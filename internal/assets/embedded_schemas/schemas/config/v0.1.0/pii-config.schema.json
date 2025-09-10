@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpterhq.github.io/schemas/config/v0.1.0/pii-config.schema.json",
+  "title": "Sumpter PII Configuration (v0.1.0)",
+  "description": "PII and PHI detection/sanitization configuration schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "pii-config/v0.1.0",
+      "description": "PII configuration schema version"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "off",
+        "safe",
+        "context"
+      ],
+      "default": "safe",
+      "description": "PII detection and sanitization mode"
+    },
+    "safe_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Force PII-safe mode regardless of other settings"
+    },
+    "allowed_contexts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Contexts where PII is allowed when mode is 'context'"
+    },
+    "patterns": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled_defaults": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable default PII detection patterns"
+        },
+        "custom": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "pattern",
+              "replacement"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Pattern name for identification"
+              },
+              "pattern": {
+                "type": "string",
+                "description": "Regular expression pattern"
+              },
+              "replacement": {
+                "type": "string",
+                "description": "Replacement string for sanitized output"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "pii",
+                  "phi"
+                ],
+                "default": "pii",
+                "description": "PII or PHI category"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ],
+                "default": "medium",
+                "description": "Severity level for detection"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Enable this custom pattern"
+              }
+            }
+          },
+          "default": [],
+          "description": "Custom PII detection patterns"
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Override enable/disable for default pattern"
+              },
+              "replacement": {
+                "type": "string",
+                "description": "Override replacement string for default pattern"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ],
+                "description": "Override severity for default pattern"
+              }
+            }
+          },
+          "description": "Override settings for default patterns by name"
+        }
+      }
+    },
+    "reporting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "log_detections": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log PII detection events"
+        },
+        "log_summary": {
+          "type": "boolean",
+          "default": true,
+          "description": "Log PII detection summary at end of processing"
+        },
+        "alert_thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "high_severity_count": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 5,
+              "description": "Alert when high severity PII detections exceed this count"
+            },
+            "critical_severity_count": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1,
+              "description": "Alert when critical severity PII detections exceed this count"
+            }
+          }
+        }
+      }
+    },
+    "exclusions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "file_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "File patterns to exclude from PII scanning"
+        },
+        "element_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "XML element patterns to exclude from PII scanning"
+        },
+        "attribute_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "XML attribute patterns to exclude from PII scanning"
+        }
+      }
+    }
+  }
+}

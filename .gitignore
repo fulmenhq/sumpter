@@ -1,0 +1,223 @@
+# Sumpter Go Project .gitignore
+# Based on Fulmen ecosystem patterns from lanyte and go-fulminar
+
+# Go-specific ignores
+bin/
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# Sumpter-specific binaries (anywhere in tree)
+**/sumpter
+**/sumpter.exe
+**/sumpter.db
+**/test-sumpter
+**/*.test
+# but allow source command folder named sumpter
+!cmd/sumpter/
+
+# Build output and temporary files
+dist/
+tmp/
+build/
+out/
+testdata/
+
+# Coverage reports
+coverage*/
+coverageP/
+cover.html
+coverage.html
+cover.out
+*_coverage.html
+coverage_report.html
+
+# Dependency directories (if not using Go modules)
+Godeps/
+_deps/
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# AI tool directories (should not be committed)
+.claude/
+.grok/
+.windsurf/
+# Ignore .cursor directory but allow rules subdirectory
+.cursor/
+!.cursor/rules/
+!.cursor/rules/*
+
+.scratchpad/
+
+# Planning documents (private, not committed to repo)
+.plans/
+
+# macOS-specific files
+.DS_Store
+Thumbs.db
+
+# Windows-specific files
+desktop.ini
+*.lnk
+
+# Environment files
+.env*
+!.env.example
+
+# Miscellaneous
+*.log
+*.pid
+*.seed
+*.gz
+*.tar
+*.zip
+*.rar
+node_modules/
+
+# Database files (test artifacts and runtime state)
+*.db
+*.sqlite
+*.sqlite3
+sumpter-state.db
+
+# Docker build artifacts and caches
+.docker/
+docker-build/
+.dockerignore.local
+**/Dockerfile.local
+**/Dockerfile.dev
+# Allow official Dockerfiles
+!Dockerfile
+!Dockerfile.*
+!**/Dockerfile.production
+!**/Dockerfile.security-test
+
+# Container images and volumes
+docker-compose.override.yml
+.docker-compose/
+
+# Security scan reports and artifacts
+security-reports/
+.security/
+*.sarif
+*.security
+
+# CI/CD artifacts
+.github/workflows/.local/
+ci-artifacts/
+pipeline-artifacts/
+test-results/
+benchmarks/
+
+# Observability and monitoring
+logs/
+metrics/
+traces/
+
+# Configuration overrides (allow templates)
+config/local/
+config/development/
+.config/
+*.local.yaml
+*.local.json
+*.dev.yaml
+*.dev.json
+# Allow example configurations
+!config/examples/
+!*.example.yaml
+!*.example.json
+
+# Temporary files and caches
+*.tmp
+*.cache
+.cache/
+.gocache/
+
+# Sumpter-specific runtime files
+~/.sumpter/
+~/.sumpter/port-reservations.yaml
+~/.sumpter/internal/
+~/.sumpter/sessions/
+~/.sumpter/tools/
+~/.sumpter/logs/
+
+# XML processing artifacts (runtime state)
+xml-processing/
+*.processed.xml
+sumpter-output/
+
+# Test artifacts and output
+sumpter-test
+sumpter-test.go.bak
+*.test.log
+test-coverage-*.html
+tests/tmp/
+tests/output/
+test-artifacts/
+**/test-output/
+
+# Test files in repo root only (prevent accidental test file commits)
+/test-*
+/test.*
+/large-test.xml
+*.report.json
+report.json
+
+# XML processing artifacts (future v0.1.1+)
+processed/
+*.processed.md
+*.processed.html
+*.processed.pdf
+sumpter-output/
+
+# Profiling and performance data
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+profile.cov
+
+# Pre-commit and linting caches
+.pre-commit-cache/
+.golangci-cache/
+.staticcheck-cache/
+
+# Documentation build artifacts
+docs/.astro/
+docs/dist/
+docs/.vite/
+
+# Protocol buffer generated files (if not committed)
+# Uncomment if you want to ignore generated protobuf files:
+# **/*.pb.go
+# !**/proto/**
+
+# Vendor-specific files
+.vscode/settings.json
+.idea/workspace.xml
+
+# Local development overrides
+Makefile.local
+makefile.local
+
+# Documentation Management
+docs/.codex-meta/
+!docs/.gitkeep
+
+# Schema Management
+
+# Asset Management (SSOT in sumpter-codex)
+/assets/*
+!/assets/.gitkeep

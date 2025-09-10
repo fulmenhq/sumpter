@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/paths.schema.json",
+  "title": "Sumpter Application Paths",
+  "description": "Schema for application directory paths from sumpter envinfo paths",
+  "type": "object",
+  "properties": {
+    "home": {
+      "type": "string",
+      "description": "SUMPTER_HOME directory path",
+      "examples": [
+        "/Users/username/Library/Application Support/Sumpter"
+      ]
+    },
+    "workDir": {
+      "type": "string",
+      "description": "SUMPTER_WORKDIR directory path",
+      "examples": [
+        "/tmp/sumpter-work"
+      ]
+    },
+    "cache": {
+      "type": "string",
+      "description": "Cache directory path",
+      "examples": [
+        "/Users/username/Library/Application Support/Sumpter/cache"
+      ]
+    },
+    "logs": {
+      "type": "string",
+      "description": "Logs directory path",
+      "examples": [
+        "/Users/username/Library/Application Support/Sumpter/logs"
+      ]
+    },
+    "configs": {
+      "type": "string",
+      "description": "Configuration directory path",
+      "examples": [
+        "/Users/username/Library/Application Support/Sumpter/configs"
+      ]
+    },
+    "temp": {
+      "type": "string",
+      "description": "Temporary files directory path",
+      "examples": [
+        "/Users/username/Library/Application Support/Sumpter/work/temp"
+      ]
+    }
+  },
+  "required": [
+    "home",
+    "workDir",
+    "cache",
+    "logs",
+    "configs",
+    "temp"
+  ],
+  "additionalProperties": false
+}

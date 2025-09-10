@@ -1,0 +1,20 @@
+version: "1.0.0"
+topics:
+  user-guide:
+    tags: [commands, tutorials, guides]
+    include:
+      - sumpter_overview.md
+      - output_rendering.md
+      - standards/**/*.md
+      - sop/**/*.md
+    exclude:
+      - .plans/**
+      - testdata/**
+      - coverage/**
+  examples:
+    tags: [samples, configurations]
+    include:
+      - examples/**/*
+    exclude:
+      - examples/**/*.tmp
+      - examples/**/*.temp

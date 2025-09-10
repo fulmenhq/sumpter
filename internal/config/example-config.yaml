@@ -1,0 +1,57 @@
+# Example Sumpter Configuration File
+# This demonstrates the structure and options available
+version: "config/v0.1.0"
+logging:
+  level: "info"
+  format: "pretty"
+  use_color: true
+  component: "sumpter"
+  file:
+    enabled: true
+    path: "sumpter.log"
+    rotation:
+      enabled: true
+      max_size_mb: 10
+      max_age_days: 30
+      max_backups: 5
+      compress: true
+      time_format: "2006-01-02"
+  telemetry:
+    enabled: false
+    service_name: "sumpter"
+    service_version: "v0.1.0"
+    environment: "development"
+pii:
+  mode: "safe"
+  safe_only: true
+  allowed_contexts: []
+  patterns:
+    enabled_defaults: true
+    custom: []
+    overrides: {}
+  reporting:
+    log_detections: false
+    log_summary: true
+    alert_thresholds:
+      high_severity_count: 5
+      critical_severity_count: 1
+  exclusions:
+    file_patterns: []
+    element_patterns: []
+    attribute_patterns: []
+paths:
+  cache_dir: "cache"
+  temp_dir: "temp"
+  output_dir: "output"
+performance:
+  max_memory_mb: 512
+  buffer_size_kb: 64
+  worker_count: 4
+  timeout_seconds: 300
+telemetry:
+  enabled: false
+  service_name: "sumpter"
+  service_version: "v0.1.0"
+  environment: "development"
+  batch_size: 100
+  flush_interval_seconds: 30

@@ -1,0 +1,149 @@
+# Sumpter Coverage Thresholds Configuration
+# Lifecycle-aware test coverage requirements
+# Last Updated: September 3, 2025
+metadata:
+  version: "1.0.0"
+  description: "Phase-specific test coverage requirements for Sumpter"
+  governance: "Fulmen Ecosystem Standards"
+phases:
+  alpha:
+    coverage: 50
+    description: "Foundation phase - core functionality and professional tooling"
+    requirements:
+      - "Core XML processing functions tested"
+      - "Basic CLI commands functional"
+      - "Error handling implemented"
+      - "Security scanning operational"
+    validation:
+      - "make check-all passes"
+      - "Unit tests for critical functions"
+      - "Basic integration tests"
+  beta:
+    coverage: 70
+    description: "Integration phase - feature completeness and system validation"
+    requirements:
+      - "All core features implemented"
+      - "Comprehensive integration testing"
+      - "Performance benchmarks established"
+      - "Enterprise deployment considerations"
+    validation:
+      - "Integration tests passing"
+      - "Performance requirements met"
+      - "Security audit completed"
+      - "Multi-platform builds validated"
+  production:
+    coverage: 80
+    description: "Enterprise phase - production readiness and operational stability"
+    requirements:
+      - "Enterprise-grade deployment packages"
+      - "Comprehensive monitoring and alerting"
+      - "Automated deployment pipelines"
+      - "Incident response procedures"
+    validation:
+      - "Production monitoring implemented"
+      - "Automated deployment validated"
+      - "Security compliance maintained"
+      - "Performance SLAs met"
+  mature:
+    coverage: 85
+    description: "Optimization phase - advanced capabilities and ecosystem integration"
+    requirements:
+      - "Advanced feature development"
+      - "Performance optimization ongoing"
+      - "Ecosystem integration comprehensive"
+      - "Community engagement active"
+    validation:
+      - "Advanced performance metrics"
+      - "Ecosystem integration tested"
+      - "Community feedback incorporated"
+      - "Innovation metrics tracked"
+# Package-specific overrides (optional)
+packages:
+  cmd/sumpter/commands:
+    alpha: 60 # Higher requirement for CLI commands
+    beta: 75
+    production: 85
+    mature: 90
+  internal/config:
+    alpha: 40 # Lower requirement for internal packages
+    beta: 65
+    production: 75
+    mature: 80
+  internal/logging:
+    alpha: 45
+    beta: 70
+    production: 80
+    mature: 85
+# Validation settings
+validation:
+  strict: true # Fail on coverage below threshold
+  include_generated: false # Exclude generated code from coverage
+  exclude_patterns: # Files/patterns to exclude
+    - "*/mocks/*"
+    - "*/testdata/*"
+    - "*_mock.go"
+    - "*_generated.go"
+  reporting:
+    format: "html" # html, xml, json, text
+    output_dir: "coverage" # Coverage report directory
+    badge: true # Generate coverage badge
+    history: true # Track coverage history
+# Quality gate integration
+quality_gates:
+  pre_commit:
+    coverage: true
+    threshold: "phase_dynamic" # Use phase-specific threshold
+    fail_on_decline: true # Fail if coverage decreases
+  pre_push:
+    coverage: true
+    threshold: 80 # Fixed 80% for production readiness
+    integration_tests: true # Require integration tests
+    security_scan: true # Require security scanning
+  ci_cd:
+    coverage: true
+    threshold: "phase_dynamic"
+    upload_results: true # Upload coverage to external service
+    generate_reports: true # Generate detailed HTML reports
+# Emergency overrides (require supervisor approval)
+emergency:
+  enabled: false # Must be explicitly enabled
+  minimum_threshold: 30 # Absolute minimum allowed
+  duration_hours: 24 # Auto-disable after this period
+  approval_required: true # Require @3leapsdave approval
+  audit_required: true # Log emergency override usage
+# Notification settings
+notifications:
+  slack:
+    enabled: false
+    webhook_url: "" # Set via environment variable
+    channels:
+      - "#devops"
+      - "#quality"
+  email:
+    enabled: false
+    recipients:
+      - "devops@sumpterhq.dev"
+    threshold_alerts: true # Alert when approaching threshold
+    failure_alerts: true # Alert on coverage failures
+# Historical tracking
+history:
+  enabled: true
+  retention_days: 90
+  database_path: ".coverage/history.db"
+  trend_analysis: true
+  regression_detection: true
+# Advanced settings
+advanced:
+  parallel_execution: true # Run tests in parallel
+  race_detection: true # Enable race condition detection
+  memory_profiling: true # Enable memory profiling
+  cpu_profiling: false # Enable CPU profiling (resource intensive)
+  coverage_types:
+    - "unit" # Unit test coverage
+    - "integration" # Integration test coverage
+    - "system" # System test coverage (future)
+  custom_metrics:
+    enabled: false
+    mutation_testing: false # Enable mutation testing
+    fuzz_testing: false # Enable fuzz testing
+    performance_benchmarks: true # Include performance benchmarks

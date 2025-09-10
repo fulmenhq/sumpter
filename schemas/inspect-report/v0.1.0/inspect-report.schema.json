@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpterhq.github.io/schemas/inspect-report/v0.1.0/inspect-report.schema.json",
+  "title": "Sumpter Inspect Report (v0.1.0)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "input",
+    "metrics",
+    "paths",
+    "caps"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "inspect-report/v0.1.0"
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "path",
+        "size_bytes",
+        "encoding_detected"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "encoding_detected": {
+          "type": "string"
+        },
+        "encoding_forced": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "bytes_processed",
+        "elapsed_ms",
+        "throughput_bytes_per_sec",
+        "replacement_count"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bytes_processed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "throughput_bytes_per_sec": {
+          "type": "number",
+          "minimum": 0
+        },
+        "replacement_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rss_peak_mb": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "count"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "attributes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "count"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "default": []
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "caps": {
+      "type": "object",
+      "required": [
+        "paths_truncated",
+        "attributes_truncated",
+        "samples_truncated"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "paths_truncated": {
+          "type": "boolean"
+        },
+        "attributes_truncated": {
+          "type": "boolean"
+        },
+        "samples_truncated": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

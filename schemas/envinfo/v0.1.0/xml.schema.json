@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/xml.schema.json",
+  "title": "Sumpter XML Processing Capabilities",
+  "description": "Schema for XML processing capabilities from sumpter envinfo xml",
+  "type": "object",
+  "properties": {
+    "streamingSupported": {
+      "type": "boolean",
+      "description": "Whether streaming XML processing is supported",
+      "const": true
+    },
+    "encodings": {
+      "type": "array",
+      "description": "Supported character encodings for XML processing",
+      "items": {
+        "type": "string",
+        "enum": [
+          "UTF-8",
+          "UTF-16",
+          "ISO-8859-1",
+          "Windows-1252",
+          "US-ASCII"
+        ]
+      },
+      "minItems": 1,
+      "examples": [
+        [
+          "UTF-8",
+          "UTF-16",
+          "ISO-8859-1",
+          "Windows-1252"
+        ]
+      ]
+    },
+    "maxMemoryTarget": {
+      "type": "string",
+      "description": "Maximum memory usage target for XML processing",
+      "pattern": "^<[0-9]+MB RSS$",
+      "examples": [
+        "<50MB RSS"
+      ]
+    },
+    "supportedOutputs": {
+      "type": "array",
+      "description": "Supported output formats for XML processing",
+      "items": {
+        "type": "string",
+        "enum": [
+          "NDJSON",
+          "Parquet",
+          "DuckDB",
+          "Markdown",
+          "JSON",
+          "CSV"
+        ]
+      },
+      "minItems": 1,
+      "examples": [
+        [
+          "NDJSON",
+          "Parquet",
+          "DuckDB",
+          "Markdown"
+        ]
+      ]
+    }
+  },
+  "required": [
+    "streamingSupported",
+    "encodings",
+    "maxMemoryTarget",
+    "supportedOutputs"
+  ],
+  "additionalProperties": false
+}
