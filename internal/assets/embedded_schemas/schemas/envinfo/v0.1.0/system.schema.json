@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/system.schema.json",
+  "title": "Sumpter System Information",
+  "description": "Schema for system information output from sumpter envinfo system",
+  "type": "object",
+  "properties": {
+    "os": {
+      "type": "string",
+      "description": "Operating system name",
+      "enum": [
+        "darwin",
+        "linux",
+        "windows",
+        "freebsd",
+        "openbsd",
+        "netbsd"
+      ],
+      "examples": [
+        "darwin",
+        "linux"
+      ]
+    },
+    "architecture": {
+      "type": "string",
+      "description": "System architecture",
+      "enum": [
+        "amd64",
+        "arm64",
+        "386",
+        "arm"
+      ],
+      "examples": [
+        "arm64",
+        "amd64"
+      ]
+    },
+    "goVersion": {
+      "type": "string",
+      "description": "Go programming language version",
+      "pattern": "^go[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "examples": [
+        "go1.21.0"
+      ]
+    },
+    "numCPU": {
+      "type": "integer",
+      "description": "Number of CPU cores available",
+      "minimum": 1,
+      "examples": [
+        8,
+        16
+      ]
+    },
+    "hostname": {
+      "type": "string",
+      "description": "System hostname",
+      "examples": [
+        "myhost.local"
+      ]
+    },
+    "workingDir": {
+      "type": "string",
+      "description": "Current working directory path",
+      "examples": [
+        "/Users/username/projects"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when information was collected (RFC3339 format)",
+      "examples": [
+        "2024-01-15T10:30:00Z"
+      ]
+    }
+  },
+  "required": [
+    "os",
+    "architecture",
+    "goVersion",
+    "numCPU",
+    "hostname",
+    "workingDir",
+    "timestamp"
+  ],
+  "additionalProperties": false
+}

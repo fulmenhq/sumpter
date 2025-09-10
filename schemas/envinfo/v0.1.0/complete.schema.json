@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/complete.schema.json",
+  "title": "Sumpter Complete Environment Information",
+  "description": "Schema for complete environment information from sumpter envinfo (main command)",
+  "type": "object",
+  "properties": {
+    "system": {
+      "$ref": "system.schema.json",
+      "description": "System information"
+    },
+    "network": {
+      "$ref": "network.schema.json",
+      "description": "Network information (when requested)"
+    },
+    "variables": {
+      "$ref": "vars.schema.json",
+      "description": "Environment variables"
+    },
+    "stats": {
+      "type": "object",
+      "description": "Environment variable statistics",
+      "properties": {
+        "totalVars": {
+          "type": "integer",
+          "description": "Total number of environment variables",
+          "minimum": 0
+        },
+        "filteredVars": {
+          "type": "integer",
+          "description": "Number of variables shown after filtering",
+          "minimum": 0
+        },
+        "keyVarsCount": {
+          "type": "integer",
+          "description": "Number of key variables (SUMPTER_ and standard vars)",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "totalVars",
+        "filteredVars",
+        "keyVarsCount"
+      ],
+      "additionalProperties": false
+    },
+    "xml": {
+      "$ref": "xml.schema.json",
+      "description": "XML processing capabilities (when requested)"
+    },
+    "application": {
+      "$ref": "paths.schema.json",
+      "description": "Sumpter application directory paths"
+    }
+  },
+  "required": [
+    "system",
+    "variables",
+    "stats",
+    "application"
+  ],
+  "additionalProperties": false
+}

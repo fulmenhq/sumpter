@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/vars.schema.json",
+  "title": "Sumpter Environment Variables",
+  "description": "Schema for environment variables output from sumpter envinfo vars",
+  "type": "object",
+  "patternProperties": {
+    "^[A-Z_][A-Z0-9_]*$": {
+      "type": "string",
+      "description": "Environment variable value (may be redacted for security)"
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "HOME": "/Users/username",
+      "USER": "username",
+      "PATH": "/usr/local/bin:/usr/bin:/bin",
+      "SHELL": "/bin/bash",
+      "SUMPTER_HOME": "/Users/username/.sumpter",
+      "SUMPTER_WORKDIR": "/tmp/sumpter-work",
+      "PWD": "***redacted***"
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/network.schema.json",
+  "title": "Sumpter Network Information",
+  "description": "Schema for network information from sumpter envinfo network",
+  "type": "object",
+  "properties": {
+    "interfaces": {
+      "type": "array",
+      "description": "List of network interfaces",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Network interface name",
+            "examples": [
+              "en0",
+              "lo0",
+              "eth0"
+            ]
+          },
+          "address": {
+            "type": "string",
+            "description": "Network interface address (IP with CIDR)",
+            "examples": [
+              "192.168.1.100/24",
+              "fe80::1/64"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "Interface status",
+            "enum": [
+              "up",
+              "down"
+            ],
+            "examples": [
+              "up"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "address",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "externalIP": {
+      "type": "string",
+      "description": "External/public IP address (when --external-ip flag is used)",
+      "format": "ipv4",
+      "examples": [
+        "203.0.113.1"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "interfaces": [
+        {
+          "name": "lo0",
+          "address": "127.0.0.1/8",
+          "status": "up"
+        },
+        {
+          "name": "en0",
+          "address": "192.168.1.100/24",
+          "status": "up"
+        }
+      ]
+    },
+    {
+      "interfaces": [
+        {
+          "name": "eth0",
+          "address": "10.0.0.50/24",
+          "status": "up"
+        }
+      ],
+      "externalIP": "203.0.113.1"
+    }
+  ]
+}
