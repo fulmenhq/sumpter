@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +16,18 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
+
+// Helper function to write formatted output with error handling
+func writeFprintf(w io.Writer, format string, args ...interface{}) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
+}
+
+// Helper function to write line output with error handling
+func writeFprintln(w io.Writer, args ...interface{}) error {
+	_, err := fmt.Fprintln(w, args...)
+	return err
+}
 
 type EnvData struct {
 	System      SystemInfo        `json:"system"`
@@ -156,7 +169,9 @@ func runEnvInfoMain(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to format JSON output: %w", err)
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), string(jsonData))
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(jsonData)); err != nil {
+			return fmt.Errorf("failed to write JSON output: %w", err)
+		}
 		return nil
 	}
 
@@ -333,7 +348,13 @@ func fetchIPFromService(client *http.Client, url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			// Log the error but don't fail the function
+			// In a real application, you might want to use a logger here
+			_ = closeErr // explicitly ignore the error
+		}
+	}()
 
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("service returned status %d", resp.StatusCode)
@@ -376,64 +397,134 @@ func outputHumanReadable(cmd *cobra.Command, data *EnvData, exportFormat bool) e
 	out := cmd.OutOrStdout()
 
 	// System Information Section
-	fmt.Fprintln(out, "🖥️  System Information")
-	fmt.Fprintln(out, "==================================================")
-	fmt.Fprintf(out, "%-16s | %s\n", "OS", data.System.OS)
-	fmt.Fprintf(out, "%-16s | %s\n", "Architecture", data.System.Architecture)
-	fmt.Fprintf(out, "%-16s | %s\n", "Go Version", data.System.GoVersion)
-	fmt.Fprintf(out, "%-16s | %d\n", "CPU Cores", data.System.NumCPU)
-	fmt.Fprintf(out, "%-16s | %s\n", "Hostname", data.System.Hostname)
-	fmt.Fprintf(out, "%-16s | %s\n", "Working Dir", data.System.WorkingDir)
-	fmt.Fprintf(out, "%-16s | %s\n", "Timestamp", data.System.Timestamp.Format(time.RFC3339))
-	if data.System.ExternalIP != "" {
-		fmt.Fprintf(out, "%-16s | %s\n", "External IP", data.System.ExternalIP)
+	if _, err := fmt.Fprintln(out, "🖥️  System Information"); err != nil {
+		return fmt.Errorf("failed to write system info header: %w", err)
 	}
-	fmt.Fprintln(out, "")
+	if _, err := fmt.Fprintln(out, "=================================================="); err != nil {
+		return fmt.Errorf("failed to write system info separator: %w", err)
+	}
+	if _, err := fmt.Fprintf(out, "%-16s | %s\n", "OS", data.System.OS); err != nil {
+		return fmt.Errorf("failed to write OS info: %w", err)
+	}
+	if _, err := fmt.Fprintf(out, "%-16s | %s\n", "Architecture", data.System.Architecture); err != nil {
+		return fmt.Errorf("failed to write architecture info: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Go Version", data.System.GoVersion); err != nil {
+		return fmt.Errorf("failed to write Go version: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %d\n", "CPU Cores", data.System.NumCPU); err != nil {
+		return fmt.Errorf("failed to write CPU cores: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Hostname", data.System.Hostname); err != nil {
+		return fmt.Errorf("failed to write hostname: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Working Dir", data.System.WorkingDir); err != nil {
+		return fmt.Errorf("failed to write working dir: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Timestamp", data.System.Timestamp.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("failed to write timestamp: %w", err)
+	}
+	if data.System.ExternalIP != "" {
+		if err := writeFprintf(out, "%-16s | %s\n", "External IP", data.System.ExternalIP); err != nil {
+			return fmt.Errorf("failed to write external IP: %w", err)
+		}
+	}
+	if err := writeFprintln(out, ""); err != nil {
+		return fmt.Errorf("failed to write newline: %w", err)
+	}
 
 	// XML Capabilities Section
 	if data.XML.StreamingSupported {
-		fmt.Fprintln(out, "📄 XML Processing Capabilities")
-		fmt.Fprintln(out, "==================================================")
-		fmt.Fprintf(out, "%-16s | %t\n", "Streaming", data.XML.StreamingSupported)
-		fmt.Fprintf(out, "%-16s | %s\n", "Memory Target", data.XML.MaxMemoryTarget)
-		fmt.Fprintf(out, "%-16s | %s\n", "Encodings", strings.Join(data.XML.Encodings, ", "))
-		fmt.Fprintf(out, "%-16s | %s\n", "Outputs", strings.Join(data.XML.SupportedOutputs, ", "))
-		fmt.Fprintln(out, "")
+		if err := writeFprintln(out, "📄 XML Processing Capabilities"); err != nil {
+			return fmt.Errorf("failed to write XML capabilities header: %w", err)
+		}
+		if err := writeFprintln(out, "=================================================="); err != nil {
+			return fmt.Errorf("failed to write XML capabilities separator: %w", err)
+		}
+		if err := writeFprintf(out, "%-16s | %t\n", "Streaming", data.XML.StreamingSupported); err != nil {
+			return fmt.Errorf("failed to write streaming info: %w", err)
+		}
+		if err := writeFprintf(out, "%-16s | %s\n", "Memory Target", data.XML.MaxMemoryTarget); err != nil {
+			return fmt.Errorf("failed to write memory target: %w", err)
+		}
+		if err := writeFprintf(out, "%-16s | %s\n", "Encodings", strings.Join(data.XML.Encodings, ", ")); err != nil {
+			return fmt.Errorf("failed to write encodings: %w", err)
+		}
+		if err := writeFprintf(out, "%-16s | %s\n", "Outputs", strings.Join(data.XML.SupportedOutputs, ", ")); err != nil {
+			return fmt.Errorf("failed to write outputs: %w", err)
+		}
+		if err := writeFprintln(out, ""); err != nil {
+			return fmt.Errorf("failed to write XML capabilities newline: %w", err)
+		}
 	}
 
 	// Application Environment Section
-	fmt.Fprintln(out, "🏠 Application Environment")
-	fmt.Fprintln(out, "==================================================")
-	fmt.Fprintf(out, "%-16s | %s\n", "Home", data.Application.Home)
-	fmt.Fprintf(out, "%-16s | %s\n", "WorkDir", data.Application.WorkDir)
-	fmt.Fprintf(out, "%-16s | %s\n", "Cache", data.Application.Cache)
-	fmt.Fprintf(out, "%-16s | %s\n", "Logs", data.Application.Logs)
-	fmt.Fprintf(out, "%-16s | %s\n", "Configs", data.Application.Configs)
-	fmt.Fprintf(out, "%-16s | %s\n", "Temp", data.Application.Temp)
-	fmt.Fprintln(out, "")
+	if err := writeFprintln(out, "🏠 Application Environment"); err != nil {
+		return fmt.Errorf("failed to write app environment header: %w", err)
+	}
+	if err := writeFprintln(out, "=================================================="); err != nil {
+		return fmt.Errorf("failed to write app environment separator: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Home", data.Application.Home); err != nil {
+		return fmt.Errorf("failed to write home path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "WorkDir", data.Application.WorkDir); err != nil {
+		return fmt.Errorf("failed to write workdir path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Cache", data.Application.Cache); err != nil {
+		return fmt.Errorf("failed to write cache path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Logs", data.Application.Logs); err != nil {
+		return fmt.Errorf("failed to write logs path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Configs", data.Application.Configs); err != nil {
+		return fmt.Errorf("failed to write configs path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Temp", data.Application.Temp); err != nil {
+		return fmt.Errorf("failed to write temp path: %w", err)
+	}
+	if err := writeFprintln(out, ""); err != nil {
+		return fmt.Errorf("failed to write app environment newline: %w", err)
+	}
 
 	// Network Interfaces Section
 	if len(data.Network.Interfaces) > 0 {
-		fmt.Fprintln(out, "🌐 Network Interfaces")
-		fmt.Fprintln(out, "==================================================")
-		for _, iface := range data.Network.Interfaces {
-			fmt.Fprintf(out, "%-20s | %s (%s)\n", iface.Name, iface.Address, iface.Status)
+		if err := writeFprintln(out, "🌐 Network Interfaces"); err != nil {
+			return fmt.Errorf("failed to write network interfaces header: %w", err)
 		}
-		fmt.Fprintln(out, "")
+		if err := writeFprintln(out, "=================================================="); err != nil {
+			return fmt.Errorf("failed to write network interfaces separator: %w", err)
+		}
+		for _, iface := range data.Network.Interfaces {
+			if err := writeFprintf(out, "%-20s | %s (%s)\n", iface.Name, iface.Address, iface.Status); err != nil {
+				return fmt.Errorf("failed to write network interface %s: %w", iface.Name, err)
+			}
+		}
+		if err := writeFprintln(out, ""); err != nil {
+			return fmt.Errorf("failed to write network interfaces newline: %w", err)
+		}
 	}
 
 	// Environment Variables Section
-	fmt.Fprintln(out, "🌍 Environment Variables")
-	fmt.Fprintln(out, "==================================================")
+	if err := writeFprintln(out, "🌍 Environment Variables"); err != nil {
+		return fmt.Errorf("failed to write environment variables header: %w", err)
+	}
+	if err := writeFprintln(out, "=================================================="); err != nil {
+		return fmt.Errorf("failed to write environment variables separator: %w", err)
+	}
 
 	if len(data.Variables) == 0 {
-		fmt.Fprintln(out, "No environment variables found matching the filter.")
+		if err := writeFprintln(out, "No environment variables found matching the filter."); err != nil {
+			return fmt.Errorf("failed to write no variables message: %w", err)
+		}
 	} else {
 		if exportFormat {
 			for key, value := range data.Variables {
 				// Redact sensitive values
 				value = maybeRedact(key, value)
-				fmt.Fprintf(out, "export %s=%q\n", key, value)
+				if err := writeFprintf(out, "export %s=%q\n", key, value); err != nil {
+					return fmt.Errorf("failed to write export for %s: %w", key, err)
+				}
 			}
 		} else {
 			maxKeyLength := 20
@@ -450,19 +541,33 @@ func outputHumanReadable(cmd *cobra.Command, data *EnvData, exportFormat bool) e
 				if len(value) > 50 {
 					value = value[:50] + "..."
 				}
-				fmt.Fprintf(out, "%-*s | %s\n", maxKeyLength, key, value)
+				if err := writeFprintf(out, "%-*s | %s\n", maxKeyLength, key, value); err != nil {
+					return fmt.Errorf("failed to write variable %s: %w", key, err)
+				}
 			}
 		}
 	}
 
 	// Stats
 	if !exportFormat {
-		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "📊 Stats")
-		fmt.Fprintln(out, "==================================================")
-		fmt.Fprintf(out, "%-16s | %d\n", "Total Vars", data.Stats.TotalVars)
-		fmt.Fprintf(out, "%-16s | %d\n", "Filtered Vars", data.Stats.FilteredVars)
-		fmt.Fprintf(out, "%-16s | %d\n", "Key Vars", data.Stats.KeyVarsCount)
+		if err := writeFprintln(out, ""); err != nil {
+			return fmt.Errorf("failed to write stats newline: %w", err)
+		}
+		if err := writeFprintln(out, "📊 Stats"); err != nil {
+			return fmt.Errorf("failed to write stats header: %w", err)
+		}
+		if err := writeFprintln(out, "=================================================="); err != nil {
+			return fmt.Errorf("failed to write stats separator: %w", err)
+		}
+		if err := writeFprintf(out, "%-16s | %d\n", "Total Vars", data.Stats.TotalVars); err != nil {
+			return fmt.Errorf("failed to write total vars: %w", err)
+		}
+		if err := writeFprintf(out, "%-16s | %d\n", "Filtered Vars", data.Stats.FilteredVars); err != nil {
+			return fmt.Errorf("failed to write filtered vars: %w", err)
+		}
+		if err := writeFprintf(out, "%-16s | %d\n", "Key Vars", data.Stats.KeyVarsCount); err != nil {
+			return fmt.Errorf("failed to write key vars: %w", err)
+		}
 	}
 
 	return nil
@@ -516,7 +621,9 @@ func newEnvInfoSystemCommand() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("failed to format JSON output: %w", err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(jsonData))
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(jsonData)); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
 				return nil
 			}
 
@@ -560,7 +667,9 @@ func newEnvInfoPathsCommand() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("failed to format JSON output: %w", err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(jsonData))
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(jsonData)); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
 				return nil
 			}
 
@@ -605,7 +714,9 @@ prefixed variables. Sensitive values are automatically redacted for security.`,
 				if err != nil {
 					return fmt.Errorf("failed to format JSON output: %w", err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(jsonData))
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(jsonData)); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
 				return nil
 			}
 
@@ -639,7 +750,9 @@ func newEnvInfoXMLCommand() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("failed to format JSON output: %w", err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(jsonData))
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(jsonData)); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
 				return nil
 			}
 
@@ -677,7 +790,9 @@ func newEnvInfoNetworkCommand() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("failed to format JSON output: %w", err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(jsonData))
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(jsonData)); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
 				return nil
 			}
 
@@ -711,15 +826,33 @@ func collectSystemInfo() SystemInfo {
 func outputSystemInfo(cmd *cobra.Command, info SystemInfo) error {
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintln(out, "🖥️  System Information")
-	fmt.Fprintln(out, "==================================================")
-	fmt.Fprintf(out, "%-16s | %s\n", "OS", info.OS)
-	fmt.Fprintf(out, "%-16s | %s\n", "Architecture", info.Architecture)
-	fmt.Fprintf(out, "%-16s | %s\n", "Go Version", info.GoVersion)
-	fmt.Fprintf(out, "%-16s | %d\n", "CPU Cores", info.NumCPU)
-	fmt.Fprintf(out, "%-16s | %s\n", "Hostname", info.Hostname)
-	fmt.Fprintf(out, "%-16s | %s\n", "Working Dir", info.WorkingDir)
-	fmt.Fprintf(out, "%-16s | %s\n", "Timestamp", info.Timestamp.Format(time.RFC3339))
+	if err := writeFprintln(out, "🖥️  System Information"); err != nil {
+		return fmt.Errorf("failed to write system info header: %w", err)
+	}
+	if err := writeFprintln(out, "=================================================="); err != nil {
+		return fmt.Errorf("failed to write system info separator: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "OS", info.OS); err != nil {
+		return fmt.Errorf("failed to write OS: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Architecture", info.Architecture); err != nil {
+		return fmt.Errorf("failed to write architecture: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Go Version", info.GoVersion); err != nil {
+		return fmt.Errorf("failed to write Go version: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %d\n", "CPU Cores", info.NumCPU); err != nil {
+		return fmt.Errorf("failed to write CPU cores: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Hostname", info.Hostname); err != nil {
+		return fmt.Errorf("failed to write hostname: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Working Dir", info.WorkingDir); err != nil {
+		return fmt.Errorf("failed to write working dir: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Timestamp", info.Timestamp.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("failed to write timestamp: %w", err)
+	}
 
 	return nil
 }
@@ -727,14 +860,30 @@ func outputSystemInfo(cmd *cobra.Command, info SystemInfo) error {
 func outputApplicationPaths(cmd *cobra.Command, paths ApplicationPaths) error {
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintln(out, "🏠 Application Environment")
-	fmt.Fprintln(out, "==================================================")
-	fmt.Fprintf(out, "%-16s | %s\n", "Home", paths.Home)
-	fmt.Fprintf(out, "%-16s | %s\n", "WorkDir", paths.WorkDir)
-	fmt.Fprintf(out, "%-16s | %s\n", "Cache", paths.Cache)
-	fmt.Fprintf(out, "%-16s | %s\n", "Logs", paths.Logs)
-	fmt.Fprintf(out, "%-16s | %s\n", "Configs", paths.Configs)
-	fmt.Fprintf(out, "%-16s | %s\n", "Temp", paths.Temp)
+	if err := writeFprintln(out, "🏠 Application Environment"); err != nil {
+		return fmt.Errorf("failed to write app environment header: %w", err)
+	}
+	if err := writeFprintln(out, "=================================================="); err != nil {
+		return fmt.Errorf("failed to write app environment separator: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Home", paths.Home); err != nil {
+		return fmt.Errorf("failed to write home path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "WorkDir", paths.WorkDir); err != nil {
+		return fmt.Errorf("failed to write workdir path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Cache", paths.Cache); err != nil {
+		return fmt.Errorf("failed to write cache path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Logs", paths.Logs); err != nil {
+		return fmt.Errorf("failed to write logs path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Configs", paths.Configs); err != nil {
+		return fmt.Errorf("failed to write configs path: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Temp", paths.Temp); err != nil {
+		return fmt.Errorf("failed to write temp path: %w", err)
+	}
 
 	return nil
 }
@@ -791,11 +940,17 @@ func collectEnvironmentVariables(all bool, filter string) map[string]string {
 func outputEnvironmentVariables(cmd *cobra.Command, variables map[string]string) error {
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintln(out, "🌍 Environment Variables")
-	fmt.Fprintln(out, "==================================================")
+	if err := writeFprintln(out, "🌍 Environment Variables"); err != nil {
+		return fmt.Errorf("failed to write environment variables header: %w", err)
+	}
+	if err := writeFprintln(out, "=================================================="); err != nil {
+		return fmt.Errorf("failed to write environment variables separator: %w", err)
+	}
 
 	if len(variables) == 0 {
-		fmt.Fprintln(out, "No environment variables found matching the filter.")
+		if err := writeFprintln(out, "No environment variables found matching the filter."); err != nil {
+			return fmt.Errorf("failed to write no variables message: %w", err)
+		}
 		return nil
 	}
 
@@ -813,7 +968,9 @@ func outputEnvironmentVariables(cmd *cobra.Command, variables map[string]string)
 		if len(value) > 50 {
 			value = value[:50] + "..."
 		}
-		fmt.Fprintf(out, "%-*s | %s\n", maxKeyLength, key, value)
+		if err := writeFprintf(out, "%-*s | %s\n", maxKeyLength, key, value); err != nil {
+			return fmt.Errorf("failed to write variable %s: %w", key, err)
+		}
 	}
 
 	return nil
@@ -831,12 +988,24 @@ func collectXMLCapabilities() XMLCapabilities {
 func outputXMLCapabilities(cmd *cobra.Command, capabilities XMLCapabilities) error {
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintln(out, "📄 XML Processing Capabilities")
-	fmt.Fprintln(out, "==================================================")
-	fmt.Fprintf(out, "%-16s | %t\n", "Streaming", capabilities.StreamingSupported)
-	fmt.Fprintf(out, "%-16s | %s\n", "Memory Target", capabilities.MaxMemoryTarget)
-	fmt.Fprintf(out, "%-16s | %s\n", "Encodings", strings.Join(capabilities.Encodings, ", "))
-	fmt.Fprintf(out, "%-16s | %s\n", "Outputs", strings.Join(capabilities.SupportedOutputs, ", "))
+	if err := writeFprintln(out, "📄 XML Processing Capabilities"); err != nil {
+		return fmt.Errorf("failed to write XML capabilities header: %w", err)
+	}
+	if err := writeFprintln(out, "=================================================="); err != nil {
+		return fmt.Errorf("failed to write XML capabilities separator: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %t\n", "Streaming", capabilities.StreamingSupported); err != nil {
+		return fmt.Errorf("failed to write streaming info: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Memory Target", capabilities.MaxMemoryTarget); err != nil {
+		return fmt.Errorf("failed to write memory target: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Encodings", strings.Join(capabilities.Encodings, ", ")); err != nil {
+		return fmt.Errorf("failed to write encodings: %w", err)
+	}
+	if err := writeFprintf(out, "%-16s | %s\n", "Outputs", strings.Join(capabilities.SupportedOutputs, ", ")); err != nil {
+		return fmt.Errorf("failed to write outputs: %w", err)
+	}
 
 	return nil
 }
@@ -865,20 +1034,32 @@ func collectNetworkInfo(includeExternalIP bool) (*NetworkInfo, error) {
 func outputNetworkInfo(cmd *cobra.Command, info *NetworkInfo) error {
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintln(out, "🌐 Network Interfaces")
-	fmt.Fprintln(out, "==================================================")
+	if err := writeFprintln(out, "🌐 Network Interfaces"); err != nil {
+		return fmt.Errorf("failed to write network interfaces header: %w", err)
+	}
+	if err := writeFprintln(out, "=================================================="); err != nil {
+		return fmt.Errorf("failed to write network interfaces separator: %w", err)
+	}
 
 	if len(info.Interfaces) == 0 {
-		fmt.Fprintln(out, "No network interfaces found.")
+		if err := writeFprintln(out, "No network interfaces found."); err != nil {
+			return fmt.Errorf("failed to write no interfaces message: %w", err)
+		}
 	} else {
 		for _, iface := range info.Interfaces {
-			fmt.Fprintf(out, "%-20s | %s (%s)\n", iface.Name, iface.Address, iface.Status)
+			if err := writeFprintf(out, "%-20s | %s (%s)\n", iface.Name, iface.Address, iface.Status); err != nil {
+				return fmt.Errorf("failed to write interface %s: %w", iface.Name, err)
+			}
 		}
 	}
 
 	if info.ExternalIP != "" {
-		fmt.Fprintln(out, "")
-		fmt.Fprintf(out, "%-16s | %s\n", "External IP", info.ExternalIP)
+		if err := writeFprintln(out, ""); err != nil {
+			return fmt.Errorf("failed to write external IP newline: %w", err)
+		}
+		if err := writeFprintf(out, "%-16s | %s\n", "External IP", info.ExternalIP); err != nil {
+			return fmt.Errorf("failed to write external IP: %w", err)
+		}
 	}
 
 	return nil
