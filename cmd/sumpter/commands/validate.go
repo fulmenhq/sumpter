@@ -176,34 +176,62 @@ func outputTextResults(cmd *cobra.Command, results map[string]*validation.Valida
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Configuration Validation Results\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "==============================\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "Total files: %d\n", totalFiles)
-	fmt.Fprintf(cmd.OutOrStdout(), "Valid files: %d\n", validFiles)
-	fmt.Fprintf(cmd.OutOrStdout(), "Invalid files: %d\n", totalFiles-validFiles)
-	fmt.Fprintf(cmd.OutOrStdout(), "Total errors: %d\n\n", totalErrors)
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Configuration Validation Results\n"); err != nil {
+		return fmt.Errorf("failed to write header: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "==============================\n"); err != nil {
+		return fmt.Errorf("failed to write separator: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Total files: %d\n", totalFiles); err != nil {
+		return fmt.Errorf("failed to write total files: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Valid files: %d\n", validFiles); err != nil {
+		return fmt.Errorf("failed to write valid files: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Invalid files: %d\n", totalFiles-validFiles); err != nil {
+		return fmt.Errorf("failed to write invalid files: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Total errors: %d\n\n", totalErrors); err != nil {
+		return fmt.Errorf("failed to write total errors: %w", err)
+	}
 
 	// Individual file results
 	for filePath, result := range results {
-		fmt.Fprintf(cmd.OutOrStdout(), "File: %s\n", filePath)
+		if err := writeFprintf(cmd.OutOrStdout(), "File: %s\n", filePath); err != nil {
+			return fmt.Errorf("failed to write file path: %w", err)
+		}
 		if result.IsValid() {
-			fmt.Fprintf(cmd.OutOrStdout(), "Status: ✅ Valid\n")
+			if err := writeFprintf(cmd.OutOrStdout(), "Status: ✅ Valid\n"); err != nil {
+				return fmt.Errorf("failed to write valid status: %w", err)
+			}
 		} else {
-			fmt.Fprintf(cmd.OutOrStdout(), "Status: ❌ Invalid (%d errors)\n", result.ErrorCount())
+			if err := writeFprintf(cmd.OutOrStdout(), "Status: ❌ Invalid (%d errors)\n", result.ErrorCount()); err != nil {
+				return fmt.Errorf("failed to write invalid status: %w", err)
+			}
 			for i, err := range result.Errors {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %d. %s: %s", i+1, err.Path, err.Message)
-				if err.Line > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), " (line %d)", err.Line)
+				if writeErr := writeFprintf(cmd.OutOrStdout(), "  %d. %s: %s", i+1, err.Path, err.Message); writeErr != nil {
+					return fmt.Errorf("failed to write error details: %w", writeErr)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "\n")
+				if err.Line > 0 {
+					if writeErr := writeFprintf(cmd.OutOrStdout(), " (line %d)", err.Line); writeErr != nil {
+						return fmt.Errorf("failed to write line number: %w", writeErr)
+					}
+				}
+				if writeErr := writeFprintf(cmd.OutOrStdout(), "\n"); writeErr != nil {
+					return fmt.Errorf("failed to write newline: %w", writeErr)
+				}
 			}
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "\n")
+		if err := writeFprintf(cmd.OutOrStdout(), "\n"); err != nil {
+			return fmt.Errorf("failed to write separator: %w", err)
+		}
 	}
 
 	// Overall result
 	if totalErrors == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "🎉 All configuration files are valid!\n")
+		if err := writeFprintf(cmd.OutOrStdout(), "🎉 All configuration files are valid!\n"); err != nil {
+			return fmt.Errorf("failed to write success message: %w", err)
+		}
 		return nil
 	} else {
 		return fmt.Errorf("validation failed with %d errors across %d files", totalErrors, totalFiles-validFiles)
