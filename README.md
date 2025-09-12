@@ -81,6 +81,12 @@ See `schemas/envinfo/README.md` for details and validation examples.
 - **Clarity**: reports and outputs easy for humans and tooling.
 - **Observability**: progress, metrics, and logging from Day 1.
 
+See also:
+
+- SOP: `docs/sop/schema-first-sop.md` (JSON-first, schema-validated IO)
+- SOP: `docs/sop/logging-sop.md` (stderr-first logging with JSON/pretty)
+- ADRs: `docs/architecture/adr/` (design decisions and rationale)
+
 ---
 
 ## 📂 Project Status
