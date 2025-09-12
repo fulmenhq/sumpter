@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/spf13/cobra"
 	"golang.org/x/net/html/charset"
+    "go.uber.org/zap"
 )
 
 type InspectOptions struct {
@@ -132,6 +134,20 @@ type PerformanceInfo struct {
 	ThroughputMBps string        `json:"throughput_mbps"`
 }
 
+// countingReader wraps an io.Reader to count bytes read for progress/metrics
+type countingReader struct {
+    r io.Reader
+    n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+    n, err := c.r.Read(p)
+    c.n += int64(n)
+    return n, err
+}
+
+func (c *countingReader) Bytes() int64 { return c.n }
+
 func NewInspectCommand() *cobra.Command {
 	opts := &InspectOptions{}
 
@@ -172,6 +188,7 @@ and configurable sampling to balance speed and insight.`,
 }
 
 func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
+	log := logging.Component("inspect")
 	startTime := time.Now()
 
 	// Open input
@@ -213,8 +230,45 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		return fmt.Errorf("encoding detection failed: %w", err)
 	}
 
+	// INFO start
+	log.Info("inspect start",
+		zap.String("file", fileInfo.Path),
+		zap.Int64("size_bytes", fileInfo.Size),
+		zap.String("encoding_detected", encodingInfo.Detected),
+		zap.Bool("forced", encodingInfo.Forced),
+	)
+
+	// Wrap reader to track progress
+	cr := &countingReader{r: encodedReader}
+	// Optional progress ticker
+	var progressDone chan struct{}
+	if opts.Progress {
+		progressDone = make(chan struct{})
+		ticker := time.NewTicker(1 * time.Second)
+		go func() {
+			for {
+				select {
+				case <-ticker.C:
+					bytes := cr.Bytes()
+					elapsed := time.Since(startTime)
+					throughput := 0.0
+					if elapsed > 0 {
+						throughput = float64(bytes) / elapsed.Seconds()
+					}
+					log.Info("progress",
+						zap.Int64("bytes_processed", bytes),
+						zap.Float64("throughput_bps", throughput),
+					)
+				case <-progressDone:
+					ticker.Stop()
+					return
+				}
+			}
+		}()
+	}
+
 	// Perform inspection
-	report, err := inspectXML(encodedReader, fileInfo, encodingInfo, opts)
+	report, err := inspectXML(cr, fileInfo, encodingInfo, opts)
 	if err != nil {
 		return fmt.Errorf("inspection failed: %w", err)
 	}
@@ -224,6 +278,10 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 	report.Metrics.ElapsedMs = elapsed.Milliseconds()
 	if fileInfo.Size > 0 {
 		report.Metrics.ThroughputBytesPerSec = float64(fileInfo.Size) / elapsed.Seconds()
+	}
+	// Use actual bytes processed if available
+	if cr != nil {
+		report.Metrics.BytesProcessed = cr.Bytes()
 	}
 
 	var m runtime.MemStats
@@ -235,6 +293,28 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 	report.Metadata = &InspectMetadata{
 		Generator: "sumpter inspect",
 		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	// WARN on caps
+	if report.Caps.PathsTruncated || report.Caps.AttributesTruncated || report.Caps.SamplesTruncated {
+		log.Warn("caps reached",
+			zap.Bool("paths_truncated", report.Caps.PathsTruncated),
+			zap.Bool("attributes_truncated", report.Caps.AttributesTruncated),
+			zap.Bool("samples_truncated", report.Caps.SamplesTruncated),
+		)
+	}
+
+	// INFO finish
+	log.Info("inspect finish",
+		zap.Int64("bytes_processed", report.Metrics.BytesProcessed),
+		zap.Int64("elapsed_ms", report.Metrics.ElapsedMs),
+		zap.Float64("throughput_bps", report.Metrics.ThroughputBytesPerSec),
+		zap.Int("replacement_count", report.Metrics.ReplacementCount),
+	)
+
+	// Stop progress ticker if running
+	if progressDone != nil {
+		close(progressDone)
 	}
 
 	// Generate output
@@ -444,8 +524,11 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 		paths = append(paths, *pathInfo)
 	}
 
-	// Sort by count desc
+	// Sort by count desc; tie-break by path asc for determinism
 	sort.Slice(paths, func(i, j int) bool {
+		if paths[i].Count == paths[j].Count {
+			return paths[i].Path < paths[j].Path
+		}
 		return paths[i].Count > paths[j].Count
 	})
 
