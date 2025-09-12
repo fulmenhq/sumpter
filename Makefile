@@ -91,8 +91,15 @@ dev: ## Set up development environment
 
 # Quality checks
 .PHONY: check-all
-check-all: fmt-strict vet lint safety-check ## Run all quality checks (fast)
+check-all: fmt-strict vet lint safety-check schema-validate ## Run all quality checks (fast)
 	@echo "$(GREEN)✅ All quality checks passed!$(NC)"
+
+# Schema validation
+.PHONY: schema-validate
+schema-validate: ## Validate JSON schemas using goneat
+	@echo "$(BLUE)Validating JSON schemas...$(NC)"
+	@goneat validate --include schemas/ --format json --fail-on high
+	@echo "$(GREEN)✅ Schema validation passed!$(NC)"
 
 # Code formatting
 .PHONY: fmt
