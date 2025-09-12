@@ -5,17 +5,24 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fulmenhq/sumpter/internal/validation"
 	"gopkg.in/yaml.v3"
 )
 
 // Loader handles configuration file loading and validation
 type Loader struct {
-	paths *Paths
+	paths     *Paths
+	validator *validation.SchemaValidator
 }
 
 // NewLoader creates a new configuration loader
 func NewLoader(paths *Paths) *Loader {
-	return &Loader{paths: paths}
+	schemaDir := filepath.Join(paths.Home, "schemas")
+	validator := validation.NewSchemaValidator(schemaDir)
+	return &Loader{
+		paths:     paths,
+		validator: validator,
+	}
 }
 
 // LoadMainConfig loads the main Sumpter configuration
@@ -28,20 +35,26 @@ func (l *Loader) LoadMainConfig() (*MainConfig, error) {
 		return l.getDefaultMainConfig(), nil
 	}
 
-	// Load and parse config file
+	// Load config file
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
 
+	// Validate against schema first
+	validationResult, err := l.validator.ValidateMainConfig(data, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("schema validation failed for %s: %w", configPath, err)
+	}
+
+	if !validationResult.IsValid() {
+		return nil, fmt.Errorf("config validation failed for %s:\n%s", configPath, validationResult.ErrorSummary())
+	}
+
+	// Parse config after validation
 	var config MainConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
-	}
-
-	// Validate config
-	if err := l.validateMainConfig(&config); err != nil {
-		return nil, fmt.Errorf("invalid config file %s: %w", configPath, err)
 	}
 
 	return &config, nil
@@ -57,20 +70,26 @@ func (l *Loader) LoadLoggerConfig() (*LoggerConfig, error) {
 		return l.getDefaultLoggerConfig(), nil
 	}
 
-	// Load and parse config file
+	// Load config file
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read logger config file %s: %w", configPath, err)
 	}
 
+	// Validate against schema first
+	validationResult, err := l.validator.ValidateLoggerConfig(data, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("schema validation failed for %s: %w", configPath, err)
+	}
+
+	if !validationResult.IsValid() {
+		return nil, fmt.Errorf("logger config validation failed for %s:\n%s", configPath, validationResult.ErrorSummary())
+	}
+
+	// Parse config after validation
 	var config LoggerConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse logger config file %s: %w", configPath, err)
-	}
-
-	// Validate config
-	if err := l.validateLoggerConfig(&config); err != nil {
-		return nil, fmt.Errorf("invalid logger config file %s: %w", configPath, err)
 	}
 
 	return &config, nil
@@ -86,20 +105,26 @@ func (l *Loader) LoadPIIConfig() (*PIIConfig, error) {
 		return l.getDefaultPIIConfig(), nil
 	}
 
-	// Load and parse config file
+	// Load config file
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read PII config file %s: %w", configPath, err)
 	}
 
+	// Validate against schema first
+	validationResult, err := l.validator.ValidatePIIConfig(data, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("schema validation failed for %s: %w", configPath, err)
+	}
+
+	if !validationResult.IsValid() {
+		return nil, fmt.Errorf("PII config validation failed for %s:\n%s", configPath, validationResult.ErrorSummary())
+	}
+
+	// Parse config after validation
 	var config PIIConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse PII config file %s: %w", configPath, err)
-	}
-
-	// Validate config
-	if err := l.validatePIIConfig(&config); err != nil {
-		return nil, fmt.Errorf("invalid PII config file %s: %w", configPath, err)
 	}
 
 	return &config, nil
@@ -259,4 +284,14 @@ func (l *Loader) validatePIIConfig(config *PIIConfig) error {
 	}
 
 	return nil
+}
+
+// ValidateConfigFile validates a config file against its schema without loading it
+func (l *Loader) ValidateConfigFile(configPath string) (*validation.ValidationResult, error) {
+	return l.validator.ValidateFile(configPath)
+}
+
+// ValidateConfigDirectory validates all config files in a directory
+func (l *Loader) ValidateConfigDirectory(dirPath string) (map[string]*validation.ValidationResult, error) {
+	return l.validator.ValidateDirectory(dirPath)
 }
