@@ -7,6 +7,11 @@ set -euo pipefail
 # Establish repository root for reliable relative paths
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
+# Resolve goneat home for ephemeral artifacts (reports/cache/tmp)
+# Repo .goneat/ is static-only; do not write reports here.
+GONEAT_HOME="${GONEAT_HOME:-$HOME/.goneat}"
+export GONEAT_HOME
+
 # Detect dev mode: enabled if $REPO_ROOT/.goneat/dev-mode exists or env is set
 DEV_MODE=0
 if [ -f "$REPO_ROOT/.goneat/dev-mode" ] || [ "${GONEAT_DEV_MODE:-0}" = "1" ]; then
@@ -63,6 +68,6 @@ if [ -z "$GONEAT_BIN" ]; then
 fi
 
 # Use goneat's orchestrated assessment (manifest-driven)
-"$GONEAT_BIN" assess --hook pre-commit --hook-manifest "$REPO_ROOT/.goneat/hooks.yaml" --staged-only --categories format,lint --fail-on medium
+"$GONEAT_BIN" assess --hook pre-commit --hook-manifest "$REPO_ROOT/.goneat/hooks.yaml" --staged-only --package-mode --categories format,lint,dates --fail-on medium --package-mode
 
 echo "✅ Pre-commit validation passed!"}

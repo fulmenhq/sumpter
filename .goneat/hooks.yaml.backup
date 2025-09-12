@@ -4,7 +4,7 @@ hooks:
         - command: assess
           args:
             - --categories
-            - format,lint,dates
+            - format,lint
             - --fail-on
             - medium
             - --package-mode
@@ -14,7 +14,7 @@ hooks:
         - command: assess
           args:
             - --categories
-            - format,lint,dates,static-analysis
+            - format,lint,static-analysis
             - --fail-on
             - high
             - --package-mode
