@@ -360,10 +360,17 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		if err != nil {
 			return fmt.Errorf("failed to marshal report for validation: %w", err)
 		}
-		// Read schema file
-		schemaBytes, err := os.ReadFile("schemas/inspect-report/v0.1.0/inspect-report.schema.json")
+		// Read schema file (try YAML first, then JSON for backward compatibility)
+		var schemaBytes []byte
+
+		// Try YAML first
+		schemaBytes, err = os.ReadFile("schemas/inspect-report/v0.1.0/inspect-report.schema.yaml")
 		if err != nil {
-			return fmt.Errorf("failed to read inspect schema: %w", err)
+			// Fall back to JSON for backward compatibility
+			schemaBytes, err = os.ReadFile("schemas/inspect-report/v0.1.0/inspect-report.schema.json")
+			if err != nil {
+				return fmt.Errorf("failed to read inspect schema (tried both YAML and JSON): %w", err)
+			}
 		}
 		// Decode data into interface for validation
 		var dataInterface interface{}

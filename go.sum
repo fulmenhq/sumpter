@@ -22,6 +22,8 @@ github.com/fsnotify/fsnotify v1.8.0 h1:dAwr6QBTBZIkG8roQaJjGof0pp0EeF+tNV7YBP3F/
 github.com/fsnotify/fsnotify v1.8.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
 github.com/fulmenhq/goneat v0.2.3 h1:uJdBgdvpgzFWX9L4mpaPNkVaTkG3iYTNT8vkU19D2jI=
 github.com/fulmenhq/goneat v0.2.3/go.mod h1:8tGKWfe8Zhlyp1ptkjmMkV+rpXU7kEsA3QEkLQQbmOg=
+github.com/fulmenhq/goneat v0.2.6 h1:MLs2EvpjuOW6KvHpvxEeDxnfVLn531/7cHbQvcOmNig=
+github.com/fulmenhq/goneat v0.2.6/go.mod h1:8tGKWfe8Zhlyp1ptkjmMkV+rpXU7kEsA3QEkLQQbmOg=
 github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 h1:+zs/tPmkDkHx3U66DAb0lQFJrpS6731Oaa12ikc+DiI=
 github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376/go.mod h1:an3vInlBmSxCcxctByoQdvwPiA7DTK7jaaFDBTtu0ic=
 github.com/go-git/go-billy/v5 v5.6.2 h1:6Q86EsPXMa7c3YZ3aLAQsMA0VlWmy43r6FHqa/UNbRM=
