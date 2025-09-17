@@ -1,0 +1,35 @@
+dialect_id: "weather-xml"
+name: "Weather XML"
+description: "Weather data XML format (NOAA METAR, etc.)"
+status: "active"
+priority: "medium"
+realm: "environment"
+data_sensitivity: "low"
+confidence_threshold: 0.6
+format_type: "xml"
+patterns:
+  - pattern_id: "weather-report"
+    name: "Weather report root element"
+    selector: "local-name()='report'"
+    weight: 0.7
+    ecosystem: "meteorology"
+  - pattern_id: "weather-station"
+    name: "Weather station element"
+    selector: "local-name()='station'"
+    weight: 0.6
+    ecosystem: "meteorology"
+  - pattern_id: "weather-metar"
+    name: "METAR weather data"
+    selector: "local-name()='metar'"
+    weight: 0.8
+    ecosystem: "meteorology"
+tags:
+  - "weather"
+  - "meteorology"
+  - "noaa"
+  - "metar"
+use_cases:
+  - "Weather data processing"
+  - "Meteorological analysis"
+xml_standards:
+  - "NOAA METAR XML"

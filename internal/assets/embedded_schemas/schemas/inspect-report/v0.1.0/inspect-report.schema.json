@@ -141,6 +141,48 @@
           "type": "boolean"
         }
       }
+    },
+    "dialect": {
+      "type": "object",
+      "description": "Dialect detection results",
+      "additionalProperties": false,
+      "properties": {
+        "dialect_name": {
+          "type": "string",
+          "description": "Name of the detected dialect"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Confidence score (0-1)"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Raw detection score"
+        },
+        "score_breakdown": {
+          "type": "object",
+          "description": "Breakdown of scores by pattern",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "matched_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Names of matched patterns"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Additional dialect metadata",
+          "additionalProperties": true
+        }
+      }
     }
   }
 }

@@ -1,0 +1,41 @@
+dialect_id: "arts-poslog-v4.0"
+name: "ARTS POSLog v4.0"
+description: "ARTS (Association for Retail Technology Standards) Point of Sale Log format v4.0"
+status: "active"
+priority: "high"
+realm: "retail"
+data_sensitivity: "medium"
+confidence_threshold: 0.7
+format_type: "xml"
+patterns:
+- pattern_id: "arts-root"
+  name: "ARTS POSLog root element"
+  selector: "local-name()='POSLog'"
+  weight: 0.9
+  ecosystem: "transaction"
+- pattern_id: "arts-transaction"
+  name: "ARTS Transaction element"
+  selector: "local-name()='Transaction'"
+  weight: 0.8
+  ecosystem: "transaction"
+- pattern_id: "arts-business-day"
+  name: "ARTS BusinessDayDate element"
+  selector: "local-name()='BusinessDayDate'"
+  weight: 0.7
+  ecosystem: "transaction"
+- pattern_id: "arts-workstation"
+  name: "ARTS WorkstationID attribute"
+  selector: "@WorkstationID"
+  weight: 0.6
+  ecosystem: "transaction"
+tags:
+  - "retail"
+  - "pos"
+  - "transaction"
+  - "arts"
+use_cases:
+  - "Retail transaction processing"
+  - "Point of sale data analysis"
+  - "Inventory management"
+xml_standards:
+  - "ARTS POSLog v4.0"
