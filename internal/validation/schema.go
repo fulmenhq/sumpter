@@ -22,6 +22,24 @@ func NewSchemaValidator(schemaDir string) *SchemaValidator {
 	}
 }
 
+// readSchemaFile reads a schema file, trying YAML first then JSON for backward compatibility
+func (v *SchemaValidator) readSchemaFile(schemaPath string) ([]byte, error) {
+	// Try YAML first
+	yamlPath := schemaPath[:len(schemaPath)-5] + ".yaml" // Replace .json with .yaml
+	schemaBytes, err := os.ReadFile(yamlPath)
+	if err == nil {
+		return schemaBytes, nil
+	}
+
+	// Fall back to JSON for backward compatibility
+	schemaBytes, err = os.ReadFile(schemaPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file (tried both YAML and JSON): %w", err)
+	}
+
+	return schemaBytes, nil
+}
+
 // ValidationResult represents the result of schema validation
 type ValidationResult struct {
 	Valid  bool              `json:"valid"`
@@ -58,8 +76,8 @@ func (v *SchemaValidator) ValidatePIIConfig(configData []byte, configFile string
 
 // validateAgainstSchema validates data against a schema file
 func (v *SchemaValidator) validateAgainstSchema(data []byte, schemaPath, dataFile, schemaName string) (*ValidationResult, error) {
-	// Read schema file
-	schemaBytes, err := os.ReadFile(schemaPath)
+	// Read schema file (try YAML first, then JSON)
+	schemaBytes, err := v.readSchemaFile(schemaPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
 	}

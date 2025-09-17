@@ -1,6 +1,6 @@
 dialect_id: "weather-xml"
 name: "Weather XML"
-description: "Weather data XML format (NOAA METAR, etc.)"
+description: "Weather data XML format (NOAA METAR, aviation weather reports)"
 status: "active"
 priority: "medium"
 realm: "environment"
@@ -23,13 +23,60 @@ patterns:
     selector: "local-name()='metar'"
     weight: 0.8
     ecosystem: "meteorology"
+  - pattern_id: "weather-observation"
+    name: "Weather observation element"
+    selector: "local-name()='observation'"
+    weight: 0.5
+    ecosystem: "meteorology"
+  - pattern_id: "weather-conditions"
+    name: "Weather conditions element"
+    selector: "local-name()='conditions'"
+    weight: 0.4
+    ecosystem: "meteorology"
+  - pattern_id: "weather-forecast"
+    name: "Weather forecast element"
+    selector: "local-name()='forecast'"
+    weight: 0.6
+    ecosystem: "meteorology"
+  - pattern_id: "aviation-weather"
+    name: "Aviation weather data"
+    selector: "local-name()='aviation'"
+    weight: 0.7
+    ecosystem: "meteorology"
+  - pattern_id: "weather-data"
+    name: "Generic weather data element"
+    selector: "local-name()='weather'"
+    weight: 0.3
+    ecosystem: "meteorology"
+  - pattern_id: "temperature-reading"
+    name: "Temperature reading attribute"
+    selector: "@temperature"
+    weight: 0.4
+    ecosystem: "meteorology"
+  - pattern_id: "wind-speed"
+    name: "Wind speed attribute"
+    selector: "@wind_speed"
+    weight: 0.4
+    ecosystem: "meteorology"
+  - pattern_id: "visibility"
+    name: "Visibility attribute"
+    selector: "@visibility"
+    weight: 0.3
+    ecosystem: "meteorology"
 tags:
   - "weather"
   - "meteorology"
   - "noaa"
   - "metar"
+  - "aviation"
+  - "forecast"
+  - "observation"
 use_cases:
   - "Weather data processing"
   - "Meteorological analysis"
+  - "Aviation weather reports"
+  - "Climate data aggregation"
 xml_standards:
   - "NOAA METAR XML"
+  - "Aviation Weather XML"
+  - "WMO Weather XML"

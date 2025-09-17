@@ -83,7 +83,9 @@ func TestLoadMainConfigWithFile(t *testing.T) {
 	}
 
 	// Create config directory
-	os.MkdirAll(paths.Configs, 0755)
+	if err := os.MkdirAll(paths.Configs, 0755); err != nil {
+		t.Fatalf("Failed to create config directory: %v", err)
+	}
 
 	// Create a test config file
 	testConfig := &MainConfig{
@@ -152,7 +154,9 @@ func TestLoadMainConfigInvalidFile(t *testing.T) {
 	}
 
 	// Create config directory
-	os.MkdirAll(paths.Configs, 0755)
+	if err := os.MkdirAll(paths.Configs, 0755); err != nil {
+		t.Fatalf("Failed to create config directory: %v", err)
+	}
 
 	// Create an invalid YAML file
 	configPath := filepath.Join(paths.Configs, "sumpter.yaml")
