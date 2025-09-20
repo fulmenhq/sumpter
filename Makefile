@@ -51,7 +51,11 @@ TEST_FLAGS := -v -race -coverprofile=$(COVERAGE_DIR)/coverage.out
 BENCH_FLAGS := -bench=. -benchmem
 PRE_PUSH_COVERAGE := 80
 
-# Color output
+# Color output disabled for cross-platform simplicity
+define color_echo
+printf '%s\n' "$(2)"
+endef
+
 RED := \033[0;31m
 GREEN := \033[0;32m
 YELLOW := \033[1;33m
@@ -92,29 +96,29 @@ dev: ## Set up development environment
 # Quality checks
 .PHONY: check-all
 check-all: fmt-strict vet lint safety-check schema-validate ## Run all quality checks (fast)
-	@echo "$(GREEN)✅ All quality checks passed!$(NC)"
+	$(call color_echo,$(GREEN),✅ All quality checks passed!)
 
 # Schema validation
 .PHONY: schema-validate
 schema-validate: ## Validate JSON schemas using goneat
-	@echo "$(BLUE)Validating JSON schemas...$(NC)"
-	@goneat validate --include schemas/ --format json --fail-on high
-	@echo "$(GREEN)✅ Schema validation passed!$(NC)"
+	$(call color_echo,$(BLUE),Validating JSON schemas...)
+	@goneat validate --include schemas/ --format json --fail-on high --no-color
+	$(call color_echo,$(GREEN),✅ Schema validation passed!)
 
 # Code formatting
 .PHONY: fmt
 fmt: ## Format Go code only
-	@echo "$(BLUE)Formatting Go code...$(NC)"
+	$(call color_echo,$(BLUE),Formatting Go code...)
 	$(GOFMT) ./...
 
 .PHONY: fmt-strict
 fmt-strict: ## Strictly check Go code formatting, fails if issues found
-	@echo "$(BLUE)Checking code formatting...$(NC)"
+	$(call color_echo,$(BLUE),Checking code formatting...)
 	@if find . -name "*.go" -not -path "./vendor/*" -not -path "./.plans/*" | xargs gofmt -l | grep .; then \
-		echo "$(RED)❌ Formatting issues found. Run 'make fmt' to fix.$(NC)"; \
+		$(call color_echo,$(RED),❌ Formatting issues found. Run 'make fmt' to fix.); \
 		exit 1; \
 	fi
-	@echo "$(GREEN)✅ Code formatting check passed$(NC)"
+	$(call color_echo,$(GREEN),✅ Code formatting check passed)
 
 # Document formatting (YAML, JSON, Markdown)
 .PHONY: fmt-docs
@@ -172,25 +176,25 @@ fmt-whitespace: ## Fix end-of-file and trailing whitespace issues
 # Unified formatting target
 .PHONY: fmt-all
 fmt-all: fmt fmt-docs ## Format all code and documentation files
-	@echo "$(GREEN)✅ All formatting completed$(NC)"
+	$(call color_echo,$(GREEN),✅ All formatting completed)
 
 # Linting and vetting
 .PHONY: vet
 vet: ## Run go vet
-	@echo "$(BLUE)Running go vet...$(NC)"
+	$(call color_echo,$(BLUE),Running go vet...)
 	$(GOVET) ./...
 
 .PHONY: lint
 lint: ## Run golangci-lint (install if needed)
-	@echo "$(BLUE)Running linter...$(NC)"
+	$(call color_echo,$(BLUE),Running linter...)
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "$(YELLOW)Installing golangci-lint...$(NC)"; \
+		$(call color_echo,$(YELLOW),Installing golangci-lint...); \
 		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$((go env GOPATH))/bin; \
 	fi
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run; \
+		golangci-lint run --color=never; \
 	else \
-		$$(go env GOPATH)/bin/golangci-lint run; \
+		$$(go env GOPATH)/bin/golangci-lint run --color=never; \
 	fi
 
 # Testing
@@ -200,117 +204,117 @@ test: ## Run all tests with coverage
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) $(TEST_FLAGS) ./...
 	@$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
-	@echo "$(GREEN)Coverage report generated: $(COVERAGE_DIR)/coverage.html$(NC)"
+	$(call color_echo,$(GREEN),Coverage report generated: $(COVERAGE_DIR)/coverage.html)
 
 .PHONY: test-short
 test-short: ## Run tests without network dependencies
-	@echo "$(BLUE)Running short tests...$(NC)"
+	$(call color_echo,$(BLUE),Running short tests...)
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) -short $(TEST_FLAGS) ./...
 
 .PHONY: test-verbose
 test-verbose: ## Run tests with verbose output
-	@echo "$(BLUE)Running verbose tests...$(NC)"
+	$(call color_echo,$(BLUE),Running verbose tests...)
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) -v $(TEST_FLAGS) ./...
 
 .PHONY: test-parallel
 test-parallel: ## Run tests with parallel execution and race detection
-	@echo "$(BLUE)Running parallel tests with race detection...$(NC)"
+	$(call color_echo,$(BLUE),Running parallel tests with race detection...)
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) -parallel=4 -race $(TEST_FLAGS) ./...
 
 .PHONY: test-coverage
 test-coverage: ## Run tests with detailed coverage analysis
-	@echo "$(BLUE)Running tests with detailed coverage analysis...$(NC)"
+	$(call color_echo,$(BLUE),Running tests with detailed coverage analysis...)
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) $(TEST_FLAGS) ./...
 	@$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | tail -1
 	@$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
-	@echo "$(GREEN)Coverage report: $(COVERAGE_DIR)/coverage.html$(NC)"
+	$(call color_echo,$(GREEN),Coverage report: $(COVERAGE_DIR)/coverage.html)
 
 .PHONY: test-coverage-report
 test-coverage-report: test ## Generate coverage report and show summary
-	@echo "$(BLUE)Coverage Summary:$(NC)"
+	$(call color_echo,$(BLUE),Coverage Summary:)
 	@$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep -E "(total|coverage)"
 	@echo ""
-	@echo "$(GREEN)Detailed HTML report: $(COVERAGE_DIR)/coverage.html$(NC)"
+	$(call color_echo,$(GREEN),Detailed HTML report: $(COVERAGE_DIR)/coverage.html)
 
 .PHONY: test-commands
 test-commands: ## Run tests for command packages only
-	@echo "$(BLUE)Running command package tests...$(NC)"
+	$(call color_echo,$(BLUE),Running command package tests...)
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) $(TEST_FLAGS) ./cmd/sumpter/commands/...
 
 .PHONY: test-cleanup
 test-cleanup: ## Clean test artifacts and temporary files
-	@echo "$(BLUE)Cleaning test artifacts...$(NC)"
+	$(call color_echo,$(BLUE),Cleaning test artifacts...)
 	@rm -rf $(COVERAGE_DIR) $(TEMP_DIR)
 	@find . -name "*.test" -type f -delete 2>/dev/null || true
 	@find . -name "*.out" -type f -delete 2>/dev/null || true
-	@echo "$(GREEN)Test artifacts cleaned$(NC)"
+	$(call color_echo,$(GREEN),Test artifacts cleaned)
 
 .PHONY: test-integration
 test-integration: build ## Run integration tests (requires external dependencies)
-	@echo "$(BLUE)Running integration tests...$(NC)"
+	$(call color_echo,$(BLUE),Running integration tests...)
 	@mkdir -p tmp/integration-tests
 	$(GOTEST) -v -race -timeout=300s ./tests/integration/...
 
 .PHONY: test-integration-short
 test-integration-short: build ## Run integration tests (short mode - no external dependencies)
-	@echo "$(BLUE)Running integration tests (short mode - no external dependencies)...$(NC)"
+	$(call color_echo,$(BLUE),Running integration tests (short mode - no external dependencies)...)
 	@mkdir -p tmp/integration-tests
 	$(GOTEST) -short -v -race -timeout=120s ./tests/integration/...
 
 .PHONY: benchmark
 benchmark: ## Run benchmarks
-	@echo "$(BLUE)Running benchmarks...$(NC)"
+	$(call color_echo,$(BLUE),Running benchmarks...)
 	$(GOTEST) $(BENCH_FLAGS) ./...
 
 .PHONY: coverage-check
 coverage-check: test ## Check coverage threshold
-	@echo "$(BLUE)Checking coverage threshold ($(PRE_PUSH_COVERAGE)%)...$(NC)"
+	$(call color_echo,$(BLUE),Checking coverage threshold ($(PRE_PUSH_COVERAGE)%)...)
 	@COVERAGE=$$($(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 	if [ "$${COVERAGE%.*}" -lt "$(PRE_PUSH_COVERAGE)" ]; then \
-		echo "$(RED)Coverage $${COVERAGE}% is below threshold $(PRE_PUSH_COVERAGE)%$(NC)"; \
+		$(call color_echo,$(RED),Coverage $${COVERAGE}% is below threshold $(PRE_PUSH_COVERAGE)%); \
 		exit 1; \
 	else \
-		echo "$(GREEN)Coverage $${COVERAGE}% meets threshold $(PRE_PUSH_COVERAGE)%$(NC)"; \
+		$(call color_echo,$(GREEN),Coverage $${COVERAGE}% meets threshold $(PRE_PUSH_COVERAGE)%); \
 	fi
 
 .PHONY: coverage-check-dynamic
 coverage-check-dynamic: test ## Check coverage threshold based on lifecycle phase
-	@echo "$(BLUE)Checking dynamic coverage threshold based on lifecycle phase...$(NC)"
+	$(call color_echo,$(BLUE),Checking dynamic coverage threshold based on lifecycle phase...)
 	@if [ -f "config/coverage-thresholds.yaml" ]; then \
 		./scripts/validate-coverage-threshold.sh || exit 1; \
 	else \
-		@echo "$(YELLOW)⚠️ No coverage config found, using default 50% threshold$(NC)"; \
+		$(call color_echo,$(YELLOW),⚠️ No coverage config found, using default 50% threshold); \
 		$(MAKE) coverage-check PRE_PUSH_COVERAGE=50; \
 	fi
-	@echo "$(GREEN)✅ Dynamic coverage validation passed!$(NC)"
+	$(call color_echo,$(GREEN),✅ Dynamic coverage validation passed!)
 
 # Asset embedding
 .PHONY: embed-assets
 embed-assets: ## Embed assets into binary (docs, schemas, examples)
-	@echo "$(BLUE)Embedding assets...$(NC)"
+	$(call color_echo,$(BLUE),Embedding assets...)
 	@./scripts/embed-assets.sh
-	@echo "$(GREEN)✅ Assets embedded successfully$(NC)"
+	$(call color_echo,$(GREEN),✅ Assets embedded successfully)
 
 .PHONY: verify-embeds
 verify-embeds: ## Verify embedded assets match SSOT
-	@echo "$(BLUE)Verifying embedded assets...$(NC)"
+	$(call color_echo,$(BLUE),Verifying embedded assets...)
 	@./scripts/verify-embeds.sh
-	@echo "$(GREEN)✅ Embedded assets verified$(NC)"
+	$(call color_echo,$(GREEN),✅ Embedded assets verified)
 
 # Building
 .PHONY: build
 build: embed-assets clean ## Build the binary
-	@echo "$(BLUE)Building $(BINARY_NAME) v$(VERSION)...$(NC)"
+	$(call color_echo,$(BLUE),Building $(BINARY_NAME) v$(VERSION)...)
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(BUILD_FLAGS) ./$(CMD_DIR)
-	@echo "$(GREEN)✅ Build completed: $(BUILD_DIR)/$(BINARY_NAME)$(NC)"
+	$(call color_echo,$(GREEN),✅ Build completed: $(BUILD_DIR)/$(BINARY_NAME))
 	@echo ""
-	@echo "$(WHITE)Usage examples:$(NC)"
+	$(call color_echo,$(WHITE),Usage examples:)
 	@echo "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) --help$(NC)"
 	@echo "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) version$(NC)"
 	@echo "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) envinfo$(NC)"
@@ -318,14 +322,14 @@ build: embed-assets clean ## Build the binary
 
 .PHONY: build-race
 build-race: ## Build with race detector
-	@echo "$(BLUE)Building with race detector...$(NC)"
+	$(call color_echo,$(BLUE),Building with race detector...)
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) -race $(BUILD_FLAGS) ./$(CMD_DIR)
 
 # Cross-platform building
 .PHONY: build-all
 build-all: ## Build for all platforms
-	@echo "$(BLUE)Building for all platforms...$(NC)"
+	$(call color_echo,$(BLUE),Building for all platforms...)
 	@mkdir -p $(BUILD_DIR)
 
 	@echo "Building for Linux x64..."
@@ -343,52 +347,52 @@ build-all: ## Build for all platforms
 	@echo "Building for Windows x64..."
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./$(CMD_DIR)
 
-	@echo "$(GREEN)✅ Multi-platform build completed:$(NC)"
+	$(call color_echo,$(GREEN),✅ Multi-platform build completed:)
 	@ls -la $(BUILD_DIR)/$(BINARY_NAME)-*
 
 .PHONY: install
 install: build ## Install binary to GOPATH/bin
-	@echo "$(BLUE)Installing $(BINARY_NAME)...$(NC)"
+	$(call color_echo,$(BLUE),Installing $(BINARY_NAME)...)
 	cp $(BUILD_DIR)/$(BINARY_NAME) $$((go env GOPATH))/bin/
-	@echo "$(GREEN)✅ Installed to $$((go env GOPATH))/bin/$(BINARY_NAME)$(NC)"
+	$(call color_echo,$(GREEN),✅ Installed to $$((go env GOPATH))/bin/$(BINARY_NAME))
 
 # Security scanning
 .PHONY: gosec
 gosec: ## Run gosec security scanner
-	@echo "$(BLUE)Running gosec security scanner...$(NC)"
+	$(call color_echo,$(BLUE),Running gosec security scanner...)
 	@if command -v gosec >/dev/null; then \
 		gosec ./...; \
 	else \
-		echo "$(YELLOW)gosec not found. Install with: make install-dev-tools$(NC)"; \
-		echo "$(RED)Security scanning failed - gosec required$(NC)"; \
+		$(call color_echo,$(YELLOW),gosec not found. Install with: make install-dev-tools); \
+		$(call color_echo,$(RED),Security scanning failed - gosec required); \
 		exit 1; \
 	fi
 
 .PHONY: govulncheck
 govulncheck: ## Check for known vulnerabilities
-	@echo "$(BLUE)Checking for known vulnerabilities...$(NC)"
+	$(call color_echo,$(BLUE),Checking for known vulnerabilities...)
 	@if command -v govulncheck >/dev/null; then \
 		govulncheck ./...; \
 	else \
-		echo "$(YELLOW)govulncheck not found. Install with: make install-dev-tools$(NC)"; \
-		echo "$(RED)Vulnerability check failed - govulncheck required$(NC)"; \
+		$(call color_echo,$(YELLOW),govulncheck not found. Install with: make install-dev-tools); \
+		$(call color_echo,$(RED),Vulnerability check failed - govulncheck required); \
 		exit 1; \
 	fi
 
 .PHONY: security-scan
 security-scan: gosec govulncheck ## Run all security scans
-	@echo "$(GREEN)✅ Security scanning completed!$(NC)"
+	$(call color_echo,$(GREEN),✅ Security scanning completed!)
 
 # Module management
 .PHONY: mod-tidy
 mod-tidy: ## Clean up go.mod and go.sum
-	@echo "$(BLUE)Tidying Go modules...$(NC)"
+	$(call color_echo,$(BLUE),Tidying Go modules...)
 	$(GOMOD) tidy
 
 # Cleanup
 .PHONY: clean
 clean: ## Clean build artifacts
-	@echo "$(BLUE)Cleaning build artifacts...$(NC)"
+	$(call color_echo,$(BLUE),Cleaning build artifacts...)
 	@rm -rf $(BUILD_DIR)
 	@rm -rf $(COVERAGE_DIR)
 	@rm -rf $(TEMP_DIR)
@@ -396,125 +400,125 @@ clean: ## Clean build artifacts
 
 .PHONY: clean-all
 clean-all: clean ## Clean everything including dependencies
-	@echo "$(BLUE)Cleaning all artifacts and dependencies...$(NC)"
+	$(call color_echo,$(BLUE),Cleaning all artifacts and dependencies...)
 	$(GOMOD) clean
 
 # Pre-commit and CI
 .PHONY: pre-commit
 pre-commit: check-all test-clean-servers test-short coverage-check-dynamic fmt-docs ## Run pre-commit validation
-	@echo "$(GREEN)✅ Pre-commit checks passed!$(NC)"
+	$(call color_echo,$(GREEN),✅ Pre-commit checks passed!)
 
 .PHONY: pre-push
 pre-push: check-all test-clean-servers test coverage-check-dynamic test-integration-short security-scan ## Run pre-push validation
-	@echo "$(GREEN)✅ Pre-push checks passed!$(NC)"
+	$(call color_echo,$(GREEN),✅ Pre-push checks passed!)
 
 .PHONY: ci
 ci: check-all test coverage-check build ## Run CI pipeline
-	@echo "$(GREEN)✅ CI pipeline completed successfully!$(NC)"
+	$(call color_echo,$(GREEN),✅ CI pipeline completed successfully!)
 
 # Safety checks
 .PHONY: safety-check
 safety-check: ## Run safety checks for repo hygiene (caches, ignores)
-	@echo "$(BLUE)Running safety checks...$(NC)"
+	$(call color_echo,$(BLUE),Running safety checks...)
 	@if [ -f "scripts/safety/safety-check.sh" ]; then \
 		./scripts/safety/safety-check.sh all; \
 	else \
-		echo "$(YELLOW)⚠️ Safety check script not found, creating basic checks$(NC)"; \
-		./scripts/safety-check.sh all 2>/dev/null || echo "$(YELLOW)Basic safety checks completed$(NC)"; \
+		$(call color_echo,$(YELLOW),⚠️ Safety check script not found, creating basic checks); \
+		./scripts/safety-check.sh all 2>/dev/null || $(call color_echo,$(YELLOW),Basic safety checks completed); \
 	fi
-	@echo "$(GREEN)✅ Safety checks completed$(NC)"
+	$(call color_echo,$(GREEN),✅ Safety checks completed)
 
 # Development environment setup
 .PHONY: check-go-env
 check-go-env: ## Check Go environment and PATH configuration
-	@echo "$(BLUE)🛡️ Sumpter - Go Environment Analysis$(NC)"
-	@echo "$(BLUE)Go Installation:$(NC)"
-	@go version 2>/dev/null || echo "$(RED)❌ Go not installed or not in PATH$(NC)"
+	$(call color_echo,$(BLUE),🛡️ Sumpter - Go Environment Analysis)
+	$(call color_echo,$(BLUE),Go Installation:)
+	@go version 2>/dev/null || $(call color_echo,$(RED),❌ Go not installed or not in PATH)
 	@echo "$(BLUE)GOPATH:$(NC) $$((go env GOPATH 2>/dev/null || echo 'Not set'))"
 	@echo "$(BLUE)GOBIN:$(NC) $$((go env GOBIN 2>/dev/null || echo 'Using GOPATH/bin'))"
 	@echo "$(BLUE)Go binary tools directory:$(NC) $$((go env GOPATH))/bin"
 	@echo
-	@echo "$(BLUE)PATH Analysis:$(NC)"
+	$(call color_echo,$(BLUE),PATH Analysis:)
 	@if echo "$$PATH" | grep -q "$$((go env GOPATH))/bin" 2>/dev/null; then \
-		echo "$(GREEN)✅ GOPATH/bin is in PATH$(NC)"; \
+		$(call color_echo,$(GREEN),✅ GOPATH/bin is in PATH); \
 	else \
-		echo "$(RED)❌ GOPATH/bin NOT in PATH$(NC)"; \
-		echo "$(YELLOW)  Tools installed via 'go install' will not be executable$(NC)"; \
-		echo "$(YELLOW)  Run 'make fix-go-path' to add to ~/.bashrc$(NC)"; \
+		$(call color_echo,$(RED),❌ GOPATH/bin NOT in PATH); \
+		$(call color_echo,$(YELLOW),  Tools installed via 'go install' will not be executable); \
+		$(call color_echo,$(YELLOW),  Run 'make fix-go-path' to add to ~/.bashrc); \
 	fi
 	@echo
-	@echo "$(BLUE)Development Tools Status:$(NC)"
+	$(call color_echo,$(BLUE),Development Tools Status:)
 	@for tool in golangci-lint gosec govulncheck yamlfmt yq; do \
 		if command -v $$tool >/dev/null 2>&1; then \
 			echo "$(GREEN)✅ $$tool$(NC) - $$((command -v $$tool))"; \
 		else \
-			echo "$(RED)❌ $$tool$(NC) - not found in PATH"; \
+			$(call color_echo,$(RED),❌ $$tool - not found in PATH); \
 		fi \
 	done
 
 .PHONY: fix-go-path
 fix-go-path: ## Add GOPATH/bin to PATH in ~/.bashrc
-	@echo "$(BLUE)🛡️ Sumpter - Fixing Go PATH Configuration$(NC)"
+	$(call color_echo,$(BLUE),🛡️ Sumpter - Fixing Go PATH Configuration)
 	@GOPATH_BIN="$$((go env GOPATH))/bin"; \
 	if grep -q "$$GOPATH_BIN" ~/.bashrc 2>/dev/null; then \
-		echo "$(GREEN)✅ GOPATH/bin already in ~/.bashrc$(NC)"; \
+		$(call color_echo,$(GREEN),✅ GOPATH/bin already in ~/.bashrc); \
 	else \
-		echo "$(YELLOW)Adding GOPATH/bin to ~/.bashrc$(NC)"; \
+		$(call color_echo,$(YELLOW),Adding GOPATH/bin to ~/.bashrc); \
 		echo "" >> ~/.bashrc; \
 		echo "# Go tools (added by make fix-go-path)" >> ~/.bashrc; \
 		echo "export PATH=\"\$$PATH:\$$HOME/go/bin\"" >> ~/.bashrc; \
-		echo "$(GREEN)✅ Added to ~/.bashrc$(NC)"; \
-		echo "$(YELLOW)⚠️  Run 'source ~/.bashrc' or restart terminal to apply$(NC)"; \
+		$(call color_echo,$(GREEN),✅ Added to ~/.bashrc); \
+		$(call color_echo,$(YELLOW),⚠️  Run 'source ~/.bashrc' or restart terminal to apply); \
 	fi
 
 .PHONY: install-dev-tools
 install-dev-tools: ## Install development and security tools
-	@echo "$(BLUE)🛡️ Sumpter - Installing Development Tools$(NC)"
+	$(call color_echo,$(BLUE),🛡️ Sumpter - Installing Development Tools)
 	@GOPATH_BIN="$$((go env GOPATH))/bin"; \
-	echo "$(BLUE)Installing to: $$GOPATH_BIN$(NC)"; \
+	$(call color_echo,$(BLUE),Installing to: $$GOPATH_BIN); \
 	mkdir -p "$$GOPATH_BIN"
-	@echo "$(BLUE)Installing Go security tools...$(NC)"
+	$(call color_echo,$(BLUE),Installing Go security tools...)
 	@if ! command -v gosec >/dev/null; then \
 		echo "Installing gosec..."; \
 		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
 	else \
-		echo "$(GREEN)✅ gosec already installed$(NC)"; \
+		$(call color_echo,$(GREEN),✅ gosec already installed); \
 	fi
 	@if ! command -v govulncheck >/dev/null; then \
 		echo "Installing govulncheck..."; \
 		go install golang.org/x/vuln/cmd/govulncheck@latest; \
 	else \
-		echo "$(GREEN)✅ govulncheck already installed$(NC)"; \
+		$(call color_echo,$(GREEN),✅ govulncheck already installed); \
 	fi
 	@if ! command -v golangci-lint >/dev/null; then \
 		echo "Installing golangci-lint..."; \
 		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$$((go env GOPATH))/bin"; \
 	else \
-		echo "$(GREEN)✅ golangci-lint already installed$(NC)"; \
+		$(call color_echo,$(GREEN),✅ golangci-lint already installed); \
 	fi
-	@echo "$(BLUE)Installing document formatting tools...$(NC)"
+	$(call color_echo,$(BLUE),Installing document formatting tools...)
 	@if ! command -v yamlfmt >/dev/null; then \
 		echo "Installing yamlfmt..."; \
 		go install github.com/google/yamlfmt/cmd/yamlfmt@latest; \
 	else \
-		echo "$(GREEN)✅ yamlfmt already installed$(NC)"; \
+		$(call color_echo,$(GREEN),✅ yamlfmt already installed); \
 	fi
 	@if ! command -v yq >/dev/null; then \
 		echo "Installing yq..."; \
 		go install github.com/mikefarah/yq/v4@latest; \
 	else \
-		echo "$(GREEN)✅ yq already installed$(NC)"; \
+		$(call color_echo,$(GREEN),✅ yq already installed); \
 	fi
-	@echo "$(GREEN)✅ Development tools installation completed$(NC)"
+	$(call color_echo,$(GREEN),✅ Development tools installation completed)
 	@if ! echo "$$PATH" | grep -q "$$((go env GOPATH))/bin" 2>/dev/null; then \
-		echo "$(YELLOW)⚠️  Tools installed but not in PATH$(NC)"; \
-		echo "$(YELLOW)   Run 'make fix-go-path' then 'source ~/.bashrc'$(NC)"; \
+		$(call color_echo,$(YELLOW),⚠️  Tools installed but not in PATH); \
+		$(call color_echo,$(YELLOW),   Run 'make fix-go-path' then 'source ~/.bashrc'); \
 	fi
 
 .PHONY: setup-dev-env
 setup-dev-env: check-go-env fix-go-path install-dev-tools ## Complete development environment setup
-	@echo "$(GREEN)🛡️ Development environment setup completed!$(NC)"
-	@echo "$(YELLOW)Next steps:$(NC)"
+	$(call color_echo,$(GREEN),🛡️ Development environment setup completed!)
+	$(call color_echo,$(YELLOW),Next steps:)
 	@echo "  1. Run: source ~/.bashrc"
 	@echo "  2. Run: make check-go-env  # to verify"
 	@echo "  3. Run: make check-all     # to test tools"
@@ -528,24 +532,24 @@ version: ## Show current version
 
 .PHONY: version-bump-patch
 version-bump-patch: ## Bump patch version
-	@echo "$(BLUE)Bumping patch version...$(NC)"
+	$(call color_echo,$(BLUE),Bumping patch version...)
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{$$3++; print $$1"."$$2"."$$3}'); \
 	echo $$NEW_VERSION > VERSION; \
-	echo "$(GREEN)Version bumped to $$NEW_VERSION$(NC)"
+	$(call color_echo,$(GREEN),Version bumped to $$NEW_VERSION)
 
 .PHONY: version-bump-minor
 version-bump-minor: ## Bump minor version
-	@echo "$(BLUE)Bumping minor version...$(NC)"
+	$(call color_echo,$(BLUE),Bumping minor version...)
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{$$2++; $$3=0; print $$1"."$$2"."$$3}'); \
 	echo $$NEW_VERSION > VERSION; \
-	echo "$(GREEN)Version bumped to $$NEW_VERSION$(NC)"
+	$(call color_echo,$(GREEN),Version bumped to $$NEW_VERSION)
 
 .PHONY: version-bump-major
 version-bump-major: ## Bump major version
-	@echo "$(BLUE)Bumping major version...$(NC)"
+	$(call color_echo,$(BLUE),Bumping major version...)
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{$$1++; $$2=0; $$3=0; print $$1"."$$2"."$$3}'); \
 	echo $$NEW_VERSION > VERSION; \
-	echo "$(GREEN)Version bumped to $$NEW_VERSION$(NC)"
+	$(call color_echo,$(GREEN),Version bumped to $$NEW_VERSION)
 
 .PHONY: version-get
 version-get: ## Get current version from VERSION file
@@ -554,13 +558,13 @@ version-get: ## Get current version from VERSION file
 .PHONY: version-set
 version-set: ## Set explicit version (usage: make version-set VERSION_NEW=1.2.3)
 	@if [ -z "$(VERSION_NEW)" ]; then \
-		echo "$(RED)Error: VERSION_NEW is required$(NC)"; \
-		echo "$(YELLOW)Usage: make version-set VERSION_NEW=1.2.3$(NC)"; \
+		$(call color_echo,$(RED),Error: VERSION_NEW is required); \
+		$(call color_echo,$(YELLOW),Usage: make version-set VERSION_NEW=1.2.3); \
 		exit 1; \
 	fi
-	@echo "$(BLUE)Setting version to $(VERSION_NEW)...$(NC)"
+	$(call color_echo,$(BLUE),Setting version to $(VERSION_NEW)...)
 	@echo "$(VERSION_NEW)" > VERSION
-	@echo "$(GREEN)Version set to $(VERSION_NEW)$(NC)"
+	$(call color_echo,$(GREEN),Version set to $(VERSION_NEW))
 
 # Default target
 .DEFAULT_GOAL := help

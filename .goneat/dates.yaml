@@ -1,0 +1,59 @@
+enabled: true
+
+# Limited default includes to avoid false positives (goneat-inspired approach)
+files:
+  include:
+    - "CHANGELOG.md"
+    - "VERSION"
+    - "docs/**/*.md"
+    - "README.md"
+  exclude:
+    - "**/node_modules/**"
+    - "internal/assets/embedded_docs/**"
+    - ".git/**"
+    - "dist/**"
+    - "coverage/**"
+    - "**/*.pb.go"
+    - "**/*_generated.go"
+    - "**/*_mock.go"
+
+date_patterns:
+  - regex: "(\\d{4})-(\\d{2})-(\\d{2})"  # YYYY-MM-DD (ISO 8601)
+    order: "YMD"
+  - regex: "(\\d{4})/(\\d{2})/(\\d{2})"  # YYYY/MM/DD
+    order: "YMD"
+  - regex: "(\\d{2})/(\\d{2})/(\\d{4})"  # MM/DD/YYYY
+    order: "MDY"
+  - regex: "(\\d{4})\\.(\\d{2})\\.(\\d{2})"  # YYYY.MM.DD
+    order: "YMD"
+
+rules:
+  future_dates:
+    enabled: true
+    max_skew: "48h"  # Allow some clock skew
+    severity: "error"
+
+  stale_entries:
+    enabled: true
+    warn_days: 365
+    error_days: 730
+    severity: "warning"
+
+  impossible_dates:
+    enabled: true
+    severity: "error"
+
+monotonic_order:
+  enabled: true
+  files:
+    - "CHANGELOG.md"
+    - "VERSION"
+  severity: "warning"
+
+# Block patterns for known problematic date formats
+blocks:
+  - pattern: "\\d{2}/\\d{2}/\\d{2}"  # Ambiguous MM/DD/YY or DD/MM/YY
+    reason: "Ambiguous 2-digit year format"
+  - pattern: "\\d{1,2}-\\d{1,2}-\\d{4}"  # Ambiguous D-M-YYYY or M-D-YYYY
+    reason: "Ambiguous single-digit month/day format"
+
