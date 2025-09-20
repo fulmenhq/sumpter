@@ -1,0 +1,59 @@
+# Sumpter tools configuration (extends goneat defaults)
+# - Uses predefined scopes: foundation, format, security (from goneat)
+# - Adds project-specific scope: sumpter
+# - Enhanced with goneat-inspired tool definitions and metadata
+
+scopes:
+  sumpter:
+    description: "Sumpter project-specific development tools"
+    tools: [golangci-lint, yamlfmt, yq]
+
+# Define project-specific tools absent from goneat defaults
+# Enhanced with comprehensive metadata following goneat patterns
+
+tools:
+   golangci-lint:
+     name: "golangci-lint"
+     description: "Fast linters Runner for Go with extensive rule set"
+     kind: "go"
+     detect_command: "golangci-lint --version"
+     install_package: "github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+     version_args: ["--version"]
+     minimum_version: "2.0.0"
+     recommended_version: "2.4.0"
+     version_scheme: "semver"
+     platforms: ["darwin", "linux", "windows"]
+     install_commands:
+       darwin: "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+       linux: "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+       windows: "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+
+  yamlfmt:
+    name: "yamlfmt"
+    description: "YAML formatter and linter"
+    kind: "go"
+    detect_command: "yamlfmt --version || yamlfmt -version"
+    install_package: "github.com/google/yamlfmt/cmd/yamlfmt@latest"
+    version_args: ["--version"]
+    minimum_version: "0.9.0"
+    version_scheme: "semver"
+    platforms: ["darwin", "linux", "windows"]
+    install_commands:
+      darwin: "go install github.com/google/yamlfmt/cmd/yamlfmt@latest"
+      linux: "go install github.com/google/yamlfmt/cmd/yamlfmt@latest"
+      windows: "go install github.com/google/yamlfmt/cmd/yamlfmt@latest"
+
+  yq:
+    name: "yq"
+    description: "YAML/JSON processor with jq-compatible syntax"
+    kind: "go"
+    detect_command: "yq --version"
+    install_package: "github.com/mikefarah/yq/v4@latest"
+    version_args: ["--version"]
+    minimum_version: "4.30.0"
+    version_scheme: "semver"
+    platforms: ["darwin", "linux", "windows"]
+    install_commands:
+      darwin: "go install github.com/mikefarah/yq/v4@latest"
+      linux: "go install github.com/mikefarah/yq/v4@latest"
+      windows: "go install github.com/mikefarah/yq/v4@latest"

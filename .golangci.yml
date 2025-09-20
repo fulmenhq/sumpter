@@ -1,0 +1,61 @@
+linters:
+  enable:
+    - govet
+    - gosec
+    - errcheck
+    - revive
+    - gosimple
+    - staticcheck
+    - ineffassign
+    - typecheck
+    - unused
+    - gocyclo
+    - unparam
+  disable:
+    - depguard
+    - deadcode
+    - structcheck
+    - varcheck
+
+run:
+  timeout: 3m
+  tests: true
+  issues-exit-code: 1
+
+linters-settings:
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+  gosec:
+    excludes:
+      - G115
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: dot-imports
+      - name: error-return
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: range
+      - name: receiver-naming
+      - name: superfluous-else
+      - name: time-naming
+      - name: var-naming
+      - name: package-comments
+  gocyclo:
+    min-complexity: 18
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude:
+    - 'error return value not checked.*(Close|Log|fmt\.Print.*)'
+    - 'should have comment or be unexported'

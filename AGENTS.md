@@ -95,7 +95,7 @@ The following documents are critical to the safety and security of this reposito
 **SSOT Architecture Overview:**
 
 - **Environment Standard**: `docs/standards/application-environment.md` defines directory structure
-- **Home Directory**: `${SUMPTER_HOME:-${HOME}/.sumpter}` with functional organization
+- **Home Directory**: Enterprise XDG pattern (macOS: `~/Library/Application Support/Sumpter`, Linux: `$XDG_DATA_HOME/sumpter` or `~/.local/share/sumpter`, Windows: `%AppData%\Sumpter`) with functional organization
 - **Shared Resources**: Assets, cache, and configs shared across ecosystem
 
 #### Why This Matters for Sumpter
