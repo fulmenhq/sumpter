@@ -416,9 +416,16 @@ pre-push: check-all test-clean-servers test coverage-check-dynamic test-integrat
 ci: check-all test coverage-check build ## Run CI pipeline
 	$(call color_echo,$(GREEN),✅ CI pipeline completed successfully!)
 
+# License checks
+.PHONY: license-check
+license-check: ## Check license compliance and dependencies
+	$(call color_echo,$(BLUE),🔍 Checking license compliance...)
+	@./scripts/check-licenses.sh
+	$(call color_echo,$(GREEN),✅ License checks completed)
+
 # Safety checks
 .PHONY: safety-check
-safety-check: ## Run safety checks for repo hygiene (caches, ignores)
+safety-check: license-check ## Run safety checks for repo hygiene (caches, ignores, licenses)
 	$(call color_echo,$(BLUE),Running safety checks...)
 	@if [ -f "scripts/safety/safety-check.sh" ]; then \
 		./scripts/safety/safety-check.sh all; \
