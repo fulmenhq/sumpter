@@ -1,4 +1,4 @@
-$schema: "https://json-schema.org/draft/2020-12/schema"
+$schema: https://json-schema.org/draft/2020-12/schema
 title: File Signature Schema
 description: User configuration for defining file signatures to match input XML files against known patterns or types. Enables dynamic file type detection without hardcoding.
 type: object
@@ -13,19 +13,19 @@ properties:
   description:
     type: string
     description: Detailed description of what this signature matches.
-  status:
-    type: string
-    enum: ["active", "development", "deprecated"]
-    default: "development"
-    description: Current status of the signature.
-  priority:
-    type: string
-    enum: ["high", "medium", "low"]
-    default: "medium"
-    description: Detection priority level.
-  realm:
-    type: string
-    description: Domain or realm this signature applies to (e.g., "retail", "finance").
+   status:
+     type: string
+     enum: ["active", "development", "deprecated"]
+     default: "development"
+     description: Current status of the signature.
+   priority:
+     type: string
+     enum: ["high", "medium", "low"]
+     default: "medium"
+     description: Detection priority level.
+   realm:
+     type: string
+     description: Domain or realm this signature applies to (e.g., "retail", "finance").
    dialects:
      type: array
      description: Optional list of supported dialects for this signature type.
