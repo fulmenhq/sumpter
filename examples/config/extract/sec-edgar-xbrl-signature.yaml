@@ -1,0 +1,51 @@
+# SEC EDGAR XBRL File Signature Configuration
+# Matches XBRL schema and linkbase files from SEC EDGAR filings
+
+signature_id: "sec-edgar-xbrl"
+name: "SEC EDGAR XBRL Files"
+description: "Matches XBRL schema and linkbase files from SEC EDGAR corporate filings (10-K, 10-Q, 8-K, etc.)"
+status: "active"
+priority: "high"
+realm: "finance"
+match_patterns:
+  - pattern_id: "xbrl-schema"
+    name: "XBRL Schema File"
+    selector: "/xs:schema"
+    weight: 1.0
+    ecosystem: "edgar"
+  - pattern_id: "xbrl-linkbase"
+    name: "XBRL Linkbase File"
+    selector: "/link:linkbase"
+    weight: 0.9
+    ecosystem: "edgar"
+  - pattern_id: "xbrl-10k"
+    name: "10-K Filing XBRL"
+    selector: "/xs:schema"
+    weight: 1.0
+    ecosystem: "10k"
+  - pattern_id: "xbrl-10q"
+    name: "10-Q Filing XBRL"
+    selector: "/xs:schema"
+    weight: 1.0
+    ecosystem: "10q"
+  - pattern_id: "xbrl-8k"
+    name: "8-K Filing XBRL"
+    selector: "/xs:schema"
+    weight: 1.0
+    ecosystem: "8k"
+confidence_threshold: 0.8
+format_type: "xml"
+tags:
+  - "xbrl"
+  - "sec"
+  - "edgar"
+  - "financial"
+  - "corporate"
+  - "10k"
+  - "10q"
+  - "8k"
+use_cases:
+  - "Extract financial statement structures from SEC filings"
+  - "Analyze XBRL taxonomy usage in corporate reports"
+  - "Process regulatory financial disclosures"
+  - "Compare filing types (annual vs quarterly vs current reports)"

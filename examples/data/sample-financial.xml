@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinancialTransaction xmlns="http://financial.example.com/schema" version="2.0">
+  <Transaction>
+    <TransactionID>FTX-2025-ABC123</TransactionID>
+    <Type>Stock Trade</Type>
+    <Timestamp>2025-09-23T14:30:00Z</Timestamp>
+    <AccountID>ACC-45678</AccountID>
+  </Transaction>
+  <Security>
+    <Symbol>AAPL</Symbol>
+    <Name>Apple Inc.</Name>
+    <Exchange>NASDAQ</Exchange>
+    <Sector>Technology</Sector>
+  </Security>
+  <TradeDetails>
+    <Side>BUY</Side>
+    <Quantity>100</Quantity>
+    <Price>175.25</Price>
+    <Commission>4.99</Commission>
+    <TotalAmount>17525.00</TotalAmount>
+  </TradeDetails>
+  <Settlement>
+    <SettlementDate>2025-09-25</SettlementDate>
+    <Currency>USD</Currency>
+    <NetAmount>17529.99</NetAmount>
+  </Settlement>
+  <Compliance>
+    <RegulatoryID>REG-2025-001</RegulatoryID>
+    <TradeReporting>true</TradeReporting>
+    <BestExecution>true</BestExecution>
+  </Compliance>
+</FinancialTransaction>

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RetailTransaction xmlns="http://retail.example.com/schema" version="1.0">
+  <Header>
+    <TransactionID>TX-2025-001</TransactionID>
+    <StoreID>STORE-001</StoreID>
+    <Timestamp>2025-09-23T15:30:00Z</Timestamp>
+    <TerminalID>POS-01</TerminalID>
+  </Header>
+  <Customer>
+    <CustomerID>CUST-12345</CustomerID>
+    <LoyaltyNumber>LOYAL-98765</LoyaltyNumber>
+  </Customer>
+  <Items>
+    <Item>
+      <ItemID>ITEM-001</ItemID>
+      <Description>Premium Coffee Beans</Description>
+      <Quantity>2</Quantity>
+      <UnitPrice>15.99</UnitPrice>
+      <TotalPrice>31.98</TotalPrice>
+      <Category>Beverages</Category>
+    </Item>
+    <Item>
+      <ItemID>ITEM-002</ItemID>
+      <Description>Organic Tea Selection</Description>
+      <Quantity>1</Quantity>
+      <UnitPrice>12.50</UnitPrice>
+      <TotalPrice>12.50</TotalPrice>
+      <Category>Beverages</Category>
+    </Item>
+  </Items>
+  <Payment>
+    <Method>Credit Card</Method>
+    <Amount>44.48</Amount>
+    <Tax>3.56</Tax>
+    <Total>48.04</Total>
+  </Payment>
+  <Summary>
+    <Subtotal>44.48</Subtotal>
+    <Tax>3.56</Tax>
+    <Total>48.04</Total>
+    <ItemsCount>3</ItemsCount>
+  </Summary>
+</RetailTransaction>
