@@ -15,6 +15,23 @@
 
 These protocols ensure professional development standards and enterprise readiness.
 
+## 🔒 **Repository Operations Requirements**
+
+### **CRITICAL: Commit and Push Protocols**
+
+**🚨 COMMITS REQUIRE APPROVAL**
+- All commits must receive explicit approval from @3leapsdave before creation
+- Never create commits without supervisor authorization
+- Follow the Repository Operations SOP: "Check-all, stage, pre-commit, commit"
+
+**🚨 PUSHES REQUIRE FULL STOP AND REVIEW**
+- **MANDATORY FULL STOP**: No pushes allowed without explicit, per-occurrence approval
+- **Pre-Push Review Required**: Must review pre-commit hooks and quality gates before any push
+- **Specific Authorization**: Each push requires individual approval - no blanket permissions
+- **No Automated Pushes**: Never push without human supervisor review and authorization
+
+**Violation of these protocols will result in immediate work stoppage.**
+
 ## 📋 Quick Reference SOPs
 
 **CRITICAL**: Use these Standard Operating Procedures for common development tasks:
@@ -86,7 +103,14 @@ The following documents are critical to the safety and security of this reposito
 4. **Read LIFECYCLE_PHASE** - Current repository lifecycle phase
 5. **Read config/coverage-thresholds.yaml** - Phase-specific coverage requirements
 
-**📋 STANDARD OPERATING PROCEDURES (ALL AGENTS):** 5. **Read docs/sop/repository-operations-sop.md** - "Check-all, stage, pre-commit, commit" 6. **Read docs/sop/lifecycle-phase-acceptance-criteria.md** - Phase validation procedures 7. **Read docs/standards/lifecycle-maturity.md** - Lifecycle framework 8. **Read docs/standards/agentic-attribution.md** - AI agent attribution standards
+**📋 STANDARD OPERATING PROCEDURES (ALL AGENTS):**
+
+5. **Read docs/sop/repository-operations-sop.md** - "Check-all, stage, pre-commit, commit"
+6. **Read docs/sop/lifecycle-phase-acceptance-criteria.md** - Phase validation procedures
+7. **Read docs/standards/lifecycle-maturity.md** - Lifecycle framework
+8. **Read docs/standards/agentic-attribution.md** - AI agent attribution standards
+9. **Read all docs/architecture/adr/*.md** - Architecture decision records (mandatory, with any specified exclusions)
+10. **Use make targets for all development operations** - Prefer `make check-all`, `make test`, `make build` over direct `go` commands or shell scripts whenever possible
 
 **🔧 ENVIRONMENT VERIFICATION:** 8. **Check project status** - Understand current state and active work 9. **Request authorization** - Wait for explicit go-ahead from supervisor 10. **Confirm scope** - Verify specific tasks and boundaries before proceeding 11. **Verify Go environment** - Ensure all required tools are available and working 12. **Understand lifecycle requirements** - Phase-appropriate quality standards
 
@@ -95,7 +119,7 @@ The following documents are critical to the safety and security of this reposito
 **SSOT Architecture Overview:**
 
 - **Environment Standard**: `docs/standards/application-environment.md` defines directory structure
-- **Home Directory**: Enterprise XDG pattern (macOS: `~/Library/Application Support/Sumpter`, Linux: `$XDG_DATA_HOME/sumpter` or `~/.local/share/sumpter`, Windows: `%AppData%\Sumpter`) with functional organization
+- **Home Directory**: `${SUMPTER_HOME:-${HOME}/.sumpter}` with functional organization
 - **Shared Resources**: Assets, cache, and configs shared across ecosystem
 
 #### Why This Matters for Sumpter
@@ -251,6 +275,8 @@ Read: config/coverage-thresholds.yaml                   # Phase requirements
 Read: docs/sop/lifecycle-phase-acceptance-criteria.md   # Transition procedures
 
 # ❌ DON'T: Modify lifecycle code without full context understanding
+# ❌ DON'T: Modify internal/assets/embedded* files directly - these are auto-generated
+#          from SSOT sources (docs/, schemas/, examples/) via scripts/embed-assets.sh
 ```
 
 **MANDATORY Steps for lifecycle code:**
@@ -320,6 +346,27 @@ make build                        # Multi-platform binary builds
 - **Quality Gates**: Phase-appropriate pre-commit and pre-push validation
 - **Documentation**: Comprehensive SOPs and acceptance criteria
 - **Professional Tooling**: Enterprise-grade build system and automation
+
+---
+
+## 📝 **Continuation Notes - Extract Command Development**
+
+**Next Phase**: Extract Command Implementation
+- **Status**: Ready to begin after retrieve command completion
+- **Scope**: Implement XML extraction engine with streaming token decoder
+- **Requirements**:
+  - Follow existing patterns from inspect command
+  - Implement schema-driven extraction
+  - Add configuration-based output formatting
+  - Ensure lifecycle-aware quality gates
+- **Dependencies**: Retrieve command data for testing extraction workflows
+
+**Previous Work Summary**:
+- ✅ Retrieve command with SEC EDGAR support implemented
+- ✅ Path validation and fail-fast error handling added
+- ✅ Command-specific directory structure ($SUMPTER_HOME/work/retrieve/)
+- ✅ XBRL XML file detection and download working
+- ✅ Commit created with proper attribution
 
 ---
 
