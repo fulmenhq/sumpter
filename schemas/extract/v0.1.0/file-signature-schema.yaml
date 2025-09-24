@@ -1,0 +1,109 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: File Signature Schema
+description: User configuration for defining file signatures to match input XML files against known patterns or types. Enables dynamic file type detection without hardcoding.
+type: object
+properties:
+  signature_id:
+    type: string
+    description: Unique identifier for the signature.
+    pattern: '^[a-z0-9-]+$'
+  name:
+    type: string
+    description: Human-readable name of the signature.
+  description:
+    type: string
+    description: Detailed description of what this signature matches.
+  status:
+    type: string
+    enum: ["active", "development", "deprecated"]
+    default: "development"
+    description: Current status of the signature.
+  priority:
+    type: string
+    enum: ["high", "medium", "low"]
+    default: "medium"
+    description: Detection priority level.
+  realm:
+    type: string
+    description: Domain or realm this signature applies to (e.g., "retail", "finance").
+   dialects:
+     type: array
+     description: Optional list of supported dialects for this signature type.
+     items:
+       type: object
+       required:
+         - id
+         - name
+       properties:
+         id:
+           type: string
+           description: Unique identifier for the dialect.
+         name:
+           type: string
+           description: Human-readable name of the dialect.
+         description:
+           type: string
+           description: Detailed description of the dialect characteristics.
+         vendor:
+           type: string
+           description: Vendor or manufacturer associated with this dialect.
+         version:
+           type: string
+           description: Version or specification this dialect conforms to.
+   match_patterns:
+     type: array
+     description: Array of patterns used to match the file.
+     minItems: 1
+     items:
+       type: object
+       required:
+         - pattern_id
+         - name
+         - selector
+         - weight
+       properties:
+         pattern_id:
+           type: string
+           description: Unique ID for the pattern.
+         name:
+           type: string
+           description: Pattern name.
+         selector:
+           type: string
+           description: XPath-like selector to match elements or attributes.
+         weight:
+           type: number
+           minimum: 0
+           maximum: 1
+           description: Match weight (0-1) for confidence scoring.
+         ecosystem:
+           type: string
+           description: Sub-domain ecosystem (e.g., "transaction", "telemetry").
+         dialect:
+           type: string
+           description: Specific dialect this pattern matches (references dialects[].id).
+  confidence_threshold:
+    type: number
+    minimum: 0
+    maximum: 1
+    default: 0.8
+    description: Minimum confidence score required for a match.
+  format_type:
+    type: string
+    enum: ["xml", "json", "protobuf"]
+    default: "xml"
+    description: Expected format of the file.
+  tags:
+    type: array
+    items:
+      type: string
+    description: Keywords for search and filtering.
+  use_cases:
+    type: array
+    items:
+      type: string
+    description: Example use cases for this signature.
+required:
+  - signature_id
+  - name
+  - match_patterns
