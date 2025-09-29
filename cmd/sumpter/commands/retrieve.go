@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/config"
-	"github.com/fulmenhq/sumpter/internal/sourcedata/finance"
+	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
 	"github.com/spf13/cobra"
 )
 
@@ -209,7 +209,7 @@ Outputs file paths that can be used with other commands.`,
 	cmd.Flags().BoolP("progress", "p", false, "Show progress indicators")
 	cmd.Flags().Bool("flatten", false, "Output flattened relative paths instead of absolute paths")
 
-	cmd.MarkFlagRequired("input-path")
+	_ = cmd.MarkFlagRequired("input-path")
 
 	return cmd
 }
@@ -246,9 +246,9 @@ Example: sumpter retrieve recipe finance sec-edgar --ticker AAPL --filing-type 1
 	cmd.Flags().String("filing-type", "", "Filing type (e.g., 10-K, 10-Q) (for finance/sec-edgar)")
 	cmd.Flags().String("year", "", "Filing year (for finance/sec-edgar)")
 
-	cmd.MarkFlagRequired("ticker")
-	cmd.MarkFlagRequired("filing-type")
-	cmd.MarkFlagRequired("year")
+	_ = cmd.MarkFlagRequired("ticker")
+	_ = cmd.MarkFlagRequired("filing-type")
+	_ = cmd.MarkFlagRequired("year")
 
 	return cmd
 }
@@ -319,14 +319,14 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 		includePattern = "*" + includePattern + "*"
 	}
 
-	var output *os.File = os.Stdout
+	output := os.Stdout
 	if outputPath != "" {
 		var err error
 		output, err = os.Create(outputPath)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
-		defer output.Close()
+		_ = output.Close()
 	}
 
 	// Walk the directory tree
@@ -433,13 +433,13 @@ func runSecEdgarRecipe(opts *RetrieveOptions, cmd *cobra.Command) error {
 	}
 
 	loader := config.NewLoader(paths)
-	sourceConfig, err := loader.LoadRetrieveConfig(opts.ConfigPath)
+	retrieveConfig, err := loader.LoadRetrieveConfig(opts.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to load retrieve config: %w", err)
 	}
 
 	// Get finance realm config
-	realmConfig, exists := sourceConfig.Realms["finance"]
+	realmConfig, exists := retrieveConfig.Realms["finance"]
 	if !exists {
 		return fmt.Errorf("finance realm not configured in retrieve config")
 	}
@@ -449,7 +449,7 @@ func runSecEdgarRecipe(opts *RetrieveOptions, cmd *cobra.Command) error {
 		return fmt.Errorf("user_agent is required in finance realm config for SEC compliance (set in retrieve.yaml)")
 	}
 
-	client := finance.NewSecEdgarClient(realmConfig.Client.UserAgent, realmConfig.RateLimits.RequestsPerSecond)
+	client := regulatory.NewSecEdgarClient(realmConfig.Client.UserAgent, realmConfig.RateLimits.RequestsPerSecond)
 	defer client.Close()
 
 	return client.DownloadFiling(ticker, filingType, year, opts.OutputBase)
