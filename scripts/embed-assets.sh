@@ -22,11 +22,21 @@ fi
 
 # Sync schemas
 echo "📋 Syncing schemas..."
-rsync -av --delete schemas/ internal/assets/embedded_schemas/schemas/
+if command -v rsync &> /dev/null; then
+    rsync -av --delete schemas/ internal/assets/embedded_schemas/schemas/
+else
+    echo "📋 Syncing schemas using Go script..."
+    go run scripts/sync-assets.go schemas internal/assets/embedded_schemas/schemas
+fi
 
 # Sync examples
 echo "📝 Syncing examples..."
-rsync -av --delete examples/ internal/assets/embedded_examples/examples/
+if command -v rsync &> /dev/null; then
+    rsync -av --delete examples/ internal/assets/embedded_examples/examples/
+else
+    echo "📝 Syncing examples using Go script..."
+    go run scripts/sync-assets.go examples internal/assets/embedded_examples/examples
+fi
 
 echo "✅ Asset embedding complete!"
 echo "📦 Embedded content:"
