@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+- Guardian browser-based approval system for commits and pushes
+- Extract command with XPath-based XML processing
+- Retrieve command with SEC EDGAR support
+- Dialect support for file signatures
+- License compliance checking
+- Enhanced configuration system and core infrastructure
+- Infrastructure tooling and quality gates improvements
+
+### Changed
+- Refactored dialect registry to YAML schema format
+- Enhanced inspect functionality with logging and progress
+- Updated golangci-lint configuration
+
+### Fixed
+- Resolved errcheck linting violations in tests and output functions
+- Corrected golangci-lint v2 configuration
+
+### Docs
+- Added schema-first and logging SOPs + ADRs
+- Embedded architecture documentation
+- Clarified commit and push approval requirements
+- Updated embed-manifest and synced documentation
+
 ## [0.1.0] - 2025-09-18
 
 ### Added
