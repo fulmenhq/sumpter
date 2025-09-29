@@ -1,5 +1,7 @@
 package extract
 
+import "github.com/fulmenhq/goneat/pkg/schema"
+
 // FileSignature represents a file signature configuration
 type FileSignature struct {
 	SignatureID         string         `yaml:"signature_id" json:"signature_id"`
@@ -26,11 +28,12 @@ type MatchPattern struct {
 
 // ExtractRecordMatch represents an extract configuration
 type ExtractRecordMatch struct {
-	RecordType     string                 `yaml:"record_type" json:"record_type"`
-	MatchSelectors []MatchSelector        `yaml:"match_selectors" json:"match_selectors"`
-	OutputSchema   map[string]interface{} `yaml:"output_schema" json:"output_schema"`
-	FieldMappings  []FieldMapping         `yaml:"field_mappings" json:"field_mappings"`
-	Filters        map[string]interface{} `yaml:"filters" json:"filters"`
+	RecordType      string                 `yaml:"record_type" json:"record_type"`
+	MatchSelectors  []MatchSelector        `yaml:"match_selectors" json:"match_selectors"`
+	OutputSchema    map[string]interface{} `yaml:"output_schema" json:"output_schema"`
+	FieldMappings   []FieldMapping         `yaml:"field_mappings" json:"field_mappings"`
+	Filters         map[string]interface{} `yaml:"filters" json:"filters"`
+	OutputValidator *schema.Validator      `yaml:"-" json:"-"`
 }
 
 // MatchSelector represents a selector for matching records
@@ -42,11 +45,21 @@ type MatchSelector struct {
 
 // FieldMapping represents a mapping from XPath to output field
 type FieldMapping struct {
-	OutputField string         `yaml:"output_field" json:"output_field"`
-	XPath       string         `yaml:"xpath" json:"xpath"`
-	Type        string         `yaml:"type" json:"type"`
-	Transform   string         `yaml:"transform,omitempty" json:"transform,omitempty"`
-	ItemMapping []FieldMapping `yaml:"item_mapping,omitempty" json:"item_mapping,omitempty"`
+	OutputField string               `yaml:"output_field" json:"output_field"`
+	XPath       string               `yaml:"xpath" json:"xpath"`
+	Type        string               `yaml:"type" json:"type"`
+	Transform   string               `yaml:"transform,omitempty" json:"transform,omitempty"`
+	ItemMapping []FieldMapping       `yaml:"item_mapping,omitempty" json:"item_mapping,omitempty"`
+	Polymorphic []PolymorphicMapping `yaml:"polymorphic_mapping,omitempty" json:"polymorphic_mapping,omitempty"`
+}
+
+// PolymorphicMapping describes how to map heterogeneous XML line items into a
+// unified array output structure.
+type PolymorphicMapping struct {
+	ElementType   string         `yaml:"element_type,omitempty" json:"element_type,omitempty"`
+	MatchXPath    string         `yaml:"match_xpath,omitempty" json:"match_xpath,omitempty"`
+	ItemType      string         `yaml:"item_type,omitempty" json:"item_type,omitempty"`
+	FieldMappings []FieldMapping `yaml:"field_mappings" json:"field_mappings"`
 }
 
 // ExtractResult represents the result of processing a file

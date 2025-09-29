@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/fulmenhq/goneat/pkg/schema"
-	"github.com/fulmenhq/sumpter/internal/inspect"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/net/html/charset"
+	"gopkg.in/yaml.v3"
 )
 
 type InspectOptions struct {
@@ -30,7 +30,6 @@ type InspectOptions struct {
 	Progress       bool
 	IncludeAttrs   bool
 	ValidateOutput bool
-	DialectsDir    string
 }
 
 // InspectReportV0 matches the v0.1.0 schema
@@ -40,7 +39,6 @@ type InspectReportV0 struct {
 	Metrics  InspectMetrics   `json:"metrics"`
 	Paths    []InspectPath    `json:"paths"`
 	Caps     InspectCaps      `json:"caps"`
-	Dialect  *InspectDialect  `json:"dialect,omitempty"`
 	Metadata *InspectMetadata `json:"metadata,omitempty"`
 }
 
@@ -75,15 +73,6 @@ type InspectCaps struct {
 	PathsTruncated      bool `json:"paths_truncated"`
 	AttributesTruncated bool `json:"attributes_truncated"`
 	SamplesTruncated    bool `json:"samples_truncated"`
-}
-
-type InspectDialect struct {
-	DialectName     string                 `json:"dialect_name"`
-	Confidence      float64                `json:"confidence"`
-	Score           float64                `json:"score"`
-	ScoreBreakdown  map[string]float64     `json:"score_breakdown,omitempty"`
-	MatchedPatterns []string               `json:"matched_patterns,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type InspectMetadata struct {
@@ -198,7 +187,6 @@ and configurable sampling to balance speed and insight.`,
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress for large files")
 	cmd.Flags().BoolVar(&opts.IncludeAttrs, "include-attributes", true, "Include attribute analysis")
 	cmd.Flags().BoolVar(&opts.ValidateOutput, "validate-output", false, "Validate JSON output against schema")
-	cmd.Flags().StringVar(&opts.DialectsDir, "dialects-dir", "", "Directory containing custom dialect definitions")
 
 	return cmd
 }
@@ -289,21 +277,6 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		return fmt.Errorf("inspection failed: %w", err)
 	}
 
-	// Perform dialect detection
-	dialectResult, err := detectDialect(cr, opts)
-	if err != nil {
-		log.Warn("dialect detection failed", zap.Error(err))
-	} else if dialectResult != nil {
-		report.Dialect = &InspectDialect{
-			DialectName:     dialectResult.DialectName,
-			Confidence:      dialectResult.Confidence,
-			Score:           dialectResult.Score,
-			ScoreBreakdown:  dialectResult.ScoreBreakdown,
-			MatchedPatterns: dialectResult.MatchedPatterns,
-			Metadata:        dialectResult.Metadata,
-		}
-	}
-
 	// Add performance info
 	elapsed := time.Since(startTime)
 	report.Metrics.ElapsedMs = elapsed.Milliseconds()
@@ -360,17 +333,19 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		if err != nil {
 			return fmt.Errorf("failed to marshal report for validation: %w", err)
 		}
-		// Read schema file (try YAML first, then JSON for backward compatibility)
-		var schemaBytes []byte
-
-		// Try YAML first
-		schemaBytes, err = os.ReadFile("schemas/inspect-report/v0.1.0/inspect-report.schema.yaml")
+		// Read schema file (YAML format)
+		schemaYAMLBytes, err := os.ReadFile("schemas/inspect/v0.1.0/inspect-report.schema.yaml")
 		if err != nil {
-			// Fall back to JSON for backward compatibility
-			schemaBytes, err = os.ReadFile("schemas/inspect-report/v0.1.0/inspect-report.schema.json")
-			if err != nil {
-				return fmt.Errorf("failed to read inspect schema (tried both YAML and JSON): %w", err)
-			}
+			return fmt.Errorf("failed to read inspect schema: %w", err)
+		}
+		// Convert YAML schema to JSON for goneat validation
+		var schemaInterface interface{}
+		if err := yaml.Unmarshal(schemaYAMLBytes, &schemaInterface); err != nil {
+			return fmt.Errorf("failed to parse schema YAML: %w", err)
+		}
+		schemaBytes, err := json.Marshal(schemaInterface)
+		if err != nil {
+			return fmt.Errorf("failed to convert schema to JSON: %w", err)
 		}
 		// Decode data into interface for validation
 		var dataInterface interface{}
@@ -383,6 +358,10 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 			return fmt.Errorf("output schema validation failed: %w", err)
 		}
 		if !res.Valid {
+			// Show first validation error for debugging
+			if len(res.Errors) > 0 {
+				return fmt.Errorf("output invalid against schema: %s", res.Errors[0].Message)
+			}
 			return fmt.Errorf("output invalid against schema: %d error(s)", len(res.Errors))
 		}
 	}
@@ -740,79 +719,5 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 		fmt.Fprintf(output, "- **Timestamp:** %s\n", report.Metadata.Timestamp)
 	}
 
-	// Show dialect detection results
-	if report.Dialect != nil {
-		fmt.Fprintf(output, "## Dialect Detection\n\n")
-		fmt.Fprintf(output, "- **Detected Dialect:** %s\n", report.Dialect.DialectName)
-		fmt.Fprintf(output, "- **Confidence:** %.1f%%\n", report.Dialect.Confidence*100)
-		fmt.Fprintf(output, "- **Detection Score:** %.2f\n", report.Dialect.Score)
-
-		if len(report.Dialect.MatchedPatterns) > 0 {
-			fmt.Fprintf(output, "- **Matched Patterns:** %s\n", strings.Join(report.Dialect.MatchedPatterns, ", "))
-		}
-
-		if len(report.Dialect.ScoreBreakdown) > 0 {
-			fmt.Fprintf(output, "\n### Pattern Scores\n\n")
-			fmt.Fprintf(output, "| Pattern | Score |\n")
-			fmt.Fprintf(output, "|---------|-------|\n")
-			for pattern, score := range report.Dialect.ScoreBreakdown {
-				fmt.Fprintf(output, "| %s | %.2f |\n", pattern, score)
-			}
-		}
-	}
-
 	return nil
-}
-
-// detectDialect performs dialect detection on the XML stream
-func detectDialect(reader io.Reader, opts *InspectOptions) (*inspect.DetectionResult, error) {
-	log := logging.Component("dialect_detector")
-
-	// For files, create a fresh reader for dialect detection
-	var detectReader io.Reader
-	if opts.File != "-" {
-		file, err := os.Open(opts.File)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open file for dialect detection: %w", err)
-		}
-		defer file.Close()
-
-		// Apply same encoding detection as main inspection
-		encodingInfo, encodedReader, err := detectEncoding(file, opts.ForceEncoding)
-		if err != nil {
-			return nil, fmt.Errorf("encoding detection for dialect detection failed: %w", err)
-		}
-		detectReader = encodedReader
-		log.Debug("dialect detection using fresh file reader", zap.String("encoding", encodingInfo.Detected))
-	} else {
-		// For stdin, we can't re-read, so skip dialect detection
-		log.Debug("skipping dialect detection for stdin")
-		return &inspect.DetectionResult{
-			DialectName: "unknown",
-			Confidence:  0.0,
-			Score:       0.0,
-		}, nil
-	}
-
-	// Load dialect registry
-	loader := inspect.NewRegistryLoader(log)
-	registry, err := loader.LoadRegistry(opts.DialectsDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load dialect registry: %w", err)
-	}
-
-	// Create detector
-	detector := inspect.NewDialectDetector(registry, log, inspect.DetectorOptions{
-		MaxTokens:        500,
-		MinConfidence:    0.5,
-		IncludeBreakdown: true,
-	})
-
-	// Detect dialect
-	result, err := detector.DetectDialect(detectReader)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
 }
