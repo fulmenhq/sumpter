@@ -1,10 +1,13 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/fulmenhq/goneat/pkg/schema"
+	"github.com/fulmenhq/sumpter/internal/assets"
 	"github.com/fulmenhq/sumpter/internal/validation"
 	"gopkg.in/yaml.v3"
 )
@@ -17,8 +20,19 @@ type Loader struct {
 
 // NewLoader creates a new configuration loader
 func NewLoader(paths *Paths) *Loader {
-	schemaDir := filepath.Join(paths.Home, "schemas")
-	validator := validation.NewSchemaValidator(schemaDir)
+	schemaFS, err := assets.GetSchemasFS()
+	var validator *validation.SchemaValidator
+	if err != nil {
+		schemaDir := filepath.Join(paths.Home, "schemas")
+		validator = validation.NewSchemaValidator(schemaDir)
+	} else {
+		validator = validation.NewSchemaValidatorFromFS(schemaFS)
+	}
+	return NewLoaderWithValidator(paths, validator)
+}
+
+// NewLoaderWithValidator creates a loader using the supplied schema validator.
+func NewLoaderWithValidator(paths *Paths, validator *validation.SchemaValidator) *Loader {
 	return &Loader{
 		paths:     paths,
 		validator: validator,
@@ -294,4 +308,70 @@ func (l *Loader) ValidateConfigFile(configPath string) (*validation.ValidationRe
 // ValidateConfigDirectory validates all config files in a directory
 func (l *Loader) ValidateConfigDirectory(dirPath string) (map[string]*validation.ValidationResult, error) {
 	return l.validator.ValidateDirectory(dirPath)
+}
+
+// LoadRetrieveConfig loads the retrieve configuration with optional custom path
+func (l *Loader) LoadRetrieveConfig(configPath string) (*RetrieveConfig, error) {
+	if configPath == "" {
+		configPath = filepath.Join(l.paths.Configs, "retrieve.yaml")
+	}
+
+	// Check if config file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// Return default config if file doesn't exist
+		return l.getDefaultRetrieveConfig(), nil
+	}
+
+	// Load config file
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read source data config file %s: %w", configPath, err)
+	}
+
+	// Validate against schema first
+	schemaPath := filepath.Join(l.paths.Home, "schemas", "retrieve", "v0.1.0", "retrieve-config.schema.yaml")
+	schemaBytes, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
+	}
+
+	// Convert YAML schema to JSON for validation
+	var schemaInterface interface{}
+	if err := yaml.Unmarshal(schemaBytes, &schemaInterface); err != nil {
+		return nil, fmt.Errorf("failed to parse schema YAML: %w", err)
+	}
+	jsonSchemaBytes, err := json.Marshal(schemaInterface)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert schema to JSON: %w", err)
+	}
+
+	// Validate data against schema
+	var dataInterface interface{}
+	if err := yaml.Unmarshal(data, &dataInterface); err != nil {
+		return nil, fmt.Errorf("failed to parse config YAML: %w", err)
+	}
+
+	result, err := schema.ValidateFromBytes(jsonSchemaBytes, dataInterface)
+	if err != nil {
+		return nil, fmt.Errorf("schema validation failed: %w", err)
+	}
+	if !result.Valid {
+		return nil, fmt.Errorf("config validation failed: %v", result.Errors)
+	}
+
+	// Parse config after validation
+	var config RetrieveConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse retrieve config file %s: %w", configPath, err)
+	}
+
+	return &config, nil
+}
+
+// getDefaultRetrieveConfig returns default retrieve configuration
+func (l *Loader) getDefaultRetrieveConfig() *RetrieveConfig {
+	return &RetrieveConfig{
+		Version: "retrieve/v0.1.0",
+		Realms:  make(map[string]RealmConfig),
+	}
 }

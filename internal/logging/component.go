@@ -126,9 +126,10 @@ func (c *ComponentLogger) LogPerformance(operation string, duration int64, size 
 // LogSecurityEvent logs security-related events
 func (c *ComponentLogger) LogSecurityEvent(event string, severity string, details map[string]interface{}) {
 	logFunc := c.logger.Info
-	if severity == "high" || severity == "critical" {
+	switch severity {
+	case "high", "critical":
 		logFunc = c.logger.Error
-	} else if severity == "medium" {
+	case "medium":
 		logFunc = c.logger.Warn
 	}
 
