@@ -129,7 +129,7 @@ func (rws *rotatingWriteSyncer) Close() error {
 func (rws *rotatingWriteSyncer) openFile() error {
 	// Close existing file if open
 	if rws.currentFile != nil {
-		rws.currentFile.Close()
+		_ = rws.currentFile.Close()
 	}
 
 	// Open file for append/create
@@ -151,7 +151,7 @@ func (rws *rotatingWriteSyncer) openFile() error {
 func (rws *rotatingWriteSyncer) rotate() error {
 	// Close current file
 	if rws.currentFile != nil {
-		rws.currentFile.Close()
+		_ = rws.currentFile.Close()
 	}
 
 	// Generate rotation filename with timestamp

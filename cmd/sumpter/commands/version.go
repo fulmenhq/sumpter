@@ -102,13 +102,13 @@ func runVersionCommand(cmd *cobra.Command, args []string) {
 		// Output as JSON
 		jsonBytes, err := json.MarshalIndent(info, "", "  ")
 		if err != nil {
-			fmt.Fprintf(out, "Error formatting JSON: %v\n", err)
+			_, _ = fmt.Fprintf(out, "Error formatting JSON: %v\n", err)
 			return
 		}
-		fmt.Fprintln(out, string(jsonBytes))
+		_, _ = fmt.Fprintln(out, string(jsonBytes))
 	case extended:
 		// Extended human-readable output
-		fmt.Fprintf(out, "Sumpter v%s\n", info.Version)
+		_, _ = fmt.Fprintf(out, "Sumpter v%s\n", info.Version)
 
 		if info.GitStatus != nil {
 			// Git commit info with dirty flag
@@ -132,7 +132,7 @@ func runVersionCommand(cmd *cobra.Command, args []string) {
 					gitInfo += fmt.Sprintf("-dirty(%s)", strings.Join(dirtyFlags, ","))
 				}
 			}
-			fmt.Fprintln(out, gitInfo)
+			_, _ = fmt.Fprintln(out, gitInfo)
 
 			// Git branch info with ahead/behind
 			if info.GitStatus.Branch != "" {
@@ -147,22 +147,22 @@ func runVersionCommand(cmd *cobra.Command, args []string) {
 					}
 					branchInfo += fmt.Sprintf(" (%s)", strings.Join(aheadBehind, ", "))
 				}
-				fmt.Fprintln(out, branchInfo)
+				_, _ = fmt.Fprintln(out, branchInfo)
 			}
 		}
 
-		fmt.Fprintf(out, "Build time: %s\n", info.BuildTime)
-		fmt.Fprintf(out, "Platform: %s/%s\n", info.Platform, info.Arch)
-		fmt.Fprintf(out, "Go version: %s\n", info.GoVersion)
+		_, _ = fmt.Fprintf(out, "Build time: %s\n", info.BuildTime)
+		_, _ = fmt.Fprintf(out, "Platform: %s/%s\n", info.Platform, info.Arch)
+		_, _ = fmt.Fprintf(out, "Go version: %s\n", info.GoVersion)
 
 		if info.Environment != "" {
-			fmt.Fprintf(out, "Environment: %s\n", info.Environment)
+			_, _ = fmt.Fprintf(out, "Environment: %s\n", info.Environment)
 		}
 	default:
 		// Simple version output
-		fmt.Fprintf(out, "Sumpter v%s\n", info.Version)
-		fmt.Fprintf(out, "Go Version: %s\n", info.GoVersion)
-		fmt.Fprintf(out, "OS/Arch: %s/%s\n", info.Platform, info.Arch)
+		_, _ = fmt.Fprintf(out, "Sumpter v%s\n", info.Version)
+		_, _ = fmt.Fprintf(out, "Go Version: %s\n", info.GoVersion)
+		_, _ = fmt.Fprintf(out, "OS/Arch: %s/%s\n", info.Platform, info.Arch)
 	}
 }
 

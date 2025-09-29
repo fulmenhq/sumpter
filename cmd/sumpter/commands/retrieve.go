@@ -387,9 +387,13 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 
 			if format == "json" {
 				// Output as JSON
-				fmt.Fprintf(output, "{\"path\": %q}\n", line)
+				if _, err := fmt.Fprintf(output, "{\"path\": %q}\n", line); err != nil {
+					return err
+				}
 			} else {
-				fmt.Fprintln(output, line)
+				if _, err := fmt.Fprintln(output, line); err != nil {
+					return err
+				}
 			}
 		}
 

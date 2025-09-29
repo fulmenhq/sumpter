@@ -212,7 +212,7 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		if err != nil {
 			return fmt.Errorf("failed to open file: %w", err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		stat, err := file.Stat()
 		if err != nil {
@@ -631,7 +631,7 @@ func generateReport(cmd *cobra.Command, report *InspectReportV0, opts *InspectOp
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		output = file
 	} else {
 		output = cmd.OutOrStdout()
@@ -654,69 +654,121 @@ func generateJSONReport(output io.Writer, report *InspectReportV0) error {
 }
 
 func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
-	fmt.Fprintf(output, "# XML Inspection Report\n\n")
-	fmt.Fprintf(output, "**File:** %s\n\n", report.Input.Path)
-	fmt.Fprintf(output, "**Size:** %.2f MB\n\n", float64(report.Input.SizeBytes)/1024/1024)
-	fmt.Fprintf(output, "**Encoding:** %s\n\n", report.Input.EncodingDetected)
+	if _, err := fmt.Fprintf(output, "# XML Inspection Report\n\n"); err != nil {
+		return fmt.Errorf("failed to write report header: %w", err)
+	}
+	if _, err := fmt.Fprintf(output, "**File:** %s\n\n", report.Input.Path); err != nil {
+		return fmt.Errorf("failed to write file info: %w", err)
+	}
+	if _, err := fmt.Fprintf(output, "**Size:** %.2f MB\n\n", float64(report.Input.SizeBytes)/1024/1024); err != nil {
+		return fmt.Errorf("failed to write size info: %w", err)
+	}
+	if _, err := fmt.Fprintf(output, "**Encoding:** %s\n\n", report.Input.EncodingDetected); err != nil {
+		return fmt.Errorf("failed to write encoding info: %w", err)
+	}
 
 	if report.Input.EncodingForced != nil {
-		fmt.Fprintf(output, "**Encoding Forced:** %s\n\n", *report.Input.EncodingForced)
+		if _, err := fmt.Fprintf(output, "**Encoding Forced:** %s\n\n", *report.Input.EncodingForced); err != nil {
+			return fmt.Errorf("failed to write encoding forced: %w", err)
+		}
 	}
 
-	fmt.Fprintf(output, "## Performance\n\n")
-	fmt.Fprintf(output, "- **Duration:** %d ms\n", report.Metrics.ElapsedMs)
+	if _, err := fmt.Fprintf(output, "## Performance\n\n"); err != nil {
+		return fmt.Errorf("failed to write performance header: %w", err)
+	}
+	if _, err := fmt.Fprintf(output, "- **Duration:** %d ms\n", report.Metrics.ElapsedMs); err != nil {
+		return fmt.Errorf("failed to write duration: %w", err)
+	}
 	if report.Metrics.ThroughputBytesPerSec > 0 {
-		fmt.Fprintf(output, "- **Throughput:** %.2f MB/s\n", report.Metrics.ThroughputBytesPerSec/1024/1024)
+		if _, err := fmt.Fprintf(output, "- **Throughput:** %.2f MB/s\n", report.Metrics.ThroughputBytesPerSec/1024/1024); err != nil {
+			return fmt.Errorf("failed to write throughput: %w", err)
+		}
 	}
 	if report.Metrics.RssPeakMb != nil {
-		fmt.Fprintf(output, "- **Memory Peak:** %.2f MB\n\n", *report.Metrics.RssPeakMb)
+		if _, err := fmt.Fprintf(output, "- **Memory Peak:** %.2f MB\n\n", *report.Metrics.RssPeakMb); err != nil {
+			return fmt.Errorf("failed to write memory peak: %w", err)
+		}
 	}
 
-	fmt.Fprintf(output, "## Top Paths\n\n")
+	if _, err := fmt.Fprintf(output, "## Top Paths\n\n"); err != nil {
+		return fmt.Errorf("failed to write top paths header: %w", err)
+	}
 	if len(report.Paths) == 0 {
-		fmt.Fprintf(output, "*No paths analyzed yet*\n\n")
+		if _, err := fmt.Fprintf(output, "*No paths analyzed yet*\n\n"); err != nil {
+			return fmt.Errorf("failed to write no paths message: %w", err)
+		}
 	} else {
-		fmt.Fprintf(output, "| Path | Count | Attributes | Samples |\n")
-		fmt.Fprintf(output, "|------|-------|------------|---------|\n")
+		if _, err := fmt.Fprintf(output, "| Path | Count | Attributes | Samples |\n"); err != nil {
+			return fmt.Errorf("failed to write table header: %w", err)
+		}
+		if _, err := fmt.Fprintf(output, "|------|-------|------------|---------|\n"); err != nil {
+			return fmt.Errorf("failed to write table separator: %w", err)
+		}
 
 		for _, path := range report.Paths {
 			attrCount := len(path.Attributes)
 			sampleCount := len(path.Samples)
-			fmt.Fprintf(output, "| %s | %d | %d | %d |\n",
-				path.Path, path.Count, attrCount, sampleCount)
+			if _, err := fmt.Fprintf(output, "| %s | %d | %d | %d |\n",
+				path.Path, path.Count, attrCount, sampleCount); err != nil {
+				return fmt.Errorf("failed to write path row: %w", err)
+			}
 		}
-		fmt.Fprintf(output, "\n")
+		if _, err := fmt.Fprintf(output, "\n"); err != nil {
+			return fmt.Errorf("failed to write newline: %w", err)
+		}
 	}
 
 	// Show attributes if available
 	for _, path := range report.Paths {
 		if len(path.Attributes) > 0 {
-			fmt.Fprintf(output, "### Attributes for %s\n\n", path.Path)
-			fmt.Fprintf(output, "| Attribute | Count |\n")
-			fmt.Fprintf(output, "|-----------|-------|\n")
+			if _, err := fmt.Fprintf(output, "### Attributes for %s\n\n", path.Path); err != nil {
+				return fmt.Errorf("failed to write attributes header: %w", err)
+			}
+			if _, err := fmt.Fprintf(output, "| Attribute | Count |\n"); err != nil {
+				return fmt.Errorf("failed to write attributes table header: %w", err)
+			}
+			if _, err := fmt.Fprintf(output, "|-----------|-------|\n"); err != nil {
+				return fmt.Errorf("failed to write attributes table separator: %w", err)
+			}
 
 			for _, attr := range path.Attributes {
-				fmt.Fprintf(output, "| %s | %d |\n", attr.Name, attr.Count)
+				if _, err := fmt.Fprintf(output, "| %s | %d |\n", attr.Name, attr.Count); err != nil {
+					return fmt.Errorf("failed to write attribute row: %w", err)
+				}
 			}
-			fmt.Fprintf(output, "\n")
+			if _, err := fmt.Fprintf(output, "\n"); err != nil {
+				return fmt.Errorf("failed to write attributes newline: %w", err)
+			}
 		}
 	}
 
 	// Show text samples if available
 	for _, path := range report.Paths {
 		if len(path.Samples) > 0 {
-			fmt.Fprintf(output, "### Samples for %s\n\n", path.Path)
-			for _, sample := range path.Samples {
-				fmt.Fprintf(output, "- `%s`\n", sample)
+			if _, err := fmt.Fprintf(output, "### Samples for %s\n\n", path.Path); err != nil {
+				return fmt.Errorf("failed to write samples header: %w", err)
 			}
-			fmt.Fprintf(output, "\n")
+			for _, sample := range path.Samples {
+				if _, err := fmt.Fprintf(output, "- `%s`\n", sample); err != nil {
+					return fmt.Errorf("failed to write sample: %w", err)
+				}
+			}
+			if _, err := fmt.Fprintf(output, "\n"); err != nil {
+				return fmt.Errorf("failed to write samples newline: %w", err)
+			}
 		}
 	}
 
 	if report.Metadata != nil {
-		fmt.Fprintf(output, "## Metadata\n\n")
-		fmt.Fprintf(output, "- **Generator:** %s\n", report.Metadata.Generator)
-		fmt.Fprintf(output, "- **Timestamp:** %s\n", report.Metadata.Timestamp)
+		if _, err := fmt.Fprintf(output, "## Metadata\n\n"); err != nil {
+			return fmt.Errorf("failed to write metadata header: %w", err)
+		}
+		if _, err := fmt.Fprintf(output, "- **Generator:** %s\n", report.Metadata.Generator); err != nil {
+			return fmt.Errorf("failed to write generator: %w", err)
+		}
+		if _, err := fmt.Fprintf(output, "- **Timestamp:** %s\n", report.Metadata.Timestamp); err != nil {
+			return fmt.Errorf("failed to write timestamp: %w", err)
+		}
 	}
 
 	return nil

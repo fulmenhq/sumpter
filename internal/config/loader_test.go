@@ -119,7 +119,7 @@ func TestLoadMainConfigWithFile(t *testing.T) {
 	loader, paths := newLoaderForTest(t)
 
 	// Create config directory
-	os.MkdirAll(paths.Configs, 0o755)
+	_ = os.MkdirAll(paths.Configs, 0o755)
 
 	// Create a test config file
 	testConfig := &MainConfig{
@@ -178,7 +178,7 @@ func TestLoadMainConfigInvalidFile(t *testing.T) {
 	loader, paths := newLoaderForTest(t)
 
 	// Create config directory
-	os.MkdirAll(paths.Configs, 0o755)
+	_ = os.MkdirAll(paths.Configs, 0o755)
 
 	// Create an invalid YAML file
 	configPath := filepath.Join(paths.Configs, "sumpter.yaml")
@@ -579,7 +579,7 @@ func TestLoadRetrieveConfigWithFile(t *testing.T) {
 	loader, paths := newLoaderForTest(t)
 
 	// Create config directory
-	os.MkdirAll(paths.Configs, 0o755)
+	_ = os.MkdirAll(paths.Configs, 0o755)
 
 	// Create a test config file
 	testConfig := &RetrieveConfig{
@@ -646,7 +646,7 @@ func TestLoadRetrieveConfigInvalidFile(t *testing.T) {
 	loader, paths := newLoaderForTest(t)
 
 	// Create config directory
-	os.MkdirAll(paths.Configs, 0o755)
+	_ = os.MkdirAll(paths.Configs, 0o755)
 
 	// Create an invalid YAML file
 	configPath := filepath.Join(paths.Configs, "retrieve.yaml")
