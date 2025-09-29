@@ -1,60 +1,13 @@
 version: "2"
 
 run:
-  issues-exit-code: 1
+  timeout: 3m
   tests: true
 
 linters:
   enable:
-    # Core linters (enabled by default in v2)
     - govet
-    - ineffassign
     - staticcheck
-    - unused
-
-    # Temporarily disabled linters - enable gradually
-    # - revive      # Style and best practices - many issues to fix
-    # - gocyclo     # Complexity checking - threshold too strict for alpha
-    # - unparam     # Unused parameters - many warnings to address
-
-  disable:
-    - depguard    # Dependency restrictions - not needed for alpha phase
-    - errcheck    # Too many existing issues, enable in beta
-    - gosec       # Too many existing issues, enable in beta
-
-linters-settings:
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment
-  gosec:
-    excludes:
-      - G115
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-  revive:
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: dot-imports
-      - name: error-return
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: range
-      - name: receiver-naming
-      - name: superfluous-else
-      - name: time-naming
-      - name: var-naming
-      - name: package-comments
-  gocyclo:
-    min-complexity: 25  # Relaxed from 18 for alpha phase
-
-issues:
-   exclude-use-default: false
-   max-issues-per-linter: 0
-   max-same-issues: 0
-   exclude:
-     - 'should have comment or be unexported'
+    - ineffassign
+    - errcheck
+    - misspell
