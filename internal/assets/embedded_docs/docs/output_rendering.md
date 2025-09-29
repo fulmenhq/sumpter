@@ -6,7 +6,7 @@ Mapping inspect JSON SSOT to human-friendly outputs.
 
 ## Inputs
 
-- Inspect JSON conforms to `schemas/inspect-report/v0.1.0/inspect-report.schema.json`.
+- Inspect JSON conforms to `schemas/inspect-report/v0.1.0/inspect-report.schema.yaml`.
 
 ---
 

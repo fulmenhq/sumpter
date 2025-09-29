@@ -1,0 +1,126 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Extract Record Match Schema
+description: User configuration for extracting specific records from XML files without hardcoding patterns. Enables dynamic extraction of structured data based on XPath selectors and field mappings.
+type: object
+properties:
+  record_type:
+    type: string
+    description: The type of record to extract (e.g., "transaction", "event").
+  match_selectors:
+    type: array
+    description: Array of selectors used to identify matching records in the XML.
+    items:
+      type: object
+      properties:
+        xpath:
+          type: string
+          description: XPath expression to locate the record element.
+        attributes:
+          type: object
+          description: Optional key-value pairs of attributes that must match on the selected element.
+        min_occurrences:
+          type: integer
+          description: Minimum number of occurrences required for a match.
+          minimum: 0
+          default: 1
+      required:
+        - xpath
+  fields_to_extract:
+    type: array
+    description: Array of fields to extract from each matching record, with XPath mappings and type information.
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The name of the field in the output.
+        xpath:
+          type: string
+          description: XPath expression relative to the record element to extract the value.
+        type:
+          type: string
+          description: The expected data type of the field.
+          enum: ["string", "number", "integer", "boolean"]
+        transform:
+          type: string
+          description: Optional transformation function to apply to the extracted value.
+      required:
+        - name
+        - xpath
+        - type
+  output_schema:
+    type: object
+    description: JSON schema defining the structure of the output data. This should be a valid JSON Schema object that describes the expected output format.
+  field_mappings:
+    type: array
+    description: Array of mappings from input XPath expressions to output schema fields.
+    items:
+      type: object
+      properties:
+        output_field:
+          type: string
+          description: The field name in the output schema to map to.
+        xpath:
+          type: string
+          description: XPath expression relative to the record element to extract the value.
+        type:
+          type: string
+          description: The expected data type of the field.
+          enum: ["string", "number", "integer", "boolean"]
+        transform:
+          type: string
+          description: Optional transformation function to apply to the extracted value.
+        item_mapping:
+          type: array
+          description: For array types, defines how to map each array item.
+          items:
+            type: object
+            properties:
+              output_field:
+                type: string
+                description: The field name in the array item.
+              xpath:
+                type: string
+                description: XPath relative to the array item element.
+              type:
+                type: string
+                enum: ["string", "number", "integer", "boolean"]
+              transform:
+                type: string
+                description: Optional transformation for the item field.
+            required:
+              - output_field
+              - xpath
+              - type
+      required:
+        - output_field
+        - xpath
+        - type
+  external_fields:
+    type: array
+    description: Fields that are provided externally at runtime, not extracted from the XML.
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The name of the external field.
+        type:
+          type: string
+          description: The expected data type of the field.
+          enum: ["string", "number", "integer", "boolean"]
+        required:
+          type: boolean
+          description: Whether this external field is required.
+          default: false
+      required:
+        - name
+        - type
+  filters:
+    type: object
+    description: Optional filters to apply after extraction, using field names as keys with comparison operators.
+required:
+  - record_type
+  - match_selectors
+  - field_mappings
+  - output_schema

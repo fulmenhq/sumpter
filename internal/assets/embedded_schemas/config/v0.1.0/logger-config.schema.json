@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpterhq.github.io/schemas/config/v0.1.0/logger-config.schema.json",
+  "title": "Sumpter Logger Configuration (v0.1.0)",
+  "description": "Standalone logger configuration schema for Sumpter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "logger-config/v0.1.0",
+      "description": "Logger configuration schema version"
+    },
+    "level": {
+      "type": "string",
+      "enum": [
+        "trace",
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ],
+      "default": "info",
+      "description": "Global logging level"
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "pretty",
+        "json"
+      ],
+      "default": "pretty",
+      "description": "Log output format"
+    },
+    "use_color": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable colored output in pretty format"
+    },
+    "component": {
+      "type": "string",
+      "default": "sumpter",
+      "description": "Default component name for logging"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable file logging"
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to log file (relative to SUMPTER_HOME/logs if not absolute)"
+        },
+        "rotation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable log rotation"
+            },
+            "max_size_mb": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 10,
+              "description": "Maximum log file size in MB before rotation"
+            },
+            "max_age_days": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365,
+              "default": 30,
+              "description": "Maximum age of log files in days"
+            },
+            "max_backups": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 5,
+              "description": "Maximum number of rotated log files to keep"
+            },
+            "compress": {
+              "type": "boolean",
+              "default": true,
+              "description": "Compress rotated log files"
+            },
+            "time_format": {
+              "type": "string",
+              "default": "2006-01-02",
+              "description": "Time format for rotation filenames"
+            }
+          }
+        }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable telemetry collection"
+        },
+        "service_name": {
+          "type": "string",
+          "default": "sumpter",
+          "description": "Service name for telemetry"
+        },
+        "service_version": {
+          "type": "string",
+          "description": "Service version for telemetry"
+        },
+        "environment": {
+          "type": "string",
+          "default": "development",
+          "description": "Environment name for telemetry"
+        }
+      }
+    }
+  }
+}

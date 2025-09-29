@@ -1,0 +1,52 @@
+# SEC EDGAR XBRL Role Extraction Configuration
+# Extracts financial statement role definitions from XBRL schema files
+# This demonstrates extracting structured metadata from SEC filings
+
+record_type: "financial_statement_role"
+match_selectors:
+  - xpath: "//link:roleType"
+    min_occurrences: 1
+field_mappings:
+  - output_field: "role_id"
+    xpath: "@id"
+    type: "string"
+  - output_field: "role_uri"
+    xpath: "link:roleURI/@roleURI"
+    type: "string"
+  - output_field: "definition"
+    xpath: "link:definition"
+    type: "string"
+  - output_field: "used_on_presentation"
+    xpath: "count(link:usedOn[@role='http://www.xbrl.org/2003/role/presentationLink'])"
+    type: "integer"
+  - output_field: "used_on_calculation"
+    xpath: "count(link:usedOn[@role='http://www.xbrl.org/2003/role/calculationLink'])"
+    type: "integer"
+  - output_field: "used_on_definition"
+    xpath: "count(link:usedOn[@role='http://www.xbrl.org/2003/role/definitionLink'])"
+    type: "integer"
+output_schema:
+  type: "object"
+  properties:
+    role_id:
+      type: "string"
+      description: "Unique identifier for the role"
+    role_uri:
+      type: "string"
+      description: "URI of the role"
+    definition:
+      type: "string"
+      description: "Human-readable definition of the role"
+    used_on_presentation:
+      type: "integer"
+      description: "Number of presentation link usages"
+    used_on_calculation:
+      type: "integer"
+      description: "Number of calculation link usages"
+    used_on_definition:
+      type: "integer"
+      description: "Number of definition link usages"
+  required:
+    - "role_id"
+    - "role_uri"
+    - "definition"

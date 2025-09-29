@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Extract Record Match Schema",
+  "description": "Configuration describing how to extract structured records from XML sources.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["record_type", "match_selectors", "field_mappings", "output_schema"],
+  "properties": {
+    "record_type": {
+      "type": "string",
+      "description": "Identifier for the record produced by the extract recipe."
+    },
+    "match_selectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["xpath"],
+        "properties": {
+          "xpath": {
+            "type": "string",
+            "description": "XPath expression used to locate candidate record nodes."
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": ["string", "number", "integer", "boolean"]
+            },
+            "description": "Optional attribute filters that must match on the selected node."
+          },
+          "min_occurrences": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Minimum number of nodes that must satisfy the selector."
+          }
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "description": "Optional JSON Schema describing the emitted record structure."
+    },
+    "field_mappings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/fieldMapping"
+      }
+    },
+    "filters": {
+      "type": "object",
+      "description": "Optional post-extraction filters keyed by output field name."
+    }
+  },
+  "$defs": {
+    "fieldMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "output_field": {
+          "type": "string"
+        },
+        "xpath": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["string", "number", "integer", "boolean", "array", "object"]
+        },
+        "transform": {
+          "type": "string"
+        },
+        "item_mapping": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldMapping"
+          }
+        },
+        "polymorphic_mapping": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/polymorphicMapping"
+          }
+        }
+      },
+      "required": ["output_field"],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "array"}
+            },
+            "required": ["type"]
+          },
+          "then": {
+            "anyOf": [
+              {"required": ["item_mapping"]},
+              {"required": ["polymorphic_mapping"]}
+            ]
+          }
+        }
+      ]
+    },
+    "polymorphicMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "element_type": {
+          "type": "string",
+          "description": "Name of the child element to match."
+        },
+        "match_xpath": {
+          "type": "string",
+          "description": "Alternate XPath applied relative to the candidate node."
+        },
+        "item_type": {
+          "type": "string",
+          "description": "Optional type discriminator to inject into the output item."
+        },
+        "field_mappings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fieldMapping"
+          }
+        }
+      },
+      "required": ["field_mappings"],
+      "allOf": [
+        {
+          "anyOf": [
+            {"required": ["element_type"]},
+            {"required": ["match_xpath"]}
+          ]
+        }
+      ]
+    }
+  }
+}

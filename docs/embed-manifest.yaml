@@ -6,9 +6,6 @@ topics:
       - sumpter_overview.md
       - output_rendering.md
       - user-guide/**/*.md
-      - architecture/adr/**/*.md
-      - standards/**/*.md
-      - sop/**/*.md
     exclude:
       - .plans/**
       - testdata/**
