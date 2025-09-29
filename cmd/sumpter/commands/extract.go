@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fulmenhq/goneat/pkg/pathfinder"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/spf13/cobra"
@@ -101,7 +102,7 @@ func runExtract(opts *ExtractOptions) error {
 			files[i] = strings.TrimSpace(f)
 		}
 	} else {
-		files, err = findFiles(opts.InputPath, opts.IncludePattern, opts.ExcludePattern, opts.MaxDepth, opts.FollowSymlinks)
+		files, err = discoverInputFiles(opts)
 		if err != nil {
 			return fmt.Errorf("failed to find files: %w", err)
 		}
@@ -194,56 +195,42 @@ func runExtract(opts *ExtractOptions) error {
 	return nil
 }
 
-func findFiles(inputPath, includePattern, excludePattern string, maxDepth int, followSymlinks bool) ([]string, error) {
-	var files []string
+func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
+	absInput, err := filepath.Abs(opts.InputPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve input path %s: %w", opts.InputPath, err)
+	}
 
-	err := filepath.Walk(inputPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Check if symlink and not following
-		if !followSymlinks && info.Mode()&os.ModeSymlink != 0 {
-			return nil
-		}
-
-		if info.IsDir() {
-			// Check depth
-			rel, err := filepath.Rel(inputPath, path)
-			if err != nil {
-				return err
-			}
-			depth := strings.Count(rel, string(filepath.Separator))
-			if maxDepth > 0 && depth > maxDepth {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Check exclude pattern first
-		if excludePattern != "" {
-			excluded, err := filepath.Match(excludePattern, info.Name())
-			if err != nil {
-				return err
-			}
-			if excluded {
-				return nil
-			}
-		}
-
-		// Check include pattern
-		included, err := filepath.Match(includePattern, info.Name())
-		if err != nil {
-			return err
-		}
-		if included {
-			files = append(files, path)
-		}
-
-		return nil
+	facade := pathfinder.NewFinderFacade(pathfinder.NewPathFinder(), pathfinder.FinderConfig{
+		MaxWorkers: opts.Workers,
 	})
 
-	return files, err
+	query := pathfinder.FindQuery{
+		Root:           absInput,
+		MaxDepth:       opts.MaxDepth,
+		FollowSymlinks: opts.FollowSymlinks,
+		Workers:        opts.Workers,
+	}
+
+	if include := strings.TrimSpace(opts.IncludePattern); include != "" {
+		query.Include = []string{include}
+	}
+
+	if exclude := strings.TrimSpace(opts.ExcludePattern); exclude != "" {
+		query.Exclude = []string{exclude}
+	}
+
+	results, err := facade.Find(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover files from %s: %w", absInput, err)
+	}
+
+	files := make([]string, 0, len(results))
+	for _, result := range results {
+		files = append(files, filepath.Clean(filepath.FromSlash(result.SourcePath)))
+	}
+
+	return files, nil
 }
 
 func writeRecordsToFile(filename string, records []map[string]interface{}) error {
