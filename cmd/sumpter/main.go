@@ -11,3 +11,8 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// runMain is a testable version of the main logic
+func runMain() error {
+	return commands.Execute()
+}

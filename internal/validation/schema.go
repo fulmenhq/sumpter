@@ -3,7 +3,9 @@ package validation
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/fulmenhq/goneat/pkg/schema"
@@ -13,31 +15,21 @@ import (
 // SchemaValidator provides schema validation for Sumpter configs
 type SchemaValidator struct {
 	schemaDir string
+	schemaFS  fs.FS
 }
 
-// NewSchemaValidator creates a new schema validator
+// NewSchemaValidator creates a new schema validator backed by a filesystem path.
 func NewSchemaValidator(schemaDir string) *SchemaValidator {
 	return &SchemaValidator{
 		schemaDir: schemaDir,
 	}
 }
 
-// readSchemaFile reads a schema file, trying YAML first then JSON for backward compatibility
-func (v *SchemaValidator) readSchemaFile(schemaPath string) ([]byte, error) {
-	// Try YAML first
-	yamlPath := schemaPath[:len(schemaPath)-5] + ".yaml" // Replace .json with .yaml
-	schemaBytes, err := os.ReadFile(yamlPath)
-	if err == nil {
-		return schemaBytes, nil
+// NewSchemaValidatorFromFS creates a schema validator backed by the supplied filesystem.
+func NewSchemaValidatorFromFS(schemaFS fs.FS) *SchemaValidator {
+	return &SchemaValidator{
+		schemaFS: schemaFS,
 	}
-
-	// Fall back to JSON for backward compatibility
-	schemaBytes, err = os.ReadFile(schemaPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read schema file (tried both YAML and JSON): %w", err)
-	}
-
-	return schemaBytes, nil
 }
 
 // ValidationResult represents the result of schema validation
@@ -58,33 +50,53 @@ type ValidationError struct {
 
 // ValidateMainConfig validates a main config against its schema
 func (v *SchemaValidator) ValidateMainConfig(configData []byte, configFile string) (*ValidationResult, error) {
-	schemaPath := filepath.Join(v.schemaDir, "config", "v0.1.0", "sumpter-config.schema.json")
-	return v.validateAgainstSchema(configData, schemaPath, configFile, "sumpter-config-v0.1.0")
+	schemaBytes, err := v.loadSchema("config", "v0.1.0", "sumpter-config.schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("config", "v0.1.0", "sumpter-config.schema.json"), err)
+	}
+	return v.validateAgainstSchema(configData, schemaBytes, configFile, "sumpter-config-v0.1.0")
 }
 
 // ValidateLoggerConfig validates a logger config against its schema
 func (v *SchemaValidator) ValidateLoggerConfig(configData []byte, configFile string) (*ValidationResult, error) {
-	schemaPath := filepath.Join(v.schemaDir, "config", "v0.1.0", "logger-config.schema.json")
-	return v.validateAgainstSchema(configData, schemaPath, configFile, "logger-config-v0.1.0")
+	schemaBytes, err := v.loadSchema("config", "v0.1.0", "logger-config.schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("config", "v0.1.0", "logger-config.schema.json"), err)
+	}
+	return v.validateAgainstSchema(configData, schemaBytes, configFile, "logger-config-v0.1.0")
 }
 
 // ValidatePIIConfig validates a PII config against its schema
 func (v *SchemaValidator) ValidatePIIConfig(configData []byte, configFile string) (*ValidationResult, error) {
-	schemaPath := filepath.Join(v.schemaDir, "config", "v0.1.0", "pii-config.schema.json")
-	return v.validateAgainstSchema(configData, schemaPath, configFile, "pii-config-v0.1.0")
+	schemaBytes, err := v.loadSchema("config", "v0.1.0", "pii-config.schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("config", "v0.1.0", "pii-config.schema.json"), err)
+	}
+	return v.validateAgainstSchema(configData, schemaBytes, configFile, "pii-config-v0.1.0")
+}
+
+// ValidateExtractConfig validates an extract configuration against its schema.
+func (v *SchemaValidator) ValidateExtractConfig(configData []byte, configFile string) (*ValidationResult, error) {
+	schemaBytes, err := v.loadSchema("extract", "v0.1.0", "extract-record-match.schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("extract", "v0.1.0", "extract-record-match.schema.json"), err)
+	}
+	return v.validateAgainstSchema(configData, schemaBytes, configFile, "extract-record-match-v0.1.0")
+}
+
+func (v *SchemaValidator) loadSchema(parts ...string) ([]byte, error) {
+	if v.schemaFS != nil {
+		rel := path.Join(parts...)
+		return fs.ReadFile(v.schemaFS, rel)
+	}
+	full := filepath.Join(append([]string{v.schemaDir}, parts...)...)
+	return os.ReadFile(full)
 }
 
 // validateAgainstSchema validates data against a schema file
-func (v *SchemaValidator) validateAgainstSchema(data []byte, schemaPath, dataFile, schemaName string) (*ValidationResult, error) {
-	// Read schema file (try YAML first, then JSON)
-	schemaBytes, err := v.readSchemaFile(schemaPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
-	}
-
+func (v *SchemaValidator) validateAgainstSchema(data []byte, schemaBytes []byte, dataFile, schemaName string) (*ValidationResult, error) {
 	// Parse data to interface{} for validation
 	var dataInterface interface{}
-
 	// Try YAML first, then JSON
 	if err := yaml.Unmarshal(data, &dataInterface); err != nil {
 		// Fallback to JSON

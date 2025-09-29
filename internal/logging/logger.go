@@ -3,12 +3,10 @@ package logging
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/term"
 )
 
 var (
@@ -51,9 +49,6 @@ func Initialize(config Config) error {
 	// Initialize PII detector
 	piiDetector = NewPIIDetector(config.PIIMode, config.AllowedPIIContexts)
 
-	// Determine if color should be enabled for console output
-	useColor := shouldEnableColor(config)
-
 	// Create encoder config with RFC3339 timestamps (Fulmen standard)
 	encoderConfig := zapcore.EncoderConfig{
 		TimeKey:        "timestamp",
@@ -64,14 +59,14 @@ func Initialize(config Config) error {
 		MessageKey:     "message",
 		StacktraceKey:  "stacktrace",
 		LineEnding:     zapcore.DefaultLineEnding,
-		EncodeLevel:    cleanLevelEncoder,
+		EncodeLevel:    zapcore.LowercaseLevelEncoder,
 		EncodeTime:     rfc3339TimeEncoder,
 		EncodeDuration: zapcore.SecondsDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
-	// If pretty console and color is enabled, use zap's color encoder
-	if !config.EnableTelemetry && useColor {
+	// Use colored output if requested and supported
+	if config.UseColor && isTerminal() {
 		encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	}
 
@@ -129,29 +124,12 @@ func rfc3339TimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
 	enc.AppendString(t.Format(time.RFC3339))
 }
 
-// cleanLevelEncoder encodes log levels as clean UTF-8 text without ANSI escape sequences
-func cleanLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
-	enc.AppendString("[" + l.CapitalString() + "]")
-}
-
-// shouldEnableColor decides whether to enable color for console logs
-func shouldEnableColor(cfg Config) bool {
-	if !cfg.UseColor {
-		return false
+// isTerminal checks if stderr is a terminal for color support
+func isTerminal() bool {
+	if fileInfo, _ := os.Stderr.Stat(); fileInfo != nil {
+		return (fileInfo.Mode() & os.ModeCharDevice) != 0
 	}
-	// JSON/telemetry logs must not include color
-	if cfg.EnableTelemetry {
-		return false
-	}
-	// Respect NO_COLOR and dumb terminals
-	if strings.TrimSpace(os.Getenv("NO_COLOR")) != "" {
-		return false
-	}
-	if os.Getenv("TERM") == "dumb" {
-		return false
-	}
-	// Require a TTY on stderr (logger writes to stderr)
-	return term.IsTerminal(int(os.Stderr.Fd()))
+	return false
 }
 
 // Global logging functions with PII sanitization

@@ -120,3 +120,32 @@ type TelemetryConfig struct {
 	BatchSize            int    `yaml:"batch_size" json:"batch_size"`
 	FlushIntervalSeconds int    `yaml:"flush_interval_seconds" json:"flush_interval_seconds"`
 }
+
+// RetrieveConfig represents configuration for data retrieval operations
+type RetrieveConfig struct {
+	Version string                 `yaml:"version" json:"version"`
+	Realms  map[string]RealmConfig `yaml:"realms" json:"realms"`
+}
+
+// RealmConfig represents configuration for a specific data realm
+type RealmConfig struct {
+	Enabled     bool                   `yaml:"enabled" json:"enabled"`
+	Client      ClientConfig           `yaml:"client" json:"client"`
+	Credentials map[string]interface{} `yaml:"credentials" json:"credentials"`
+	RateLimits  RateLimitConfig        `yaml:"rate_limits" json:"rate_limits"`
+	Endpoints   map[string]string      `yaml:"endpoints" json:"endpoints"`
+	Options     map[string]interface{} `yaml:"options" json:"options"`
+}
+
+// ClientConfig represents HTTP client configuration
+type ClientConfig struct {
+	UserAgent      string `yaml:"user_agent" json:"user_agent"`
+	TimeoutSeconds int    `yaml:"timeout_seconds" json:"timeout_seconds"`
+}
+
+// RateLimitConfig represents rate limiting settings
+type RateLimitConfig struct {
+	RequestsPerSecond float64 `yaml:"requests_per_second" json:"requests_per_second"`
+	BurstLimit        int     `yaml:"burst_limit" json:"burst_limit"`
+	BackoffSeconds    float64 `yaml:"backoff_seconds" json:"backoff_seconds"`
+}
