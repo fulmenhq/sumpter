@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumpterhq.github.io/schemas/config/v0.1.0/sumpter-config.schema.json",
+  "title": "Sumpter Configuration (v0.1.0)",
+  "description": "Main configuration schema for Sumpter XML processing engine",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "logging",
+    "pii",
+    "paths"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "config/v0.1.0",
+      "description": "Configuration schema version"
+    },
+    "logging": {
+      "$ref": "#/$defs/loggingConfig",
+      "description": "Logging configuration"
+    },
+    "pii": {
+      "$ref": "#/$defs/piiConfig",
+      "description": "PII/PHI handling configuration"
+    },
+    "paths": {
+      "$ref": "#/$defs/pathsConfig",
+      "description": "Directory and file path configuration"
+    },
+    "performance": {
+      "$ref": "#/$defs/performanceConfig",
+      "description": "Performance tuning options"
+    },
+    "telemetry": {
+      "$ref": "#/$defs/telemetryConfig",
+      "description": "Telemetry and observability settings"
+    }
+  },
+  "$defs": {
+    "loggingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "trace",
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info",
+          "description": "Global logging level"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "pretty",
+            "json"
+          ],
+          "default": "pretty",
+          "description": "Log output format"
+        },
+        "use_color": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable colored output in pretty format"
+        },
+        "component": {
+          "type": "string",
+          "default": "sumpter",
+          "description": "Default component name for logging"
+        },
+        "file": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable file logging"
+            },
+            "path": {
+              "type": "string",
+              "description": "Path to log file (relative to SUMPTER_HOME/logs if not absolute)"
+            },
+            "rotation": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable log rotation"
+                },
+                "max_size_mb": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000,
+                  "default": 10,
+                  "description": "Maximum log file size in MB before rotation"
+                },
+                "max_age_days": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 365,
+                  "default": 30,
+                  "description": "Maximum age of log files in days"
+                },
+                "max_backups": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100,
+                  "default": 5,
+                  "description": "Maximum number of rotated log files to keep"
+                },
+                "compress": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Compress rotated log files"
+                },
+                "time_format": {
+                  "type": "string",
+                  "default": "2006-01-02",
+                  "description": "Time format for rotation filenames"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "piiConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "safe",
+            "context"
+          ],
+          "default": "safe",
+          "description": "PII detection and sanitization mode"
+        },
+        "safe_only": {
+          "type": "boolean",
+          "default": true,
+          "description": "Force PII-safe mode regardless of other settings"
+        },
+        "allowed_contexts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Contexts where PII is allowed when mode is 'context'"
+        },
+        "custom_patterns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "pattern",
+              "replacement"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Pattern name for identification"
+              },
+              "pattern": {
+                "type": "string",
+                "description": "Regular expression pattern"
+              },
+              "replacement": {
+                "type": "string",
+                "description": "Replacement string for sanitized output"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "pii",
+                  "phi"
+                ],
+                "default": "pii",
+                "description": "PII or PHI category"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ],
+                "default": "medium",
+                "description": "Severity level for detection"
+              }
+            }
+          },
+          "default": [],
+          "description": "Custom PII detection patterns"
+        }
+      }
+    },
+    "pathsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "home": {
+          "type": "string",
+          "description": "Override for SUMPTER_HOME directory"
+        },
+        "workdir": {
+          "type": "string",
+          "description": "Override for SUMPTER_WORKDIR directory"
+        },
+        "cache_dir": {
+          "type": "string",
+          "description": "Cache directory (relative to home if not absolute)"
+        },
+        "temp_dir": {
+          "type": "string",
+          "description": "Temporary directory (relative to workdir if not absolute)"
+        },
+        "output_dir": {
+          "type": "string",
+          "description": "Default output directory for generated files"
+        }
+      }
+    },
+    "performanceConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_memory_mb": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 8192,
+          "default": 512,
+          "description": "Maximum memory usage in MB"
+        },
+        "buffer_size_kb": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024,
+          "default": 64,
+          "description": "XML parsing buffer size in KB"
+        },
+        "worker_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "default": 4,
+          "description": "Number of worker goroutines for parallel processing"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 300,
+          "description": "Operation timeout in seconds"
+        }
+      }
+    },
+    "telemetryConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable telemetry collection"
+        },
+        "service_name": {
+          "type": "string",
+          "default": "sumpter",
+          "description": "Service name for telemetry"
+        },
+        "service_version": {
+          "type": "string",
+          "description": "Service version for telemetry"
+        },
+        "environment": {
+          "type": "string",
+          "default": "development",
+          "description": "Environment name for telemetry"
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Telemetry collection endpoint URL"
+        },
+        "batch_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100,
+          "description": "Number of events to batch before sending"
+        },
+        "flush_interval_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "default": 30,
+          "description": "Interval to flush telemetry batches"
+        }
+      }
+    }
+  }
+}

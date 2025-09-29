@@ -1,0 +1,161 @@
+# Sumpter Retrieve Configuration Schema (v0.1.0)
+# JSON Schema 2020-12 for validating retrieve command configuration
+# Defines configuration for data source integrations and realm-specific settings
+
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://sumpterhq.github.io/schemas/retrieve/v0.1.0/retrieve-config.schema.yaml
+
+title: Retrieve Configuration (v0.1.0)
+description: |
+  Configuration schema for Sumpter data source integrations.
+  Supports realm-based configuration for different data sources like SEC EDGAR.
+
+type: object
+additionalProperties: false
+
+required:
+  - version
+
+properties:
+  version:
+    type: string
+    const: retrieve/v0.1.0
+    description: Configuration schema version
+
+  realms:
+    type: object
+    description: Realm-specific configuration for different data sources
+    patternProperties:
+      "^[a-zA-Z][a-zA-Z0-9_-]*$":
+        $ref: "#/$defs/realmConfig"
+    additionalProperties: false
+
+$defs:
+  realmConfig:
+    type: object
+    description: Configuration for a specific data realm (e.g., finance, weather)
+    additionalProperties: false
+    properties:
+      enabled:
+        type: boolean
+        default: true
+        description: Whether this realm is enabled for data retrieval
+
+      client:
+        $ref: "#/$defs/clientConfig"
+        description: HTTP client configuration including User-Agent for API compliance
+
+      credentials:
+        $ref: "#/$defs/credentialsConfig"
+        description: Authentication credentials for API access
+
+      rate_limits:
+        $ref: "#/$defs/rateLimitConfig"
+        description: Rate limiting configuration to prevent API abuse
+
+      endpoints:
+        type: object
+        description: API endpoints and base URLs for the realm
+        patternProperties:
+          ".*":
+            type: string
+            description: URL or endpoint configuration string
+
+      options:
+        type: object
+        description: Additional realm-specific configuration options
+        additionalProperties: true  # Allow flexible options per realm
+
+  credentialsConfig:
+    type: object
+    description: Authentication credentials for data source APIs
+    additionalProperties: false
+    properties:
+      api_key:
+        $ref: "#/$defs/envVarOrValue"
+        description: API key for authentication (can be direct value or env var)
+
+      username:
+        $ref: "#/$defs/envVarOrValue"
+        description: Username for basic authentication
+
+      password:
+        $ref: "#/$defs/envVarOrValue"
+        description: Password for basic authentication
+
+      token:
+        $ref: "#/$defs/envVarOrValue"
+        description: Bearer token for OAuth/token-based authentication
+
+  clientConfig:
+    type: object
+    description: HTTP client configuration for API requests
+    additionalProperties: false
+    required:
+      - user_agent
+    properties:
+      user_agent:
+        type: string
+        description: |
+          User-Agent header for HTTP requests (required for SEC compliance).
+          Format: 'Company Name contact@email.com'
+        pattern: "^[A-Za-z0-9\\s,&.-]+\\s+[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+
+      timeout_seconds:
+        type: integer
+        minimum: 1
+        maximum: 300
+        default: 30
+        description: Request timeout in seconds
+
+  rateLimitConfig:
+    type: object
+    description: Rate limiting settings to respect API limits
+    additionalProperties: false
+    properties:
+      requests_per_second:
+        type: number
+        minimum: 0.1
+        maximum: 8
+        default: 8
+        description: |
+          Maximum requests per second (hard-capped at 8 for SEC compliance).
+          Lower values prevent rate limit violations.
+
+      burst_limit:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 10
+        description: Maximum burst requests allowed before rate limiting kicks in
+
+      backoff_seconds:
+        type: number
+        minimum: 0
+        maximum: 300
+        default: 1
+        description: Backoff time in seconds when rate limit is hit
+
+  envVarOrValue:
+    description: Either a direct string value or an environment variable reference
+    oneOf:
+      - type: string
+        description: Direct string value
+      - $ref: "#/$defs/envVarReference"
+        description: Environment variable reference for secure credential management
+
+  envVarReference:
+    type: object
+    description: Reference to an environment variable for secure configuration
+    additionalProperties: false
+    required:
+      - env
+    properties:
+      env:
+        type: string
+        pattern: "^[A-Z][A-Z0-9_]*$"
+        description: Environment variable name (must be uppercase with underscores)
+
+      default:
+        type: string
+        description: Default value if environment variable is not set
