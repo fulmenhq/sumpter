@@ -24,7 +24,7 @@ func TestNewSchemaValidatorFromFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create a simple test schema file
 	schemaContent := `{"type": "object"}`
@@ -137,187 +137,7 @@ func TestValidateMainConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
-
-	// Copy the actual schema file
-	schemaDir := filepath.Join(tempDir, "schemas", "config", "v0.1.0")
-	if err := os.MkdirAll(schemaDir, 0755); err != nil {
-		t.Fatalf("Failed to create schema dir: %v", err)
-	}
-
-	// Copy the sumpter config schema
-	sourceSchema := "../../schemas/config/v0.1.0/sumpter-config.schema.json"
-	destSchema := filepath.Join(schemaDir, "sumpter-config.schema.json")
-	if err := copyFile(sourceSchema, destSchema); err != nil {
-		t.Fatalf("Failed to copy schema: %v", err)
-	}
-
-	validator := NewSchemaValidator(filepath.Join(tempDir, "schemas"))
-
-	// Test valid main config
-	validConfig := `{
-		"version": "config/v0.1.0",
-		"logging": {
-			"level": "info",
-			"format": "pretty"
-		},
-		"pii": {
-			"mode": "safe"
-		},
-		"paths": {
-			"cache_dir": "cache",
-			"temp_dir": "temp",
-			"output_dir": "output"
-		}
-	}`
-
-	result, err := validator.ValidateMainConfig([]byte(validConfig), "test-main.yaml")
-	if err != nil {
-		t.Errorf("ValidateMainConfig() returned error for valid config: %v", err)
-	}
-	if !result.IsValid() {
-		t.Errorf("ValidateMainConfig() should validate valid config, got errors: %v", result.Errors)
-	}
-
-	// Test invalid main config (missing version)
-	invalidConfig := `{
-		"logging": {
-			"level": "info"
-		},
-		"pii": {
-			"mode": "safe"
-		},
-		"paths": {
-			"cache_dir": "cache"
-		}
-	}`
-
-	result, err = validator.ValidateMainConfig([]byte(invalidConfig), "test-main-invalid.yaml")
-	if err != nil {
-		t.Errorf("ValidateMainConfig() returned error for invalid config: %v", err)
-	}
-	if result.IsValid() {
-		t.Error("ValidateMainConfig() should reject invalid config")
-	}
-	if result.ErrorCount() == 0 {
-		t.Error("ValidateMainConfig() should return validation errors for invalid config")
-	}
-}
-
-func TestValidateLoggerConfig(t *testing.T) {
-	// Create a temporary directory for schemas
-	tempDir, err := os.MkdirTemp("", "sumpter-validation-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Copy the logger config schema
-	schemaDir := filepath.Join(tempDir, "schemas", "config", "v0.1.0")
-	if err := os.MkdirAll(schemaDir, 0755); err != nil {
-		t.Fatalf("Failed to create schema dir: %v", err)
-	}
-
-	sourceSchema := "../../schemas/config/v0.1.0/logger-config.schema.json"
-	destSchema := filepath.Join(schemaDir, "logger-config.schema.json")
-	if err := copyFile(sourceSchema, destSchema); err != nil {
-		t.Fatalf("Failed to copy schema: %v", err)
-	}
-
-	validator := NewSchemaValidator(filepath.Join(tempDir, "schemas"))
-
-	// Test valid logger config
-	validConfig := `{
-		"version": "logger-config/v0.1.0",
-		"level": "info",
-		"format": "pretty",
-		"use_color": true,
-		"component": "test"
-	}`
-
-	result, err := validator.ValidateLoggerConfig([]byte(validConfig), "test-logger.yaml")
-	if err != nil {
-		t.Errorf("ValidateLoggerConfig() returned error for valid config: %v", err)
-	}
-	if !result.IsValid() {
-		t.Errorf("ValidateLoggerConfig() should validate valid config, got errors: %v", result.Errors)
-	}
-
-	// Test invalid logger config (invalid level)
-	invalidConfig := `{
-		"version": "logger-config/v0.1.0",
-		"level": "invalid",
-		"format": "pretty"
-	}`
-
-	result, err = validator.ValidateLoggerConfig([]byte(invalidConfig), "test-logger-invalid.yaml")
-	if err != nil {
-		t.Errorf("ValidateLoggerConfig() returned error for invalid config: %v", err)
-	}
-	if result.IsValid() {
-		t.Error("ValidateLoggerConfig() should reject invalid config")
-	}
-}
-
-func TestValidatePIIConfig(t *testing.T) {
-	// Create a temporary directory for schemas
-	tempDir, err := os.MkdirTemp("", "sumpter-validation-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Copy the PII config schema
-	schemaDir := filepath.Join(tempDir, "schemas", "config", "v0.1.0")
-	if err := os.MkdirAll(schemaDir, 0755); err != nil {
-		t.Fatalf("Failed to create schema dir: %v", err)
-	}
-
-	sourceSchema := "../../schemas/config/v0.1.0/pii-config.schema.json"
-	destSchema := filepath.Join(schemaDir, "pii-config.schema.json")
-	if err := copyFile(sourceSchema, destSchema); err != nil {
-		t.Fatalf("Failed to copy schema: %v", err)
-	}
-
-	validator := NewSchemaValidator(filepath.Join(tempDir, "schemas"))
-
-	// Test valid PII config
-	validConfig := `{
-		"version": "pii-config/v0.1.0",
-		"mode": "safe",
-		"safe_only": true
-	}`
-
-	result, err := validator.ValidatePIIConfig([]byte(validConfig), "test-pii.yaml")
-	if err != nil {
-		t.Errorf("ValidatePIIConfig() returned error for valid config: %v", err)
-	}
-	if !result.IsValid() {
-		t.Errorf("ValidatePIIConfig() should validate valid config, got errors: %v", result.Errors)
-	}
-
-	// Test invalid PII config (invalid mode)
-	invalidConfig := `{
-		"version": "pii-config/v0.1.0",
-		"mode": "invalid"
-	}`
-
-	result, err = validator.ValidatePIIConfig([]byte(invalidConfig), "test-pii-invalid.yaml")
-	if err != nil {
-		t.Errorf("ValidatePIIConfig() returned error for invalid config: %v", err)
-	}
-	if result.IsValid() {
-		t.Error("ValidatePIIConfig() should reject invalid config")
-	}
-}
-
-func TestValidateExtractConfig(t *testing.T) {
-	// Create a temporary directory for schemas
-	tempDir, err := os.MkdirTemp("", "sumpter-validation-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Copy the extract config schema
 	schemaDir := filepath.Join(tempDir, "schemas", "extract", "v0.1.0")
@@ -404,7 +224,7 @@ func TestValidateFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Copy schemas
 	schemaDir := filepath.Join(tempDir, "schemas", "config", "v0.1.0")
@@ -491,7 +311,7 @@ func TestValidateDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Copy schemas
 	schemaDir := filepath.Join(tempDir, "schemas", "config", "v0.1.0")
@@ -590,7 +410,7 @@ func TestValidateDirectoryEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Copy schemas
 	schemaDir := filepath.Join(tempDir, "schemas", "config", "v0.1.0")

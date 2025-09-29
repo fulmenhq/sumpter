@@ -53,9 +53,9 @@ func TestGetEnvironment(t *testing.T) {
 	defer func() {
 		for env, value := range originalEnv {
 			if value == "" {
-				os.Unsetenv(env)
+				_ = os.Unsetenv(env)
 			} else {
-				os.Setenv(env, value)
+				_ = os.Setenv(env, value)
 			}
 		}
 	}()
@@ -102,12 +102,12 @@ func TestGetEnvironment(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clear all env vars first
 			for _, env := range envVars {
-				os.Unsetenv(env)
+				_ = os.Unsetenv(env)
 			}
 
 			// Set test env vars
 			for env, value := range tt.envVars {
-				os.Setenv(env, value)
+				_ = os.Setenv(env, value)
 			}
 
 			result := getEnvironment()

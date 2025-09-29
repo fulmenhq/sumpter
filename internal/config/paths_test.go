@@ -147,16 +147,16 @@ func TestResolveHomeDir(t *testing.T) {
 			// Setup environment
 			if tt.envValue != "" {
 				oldValue := os.Getenv("SUMPTER_HOME")
-				os.Setenv("SUMPTER_HOME", tt.envValue)
+				_ = os.Setenv("SUMPTER_HOME", tt.envValue)
 				defer func() {
 					if oldValue == "" {
-						os.Unsetenv("SUMPTER_HOME")
+						_ = os.Unsetenv("SUMPTER_HOME")
 					} else {
-						os.Setenv("SUMPTER_HOME", oldValue)
+						_ = os.Setenv("SUMPTER_HOME", oldValue)
 					}
 				}()
 			} else {
-				os.Unsetenv("SUMPTER_HOME")
+				_ = os.Unsetenv("SUMPTER_HOME")
 			}
 
 			// Run the test
@@ -224,16 +224,16 @@ func TestResolveWorkDir(t *testing.T) {
 			// Setup environment
 			if tt.envValue != "" {
 				oldValue := os.Getenv("SUMPTER_WORKDIR")
-				os.Setenv("SUMPTER_WORKDIR", tt.envValue)
+				_ = os.Setenv("SUMPTER_WORKDIR", tt.envValue)
 				defer func() {
 					if oldValue == "" {
-						os.Unsetenv("SUMPTER_WORKDIR")
+						_ = os.Unsetenv("SUMPTER_WORKDIR")
 					} else {
-						os.Setenv("SUMPTER_WORKDIR", oldValue)
+						_ = os.Setenv("SUMPTER_WORKDIR", oldValue)
 					}
 				}()
 			} else {
-				os.Unsetenv("SUMPTER_WORKDIR")
+				_ = os.Unsetenv("SUMPTER_WORKDIR")
 			}
 
 			// Run the test
@@ -394,8 +394,8 @@ func TestEnsurePaths(t *testing.T) {
 	}
 
 	// Remove directories to test creation
-	os.RemoveAll(paths.Home)
-	os.RemoveAll(paths.WorkDir)
+	_ = os.RemoveAll(paths.Home)
+	_ = os.RemoveAll(paths.WorkDir)
 
 	err := paths.EnsurePaths()
 	if err != nil {

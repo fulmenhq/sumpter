@@ -16,7 +16,7 @@ func TestRegistryDeserializer_DeserializeRegistryFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create schema directory structure
 	schemaDir := filepath.Join(tempDir, "schemas")
@@ -166,7 +166,7 @@ func TestRegistryDeserializer_ValidateRegistryFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create schema directory structure
 	schemaDir := filepath.Join(tempDir, "schemas")

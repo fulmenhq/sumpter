@@ -20,7 +20,7 @@ func TestEnvInfoSubcommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Set up test environment variables
 	testEnvVars := map[string]string{
@@ -33,8 +33,8 @@ func TestEnvInfoSubcommands(t *testing.T) {
 	}
 
 	for key, value := range testEnvVars {
-		os.Setenv(key, value)
-		defer os.Unsetenv(key)
+		_ = os.Setenv(key, value)
+		defer func(k string) { _ = os.Unsetenv(k) }(key)
 	}
 
 	tests := []struct {
@@ -395,8 +395,8 @@ func TestCollectEnvironmentVariables(t *testing.T) {
 
 	// Set environment variables
 	for key, value := range testEnvVars {
-		os.Setenv(key, value)
-		defer os.Unsetenv(key)
+		_ = os.Setenv(key, value)
+		defer func(k string) { _ = os.Unsetenv(k) }(key)
 	}
 
 	tests := []struct {
@@ -515,11 +515,11 @@ func TestResourceCleanupPatterns(t *testing.T) {
 	t.Run("environment variable cleanup", func(t *testing.T) {
 		// Save original value
 		originalValue := os.Getenv("TEST_CLEANUP_VAR")
-		defer os.Setenv("TEST_CLEANUP_VAR", originalValue) // Restore original
+		defer func() { _ = os.Setenv("TEST_CLEANUP_VAR", originalValue) }() // Restore original
 
 		// Set test value
 		testValue := "test-value-123"
-		os.Setenv("TEST_CLEANUP_VAR", testValue)
+		_ = os.Setenv("TEST_CLEANUP_VAR", testValue)
 
 		// Verify value is set
 		if actual := os.Getenv("TEST_CLEANUP_VAR"); actual != testValue {
@@ -571,18 +571,18 @@ func TestResourceCleanupPatterns(t *testing.T) {
 		origEnv2 := os.Getenv("TEST_MULTI_2")
 
 		// Set test environment variables
-		os.Setenv("TEST_MULTI_1", "value1")
-		os.Setenv("TEST_MULTI_2", "value2")
+		_ = os.Setenv("TEST_MULTI_1", "value1")
+		_ = os.Setenv("TEST_MULTI_2", "value2")
 
 		// Cleanup function that handles all resources
 		cleanup := func() {
 			// Cleanup directories
-			os.RemoveAll(tempDir1)
-			os.RemoveAll(tempDir2)
+			_ = os.RemoveAll(tempDir1)
+			_ = os.RemoveAll(tempDir2)
 
 			// Restore environment variables
-			os.Setenv("TEST_MULTI_1", origEnv1)
-			os.Setenv("TEST_MULTI_2", origEnv2)
+			_ = os.Setenv("TEST_MULTI_1", origEnv1)
+			_ = os.Setenv("TEST_MULTI_2", origEnv2)
 		}
 		defer cleanup()
 
@@ -729,16 +729,16 @@ func TestErrorHandling(t *testing.T) {
 			for _, env := range originalEnviron {
 				pair := strings.SplitN(env, "=", 2)
 				if len(pair) == 2 {
-					os.Setenv(pair[0], pair[1])
+					_ = os.Setenv(pair[0], pair[1])
 				}
 			}
 		}()
 
 		// Clear environment and set some test values
 		os.Clearenv()
-		os.Setenv("VALID_VAR", "valid_value")
-		os.Setenv("EMPTY_VAR", "")
-		os.Setenv("VAR_WITH_EQUALS", "value=with=equals")
+		_ = os.Setenv("VALID_VAR", "valid_value")
+		_ = os.Setenv("EMPTY_VAR", "")
+		_ = os.Setenv("VAR_WITH_EQUALS", "value=with=equals")
 
 		// Test that collectEnvironmentVariables handles these gracefully
 		vars := collectEnvironmentVariables(true, "")
@@ -773,7 +773,7 @@ func TestEdgeCases(t *testing.T) {
 			for _, env := range originalEnviron {
 				pair := strings.SplitN(env, "=", 2)
 				if len(pair) == 2 {
-					os.Setenv(pair[0], pair[1])
+					_ = os.Setenv(pair[0], pair[1])
 				}
 			}
 		}()
@@ -796,8 +796,8 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("very long environment variable values", func(t *testing.T) {
 		// Test handling of very long environment variable values
 		longValue := strings.Repeat("x", 10000) // 10KB string
-		os.Setenv("TEST_LONG_VAR", longValue)
-		defer os.Unsetenv("TEST_LONG_VAR")
+		_ = os.Setenv("TEST_LONG_VAR", longValue)
+		defer func() { _ = os.Unsetenv("TEST_LONG_VAR") }()
 
 		vars := collectEnvironmentVariables(true, "TEST_LONG")
 		if vars["TEST_LONG_VAR"] != longValue {
@@ -807,8 +807,8 @@ func TestEdgeCases(t *testing.T) {
 
 	t.Run("special characters in environment variables", func(t *testing.T) {
 		specialValue := "value with spaces & special chars: !@#$%^&*()"
-		os.Setenv("TEST_SPECIAL_VAR", specialValue)
-		defer os.Unsetenv("TEST_SPECIAL_VAR")
+		_ = os.Setenv("TEST_SPECIAL_VAR", specialValue)
+		defer func() { _ = os.Unsetenv("TEST_SPECIAL_VAR") }()
 
 		vars := collectEnvironmentVariables(true, "TEST_SPECIAL")
 		if vars["TEST_SPECIAL_VAR"] != specialValue {
@@ -818,8 +818,8 @@ func TestEdgeCases(t *testing.T) {
 
 	t.Run("unicode in environment variables", func(t *testing.T) {
 		unicodeValue := "测试 🚀 Unicode 值"
-		os.Setenv("TEST_UNICODE_VAR", unicodeValue)
-		defer os.Unsetenv("TEST_UNICODE_VAR")
+		_ = os.Setenv("TEST_UNICODE_VAR", unicodeValue)
+		defer func() { _ = os.Unsetenv("TEST_UNICODE_VAR") }()
 
 		vars := collectEnvironmentVariables(true, "TEST_UNICODE")
 		if vars["TEST_UNICODE_VAR"] != unicodeValue {

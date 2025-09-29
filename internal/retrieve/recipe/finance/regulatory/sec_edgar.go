@@ -127,7 +127,7 @@ func (c *SecEdgarClient) getCIK(ticker string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -166,7 +166,7 @@ func (c *SecEdgarClient) findRecentFiling(cik, filingType, year string) (*Filing
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch submissions: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
@@ -350,7 +350,7 @@ func (c *SecEdgarClient) downloadFile(url, filepath string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)

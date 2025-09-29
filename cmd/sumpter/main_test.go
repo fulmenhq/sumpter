@@ -30,7 +30,7 @@ func TestMainExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v\nOutput: %s", err, output)
 	}
-	defer os.Remove("sumpter-test")
+	defer func() { _ = os.Remove("sumpter-test") }()
 
 	// Test successful execution (help command)
 	cmd := exec.Command("./sumpter-test", "--help")
@@ -51,7 +51,7 @@ func TestMainExitCodes(t *testing.T) {
 	if err := buildCmd.Run(); err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	defer os.Remove("sumpter-test")
+	defer func() { _ = os.Remove("sumpter-test") }()
 
 	// Test with invalid command (should exit with code 1)
 	cmd := exec.Command("./sumpter-test", "invalid-command")
@@ -76,7 +76,7 @@ func TestMainVersionCommand(t *testing.T) {
 	if err := buildCmd.Run(); err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	defer os.Remove("sumpter-test")
+	defer func() { _ = os.Remove("sumpter-test") }()
 
 	// Test version command (should succeed)
 	cmd := exec.Command("./sumpter-test", "version")

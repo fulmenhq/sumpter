@@ -34,9 +34,9 @@ func TestGetVersion(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to write VERSION file: %v", err)
 				}
-				defer os.Remove("VERSION") // cleanup
+				defer func() { _ = os.Remove("VERSION") }() // cleanup
 			} else {
-				os.Remove("VERSION") // ensure it doesn't exist
+				_ = os.Remove("VERSION") // ensure it doesn't exist
 			}
 
 			result := getVersion()
@@ -98,8 +98,8 @@ func TestTestableInitializeEnvironment(t *testing.T) {
 
 	// Set HOME environment variable for path resolution
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", "/tmp/test-home")
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", "/tmp/test-home")
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create a mock command with the expected flags
 	cmd := &cobra.Command{}
@@ -141,8 +141,8 @@ func TestTestableInitializeEnvironmentWithFlags(t *testing.T) {
 
 	// Set HOME environment variable for path resolution
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", "/tmp/test-home")
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", "/tmp/test-home")
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("home", "", "")    // Use default
@@ -177,8 +177,8 @@ func TestTestableInitializeEnvironmentPathResolutionError(t *testing.T) {
 
 	// Remove HOME environment variable to trigger path resolution error
 	originalHome := os.Getenv("HOME")
-	os.Unsetenv("HOME")
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Unsetenv("HOME")
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("home", "", "")
