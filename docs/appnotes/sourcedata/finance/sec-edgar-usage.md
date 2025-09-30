@@ -50,27 +50,27 @@ While SEC EDGAR data is publicly accessible without authentication, some commerc
 
 3. **Create Retrieve Configuration**: Use the interactive setup wizard to create a properly configured retrieve file:
 
-    ```bash
-    sumpter doctor config setup retrieve-sec-edgar
-    ```
+   ```bash
+   sumpter doctor config setup retrieve-sec-edgar
+   ```
 
-    This will guide you through:
-    - Setting up your company name and contact email for SEC compliance
-    - Configuring rate limits appropriate for SEC EDGAR access
-    - Validating the configuration against the schema
+   This will guide you through:
+   - Setting up your company name and contact email for SEC compliance
+   - Configuring rate limits appropriate for SEC EDGAR access
+   - Validating the configuration against the schema
 
-    **Alternative**: If you prefer manual setup, copy the example configuration from `examples/config/retrieve/retrieve-config.yaml` to `SUMPTER_HOME/configs/retrieve.yaml` (where SUMPTER_HOME is typically `~/Library/Application Support/Sumpter` on macOS, `~/.local/share/sumpter` on Linux, or `%AppData%\Sumpter` on Windows):
+   **Alternative**: If you prefer manual setup, copy the example configuration from `examples/config/retrieve/retrieve-config.yaml` to `SUMPTER_HOME/configs/retrieve.yaml` (where SUMPTER_HOME is typically `~/Library/Application Support/Sumpter` on macOS, `~/.local/share/sumpter` on Linux, or `%AppData%\Sumpter` on Windows):
 
-    ```yaml
-    version: "retrieve/v0.1.0"
-    realms:
-      finance:
-        enabled: true
-        client:
-          user_agent: "Your Company Name contact@yourcompany.com"
-        rate_limits:
-          requests_per_second: 8
-    ```
+   ```yaml
+   version: "retrieve/v0.1.0"
+   realms:
+     finance:
+       enabled: true
+       client:
+         user_agent: "Your Company Name contact@yourcompany.com"
+       rate_limits:
+         requests_per_second: 8
+   ```
 
    **Important**: The `user_agent` field is required and must follow SEC guidelines: "Company Name contact@email.com". Do not use generic or placeholder values. The doctor command ensures compliance with these requirements.
 
@@ -115,6 +115,7 @@ sumpter retrieve recipe finance sec-edgar \
 ```
 
 This creates the directory structure:
+
 ```
 ./data/filings/
 └── aapl/
@@ -184,6 +185,7 @@ Due to SEC automation restrictions, automated downloads may fail. In such cases,
 **Error**: HTTP 403 Forbidden or bot detection
 
 **Solution**:
+
 - Verify your `user_agent` in the retrieve config follows the format: "Company Name contact@email.com"
 - Use your actual company name and valid contact email
 - Do not use generic values like "Sample Company" or placeholder emails
@@ -194,6 +196,7 @@ Due to SEC automation restrictions, automated downloads may fail. In such cases,
 **Error**: "retrieve config file not found"
 
 **Solution**:
+
 - Copy the example from `examples/config/retrieve/retrieve-config.yaml`
 - Place it at `SUMPTER_HOME/configs/retrieve.yaml`
 - Use `sumpter envinfo paths` to find your SUMPTER_HOME location

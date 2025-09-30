@@ -34,6 +34,7 @@ Displays all environment information in a comprehensive format.
 ## Flags
 
 ### Main Command Flags
+
 - `--all`, `-a`: Show all environment variables (default: show key variables only)
 - `--export`, `-e`: Output environment variables in shell export format
 - `--filter`: Filter variables by key (case-insensitive substring match)
@@ -52,6 +53,7 @@ sumpter envinfo
 ```
 
 Output:
+
 ```
 🖥️  System Information
 ==================================================
@@ -121,6 +123,7 @@ sumpter envinfo --export --filter SUMPTER
 ```
 
 Output:
+
 ```bash
 export SUMPTER_HOME="/home/user/.local/share/sumpter"
 export SUMPTER_LOG_LEVEL="info"
@@ -151,6 +154,7 @@ sumpter envinfo xml
 ```
 
 Output:
+
 ```
 📄 XML Processing Capabilities
 ==================================================
@@ -163,6 +167,7 @@ Outputs         | NDJSON, Parquet, DuckDB, Markdown
 ## Information Sections
 
 ### System Information
+
 - **OS**: Operating system (linux, darwin, windows)
 - **Architecture**: CPU architecture (amd64, arm64)
 - **Go Version**: Go runtime version used by Sumpter
@@ -173,12 +178,14 @@ Outputs         | NDJSON, Parquet, DuckDB, Markdown
 - **External IP**: Public IP address (when --external-ip is used)
 
 ### XML Processing Capabilities
+
 - **Streaming**: Whether streaming XML processing is supported
 - **Memory Target**: Maximum memory usage target
 - **Encodings**: Supported character encodings
 - **Outputs**: Available output formats
 
 ### Application Environment
+
 - **Home**: Sumpter's home directory (XDG_DATA_HOME/sumpter)
 - **WorkDir**: Current working directory
 - **Cache**: Cache directory (XDG_CACHE_HOME/sumpter)
@@ -187,24 +194,30 @@ Outputs         | NDJSON, Parquet, DuckDB, Markdown
 - **Temp**: Temporary directory (/tmp/sumpter)
 
 ### Environment Variables
+
 Shows environment variables with automatic security filtering:
+
 - **Key Variables**: Important variables (HOME, USER, PATH, etc.)
-- **SUMPTER_ Variables**: Sumpter-specific configuration
+- **SUMPTER\_ Variables**: Sumpter-specific configuration
 - **Filtered Results**: When using --filter flag
-- **Security**: Sensitive values are redacted (***redacted***)
+- **Security**: Sensitive values are redacted (**_redacted_**)
 
 ### Network Information (Optional)
+
 - **Interfaces**: Network interface details
 - **External IP**: Public IP address detection
 
 ## Security Features
 
 ### Automatic Redaction
+
 Environment variables containing sensitive patterns are automatically redacted:
+
 - `secret`, `token`, `apikey`, `password`, `key`, `cert`
 - `database_url`, `xml_catalog`, `credential`
 
 ### Safe Display
+
 - Values longer than 50 characters are truncated
 - Sensitive information is never displayed in full
 

@@ -26,6 +26,7 @@ sumpter version
 ```
 
 Output:
+
 ```
 Sumpter v0.1.0
 Go Version: go1.21.0
@@ -39,6 +40,7 @@ sumpter version --extended
 ```
 
 Output:
+
 ```
 Sumpter v0.1.0
 Git commit: a1b2c3d (dirty-+1 ~2 ?3)
@@ -56,6 +58,7 @@ sumpter version --json
 ```
 
 Output:
+
 ```json
 {
   "version": "0.1.0",
@@ -81,11 +84,13 @@ Output:
 ## Information Displayed
 
 ### Basic Information
+
 - **Version**: Current Sumpter version from VERSION file
 - **Go Version**: Go runtime version used to build Sumpter
 - **OS/Arch**: Operating system and architecture
 
 ### Extended Information (with --extended)
+
 - **Git Commit**: Current Git commit hash (short form)
 - **Git Branch**: Current branch name with ahead/behind status
 - **Build Time**: When the binary was built (UTC)
@@ -94,7 +99,9 @@ Output:
 - **Environment**: Detected environment (development/production)
 
 ### Git Status Indicators
+
 When Git information is available, the extended output shows:
+
 - **Clean/Dirty**: Whether working directory has uncommitted changes
 - **Staged**: Number of staged changes (+N)
 - **Unstaged**: Number of unstaged changes (~N)

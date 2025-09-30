@@ -30,5 +30,3 @@ require a single source of truth for programmatic IO.
 - SOP: `docs/sop/schema-first-sop.md`
 - Schemas: `schemas/README.md`
 - Output rendering: `docs/output_rendering.md`
-
-

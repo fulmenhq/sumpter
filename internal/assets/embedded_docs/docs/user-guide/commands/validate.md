@@ -31,6 +31,7 @@ sumpter validate
 ```
 
 Output:
+
 ```
 Configuration Validation Results
 ==============================
@@ -68,6 +69,7 @@ sumpter validate --json
 ```
 
 Output:
+
 ```json
 {
   "files": {
@@ -92,9 +94,11 @@ Output:
 ## Configuration Files
 
 ### Main Configuration (sumpter.yaml)
+
 Located at: `$XDG_CONFIG_HOME/sumpter/sumpter.yaml`
 
 Validates:
+
 - Version compatibility
 - Logging configuration structure
 - PII configuration structure
@@ -103,9 +107,11 @@ Validates:
 - Telemetry configuration
 
 ### Logger Configuration (logger.yaml)
+
 Located at: `$XDG_CONFIG_HOME/sumpter/logger.yaml`
 
 Validates:
+
 - Logger version
 - Log level settings
 - Output format configuration
@@ -113,9 +119,11 @@ Validates:
 - Rotation configuration
 
 ### PII Configuration (pii.yaml)
+
 Located at: `$XDG_CONFIG_HOME/sumpter/pii.yaml`
 
 Validates:
+
 - PII version
 - Mode settings (safe/unsafe)
 - Safe-only configuration
@@ -124,11 +132,13 @@ Validates:
 ## Validation Process
 
 ### Schema Loading
+
 1. **YAML-first Approach**: Attempts to load YAML schema first
 2. **JSON Fallback**: Falls back to JSON schema for backward compatibility
 3. **Embedded Schemas**: Uses embedded schemas from `internal/assets`
 
 ### Validation Steps
+
 1. **File Discovery**: Locates configuration files in standard locations
 2. **Schema Resolution**: Matches configuration type to appropriate schema
 3. **Structure Validation**: Validates against JSON schema constraints
@@ -136,6 +146,7 @@ Validates:
 5. **Required Fields**: Verifies presence of mandatory configuration fields
 
 ### Error Reporting
+
 - **Detailed Errors**: Specific field and constraint violations
 - **Line Numbers**: Location information for YAML/JSON parsing errors
 - **Path Context**: JSONPath-style error locations
@@ -181,21 +192,25 @@ Status: ❌ Invalid (1 errors)
 ## Use Cases
 
 ### Configuration Setup
+
 - **Initial Setup**: Validate configuration after initial setup
 - **Migration**: Check configuration compatibility after updates
 - **Template Validation**: Verify configuration templates
 
 ### CI/CD Integration
+
 - **Automated Validation**: Include in CI pipelines
 - **Deployment Checks**: Validate before deployment
 - **Configuration Drift**: Detect configuration changes
 
 ### Troubleshooting
+
 - **Configuration Issues**: Diagnose configuration-related problems
 - **Schema Updates**: Verify compatibility with new schema versions
 - **Debugging**: Identify configuration syntax errors
 
 ### Development
+
 - **Schema Testing**: Test schema changes against sample configurations
 - **Documentation**: Ensure configuration examples are valid
 - **Code Changes**: Validate impact of configuration structure changes
@@ -203,11 +218,13 @@ Status: ❌ Invalid (1 errors)
 ## Schema Locations
 
 ### Embedded Schemas
+
 - `schemas/config/v0.1.0/sumpter-config.schema.json`
 - `schemas/config/v0.1.0/logger-config.schema.json`
 - `schemas/config/v0.1.0/pii-config.schema.json`
 
 ### Schema Versions
+
 - **v0.1.0**: Current schema version for all configuration types
 - **Backward Compatibility**: Supports older configuration formats
 - **Version Validation**: Ensures configuration version matches schema
@@ -215,6 +232,7 @@ Status: ❌ Invalid (1 errors)
 ## Integration with Configuration System
 
 ### Automatic Discovery
+
 The validate command integrates with Sumpter's configuration system:
 
 ```bash
@@ -223,13 +241,15 @@ sumpter validate  # Validates default locations
 ```
 
 ### Configuration Loader
+
 - **Shared Logic**: Uses same configuration loader as main application
 - **Path Resolution**: Follows XDG Base Directory specification
-- **Environment Variables**: Respects SUMPTER_* environment variables
+- **Environment Variables**: Respects SUMPTER\_\* environment variables
 
 ## Best Practices
 
 ### Regular Validation
+
 ```bash
 # Add to development workflow
 make validate-config
@@ -237,6 +257,7 @@ sumpter validate
 ```
 
 ### CI/CD Integration
+
 ```yaml
 # .github/workflows/validate.yml
 - name: Validate Configuration
@@ -245,6 +266,7 @@ sumpter validate
 ```
 
 ### Error Handling
+
 ```bash
 # Check validation status in scripts
 if ! sumpter validate >/dev/null 2>&1; then

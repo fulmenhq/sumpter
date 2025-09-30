@@ -1,7 +1,6 @@
 # SEC EDGAR XBRL Role Extraction Configuration
 # Extracts financial statement role definitions from XBRL schema files
 # This demonstrates extracting structured metadata from SEC filings
-
 record_type: "financial_statement_role"
 match_selectors:
   - xpath: "//link:roleType"

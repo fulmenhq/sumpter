@@ -1,6 +1,7 @@
 package extract
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/goneat/pkg/schema"
 )
 
 func TestProcessFilePolymorphicArray(t *testing.T) {
@@ -206,21 +208,34 @@ func TestExtractRecordsOutputSchemaValidation(t *testing.T) {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
 
+	schemaMap := map[string]interface{}{
+		"type":     "object",
+		"required": []interface{}{"identifier", "value"},
+		"properties": map[string]interface{}{
+			"identifier": map[string]interface{}{"type": "string"},
+			"value":      map[string]interface{}{"type": "number"},
+		},
+	}
+
 	cfg := &ExtractRecordMatch{
 		RecordType:     "test",
 		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
 		FieldMappings: []FieldMapping{
 			{OutputField: "identifier", XPath: "Identifier", Type: "string"},
 		},
-		OutputSchema: map[string]interface{}{
-			"type":     "object",
-			"required": []interface{}{"identifier", "value"},
-			"properties": map[string]interface{}{
-				"identifier": map[string]interface{}{"type": "string"},
-				"value":      map[string]interface{}{"type": "number"},
-			},
-		},
+		OutputSchema: schemaMap,
 	}
+
+	// Set up the validator like LoadExtractConfig does
+	schemaBytes, err := json.Marshal(schemaMap)
+	if err != nil {
+		t.Fatalf("failed to marshal schema: %v", err)
+	}
+	validator, err := schema.NewValidatorFromBytes(schemaBytes)
+	if err != nil {
+		t.Fatalf("failed to create validator: %v", err)
+	}
+	cfg.OutputValidator = validator
 
 	_, err = extractRecords(doc, cfg, nil)
 	if err == nil || !strings.Contains(err.Error(), "output schema validation failed") {

@@ -25,6 +25,7 @@ sumpter doctor setup [flags]
 **Description**: Interactive setup wizard for configuring SUMPTER_HOME and related environment variables.
 
 **Flags**:
+
 - `--home`: Custom SUMPTER_HOME directory (detect automatically if not specified)
 - `--generate-script`: Generate setup script instead of interactive setup
 - `--shell`: Shell type for script generation (bash, zsh, fish, powershell)
@@ -33,11 +34,13 @@ sumpter doctor setup [flags]
 **Examples**:
 
 Generate setup script for bash:
+
 ```bash
 sumpter doctor setup --generate-script --shell bash
 ```
 
 Interactive setup with custom home:
+
 ```bash
 sumpter doctor setup --home /custom/sumpter/path
 ```
@@ -53,6 +56,7 @@ sumpter doctor check
 **Description**: Run diagnostic checks on your Sumpter installation and environment.
 
 **Checks Performed**:
+
 - Environment variables (SUMPTER_HOME, SUMPTER_WORKDIR)
 - Directory paths and permissions
 - Configuration file validity
@@ -89,19 +93,23 @@ sumpter doctor config setup <target> [flags]
 **Description**: Guided setup wizard for specific configuration files.
 
 **Supported Targets**:
+
 - `retrieve-sec-edgar`: SEC EDGAR data retrieval configuration
 
 **Flags**:
+
 - `--output`: Custom output path for the config file
 
 **Examples**:
 
 Set up SEC EDGAR retrieve configuration:
+
 ```bash
 sumpter doctor config setup retrieve-sec-edgar
 ```
 
 Set up with custom output path:
+
 ```bash
 sumpter doctor config setup retrieve-sec-edgar --output /custom/path/retrieve.yaml
 ```
@@ -139,6 +147,7 @@ sumpter doctor check
 ```
 
 Output shows:
+
 - Environment variables status
 - Directory paths and accessibility
 - Configuration file validation
@@ -194,15 +203,18 @@ realms:
 ## Validation Rules
 
 ### Company Name Validation
+
 - Cannot be empty
 - Must be at least 2 characters
 - Blocks common placeholders: "test company", "my company", "company name", "your company", "example company"
 
 ### Email Validation
+
 - Must contain "@" and "." characters
 - Blocks placeholder domains: "yourcompany.com", "example.com", "testcompany.com", "company.com", "placeholder.com", "test.com"
 
 ### SEC Compliance
+
 - User agent format: "Company Name contact@email.com"
 - Warns users about SEC blocking invalid user agents
 - Guides users toward providing real company information

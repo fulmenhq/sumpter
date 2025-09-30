@@ -133,4 +133,5 @@ Apache 2.0 (to be finalized).
 Sumpter uses an enterprise-friendly home/workdir layout with user overrides. See the environment standard for full precedence rules and locations:
 
 See `docs/standards/application-environment.md`.
+
 # Test commit to verify goneat hooks
