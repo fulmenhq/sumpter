@@ -37,17 +37,17 @@ Enabled core linters required for basic code quality while disabling more string
 linters:
   enable:
     # Core linters (enabled by default in v2)
-    - errcheck      # 96 issues - unchecked errors
-    - govet         # Built-in Go vet checks
-    - ineffassign   # Unused assignments
-    - staticcheck   # 3 issues - static analysis
-    - unused        # Unused code detection
+    - errcheck # 96 issues - unchecked errors
+    - govet # Built-in Go vet checks
+    - ineffassign # Unused assignments
+    - staticcheck # 3 issues - static analysis
+    - unused # Unused code detection
 
     # Additional security linter
-    - gosec         # 39 issues - security vulnerabilities
+    - gosec # 39 issues - security vulnerabilities
 
   disable:
-    - depguard    # Dependency restrictions - not needed for alpha phase
+    - depguard # Dependency restrictions - not needed for alpha phase
 ```
 
 ### 3. Temporarily Disabled Strict Linters
@@ -69,24 +69,24 @@ Modified `check-all` target to depend on `build` for proper asset embedding befo
 
 ### Enabled Linters (6 total)
 
-| Linter | Issues | Purpose | Status |
-|--------|--------|---------|--------|
-| `errcheck` | 96 | Unchecked error returns | ✅ Enabled |
-| `govet` | 13 | Go static analysis | ✅ Enabled |
-| `ineffassign` | 0 | Unused assignments | ✅ Enabled |
-| `staticcheck` | 3 | Advanced static analysis | ✅ Enabled |
-| `unused` | 0 | Unused code detection | ✅ Enabled |
-| `gosec` | 39 | Security vulnerability scanning | ✅ Enabled |
+| Linter        | Issues | Purpose                         | Status     |
+| ------------- | ------ | ------------------------------- | ---------- |
+| `errcheck`    | 96     | Unchecked error returns         | ✅ Enabled |
+| `govet`       | 13     | Go static analysis              | ✅ Enabled |
+| `ineffassign` | 0      | Unused assignments              | ✅ Enabled |
+| `staticcheck` | 3      | Advanced static analysis        | ✅ Enabled |
+| `unused`      | 0      | Unused code detection           | ✅ Enabled |
+| `gosec`       | 39     | Security vulnerability scanning | ✅ Enabled |
 
 **Total Issues**: 138 across all enabled linters
 
 ### Reserved Linters (3 disabled)
 
-| Linter | Purpose | Planned Phase |
-|--------|---------|---------------|
-| `revive` | Style and best practices | Beta |
-| `gocyclo` | Cyclomatic complexity | Beta |
-| `unparam` | Unused function parameters | Production |
+| Linter    | Purpose                    | Planned Phase |
+| --------- | -------------------------- | ------------- |
+| `revive`  | Style and best practices   | Beta          |
+| `gocyclo` | Cyclomatic complexity      | Beta          |
+| `unparam` | Unused function parameters | Production    |
 
 ## Post-Operation Verification
 

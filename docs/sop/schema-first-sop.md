@@ -56,5 +56,3 @@ Purpose: Establish a single, unambiguous principle for all programmatic inputs a
 - Schemas overview: `schemas/README.md`
 - Output rendering guidance: `docs/output_rendering.md`
 - Validation library appnote (goneat): `../goneat/docs/appnotes/library-schema-validation.md` (external repo)
-
-

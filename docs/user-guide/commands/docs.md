@@ -39,6 +39,7 @@ sumpter docs list
 ```
 
 Output:
+
 ```
 Sumpter Embedded Documentation
 ==============================
@@ -93,26 +94,31 @@ sumpter docs show sop/repository-operations-sop
 ## Documentation Categories
 
 ### Root Level
+
 - **sumpter_overview.md**: High-level overview of Sumpter's capabilities
 - **output_rendering.md**: Information about output formats and rendering
 
 ### Architecture (architecture/)
+
 - **adr/**: Architecture Decision Records explaining design choices
   - `0001-schema-first-outputs.md`: Schema-driven output design
   - `0002-logging-stderr-json-pretty.md`: Logging architecture decisions
 
 ### Standards (standards/)
+
 - **agentic-attribution.md**: AI agent attribution standards
 - **application-environment.md**: XDG-compliant directory structure
 - **lifecycle-maturity.md**: Development lifecycle framework
 
 ### SOPs (sop/)
+
 - **lifecycle-phase-acceptance-criteria.md**: Phase transition requirements
 - **logging-sop.md**: Logging standard operating procedures
 - **repository-operations-sop.md**: Git workflow and commit standards
 - **schema-first-sop.md**: Schema development procedures
 
 ### User Guide (user-guide/)
+
 - **commands/**: Individual command documentation
   - `envinfo.md`: Environment information command
   - `inspect.md`: XML inspection command
@@ -126,19 +132,23 @@ sumpter docs show sop/repository-operations-sop
 The `show` command supports flexible path resolution:
 
 ### Direct Paths
+
 ```bash
 sumpter docs show user-guide/commands/inspect.md
 sumpter docs show standards/application-environment.md
 ```
 
 ### Short Paths (without .md extension)
+
 ```bash
 sumpter docs show user-guide/commands/inspect
 sumpter docs show standards/application-environment
 ```
 
 ### Automatic docs/ Prefix Addition
+
 If a path doesn't exist directly, the command automatically tries with a `docs/` prefix:
+
 ```bash
 sumpter docs show user-guide/commands/inspect
 # Tries: user-guide/commands/inspect
@@ -148,22 +158,26 @@ sumpter docs show user-guide/commands/inspect
 ## Use Cases
 
 ### Quick Reference
+
 - **Command Help**: Get detailed usage information for any command
 - **Configuration**: Understand configuration options and file locations
 - **Standards**: Review development and operational standards
 - **Architecture**: Learn about design decisions and rationale
 
 ### Offline Documentation
+
 - **No Internet Required**: All documentation is embedded in the binary
 - **Consistent**: Documentation version matches binary version
 - **Portable**: Works on any system where Sumpter runs
 
 ### Development Support
+
 - **SOP Compliance**: Follow standard operating procedures
 - **Best Practices**: Learn recommended workflows and patterns
 - **Troubleshooting**: Access diagnostic and debugging information
 
 ### Learning and Training
+
 - **New User Onboarding**: Comprehensive introduction to Sumpter
 - **Feature Discovery**: Learn about capabilities and use cases
 - **Advanced Usage**: Deep dive into complex features
@@ -171,6 +185,7 @@ sumpter docs show user-guide/commands/inspect
 ## Error Handling
 
 ### File Not Found
+
 ```bash
 Documentation for 'nonexistent' not found in embedded docs.
 
@@ -184,6 +199,7 @@ Use 'sumpter docs list' to see all available files.
 ```
 
 ### Invalid Path
+
 ```bash
 Error accessing embedded docs: file does not exist
 ```

@@ -31,5 +31,3 @@ Status: Active
 ## References
 
 - ADR: `docs/architecture/adr/0002-logging-stderr-json-pretty.md`
-
-

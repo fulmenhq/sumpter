@@ -8,7 +8,6 @@
 #
 # SEC EDGAR requires proper user-agent identification for compliance.
 # Do not use generic or placeholder values.
-
 version: "retrieve/v0.1.0"
 realms:
   finance:
@@ -27,4 +26,5 @@ realms:
       sec_edgar_base: "https://data.sec.gov"
     # Optional: Realm-specific options
     options:
-      # Future: enable caching, custom headers, etc.
+
+# Future: enable caching, custom headers, etc.

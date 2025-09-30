@@ -145,13 +145,13 @@ func TestValidateMainConfig(t *testing.T) {
 		t.Fatalf("Failed to create schema dir: %v", err)
 	}
 
-	sourceSchema := "../../schemas/extract/v0.1.0/extract-record-match.schema.json"
-	destSchema := filepath.Join(schemaDir, "extract-record-match.schema.json")
+	sourceSchema := "../../schemas/extract/v0.1.0/extract-record-match-schema.yaml"
+	destSchema := filepath.Join(schemaDir, "extract-record-match-schema.yaml")
 	if err := copyFile(sourceSchema, destSchema); err != nil {
 		t.Fatalf("Failed to copy schema: %v", err)
 	}
 
-	validator := NewSchemaValidator(filepath.Join(tempDir, "schemas"))
+	validator := NewSchemaValidator(tempDir)
 
 	// Test valid extract config
 	validConfig := `{

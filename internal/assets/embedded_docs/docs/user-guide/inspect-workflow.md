@@ -53,6 +53,7 @@ Sumpter uses a **pattern-based matching system** to identify XML dialects:
 **Purpose**: U.S. Securities and Exchange Commission regulatory filings
 
 **Matching Criteria**:
+
 ```yaml
 patterns:
   - pattern_id: "sec-header"
@@ -67,13 +68,16 @@ patterns:
 ```
 
 **Detection Example**:
+
 ```bash
 sumpter inspect sec-filing.xml
 ```
 
 Output:
+
 ```markdown
 ## Dialect Detection
+
 - **Detected Dialect:** SEC EDGAR
 - **Confidence:** 95.2%
 - **Detection Score:** 0.87
@@ -81,6 +85,7 @@ Output:
 ```
 
 **Supported Formats**:
+
 - Form 10-K (Annual Reports)
 - Form 10-Q (Quarterly Reports)
 - Form 8-K (Current Reports)
@@ -92,6 +97,7 @@ Output:
 **Purpose**: Meteorological data and aviation weather reports
 
 **Matching Criteria**:
+
 ```yaml
 patterns:
   - pattern_id: "weather-report"
@@ -106,13 +112,16 @@ patterns:
 ```
 
 **Detection Example**:
+
 ```bash
 sumpter inspect weather-data.xml
 ```
 
 Output:
+
 ```markdown
 ## Dialect Detection
+
 - **Detected Dialect:** Weather XML
 - **Confidence:** 87.3%
 - **Detection Score:** 0.76
@@ -120,6 +129,7 @@ Output:
 ```
 
 **Supported Formats**:
+
 - NOAA METAR Reports
 - Aviation Weather (TAF)
 - Weather Forecasts
@@ -141,6 +151,7 @@ Each pattern contributes to the overall dialect score:
 ```
 
 **Score Calculation**:
+
 - **Presence**: 1.0 if pattern found, 0.0 if not found
 - **Weight**: Pattern importance (0.0 to 1.0)
 - **Frequency**: Bonus for multiple occurrences
@@ -159,6 +170,7 @@ When multiple dialects match:
 
 ```markdown
 ## Dialect Detection
+
 - **Primary Dialect:** SEC EDGAR (87.3%)
 - **Secondary Dialect:** XBRL Generic (45.2%)
 - **Recommendation:** Use SEC EDGAR patterns for extraction
@@ -190,12 +202,14 @@ When multiple dialects match:
 #### Step 2: Identify Key Patterns
 
 **Structural Patterns**:
+
 - Root element: `IndustryData`
 - Header section: `IndustryData.Header`
 - Record elements: `IndustryData.Records.Record`
 - ID attributes: `@id`
 
 **Content Patterns**:
+
 - Document IDs: `IND-YYYY-NNN` format
 - Timestamps: ISO 8601 format
 - Version numbers: Semantic versioning
@@ -276,8 +290,10 @@ sumpter inspect sample-industry.xml --dialects-dir ./custom-dialects
 ```
 
 Expected output:
+
 ```markdown
 ## Dialect Detection
+
 - **Detected Dialect:** Industry Data XML
 - **Confidence:** 92.1%
 - **Detection Score:** 0.83
@@ -289,6 +305,7 @@ Expected output:
 #### XPath Selectors
 
 **Element Selection**:
+
 ```yaml
 # Match any element with specific local name
 selector: "local-name()='ElementName'"
@@ -301,6 +318,7 @@ selector: "//RootElement/ChildElement"
 ```
 
 **Attribute Selection**:
+
 ```yaml
 # Match specific attribute
 selector: "@attributeName"
@@ -310,6 +328,7 @@ selector: "@id[starts-with(., 'PREFIX-')]"
 ```
 
 **Content-Based Selection**:
+
 ```yaml
 # Match elements containing specific text
 selector: "contains(., 'specific-text')"
@@ -321,16 +340,19 @@ selector: "number(.) = number(.)"  # Is numeric
 #### Pattern Weight Optimization
 
 **High Weight Patterns** (0.8-1.0):
+
 - Unique identifiers for the format
 - Required root elements
 - Format-specific metadata
 
 **Medium Weight Patterns** (0.5-0.7):
+
 - Common structural elements
 - Standard attributes
 - Repeated patterns
 
 **Low Weight Patterns** (0.1-0.4):
+
 - Optional elements
 - Generic attributes
 - Fallback patterns
@@ -415,6 +437,7 @@ patterns:
 ### Pattern Development
 
 #### Start Simple
+
 ```yaml
 # Begin with core identifying patterns
 patterns:
@@ -424,12 +447,14 @@ patterns:
 ```
 
 #### Test Incrementally
+
 ```bash
 # Test after each pattern addition
 sumpter inspect test.xml --dialects-dir ./dialects
 ```
 
 #### Validate Across Samples
+
 ```bash
 # Test with multiple sample files
 for file in samples/*.xml; do
@@ -441,11 +466,13 @@ done
 ### Performance Considerations
 
 #### Pattern Efficiency
+
 - Prefer `local-name()` over complex XPath
 - Use attribute selectors for fast matching
 - Avoid expensive content-based patterns
 
 #### Registry Size
+
 - Limit to essential patterns (10-20 per dialect)
 - Use appropriate weight values
 - Remove unused patterns
@@ -453,6 +480,7 @@ done
 ### Maintenance
 
 #### Version Control
+
 ```bash
 # Track dialect changes
 git add dialects/
@@ -460,6 +488,7 @@ git commit -m "Add industry data dialect v1.0"
 ```
 
 #### Documentation
+
 ```yaml
 # Include comprehensive metadata
 description: "Detailed description of dialect purpose and scope"
@@ -472,6 +501,7 @@ xml_standards:
 ```
 
 #### Testing
+
 ```bash
 # Create test files for dialect validation
 # test-dialects/
@@ -489,6 +519,7 @@ xml_standards:
 **Problem**: Dialect detection shows low confidence
 
 **Solutions**:
+
 ```yaml
 # Increase pattern weights
 patterns:
@@ -507,6 +538,7 @@ patterns:
 **Problem**: Incorrect dialect detection
 
 **Solutions**:
+
 ```yaml
 # Add negative patterns
 patterns:
@@ -523,6 +555,7 @@ selector: "local-name()='Element' and @type='specific-type'"
 **Problem**: Multiple dialects match the same elements
 
 **Solutions**:
+
 ```yaml
 # Use namespace qualification
 selector: "local-name()='Element' and namespace-uri()='http://specific.namespace'"

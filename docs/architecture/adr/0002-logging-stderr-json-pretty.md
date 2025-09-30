@@ -23,5 +23,3 @@ human-readable and machine-readable logs.
 ## References
 
 - SOP: `docs/sop/logging-sop.md`
-
-

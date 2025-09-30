@@ -16,6 +16,7 @@ The initial extract prototype used `--dir` for input paths, creating inconsisten
 All Sumpter commands will follow these standardized flag categories and naming conventions:
 
 #### 1. Input/Output Path Flags
+
 ```
 --input-path PATH        # Primary input location (files/directories)
 --output-path PATH       # Primary output destination
@@ -24,6 +25,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ```
 
 #### 2. Content Control Flags
+
 ```
 --include-pattern GLOB   # File/directory inclusion patterns
 --exclude-pattern GLOB   # File/directory exclusion patterns
@@ -32,6 +34,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ```
 
 #### 3. Processing Control Flags
+
 ```
 --batch-size INT        # Processing batch size
 --workers INT          # Number of parallel workers
@@ -40,6 +43,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ```
 
 #### 4. Output Format Flags
+
 ```
 --format/-f FORMAT     # Output format: json, yaml, table, markdown, etc.
 --output/-o PATH       # Output file path (stdout if not specified)
@@ -48,6 +52,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ```
 
 #### 5. Filtering & Selection Flags
+
 ```
 --filter EXPR          # Content filtering expression
 --limit INT            # Result count limit
@@ -56,6 +61,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ```
 
 #### 6. Progress & Logging Flags
+
 ```
 --progress/-p          # Show progress indicators (boolean)
 --verbose/-v           # Verbose output mode (boolean)
@@ -74,6 +80,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ### Command-Specific Patterns
 
 #### Data Processing Commands (inspect, extract, retrieve)
+
 ```bash
 # File discovery and processing
 --input-path /data/source
@@ -93,6 +100,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ```
 
 #### Configuration Commands (validate, envinfo)
+
 ```bash
 # Input specification
 --input-path /path/to/configs
@@ -105,6 +113,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ```
 
 #### Root/Global Flags (inherited by all commands)
+
 ```bash
 # Environment
 --home /custom/sumpter/home
@@ -122,6 +131,7 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ## Consequences
 
 ### Positive
+
 - **Consistent UX**: Users learn one syntax pattern applicable to all commands
 - **Predictable behavior**: Flag meanings are standardized across commands
 - **Easier maintenance**: Developers follow established patterns
@@ -129,11 +139,13 @@ All Sumpter commands will follow these standardized flag categories and naming c
 - **Future-proofing**: New commands automatically fit the established framework
 
 ### Negative
+
 - **Breaking changes**: Existing commands may need flag renaming (e.g., `--dir` → `--input-path`)
 - **Pattern rigidity**: Some commands may need exceptions for domain-specific flags
 - **Adoption overhead**: All future development must follow these patterns
 
 ### Migration Strategy
+
 1. **Immediate**: New commands (extract, retrieve) use unified patterns from inception
 2. **Gradual**: Existing commands migrate flags in backward-compatible way
 3. **Deprecation**: Old flags show warnings and remain functional during transition
@@ -142,24 +154,29 @@ All Sumpter commands will follow these standardized flag categories and naming c
 ## Alternatives Considered
 
 ### Minimal Standardization
+
 - Only standardize flag naming without categories
 - **Rejected**: Doesn't provide enough structure for complex commands
 
 ### Command-Specific Autonomy
+
 - Each command defines its own syntax
 - **Rejected**: Leads to inconsistent UX and maintenance burden
 
 ### Strict POSIX Compliance
+
 - Follow GNU/POSIX flag conventions exactly
 - **Rejected**: Too restrictive for modern CLI patterns, conflicts with existing flags
 
 ### Configuration-Driven Syntax
+
 - Define command syntax in YAML configs
 - **Rejected**: Adds complexity without clear benefits for this use case
 
 ## Implementation
 
 ### Validation Checklist
+
 QA team will evaluate new commands against this ADR:
 
 - [ ] All flags follow naming conventions
@@ -171,6 +188,7 @@ QA team will evaluate new commands against this ADR:
 - [ ] Help text follows consistent formatting
 
 ### Code Standards
+
 ```go
 // Example implementation pattern
 type CommandOptions struct {

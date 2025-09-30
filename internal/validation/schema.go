@@ -77,9 +77,9 @@ func (v *SchemaValidator) ValidatePIIConfig(configData []byte, configFile string
 
 // ValidateExtractConfig validates an extract configuration against its schema.
 func (v *SchemaValidator) ValidateExtractConfig(configData []byte, configFile string) (*ValidationResult, error) {
-	schemaBytes, err := v.loadSchema("extract", "v0.1.0", "extract-record-match.schema.json")
+	schemaBytes, err := v.loadSchema("schemas", "extract", "v0.1.0", "extract-record-match-schema.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("extract", "v0.1.0", "extract-record-match.schema.json"), err)
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("schemas", "extract", "v0.1.0", "extract-record-match-schema.yaml"), err)
 	}
 	return v.validateAgainstSchema(configData, schemaBytes, configFile, "extract-record-match-v0.1.0")
 }
@@ -105,8 +105,23 @@ func (v *SchemaValidator) validateAgainstSchema(data []byte, schemaBytes []byte,
 		}
 	}
 
+	// Parse schema - try YAML first, then JSON, then convert to JSON for goneat
+	var schemaInterface interface{}
+	if err := yaml.Unmarshal(schemaBytes, &schemaInterface); err != nil {
+		// Try JSON
+		if jsonErr := json.Unmarshal(schemaBytes, &schemaInterface); jsonErr != nil {
+			return nil, fmt.Errorf("failed to parse schema as YAML or JSON: yaml error: %w, json error: %w", err, jsonErr)
+		}
+	}
+
+	// Convert schema to JSON bytes for goneat
+	schemaJSONBytes, err := json.Marshal(schemaInterface)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert schema to JSON: %w", err)
+	}
+
 	// Validate using goneat schema library
-	result, err := schema.ValidateFromBytes(schemaBytes, dataInterface)
+	result, err := schema.ValidateFromBytes(schemaJSONBytes, dataInterface)
 	if err != nil {
 		return nil, fmt.Errorf("schema validation failed: %w", err)
 	}

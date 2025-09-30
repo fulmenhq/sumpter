@@ -1,6 +1,5 @@
 # SEC EDGAR XBRL File Signature Configuration
 # Matches XBRL schema and linkbase files from SEC EDGAR filings
-
 signature_id: "sec-edgar-xbrl"
 name: "SEC EDGAR XBRL Files"
 description: "Matches XBRL schema and linkbase files from SEC EDGAR corporate filings (10-K, 10-Q, 8-K, etc.)"

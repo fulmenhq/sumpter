@@ -40,7 +40,7 @@ properties:
         type:
           type: string
           description: The expected data type of the field.
-          enum: ["string", "number", "integer", "boolean"]
+          enum: ["string", "number", "integer", "boolean", "array"]
         transform:
           type: string
           description: Optional transformation function to apply to the extracted value.
@@ -66,10 +66,14 @@ properties:
         type:
           type: string
           description: The expected data type of the field.
-          enum: ["string", "number", "integer", "boolean"]
+          enum: ["string", "number", "integer", "boolean", "array"]
         transform:
           type: string
           description: Optional transformation function to apply to the extracted value.
+        transform_params:
+          type: object
+          description: Parameters to be supplied to the transform function.
+          additionalProperties: true
         item_mapping:
           type: array
           description: For array types, defines how to map each array item.
@@ -84,7 +88,7 @@ properties:
                 description: XPath relative to the array item element.
               type:
                 type: string
-                enum: ["string", "number", "integer", "boolean"]
+                enum: ["string", "number", "integer", "boolean", "array"]
               transform:
                 type: string
                 description: Optional transformation for the item field.
@@ -92,6 +96,27 @@ properties:
               - output_field
               - xpath
               - type
+        polymorphic_mapping:
+          type: array
+          description: For array types with varying item structures, defines polymorphic mappings.
+          items:
+            type: object
+            properties:
+              item_type:
+                type: string
+                description: Type identifier for this mapping.
+              match_xpath:
+                type: string
+                description: XPath expression to locate matching nodes.
+              element_type:
+                type: string
+                description: Element name to match when using child lookup.
+              field_mappings:
+                type: array
+                items:
+                  $ref: "#/properties/field_mappings/items"
+            required:
+              - field_mappings
       required:
         - output_field
         - xpath
@@ -108,7 +133,7 @@ properties:
         type:
           type: string
           description: The expected data type of the field.
-          enum: ["string", "number", "integer", "boolean"]
+          enum: ["string", "number", "integer", "boolean", "array"]
         required:
           type: boolean
           description: Whether this external field is required.
@@ -119,6 +144,113 @@ properties:
   filters:
     type: object
     description: Optional filters to apply after extraction, using field names as keys with comparison operators.
+  validation_metadata:
+    type: object
+    description: Optional validation metadata generation for data quality verification
+    properties:
+      enable:
+        type: boolean
+        default: false
+        description: Enable validation metadata generation
+      expression_language:
+        type: string
+        enum: ["sumpter-dsl", "jmespath", "jsonata", "cel"]
+        default: "sumpter-dsl"
+        description: Expression language for filters, aggregations, and validation rules
+      placement:
+        type: string
+        enum: ["footer", "header", "separate_file"]
+        default: "footer"
+        description: Where to place validation metadata in output
+      failure_policy:
+        type: object
+        description: Policy for handling validation failures
+        properties:
+          fail_on_fatal:
+            type: boolean
+            default: true
+            description: Fail extraction if any fatal validation fails
+          error_threshold:
+            type: integer
+            minimum: 0
+            description: Fail extraction if error count exceeds this threshold
+          warning_threshold:
+            type: integer
+            minimum: 0
+            description: Log warning if warning count exceeds this threshold
+          halt_on_first_fatal:
+            type: boolean
+            default: true
+            description: Stop extraction immediately on first fatal error
+      accumulations:
+        type: array
+        description: Incremental operations computed during extraction (per-record)
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Name for the accumulation result
+            operation:
+              type: string
+              enum: ["count", "sum", "min", "max", "avg", "increment"]
+              description: Type of accumulation operation
+            field:
+              type: string
+              description: Field path to operate on (for sum, min, max, avg)
+            filter:
+              type: string
+              description: Optional filter expression (e.g., "is_suspended == false")
+          required:
+            - name
+            - operation
+      aggregations:
+        type: array
+        description: Post-processing aggregations over complete dataset
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Name for the aggregation result
+            expression:
+              type: string
+              description: Expression to evaluate (can reference accumulations and other aggregations)
+            compare_to:
+              type: string
+              description: Optional field from extraction to compare against
+            tolerance:
+              type: number
+              default: 0.01
+              description: Acceptable difference for numeric comparisons
+          required:
+            - name
+            - expression
+      validations:
+        type: array
+        description: Validation rules to check data quality
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Name of the validation check
+            rule:
+              type: string
+              description: Boolean expression to evaluate (can reference aggregations and accumulations)
+            severity:
+              type: string
+              enum: ["info", "warning", "error", "fatal"]
+              default: "error"
+              description: Severity level if validation fails
+            message:
+              type: string
+              description: Message template to display if validation fails (supports {variable} substitution)
+          required:
+            - name
+            - rule
+            - severity
+            - message
 required:
   - record_type
   - match_selectors

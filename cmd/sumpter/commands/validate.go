@@ -21,7 +21,7 @@ This command validates configuration files to ensure they conform to the expecte
 schema structure and values. It supports validation of:
 
 - Main configuration (sumpter.yaml)
-- Logger configuration (logger.yaml) 
+- Logger configuration (logger.yaml)
 - PII configuration (pii.yaml)
 
 Examples:

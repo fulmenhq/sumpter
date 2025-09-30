@@ -15,11 +15,13 @@ sumpter retrieve [command] [flags]
 Copy data from various sources to destinations.
 
 **Sources can be:**
+
 - API endpoints (e.g., `sec-edgar://AAPL/10-K/2024`)
 - File paths (e.g., `/path/to/files/*.xml`)
 - Recipe references (e.g., `recipe://finance/sec-edgar`)
 
 **Destinations can be:**
+
 - Local paths
 - Cloud storage URIs (future support)
 
@@ -38,8 +40,9 @@ sumpter retrieve find [flags]
 ```
 
 **Flags:**
+
 - `--input-path`: Input path to search (directory)
-- `--include-pattern`: File inclusion pattern (default: "*")
+- `--include-pattern`: File inclusion pattern (default: "\*")
 - `--exclude-pattern`: File exclusion pattern
 - `--max-depth`: Maximum directory depth to search (0 = unlimited)
 - `--follow-symlinks`: Follow symbolic links
@@ -62,11 +65,13 @@ sumpter retrieve recipe <realm> <domain-tag> [flags]
 ```
 
 **Example:**
+
 ```bash
 sumpter retrieve recipe finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024
 ```
 
 **Flags:**
+
 - `--ticker`: Stock ticker symbol (for finance/sec-edgar)
 - `--filing-type`: Filing type (e.g., 10-K, 10-Q) (for finance/sec-edgar)
 - `--year`: Filing year (for finance/sec-edgar)
@@ -114,8 +119,6 @@ realms:
     - `backoff_seconds`: Backoff time when rate limited
   - `endpoints`: API endpoints and base URLs
   - `options`: Additional realm-specific configuration
-
-
 
 ## Examples
 
