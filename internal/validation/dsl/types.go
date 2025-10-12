@@ -10,14 +10,16 @@ import (
 
 // ValidationMetadata defines the complete validation configuration and runtime state.
 type ValidationMetadata struct {
-	Enable             bool                 `yaml:"enable" json:"enable"`
-	ExpressionLanguage string               `yaml:"expression_language" json:"expression_language"`
-	Placement          string               `yaml:"placement" json:"placement"`
-	FailurePolicy      FailurePolicy        `yaml:"failure_policy" json:"failure_policy"`
-	Accumulations      []AccumulationConfig `yaml:"accumulations" json:"accumulations"`
-	Aggregations       []AggregationConfig  `yaml:"aggregations" json:"aggregations"`
-	Validations        []ValidationConfig   `yaml:"validations" json:"validations"`
-	Runtime            *ValidationRuntime   `yaml:"-" json:"-"` // Runtime state
+	Enable             bool                   `yaml:"enable" json:"enable"`
+	ExpressionLanguage string                 `yaml:"expression_language" json:"expression_language"`
+	ArrayPath          string                 `yaml:"array_path" json:"array_path"`
+	Placement          string                 `yaml:"placement" json:"placement"`
+	FailurePolicy      FailurePolicy          `yaml:"failure_policy" json:"failure_policy"`
+	Accumulations      []AccumulationConfig   `yaml:"accumulations" json:"accumulations"`
+	Aggregations       []AggregationConfig    `yaml:"aggregations" json:"aggregations"`
+	Reconciliations    []ReconciliationConfig `yaml:"reconciliations" json:"reconciliations"`
+	Validations        []ValidationConfig     `yaml:"validations" json:"validations"`
+	Runtime            *ValidationRuntime     `yaml:"-" json:"-"` // Runtime state
 }
 
 // FailurePolicy defines how to handle validation failures.
@@ -44,6 +46,38 @@ type AggregationConfig struct {
 	Tolerance  float64 `yaml:"tolerance" json:"tolerance"`   // Numeric comparison tolerance
 }
 
+// ReconciliationConfig defines a reconciliation workflow for balancing aggregates.
+type ReconciliationConfig struct {
+	Name             string                          `yaml:"name" json:"name"`
+	BaseExpression   string                          `yaml:"base_expression" json:"base_expression"`
+	Tolerance        float64                         `yaml:"tolerance" json:"tolerance"`
+	Severity         string                          `yaml:"severity" json:"severity"`
+	AllowUnexplained bool                            `yaml:"allow_unexplained" json:"allow_unexplained"`
+	Components       []ReconciliationComponentConfig `yaml:"components" json:"components"`
+	GroupBy          *ReconciliationGroupByConfig    `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+}
+
+// ReconciliationComponentConfig defines a component contributing to a reconciliation balance.
+type ReconciliationComponentConfig struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description"`
+	Expression  string `yaml:"expression" json:"expression"`
+}
+
+// ReconciliationGroupByConfig defines dynamic component generation based on grouped records.
+type ReconciliationGroupByConfig struct {
+	Source              string `yaml:"source" json:"source"`
+	Field               string `yaml:"field" json:"field"`
+	LabelField          string `yaml:"label_field,omitempty" json:"label_field,omitempty"`
+	MissingLabel        string `yaml:"missing_label,omitempty" json:"missing_label,omitempty"`
+	Filter              string `yaml:"filter,omitempty" json:"filter,omitempty"`
+	ValueExpression     string `yaml:"value_expression" json:"value_expression"`
+	Aggregation         string `yaml:"aggregation,omitempty" json:"aggregation,omitempty"`
+	NameTemplate        string `yaml:"name_template,omitempty" json:"name_template,omitempty"`
+	DescriptionTemplate string `yaml:"description_template,omitempty" json:"description_template,omitempty"`
+	OverflowStrategy    string `yaml:"overflow_strategy,omitempty" json:"overflow_strategy,omitempty"`
+}
+
 // ValidationConfig defines a quality check with severity-based failure.
 type ValidationConfig struct {
 	Name     string `yaml:"name" json:"name"`
@@ -54,19 +88,23 @@ type ValidationConfig struct {
 
 // ValidationRuntime holds runtime state for validation execution.
 type ValidationRuntime struct {
-	Accumulators       map[string]*Accumulator // Name -> Accumulator instance
-	AggregationResults map[string]interface{}  // Name -> result value
-	ValidationResults  []ValidationResult      // Results of all validations
-	StartTime          time.Time               // When validation started
-	RecordCount        int                     // Total records processed
+	Accumulators          map[string]*Accumulator // Name -> Accumulator instance
+	AggregationResults    map[string]interface{}  // Name -> result value
+	ValidationResults     []ValidationResult      // Results of all validations
+	ReconciliationResults []ReconciliationResult  // Structured reconciliation outputs
+	ReconciliationScalars map[string]interface{}  // Helper variables exposed to validations
+	DocumentContext       map[string]interface{}  // Top-level document context
+	StartTime             time.Time               // When validation started
+	RecordCount           int                     // Total records processed
 }
 
 // Accumulator holds state for incremental operations.
 type Accumulator struct {
-	Name      string
-	Operation string
-	Field     string
-	Filter    *FilterExpression // Parsed filter
+	Name       string
+	Operation  string
+	Field      string
+	Filter     *FilterExpression // Parsed filter
+	FilterExpr *Expression       // Parsed expression filter (supports &&, ||, etc.)
 	// State for different operations
 	Count int
 	Sum   float64
@@ -83,6 +121,26 @@ type ValidationResult struct {
 	Severity string      `json:"severity"`        // info, warning, error, fatal
 	Message  string      `json:"message"`         // Formatted message
 	Value    interface{} `json:"value,omitempty"` // Actual value for debugging
+}
+
+// ReconciliationComponentResult captures the evaluated value of a reconciliation component.
+type ReconciliationComponentResult struct {
+	Name        string  `json:"name"`
+	Description string  `json:"description,omitempty"`
+	Value       float64 `json:"value"`
+}
+
+// ReconciliationResult summarizes the outcome of a reconciliation balance.
+type ReconciliationResult struct {
+	Name             string                          `json:"name"`
+	BaseValue        float64                         `json:"base_value"`
+	Components       []ReconciliationComponentResult `json:"components"`
+	ComponentsTotal  float64                         `json:"components_total"`
+	Residual         float64                         `json:"residual"`
+	Tolerance        float64                         `json:"tolerance"`
+	Status           string                          `json:"status"`
+	AllowUnexplained bool                            `json:"allow_unexplained"`
+	Severity         string                          `json:"severity"`
 }
 
 // QualitySummary provides a summary of validation results.
@@ -141,11 +199,14 @@ type FunctionCall struct {
 // NewValidationRuntime creates a new runtime state for validation.
 func NewValidationRuntime() *ValidationRuntime {
 	return &ValidationRuntime{
-		Accumulators:       make(map[string]*Accumulator),
-		AggregationResults: make(map[string]interface{}),
-		ValidationResults:  []ValidationResult{},
-		StartTime:          time.Now(),
-		RecordCount:        0,
+		Accumulators:          make(map[string]*Accumulator),
+		AggregationResults:    make(map[string]interface{}),
+		ValidationResults:     []ValidationResult{},
+		ReconciliationResults: []ReconciliationResult{},
+		ReconciliationScalars: make(map[string]interface{}),
+		DocumentContext:       make(map[string]interface{}),
+		StartTime:             time.Now(),
+		RecordCount:           0,
 	}
 }
 
@@ -189,8 +250,8 @@ func (r *ValidationRuntime) ShouldFailExtraction(policy FailurePolicy) (bool, er
 		return true, fmt.Errorf("validation failed: %d fatal error(s)", summary.Fatals)
 	}
 
-	// Check error threshold
-	if policy.ErrorThreshold > 0 && summary.Errors > policy.ErrorThreshold {
+	// Check error threshold (threshold of 0 means any errors fail)
+	if policy.ErrorThreshold >= 0 && summary.Errors > policy.ErrorThreshold {
 		return true, fmt.Errorf("validation failed: %d errors exceed threshold %d",
 			summary.Errors, policy.ErrorThreshold)
 	}

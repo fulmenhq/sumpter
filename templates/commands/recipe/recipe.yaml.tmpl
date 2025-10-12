@@ -1,0 +1,34 @@
+version: "recipe/v0.1.0"
+kind: "extract"
+id: {{if .RecipeID}}{{.RecipeID}}{{else}}your-recipe-id{{end}}
+display_name: ""
+description: ""
+created_at: "{{.CreatedAt}}"
+owners:
+  - name: ""
+    contact: ""
+documentation:
+  overview: README.md
+assets:
+  signature: signature/example-signature.yaml
+  extract: extract/example-extract.yaml
+  validation: ""
+  extras: []
+defaults:
+  input:
+    mode: path
+    path: testdata
+    include_pattern: "*.xml"
+    exclude_pattern: ""
+    max_depth: 0
+    follow_symlinks: false
+    files: []
+  output:
+    format: json
+    path: outputs
+    pattern: extract-{}.json
+  client_id: ""
+  site_id: ""
+  workers: 1
+  progress: false
+notes: ""

@@ -66,6 +66,8 @@ type ExtractRecordMatch struct {
 	FieldMappings      []FieldMapping          `yaml:"field_mappings" json:"field_mappings"`
 	Filters            map[string]interface{}  `yaml:"filters" json:"filters"`
 	ValidationMetadata *dsl.ValidationMetadata `yaml:"validation_metadata,omitempty" json:"validation_metadata,omitempty"`
+	OutputOptions      *OutputOptions          `yaml:"output_options,omitempty" json:"output_options,omitempty"`
+	Summaries          []SummaryConfig         `yaml:"summaries,omitempty" json:"summaries,omitempty"`
 	OutputValidator    *schema.Validator       `yaml:"-" json:"-"`
 	prepareOnce        sync.Once               `yaml:"-" json:"-"`
 	prepareErr         error                   `yaml:"-" json:"-"`
@@ -106,6 +108,35 @@ type ExtractResult struct {
 	File    string                   `json:"file"`
 	Records []map[string]interface{} `json:"records"`
 	Error   error                    `json:"error,omitempty"`
+}
+
+// OutputOptions controls optional output sections.
+type OutputOptions struct {
+	ShowSummaries          *bool `yaml:"show_summaries,omitempty" json:"show_summaries,omitempty"`
+	ShowValidationMetadata *bool `yaml:"show_validation_metadata,omitempty" json:"show_validation_metadata,omitempty"`
+}
+
+// SummaryConfig describes a declarative rollup summary.
+type SummaryConfig struct {
+	Name       string                   `yaml:"name" json:"name"`
+	Label      string                   `yaml:"label" json:"label"`
+	Format     string                   `yaml:"format,omitempty" json:"format,omitempty"`
+	Total      SummaryValueConfig       `yaml:"total" json:"total"`
+	Components []SummaryComponentConfig `yaml:"components" json:"components"`
+}
+
+// SummaryValueConfig defines a summary total expression.
+type SummaryValueConfig struct {
+	Expression string `yaml:"expression" json:"expression"`
+}
+
+// SummaryComponentConfig defines an individual summary component.
+type SummaryComponentConfig struct {
+	Name       string `yaml:"name" json:"name"`
+	Label      string `yaml:"label" json:"label"`
+	Expression string `yaml:"expression,omitempty" json:"expression,omitempty"`
+	Remainder  bool   `yaml:"remainder,omitempty" json:"remainder,omitempty"`
+	Format     string `yaml:"format,omitempty" json:"format,omitempty"`
 }
 
 // JSONSchema represents a JSON schema

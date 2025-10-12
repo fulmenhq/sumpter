@@ -1,6 +1,6 @@
 ---
 title: "SEC EDGAR Data Acquisition"
-description: "Guide for acquiring SEC EDGAR financial data using Sumpter's retrieve command"
+description: "Guide for acquiring SEC EDGAR financial data using Sumpter's recipes command"
 date: "2025-09-23"
 author: "Sumpter Team"
 tags: ["finance", "sec-edgar", "data-acquisition", "xml"]
@@ -8,7 +8,7 @@ tags: ["finance", "sec-edgar", "data-acquisition", "xml"]
 
 # SEC EDGAR Data Acquisition
 
-This application note explains how to use Sumpter's `retrieve` command to acquire SEC EDGAR financial data, specifically XML filings from public companies.
+This application note explains how to use Sumpter's `recipes retrieve` command to acquire SEC EDGAR financial data, specifically XML filings from public companies.
 
 ## Overview
 
@@ -83,7 +83,7 @@ While SEC EDGAR data is publicly accessible without authentication, some commerc
 ### Basic Command Structure
 
 ```bash
-sumpter retrieve recipe finance sec-edgar \
+sumpter recipes retrieve finance sec-edgar \
   --ticker TICKER \
   --filing-type FILING_TYPE \
   --year YEAR
@@ -108,7 +108,7 @@ sumpter retrieve recipe finance sec-edgar \
 ### Download Apple Inc. 10-K for 2024
 
 ```bash
-sumpter retrieve recipe finance sec-edgar \
+sumpter recipes retrieve finance sec-edgar \
   --ticker AAPL \
   --filing-type 10-K \
   --year 2024
@@ -128,7 +128,7 @@ This creates the directory structure:
 
 ```bash
 for ticker in AAPL MSFT GOOGL; do
-  sumpter retrieve recipe finance sec-edgar \
+  sumpter recipes retrieve finance sec-edgar \
     --ticker $ticker \
     --filing-type 10-K \
     --year 2024

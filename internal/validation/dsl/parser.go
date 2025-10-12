@@ -113,6 +113,15 @@ func ParseExpression(exprStr string) (*Expression, error) {
 		}, nil
 	}
 
+	// Strip surrounding parentheses that wrap the entire expression (grouping)
+	if hasEnclosingParens(exprStr) {
+		inner := strings.TrimSpace(exprStr[1 : len(exprStr)-1])
+		if inner == "" {
+			return nil, fmt.Errorf("empty parenthesized expression")
+		}
+		return ParseExpression(inner)
+	}
+
 	// Try to parse function call
 	if strings.Contains(exprStr, "(") && strings.HasSuffix(exprStr, ")") {
 		return parseFunction(exprStr)
@@ -189,6 +198,30 @@ func isValidSplitPoint(exprStr string, idx int) bool {
 			depth--
 		}
 	}
+	return depth == 0
+}
+
+func hasEnclosingParens(exprStr string) bool {
+	if !strings.HasPrefix(exprStr, "(") || !strings.HasSuffix(exprStr, ")") {
+		return false
+	}
+
+	depth := 0
+	for i, ch := range exprStr {
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(exprStr)-1 {
+				return false
+			}
+		}
+		if depth < 0 {
+			return false
+		}
+	}
+
 	return depth == 0
 }
 

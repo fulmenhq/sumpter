@@ -122,6 +122,7 @@ sumpter docs show sop/repository-operations-sop
 - **commands/**: Individual command documentation
   - `envinfo.md`: Environment information command
   - `inspect.md`: XML inspection command
+  - `recipes.md`: Recipe scaffolding and acquisition command
   - `version.md`: Version information command
   - `docs.md`: This documentation command
   - `validate.md`: Configuration validation command

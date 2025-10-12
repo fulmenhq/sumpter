@@ -1,0 +1,6 @@
+version: "1.0.0"
+topics:
+  recipe-templates:
+    tags: [recipes, scaffolding]
+    include:
+      - commands/recipe/**/*.tmpl

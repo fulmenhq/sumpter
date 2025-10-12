@@ -2,6 +2,7 @@ package validation
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -84,11 +85,35 @@ func (v *SchemaValidator) ValidateExtractConfig(configData []byte, configFile st
 	return v.validateAgainstSchema(configData, schemaBytes, configFile, "extract-record-match-v0.1.0")
 }
 
-func (v *SchemaValidator) loadSchema(parts ...string) ([]byte, error) {
-	if v.schemaFS != nil {
-		rel := path.Join(parts...)
-		return fs.ReadFile(v.schemaFS, rel)
+// ValidateRecipeManifest validates a recipe manifest against the embedded schema.
+func (v *SchemaValidator) ValidateRecipeManifest(data []byte, manifestFile string) (*ValidationResult, error) {
+	schemaBytes, err := v.loadSchema("recipes", "v0.1.0", "recipe.schema.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("recipes", "v0.1.0", "recipe.schema.yaml"), err)
 	}
+	return v.validateAgainstSchema(data, schemaBytes, manifestFile, "recipe-manifest-v0.1.0")
+}
+
+func (v *SchemaValidator) loadSchema(parts ...string) ([]byte, error) {
+	rel := path.Join(parts...)
+
+	if v.schemaFS != nil {
+		data, err := fs.ReadFile(v.schemaFS, rel)
+		if err == nil {
+			return data, nil
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			alt := path.Join("schemas", rel)
+			if data, altErr := fs.ReadFile(v.schemaFS, alt); altErr == nil {
+				return data, nil
+			} else if !errors.Is(altErr, fs.ErrNotExist) {
+				return nil, altErr
+			}
+		} else {
+			return nil, err
+		}
+	}
+
 	full := filepath.Join(append([]string{v.schemaDir}, parts...)...)
 	return os.ReadFile(full)
 }
@@ -179,6 +204,8 @@ func (v *SchemaValidator) ValidateFile(configFile string) (*ValidationResult, er
 				return v.ValidateLoggerConfig(data, configFile)
 			case "pii-config/v0.1.0":
 				return v.ValidatePIIConfig(data, configFile)
+			case "recipe/v0.1.0":
+				return v.ValidateRecipeManifest(data, configFile)
 			}
 		}
 

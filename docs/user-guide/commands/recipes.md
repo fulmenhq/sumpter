@@ -1,0 +1,148 @@
+# Recipes Command
+
+The `recipes` command manages recipe workspaces and orchestrates recipe-driven automation such as SEC EDGAR acquisition and XML extraction.
+
+## Usage
+
+```bash
+sumpter recipes [command] [flags]
+```
+
+## Available Subcommands
+
+### `init`
+
+Scaffold a new recipe workspace with standard folders, templated README, and recipe manifest.
+
+```bash
+sumpter recipes init --path <target> [--id <recipe-id>] [--git-init]
+```
+
+**Flags:**
+
+- `--path` *(required)*: Target directory for the new recipe workspace
+- `--id`: Recipe identifier injected into templates
+- `--git-init`: Initialize a git repository inside the workspace
+
+The command creates the base directory, populates `signature/`, `extract/`, `validation/`, `testdata/`, and `outputs/`, and renders template files from the embedded assets bundle.
+
+### `run extract`
+
+Execute an extract recipe using the manifest defaults (`recipe.yaml`).
+
+```bash
+sumpter recipes run extract <workspace> [flags]
+```
+
+**Key Flags:**
+
+- `--manifest`: Path to the manifest (default: `recipe.yaml` relative to the workspace)
+- `--input-path` / `--files`: Override manifest input discovery
+- `--include-pattern` / `--exclude-pattern`: Override glob patterns
+- `--output-path` / `--output-pattern`: Override output destinations
+- `--format`: Override output format (`json`, `structured`, `ndjson`, etc.)
+- `--client-id`, `--site-id`: Blend identifiers into the output payload
+- `--signature`, `--extract`: Override the manifest asset paths for debugging
+
+When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, and progress settings. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
+
+### `retrieve`
+
+Execute a recipe to acquire upstream data (currently SEC EDGAR filings).
+
+```bash
+sumpter recipes retrieve <realm> <domain-tag> [flags]
+```
+
+**Supported realms:** `finance`
+
+**Supported domain-tags:** `sec-edgar`
+
+**Flags:**
+
+- `--output-base`: Base directory for retrieved artifacts (defaults to `$SUMPTER_HOME/work/`)
+- `--config-path`: Optional path to `retrieve.yaml` (defaults to `$SUMPTER_HOME/configs/retrieve.yaml`)
+- `--ticker`: Stock ticker symbol (required for `finance sec-edgar`)
+- `--filing-type`: Filing type, e.g., `10-K`, `10-Q` (required for `finance sec-edgar`)
+- `--year`: Filing year (required for `finance sec-edgar`)
+
+The command validates write access to the output directory, loads the retrieve configuration, enforces SEC user-agent requirements, and downloads the requested filing into the structured workspace.
+
+## Recipe Manifest (`recipe.yaml`)
+
+Every workspace includes a manifest that documents the recipe metadata and runtime defaults:
+
+```yaml
+version: "recipe/v0.1.0"
+kind: "extract"
+id: cpjr_naxml_v1
+display_name: "NAXML CPJR Daily Sales"
+created_at: "2025-10-02T14:00:00Z"
+assets:
+  signature: signature/naxml-cpjr-signature.yaml
+  extract: extract/naxml-cpjr-extract.yaml
+  validation: ""
+defaults:
+  input:
+    mode: path
+    path: testdata
+    include_pattern: "*.xml"
+    exclude_pattern: ""
+    max_depth: 0
+    follow_symlinks: false
+  output:
+    format: json
+    path: outputs
+    pattern: extract-{}.json
+  client_id: ""
+  site_id: ""
+  workers: 1
+  progress: false
+```
+
+- **`assets`** points at the core configuration files required to run the recipe.
+- **`defaults.input`** defines how the runner discovers XML (directory scanning or explicit file list).
+- **`defaults.output`** controls output formatting and destination, allowing NDJSON/structured JSON switches later.
+- **`defaults.client_id` / `site_id`** pre-populate metadata for downstream consumers.
+- **`kind`** distinguishes extract vs. acquire recipes; additional kinds can be introduced without changing the runner syntax.
+
+The manifest is validated against `schemas/recipes/v0.1.0/recipe.schema.yaml`. Use `sumpter recipes init` to scaffold a workspace and then drop your signature/extract configs into the generated folders. For low-level debugging you can still call the extract command directly:
+
+```bash
+sumpter extract files \
+  --signature-config-path signature/naxml-cpjr-signature.yaml \
+  --extract-config-path extract/naxml-cpjr-extract.yaml \
+  --files testdata/sample.xml
+```
+
+## Examples
+
+### Scaffold a Recipe Workspace
+
+```bash
+sumpter recipes init \
+  --path ./recipes/customer/cpjr \
+  --id cpjr_naxml_v1 \
+  --git-init
+```
+
+### Download an SEC EDGAR Filing
+
+```bash
+sumpter recipes retrieve finance sec-edgar \
+  --ticker AAPL \
+  --filing-type 10-K \
+  --year 2024
+```
+
+The filing is saved under `$SUMPTER_HOME/work/retrieve/<ticker>/<filing-type>/…` when default paths are in use.
+
+### Execute an Extract Recipe from the Manifest
+
+```bash
+sumpter recipes run extract ./recipes/customer/cpjr \
+  --input-path ./recipes/customer/cpjr/testdata \
+  --output-path ./recipes/customer/cpjr/outputs/cpjr.json
+```
+
+The command resolves signature/extract configs via the manifest, applies defaults for include patterns and output format, and delegates to the extract engine.

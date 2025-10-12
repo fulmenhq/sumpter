@@ -10,6 +10,7 @@ echo "🔨 Embedding Sumpter assets..."
 mkdir -p internal/assets/embedded_docs/docs
 mkdir -p internal/assets/embedded_schemas/schemas
 mkdir -p internal/assets/embedded_examples/examples
+mkdir -p internal/assets/embedded_templates/templates
 
 # Sync docs (using goneat content command if available)
 if command -v goneat &> /dev/null; then
@@ -38,8 +39,13 @@ else
     go run scripts/sync-assets.go examples internal/assets/embedded_examples/examples
 fi
 
+# Sync templates
+echo "🧩 Syncing templates..."
+rsync -av --delete templates/ internal/assets/embedded_templates/templates/
+
 echo "✅ Asset embedding complete!"
 echo "📦 Embedded content:"
 echo "  - docs/ → internal/assets/embedded_docs/docs/"
 echo "  - schemas/ → internal/assets/embedded_schemas/schemas/"
 echo "  - examples/ → internal/assets/embedded_examples/examples/"
+echo "  - templates/ → internal/assets/embedded_templates/templates/"

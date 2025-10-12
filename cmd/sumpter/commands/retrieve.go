@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/config"
-	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
 	"github.com/spf13/cobra"
 )
 
@@ -146,7 +145,6 @@ Supports recipe-driven acquisitions, deep directory traversal, and cloud storage
 	// Add core operation subcommands
 	cmd.AddCommand(newCopyCommand(opts))
 	cmd.AddCommand(newFindCommand(opts))
-	cmd.AddCommand(newRecipeCommand(opts))
 
 	return cmd
 }
@@ -210,45 +208,6 @@ Outputs file paths that can be used with other commands.`,
 	cmd.Flags().Bool("flatten", false, "Output flattened relative paths instead of absolute paths")
 
 	_ = cmd.MarkFlagRequired("input-path")
-
-	return cmd
-}
-
-func newRecipeCommand(opts *RetrieveOptions) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "recipe <realm> <domain-tag>",
-		Short: "Run a data acquisition recipe for a specific realm and domain",
-		Long: `Execute data acquisition recipes for specific realms and domains.
-
-Supported realms: finance
-Supported domain-tags: sec-edgar
-
-Configuration is loaded from retrieve.yaml (use --config-path to override).
-For finance realm, configure user_agent for SEC compliance.
-
-Example: sumpter retrieve recipe finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024`,
-		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			realm := args[0]
-			domainTag := args[1]
-
-			// Validate realm is supported
-			if !config.IsValidRealm(realm) {
-				return fmt.Errorf("unsupported realm: %s (supported realms: %v)", realm, config.ValidRealms())
-			}
-
-			return runRecipe(opts, cmd, realm, domainTag)
-		},
-	}
-
-	// Add flags for recipe options
-	cmd.Flags().String("ticker", "", "Stock ticker symbol (for finance/sec-edgar)")
-	cmd.Flags().String("filing-type", "", "Filing type (e.g., 10-K, 10-Q) (for finance/sec-edgar)")
-	cmd.Flags().String("year", "", "Filing year (for finance/sec-edgar)")
-
-	_ = cmd.MarkFlagRequired("ticker")
-	_ = cmd.MarkFlagRequired("filing-type")
-	_ = cmd.MarkFlagRequired("year")
 
 	return cmd
 }
@@ -399,62 +358,4 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 
 		return nil
 	})
-}
-
-func runRecipe(opts *RetrieveOptions, cmd *cobra.Command, realm, domainTag string) error {
-	switch realm {
-	case "finance":
-		return runFinanceRecipe(opts, cmd, domainTag)
-	default:
-		return fmt.Errorf("unsupported realm: %s", realm)
-	}
-}
-
-func runFinanceRecipe(opts *RetrieveOptions, cmd *cobra.Command, domainTag string) error {
-	switch domainTag {
-	case "sec-edgar":
-		return runSecEdgarRecipe(opts, cmd)
-	default:
-		return fmt.Errorf("unsupported finance domain-tag: %s", domainTag)
-	}
-}
-
-func runSecEdgarRecipe(opts *RetrieveOptions, cmd *cobra.Command) error {
-	// Validate output directory
-	if err := validateWritableDir(opts.OutputBase); err != nil {
-		return fmt.Errorf("output directory validation failed: %w", err)
-	}
-
-	// Get flags
-	ticker, _ := cmd.Flags().GetString("ticker")
-	filingType, _ := cmd.Flags().GetString("filing-type")
-	year, _ := cmd.Flags().GetString("year")
-
-	// Load retrieve config
-	paths, err := config.ResolvePaths("", "")
-	if err != nil {
-		return fmt.Errorf("failed to resolve paths: %w", err)
-	}
-
-	loader := config.NewLoader(paths)
-	retrieveConfig, err := loader.LoadRetrieveConfig(opts.ConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to load retrieve config: %w", err)
-	}
-
-	// Get finance realm config
-	realmConfig, exists := retrieveConfig.Realms["finance"]
-	if !exists {
-		return fmt.Errorf("finance realm not configured in retrieve config")
-	}
-
-	// Validate required user agent
-	if realmConfig.Client.UserAgent == "" {
-		return fmt.Errorf("user_agent is required in finance realm config for SEC compliance (set in retrieve.yaml)")
-	}
-
-	client := regulatory.NewSecEdgarClient(realmConfig.Client.UserAgent, realmConfig.RateLimits.RequestsPerSecond)
-	defer client.Close()
-
-	return client.DownloadFiling(ticker, filingType, year, opts.OutputBase)
 }

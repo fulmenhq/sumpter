@@ -51,30 +51,7 @@ sumpter retrieve find [flags]
 - `--progress`: Show progress indicators
 - `--flatten`: Output flattened relative paths instead of absolute paths
 
-### `recipe`
-
-Execute data acquisition recipes for specific realms and domains.
-
-Configuration is loaded from `retrieve.yaml` (use `--config-path` to override).
-
-**Supported realms:** finance
-**Supported domain-tags:** sec-edgar
-
-```bash
-sumpter retrieve recipe <realm> <domain-tag> [flags]
-```
-
-**Example:**
-
-```bash
-sumpter retrieve recipe finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024
-```
-
-**Flags:**
-
-- `--ticker`: Stock ticker symbol (for finance/sec-edgar)
-- `--filing-type`: Filing type (e.g., 10-K, 10-Q) (for finance/sec-edgar)
-- `--year`: Filing year (for finance/sec-edgar)
+> **Note:** Recipe-driven acquisition now lives under the dedicated `sumpter recipes` command. Use `sumpter recipes retrieve …` when you need to run a data-source recipe such as SEC EDGAR. The `retrieve` command continues to provide low-level file discovery and copy utilities.
 
 ## Global Flags
 
@@ -131,7 +108,7 @@ sumpter retrieve find --input-path ./data --include-pattern "*.xml" --format jso
 ### Download SEC EDGAR filings
 
 ```bash
-sumpter retrieve recipe finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024
+sumpter recipes retrieve finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024
 ```
 
 ### Copy files with progress

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fulmenhq/sumpter/internal/assets"
 )
 
 func TestNewSchemaValidator(t *testing.T) {
@@ -128,6 +130,33 @@ func TestValidationError(t *testing.T) {
 	}
 	if err.Line != 42 {
 		t.Errorf("Line = %v, want %v", err.Line, 42)
+	}
+}
+
+func TestValidateRecipeManifestEmbeddedSchemas(t *testing.T) {
+	schemaFS, err := assets.GetSchemasFS()
+	if err != nil {
+		t.Skipf("embedded schemas unavailable: %v", err)
+	}
+
+	validator := NewSchemaValidatorFromFS(schemaFS)
+	manifestYAML := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+assets:
+  signature: signature.yaml
+  extract: extract.yaml
+`
+
+	result, err := validator.ValidateRecipeManifest([]byte(manifestYAML), "recipe.yaml")
+	if err != nil {
+		t.Fatalf("ValidateRecipeManifest returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("ValidateRecipeManifest returned nil result")
+	}
+	if !result.Valid {
+		t.Fatalf("expected manifest to be valid, got errors: %+v", result.Errors)
 	}
 }
 
