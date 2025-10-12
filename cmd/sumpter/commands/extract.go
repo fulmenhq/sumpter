@@ -32,6 +32,7 @@ type ExtractOptions struct {
 	ExtractConfig   string
 	ClientID        string
 	SiteID          string
+	AllowLargeFiles bool
 }
 
 func NewExtractCommand() *cobra.Command {
@@ -64,6 +65,12 @@ The command supports both direct file specification and directory scanning with 
 Files are matched against the signature configuration, and matching records are extracted
 according to the extract configuration, producing structured output.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Retrieve the allow-large-files flag from the persistent flags
+			allowLargeFiles, err := cmd.InheritedFlags().GetBool("allow-large-files")
+			if err != nil {
+				return fmt.Errorf("failed to get allow-large-files flag: %w", err)
+			}
+			opts.AllowLargeFiles = allowLargeFiles
 			return runExtract(opts)
 		},
 	}
@@ -203,7 +210,7 @@ func runExtract(opts *ExtractOptions) error {
 
 	// For now, serial processing
 	for _, file := range files {
-		result := extract.ProcessFile(file, sigCfg, extCfg, externalFields)
+		result := extract.ProcessFile(file, sigCfg, extCfg, externalFields, opts.AllowLargeFiles)
 		results <- result
 	}
 	close(results)

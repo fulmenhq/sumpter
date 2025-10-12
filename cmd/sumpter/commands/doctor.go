@@ -513,7 +513,7 @@ func runDoctorConfigSetupRetrieveSecEdgar(outputPath string) error {
 	}
 
 	fmt.Printf("🎉 Setup complete! You can now use:\n")
-	fmt.Printf("   sumpter retrieve recipe finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024\n")
+	fmt.Printf("   sumpter recipes retrieve finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024\n")
 
 	return nil
 }
@@ -533,7 +533,7 @@ func runDoctorConfigTestRetrieveSecEdgar() error {
 	// This would do a dry-run test, but for now just show what would happen
 	fmt.Printf("✅ Configuration appears valid\n")
 	fmt.Printf("💡 To test with real data, run:\n")
-	fmt.Printf("   sumpter retrieve recipe finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024\n")
+	fmt.Printf("   sumpter recipes retrieve finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024\n")
 
 	return nil
 }

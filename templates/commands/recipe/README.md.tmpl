@@ -1,0 +1,63 @@
+# {{if .RecipeID}}{{.RecipeID}}{{else}}New Recipe{{end}}
+
+## Overview
+
+- **Created At:** {{.CreatedAt}}
+- **Recipe ID:** {{if .RecipeID}}{{.RecipeID}}{{else}}(set in recipe.yaml){{end}}
+- **Type:** extract
+- **Owner / Contact:** _Update in recipe.yaml_
+
+## Workspace Layout
+
+```
+.
+├── recipe.yaml          # Manifest metadata and defaults
+├── README.md            # This file
+├── signature/           # Signature configurations
+├── extract/             # Extract configuration(s)
+├── validation/          # Validation metadata / DSL rules
+├── testdata/            # Sanitised input samples for regression testing
+└── outputs/             # Captured outputs / golden files
+```
+
+## Next Steps
+
+1. Update `recipe.yaml` with accurate display name, owners, and asset paths.
+2. Copy signature configs into `signature/` and extract configs into `extract/`.
+3. Drop representative XML into `testdata/` for local testing.
+4. Record expected outputs in `outputs/` if you need golden comparisons.
+
+## Execution
+
+Use the manifest-aware runner to execute the recipe:
+
+```bash
+sumpter recipes run extract <workspace> \
+  --input-path ./testdata \
+  --output-path ./outputs/journal.json
+```
+
+The manifest provides defaults for signature/extract configs, input discovery, and output format. Override anything at the command line as needed.
+
+For low-level debugging you can still call the extract command directly:
+
+```bash
+sumpter extract files \
+  --signature-config-path signature/example-signature.yaml \
+  --extract-config-path extract/example-extract.yaml \
+  --files testdata/sample.xml
+```
+
+## QA Checklist
+
+- [ ] Signatures validated against sample inputs
+- [ ] Extract config passes schema validation (`make check-all`)
+- [ ] Validation metadata enabled and thresholds tuned
+- [ ] Summaries and payloads reviewed with downstream consumers
+- [ ] Golden output captured in `outputs/` (optional)
+
+## Revision History
+
+| Date | Author | Notes |
+|------|--------|-------|
+| {{.CreatedAt}} | {{if .RecipeID}}{{.RecipeID}}{{else}}(owner){{end}} | Initial scaffold |

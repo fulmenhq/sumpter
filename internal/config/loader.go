@@ -2,7 +2,9 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 
@@ -328,11 +330,18 @@ func (l *Loader) LoadRetrieveConfig(configPath string) (*RetrieveConfig, error) 
 		return nil, fmt.Errorf("failed to read source data config file %s: %w", configPath, err)
 	}
 
-	// Validate against schema first
-	schemaPath := filepath.Join(l.paths.Home, "schemas", "retrieve", "v0.1.0", "retrieve-config.schema.yaml")
+	const schemaRelPath = "retrieve/v0.1.0/retrieve-config.schema.yaml"
+	schemaPath := filepath.Join(l.paths.Home, "schemas", schemaRelPath)
 	schemaBytes, err := os.ReadFile(schemaPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
+		}
+
+		schemaBytes, err = l.loadEmbeddedSchema(schemaRelPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load retrieve schema: %w", err)
+		}
 	}
 
 	// Convert YAML schema to JSON for validation
@@ -366,6 +375,21 @@ func (l *Loader) LoadRetrieveConfig(configPath string) (*RetrieveConfig, error) 
 	}
 
 	return &config, nil
+}
+
+func (l *Loader) loadEmbeddedSchema(relPath string) ([]byte, error) {
+	schemaFS, err := assets.GetSchemasFS()
+	if err != nil {
+		return nil, fmt.Errorf("embedded schemas unavailable: %w", err)
+	}
+
+	fsPath := filepath.ToSlash(filepath.Join("schemas", relPath))
+	data, err := iofs.ReadFile(schemaFS, fsPath)
+	if err != nil {
+		return nil, fmt.Errorf("embedded schema %s not found: %w", relPath, err)
+	}
+
+	return data, nil
 }
 
 // getDefaultRetrieveConfig returns default retrieve configuration

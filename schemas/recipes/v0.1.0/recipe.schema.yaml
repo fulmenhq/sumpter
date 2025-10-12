@@ -1,0 +1,119 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: "Sumpter Recipe Manifest"
+description: "Structured metadata for Sumpter recipe workspaces"
+type: object
+additionalProperties: false
+required:
+  - version
+  - id
+  - kind
+  - assets
+properties:
+  version:
+    type: string
+    const: "recipe/v0.1.0"
+  id:
+    type: string
+    pattern: "^[a-zA-Z0-9_.-]+$"
+  kind:
+    type: string
+    enum: ["extract", "acquire"]
+  display_name:
+    type: string
+    maxLength: 200
+  description:
+    type: string
+  tags:
+    type: array
+    items:
+      type: string
+  created_at:
+    type: string
+    format: date-time
+  owners:
+    type: array
+    items:
+      type: object
+      required: ["name"]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        contact:
+          type: string
+  documentation:
+    type: object
+    additionalProperties: false
+    properties:
+      overview:
+        type: string
+      changelog:
+        type: string
+      references:
+        type: array
+        items:
+          type: string
+  assets:
+    type: object
+    additionalProperties: false
+    required: []
+    properties:
+      signature:
+        type: string
+      extract:
+        type: string
+      validation:
+        type: string
+      retrieve:
+        type: string
+      extras:
+        type: array
+        items:
+          type: string
+  defaults:
+    type: object
+    additionalProperties: false
+    properties:
+      input:
+        type: object
+        additionalProperties: false
+        properties:
+          mode:
+            type: string
+            enum: ["files", "path"]
+          files:
+            type: array
+            items:
+              type: string
+          path:
+            type: string
+          include_pattern:
+            type: string
+          exclude_pattern:
+            type: string
+          max_depth:
+            type: integer
+            minimum: 0
+          follow_symlinks:
+            type: boolean
+      output:
+        type: object
+        additionalProperties: false
+        properties:
+          format:
+            type: string
+          path:
+            type: string
+          pattern:
+            type: string
+      client_id:
+        type: string
+      site_id:
+        type: string
+      workers:
+        type: integer
+        minimum: 1
+      progress:
+        type: boolean
+  notes:
+    type: string

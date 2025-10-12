@@ -1,0 +1,528 @@
+package commands
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"text/template"
+	"time"
+
+	"github.com/fulmenhq/sumpter/internal/assets"
+	"github.com/fulmenhq/sumpter/internal/config"
+	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
+	"github.com/spf13/cobra"
+)
+
+type templateData struct {
+	RecipeID  string
+	CreatedAt string
+}
+
+func NewRecipesCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "recipes",
+		Short: "Manage recipes for acquisition and extraction workflows",
+	}
+
+	cmd.AddCommand(newRecipeInitCommand())
+	cmd.AddCommand(newRecipeRetrieveCommand())
+	cmd.AddCommand(newRecipeRunCommand())
+
+	return cmd
+}
+
+func newRecipeInitCommand() *cobra.Command {
+	var (
+		basePath string
+		recipeID string
+		gitInit  bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Scaffold a new recipe workspace",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if basePath == "" {
+				return errors.New("--path is required")
+			}
+
+			absPath, err := filepath.Abs(basePath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve path: %w", err)
+			}
+
+			if err := ensureEmptyOrMissing(absPath); err != nil {
+				return err
+			}
+
+			data := templateData{
+				RecipeID:  recipeID,
+				CreatedAt: time.Now().UTC().Format(time.RFC3339),
+			}
+
+			dirs := []string{
+				filepath.Join(absPath, "signature"),
+				filepath.Join(absPath, "extract"),
+				filepath.Join(absPath, "validation"),
+				filepath.Join(absPath, "testdata"),
+				filepath.Join(absPath, "outputs"),
+			}
+			for _, dir := range dirs {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return fmt.Errorf("failed to create directory %s: %w", dir, err)
+				}
+			}
+
+			templateFS, err := assets.GetTemplatesFS()
+			if err != nil {
+				return fmt.Errorf("failed to access embedded templates: %w", err)
+			}
+
+			files := map[string]string{
+				filepath.Join(absPath, "README.md"):   "commands/recipe/README.md.tmpl",
+				filepath.Join(absPath, "recipe.yaml"): "commands/recipe/recipe.yaml.tmpl",
+			}
+
+			for target, source := range files {
+				if err := renderTemplate(templateFS, source, target, data); err != nil {
+					return err
+				}
+			}
+
+			if gitInit {
+				if err := runGitInit(absPath); err != nil {
+					return err
+				}
+			}
+
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Recipe scaffold created at %s\n", absPath); err != nil {
+				return fmt.Errorf("failed to write scaffold confirmation: %w", err)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&basePath, "path", "", "Target directory for the new recipe (required)")
+	cmd.Flags().StringVar(&recipeID, "id", "", "Recipe identifier used in templates")
+	cmd.Flags().BoolVar(&gitInit, "git-init", false, "Initialize a git repository in the recipe directory")
+
+	return cmd
+}
+
+func newRecipeRetrieveCommand() *cobra.Command {
+	defaultOutput := filepath.Join(".scratchpad", "work")
+	if paths, err := config.ResolvePaths("", ""); err == nil {
+		defaultOutput = paths.WorkDir
+	}
+
+	cmd := &cobra.Command{
+		Use:   "retrieve <realm> <domain-tag>",
+		Short: "Run a data acquisition recipe for a specific realm and domain",
+		Long: `Execute data acquisition recipes for specific realms and domains.
+
+Supported realms: finance
+Supported domain-tags: sec-edgar
+
+Configuration is loaded from retrieve.yaml (use --config-path to override).
+For finance realm, configure user_agent for SEC compliance.
+
+Example: sumpter recipes retrieve finance sec-edgar --ticker AAPL --filing-type 10-K --year 2024`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			realm := args[0]
+			domainTag := args[1]
+
+			if !config.IsValidRealm(realm) {
+				return fmt.Errorf("unsupported realm: %s (supported realms: %v)", realm, config.ValidRealms())
+			}
+
+			outputBase, err := cmd.Flags().GetString("output-base")
+			if err != nil {
+				return err
+			}
+			configPath, err := cmd.Flags().GetString("config-path")
+			if err != nil {
+				return err
+			}
+			ticker, err := cmd.Flags().GetString("ticker")
+			if err != nil {
+				return err
+			}
+			filingType, err := cmd.Flags().GetString("filing-type")
+			if err != nil {
+				return err
+			}
+			year, err := cmd.Flags().GetString("year")
+			if err != nil {
+				return err
+			}
+
+			return runRecipeRetrieve(realm, domainTag, outputBase, configPath, ticker, filingType, year)
+		},
+	}
+
+	cmd.Flags().String("output-base", defaultOutput, "Base output directory for recipe artifacts")
+	cmd.Flags().String("config-path", "", "Path to retrieve configuration file (default: SUMPTER_HOME/configs/retrieve.yaml)")
+	cmd.Flags().String("ticker", "", "Stock ticker symbol (for finance/sec-edgar)")
+	cmd.Flags().String("filing-type", "", "Filing type (e.g., 10-K, 10-Q) (for finance/sec-edgar)")
+	cmd.Flags().String("year", "", "Filing year (for finance/sec-edgar)")
+
+	_ = cmd.MarkFlagRequired("ticker")
+	_ = cmd.MarkFlagRequired("filing-type")
+	_ = cmd.MarkFlagRequired("year")
+
+	return cmd
+}
+
+func newRecipeRunCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Execute a recipe using its manifest defaults",
+	}
+
+	cmd.AddCommand(newRecipeRunExtractCommand())
+
+	return cmd
+}
+
+func newRecipeRunExtractCommand() *cobra.Command {
+	opts := &recipeRunExtractOptions{}
+
+	cmd := &cobra.Command{
+		Use:   "extract <workspace>",
+		Short: "Execute an extract recipe defined in recipe.yaml",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			workspace := args[0]
+			return executeExtractRecipe(cmd, workspace, opts)
+		},
+	}
+
+	cmd.Flags().StringVar(&opts.ManifestPath, "manifest", "recipe.yaml", "Path to recipe manifest relative to workspace")
+	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of files to process (overrides manifest)")
+	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory of XML files to process (overrides manifest)")
+	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "", "Override manifest include pattern")
+	cmd.Flags().StringVar(&opts.ExcludePattern, "exclude-pattern", "", "Override manifest exclude pattern")
+	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", -1, "Override manifest max depth")
+	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symlinks (overrides manifest)")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview files without processing")
+	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
+	cmd.Flags().IntVar(&opts.Workers, "workers", 0, "Number of parallel workers (overrides manifest)")
+	cmd.Flags().StringVar(&opts.Format, "format", "", "Override output format")
+	cmd.Flags().StringVar(&opts.OutputPath, "output-path", "", "Override output path")
+	cmd.Flags().StringVar(&opts.OutputPattern, "output-pattern", "", "Override output filename pattern")
+	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Blend client identifier into extracted records")
+	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Blend site identifier into extracted records")
+	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
+	cmd.Flags().StringVar(&opts.ExtractOverride, "extract", "", "Override manifest extract config path")
+
+	return cmd
+}
+
+type recipeRunExtractOptions struct {
+	ManifestPath      string
+	Files             string
+	InputPath         string
+	IncludePattern    string
+	ExcludePattern    string
+	MaxDepth          int
+	FollowSymlinks    bool
+	DryRun            bool
+	Progress          bool
+	Workers           int
+	Format            string
+	OutputPath        string
+	OutputPattern     string
+	ClientID          string
+	SiteID            string
+	SignatureOverride string
+	ExtractOverride   string
+}
+
+func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunExtractOptions) error {
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return fmt.Errorf("failed to resolve workspace: %w", err)
+	}
+
+	manifestPath := opts.ManifestPath
+	if !filepath.IsAbs(manifestPath) {
+		manifestPath = filepath.Join(absWorkspace, manifestPath)
+	}
+
+	manifest, err := recipesmanifest.LoadManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+
+	if manifest.Kind != recipesmanifest.KindExtract {
+		return fmt.Errorf("manifest kind %s is not supported by run extract", manifest.Kind)
+	}
+
+	signaturePath := manifest.Assets.Signature
+	extractPath := manifest.Assets.Extract
+
+	if opts.SignatureOverride != "" {
+		signaturePath = opts.SignatureOverride
+	}
+	if opts.ExtractOverride != "" {
+		extractPath = opts.ExtractOverride
+	}
+
+	signaturePath = recipesmanifest.ResolvePath(absWorkspace, signaturePath)
+	extractPath = recipesmanifest.ResolvePath(absWorkspace, extractPath)
+
+	// Retrieve the allow-large-files flag from the persistent flags
+	allowLargeFiles, err := cmd.InheritedFlags().GetBool("allow-large-files")
+	if err != nil {
+		return fmt.Errorf("failed to get allow-large-files flag: %w", err)
+	}
+
+	extractOpts := &ExtractOptions{
+		SignatureConfig: signaturePath,
+		ExtractConfig:   extractPath,
+		AllowLargeFiles: allowLargeFiles,
+	}
+
+	defaults := manifest.Defaults
+
+	// Input resolution
+	if opts.Files != "" {
+		extractOpts.Files = opts.Files
+	} else if defaults.Input.Mode == "files" && len(defaults.Input.Files) > 0 {
+		var resolved []string
+		for _, file := range defaults.Input.Files {
+			resolved = append(resolved, recipesmanifest.ResolvePath(absWorkspace, file))
+		}
+		extractOpts.Files = strings.Join(resolved, ",")
+	}
+
+	if opts.InputPath != "" {
+		extractOpts.InputPath = resolveMaybeRelative(absWorkspace, opts.InputPath)
+	} else if defaults.Input.Path != "" {
+		extractOpts.InputPath = recipesmanifest.ResolvePath(absWorkspace, defaults.Input.Path)
+	}
+
+	// Include/exclude patterns
+	if opts.IncludePattern != "" {
+		extractOpts.IncludePattern = opts.IncludePattern
+	} else {
+		extractOpts.IncludePattern = defaults.Input.IncludePattern
+	}
+
+	if opts.ExcludePattern != "" {
+		extractOpts.ExcludePattern = opts.ExcludePattern
+	} else {
+		extractOpts.ExcludePattern = defaults.Input.ExcludePattern
+	}
+
+	if opts.MaxDepth >= 0 {
+		extractOpts.MaxDepth = opts.MaxDepth
+	} else {
+		extractOpts.MaxDepth = defaults.Input.MaxDepth
+	}
+
+	if cmd.Flags().Changed("follow-symlinks") {
+		extractOpts.FollowSymlinks = opts.FollowSymlinks
+	} else {
+		extractOpts.FollowSymlinks = defaults.Input.FollowSymlinks
+	}
+
+	// Output controls
+	if opts.Format != "" {
+		extractOpts.Format = opts.Format
+	} else {
+		extractOpts.Format = defaults.Output.Format
+	}
+
+	if opts.OutputPath != "" {
+		extractOpts.OutputPath = resolveMaybeRelative(absWorkspace, opts.OutputPath)
+	} else if defaults.Output.Path != "" {
+		extractOpts.OutputPath = recipesmanifest.ResolvePath(absWorkspace, defaults.Output.Path)
+	}
+
+	if opts.OutputPattern != "" {
+		extractOpts.OutputPattern = opts.OutputPattern
+	} else {
+		extractOpts.OutputPattern = defaults.Output.Pattern
+	}
+
+	if cmd.Flags().Changed("workers") {
+		extractOpts.Workers = opts.Workers
+	} else {
+		extractOpts.Workers = defaults.Workers
+	}
+
+	if cmd.Flags().Changed("progress") {
+		extractOpts.Progress = opts.Progress
+	} else {
+		extractOpts.Progress = defaults.Progress
+	}
+
+	if cmd.Flags().Changed("dry-run") {
+		extractOpts.DryRun = opts.DryRun
+	}
+
+	if opts.ClientID != "" {
+		extractOpts.ClientID = opts.ClientID
+	} else {
+		extractOpts.ClientID = defaults.ClientID
+	}
+
+	if opts.SiteID != "" {
+		extractOpts.SiteID = opts.SiteID
+	} else {
+		extractOpts.SiteID = defaults.SiteID
+	}
+
+	if extractOpts.Files == "" && extractOpts.InputPath == "" {
+		return errors.New("no input source resolved: provide --files, --input-path, or define defaults.input in recipe.yaml")
+	}
+
+	return runExtract(extractOpts)
+}
+
+func resolveMaybeRelative(base, candidate string) string {
+	if candidate == "" {
+		return ""
+	}
+	if filepath.IsAbs(candidate) {
+		return candidate
+	}
+	return filepath.Join(base, candidate)
+}
+
+func runRecipeRetrieve(realm, domainTag, outputBase, configPath, ticker, filingType, year string) error {
+	switch realm {
+	case "finance":
+		return runFinanceRecipe(domainTag, outputBase, configPath, ticker, filingType, year)
+	default:
+		return fmt.Errorf("unsupported realm: %s", realm)
+	}
+}
+
+func runFinanceRecipe(domainTag, outputBase, configPath, ticker, filingType, year string) error {
+	switch domainTag {
+	case "sec-edgar":
+		return runSecEdgarRecipe(outputBase, configPath, ticker, filingType, year)
+	default:
+		return fmt.Errorf("unsupported finance domain-tag: %s", domainTag)
+	}
+}
+
+func runSecEdgarRecipe(outputBase, configPath, ticker, filingType, year string) error {
+	if err := ensureWritableDir(outputBase); err != nil {
+		return fmt.Errorf("output directory validation failed: %w", err)
+	}
+
+	paths, err := config.ResolvePaths("", "")
+	if err != nil {
+		return fmt.Errorf("failed to resolve paths: %w", err)
+	}
+
+	loader := config.NewLoader(paths)
+	retrieveConfig, err := loader.LoadRetrieveConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load retrieve config: %w", err)
+	}
+
+	realmConfig, exists := retrieveConfig.Realms["finance"]
+	if !exists {
+		return fmt.Errorf("finance realm not configured in retrieve config")
+	}
+
+	if realmConfig.Client.UserAgent == "" {
+		return fmt.Errorf("user_agent is required in finance realm config for SEC compliance (set in retrieve.yaml)")
+	}
+
+	client := regulatory.NewSecEdgarClient(realmConfig.Client.UserAgent, realmConfig.RateLimits.RequestsPerSecond)
+	defer client.Close()
+
+	return client.DownloadFiling(ticker, filingType, year, outputBase)
+}
+
+func ensureEmptyOrMissing(path string) error {
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("path %s exists and is not a directory", path)
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return fmt.Errorf("failed to inspect existing directory: %w", err)
+		}
+		if len(entries) > 0 {
+			return fmt.Errorf("path %s already exists and is not empty", path)
+		}
+		return nil
+	}
+
+	if os.IsNotExist(err) {
+		if mkErr := os.MkdirAll(path, 0o755); mkErr != nil {
+			return fmt.Errorf("failed to create directory %s: %w", path, mkErr)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("failed to stat path %s: %w", path, err)
+}
+
+func renderTemplate(fsys fs.FS, source, target string, data templateData) (err error) {
+	tmplBytes, err := fs.ReadFile(fsys, source)
+	if err != nil {
+		return fmt.Errorf("failed to read template %s: %w", source, err)
+	}
+
+	tmpl, err := template.New(filepath.Base(source)).Parse(string(tmplBytes))
+	if err != nil {
+		return fmt.Errorf("failed to parse template %s: %w", source, err)
+	}
+
+	file, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", target, err)
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close file %s: %w", target, cerr)
+		}
+	}()
+
+	if err := tmpl.Execute(file, data); err != nil {
+		return fmt.Errorf("failed to render template %s: %w", source, err)
+	}
+
+	return nil
+}
+
+func runGitInit(path string) error {
+	cmd := exec.Command("git", "init")
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git init failed: %w", err)
+	}
+	return nil
+}
+
+func ensureWritableDir(dir string) error {
+	if dir == "" {
+		return fmt.Errorf("directory path cannot be empty")
+	}
+
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("cannot create directory: %s: %w", dir, err)
+	}
+
+	probe := filepath.Join(dir, ".sumpter-recipe-write-test")
+	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
+		return fmt.Errorf("directory is not writable: %s: %w", dir, err)
+	}
+
+	_ = os.Remove(probe)
+	return nil
+}

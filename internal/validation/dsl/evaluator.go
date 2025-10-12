@@ -17,11 +17,18 @@ type Evaluator struct {
 
 // NewEvaluator creates a new evaluator with the given variable context.
 func NewEvaluator(variables map[string]interface{}) *Evaluator {
-	if variables == nil {
-		variables = make(map[string]interface{})
+	ctx := make(map[string]interface{})
+	for key, value := range variables {
+		ctx[key] = value
 	}
+
+	// Inject common literals
+	ctx["null"] = nil
+	ctx["true"] = true
+	ctx["false"] = false
+
 	return &Evaluator{
-		variables: variables,
+		variables: ctx,
 	}
 }
 
@@ -173,6 +180,69 @@ func (e *Evaluator) evaluateFunctionCall(funcCall *FunctionCall) (interface{}, e
 			return nil, fmt.Errorf("abs() argument must be numeric: %w", err)
 		}
 		return math.Abs(floatVal), nil
+
+	case "round":
+		if len(funcCall.Args) == 0 || len(funcCall.Args) > 2 {
+			return nil, fmt.Errorf("round() requires 1 or 2 arguments, got %d", len(funcCall.Args))
+		}
+		valueArg, err := e.EvaluateExpression(funcCall.Args[0])
+		if err != nil {
+			return nil, fmt.Errorf("failed to evaluate round() first argument: %w", err)
+		}
+		value, err := toFloat64(valueArg)
+		if err != nil {
+			return nil, fmt.Errorf("round() first argument must be numeric: %w", err)
+		}
+
+		places := 0.0
+		if len(funcCall.Args) == 2 {
+			placesArg, err := e.EvaluateExpression(funcCall.Args[1])
+			if err != nil {
+				return nil, fmt.Errorf("failed to evaluate round() second argument: %w", err)
+			}
+			places, err = toFloat64(placesArg)
+			if err != nil {
+				return nil, fmt.Errorf("round() second argument must be numeric: %w", err)
+			}
+		}
+
+		precision := math.Round(places)
+		if precision < 0 {
+			precision = 0
+		}
+		factor := math.Pow(10, precision)
+		return math.Round(value*factor) / factor, nil
+
+	case "min", "max":
+		if len(funcCall.Args) == 0 {
+			return nil, fmt.Errorf("%s() requires at least one argument", funcCall.Name)
+		}
+		values := make([]float64, len(funcCall.Args))
+		for i, arg := range funcCall.Args {
+			val, err := e.EvaluateExpression(arg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to evaluate %s() argument %d: %w", funcCall.Name, i+1, err)
+			}
+			numeric, err := toFloat64(val)
+			if err != nil {
+				return nil, fmt.Errorf("%s() argument %d must be numeric: %w", funcCall.Name, i+1, err)
+			}
+			values[i] = numeric
+		}
+
+		result := values[0]
+		for _, v := range values[1:] {
+			if strings.ToLower(funcCall.Name) == "min" {
+				if v < result {
+					result = v
+				}
+			} else {
+				if v > result {
+					result = v
+				}
+			}
+		}
+		return result, nil
 
 	case "count":
 		// count() with no args returns the variable "count" if it exists

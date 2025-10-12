@@ -345,7 +345,7 @@ func (c *SecEdgarClient) parseFilingIndexXML(indexXML, baseURL string) []string 
 }
 
 // downloadFile downloads a file from URL to local path
-func (c *SecEdgarClient) downloadFile(url, filepath string) error {
+func (c *SecEdgarClient) downloadFile(url, filepath string) (err error) {
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return err
@@ -360,8 +360,15 @@ func (c *SecEdgarClient) downloadFile(url, filepath string) error {
 	if err != nil {
 		return err
 	}
-	_ = out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
-	_, err = io.Copy(out, resp.Body)
-	return err
+	if _, err = io.Copy(out, resp.Body); err != nil {
+		return fmt.Errorf("failed to write response body: %w", err)
+	}
+
+	return nil
 }

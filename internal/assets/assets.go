@@ -14,6 +14,9 @@ var SchemasFS embed.FS
 //go:embed embedded_examples
 var ExamplesFS embed.FS
 
+//go:embed embedded_templates
+var TemplatesFS embed.FS
+
 // GetDocsFS returns the embedded documentation filesystem
 func GetDocsFS() (fs.FS, error) {
 	return fs.Sub(DocsFS, "embedded_docs")
@@ -27,4 +30,9 @@ func GetSchemasFS() (fs.FS, error) {
 // GetExamplesFS returns the embedded examples filesystem
 func GetExamplesFS() (fs.FS, error) {
 	return fs.Sub(ExamplesFS, "embedded_examples")
+}
+
+// GetTemplatesFS returns the embedded templates filesystem
+func GetTemplatesFS() (fs.FS, error) {
+	return fs.Sub(TemplatesFS, "embedded_templates/templates")
 }

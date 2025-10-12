@@ -144,6 +144,23 @@ properties:
   filters:
     type: object
     description: Optional filters to apply after extraction, using field names as keys with comparison operators.
+  output_options:
+    type: object
+    description: Configure optional sections and output format for extract results
+    properties:
+      show_summaries:
+        type: boolean
+        default: true
+        description: Include summary block inside extract output
+      show_validation_metadata:
+        type: boolean
+        default: true
+        description: Include validation audit block when validation metadata is enabled
+      format:
+        type: string
+        enum: ["object"]
+        default: "object"
+        description: Output format (currently only structured object output is supported)
   validation_metadata:
     type: object
     description: Optional validation metadata generation for data quality verification
@@ -226,6 +243,96 @@ properties:
           required:
             - name
             - expression
+      reconciliations:
+        type: array
+        description: Structured reconciliations explaining differences between aggregates
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Name for the reconciliation block
+            base_expression:
+              type: string
+              description: Expression defining the value that requires reconciliation
+            tolerance:
+              type: number
+              default: 0.01
+              description: Acceptable residual tolerance after applying components
+            severity:
+              type: string
+              enum: ["info", "warning", "error", "fatal"]
+              default: "warning"
+              description: Severity to associate with unbalanced reconciliations when allow_unexplained is false
+            allow_unexplained:
+              type: boolean
+              default: false
+              description: Allow residuals beyond tolerance without marking as unbalanced
+            components:
+              type: array
+              description: Components that should sum to the base value
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    description: Name of the reconciliation component
+                  description:
+                    type: string
+                    description: Human readable detail for this component
+                  expression:
+                    type: string
+                    description: Expression evaluating the component amount
+                required:
+                  - name
+                  - expression
+            group_by:
+              type: object
+              description: Automatically generate reconciliation components by grouping extracted records
+              properties:
+                source:
+                  type: string
+                  description: Dot-delimited path to an array of objects used to build grouped components (e.g., "sale_events[].tender_details[]")
+                field:
+                  type: string
+                  description: Field within each grouped object used as the grouping key
+                label_field:
+                  type: string
+                  description: Optional field to derive human-friendly labels for grouped components
+                missing_label:
+                  type: string
+                  description: Label to use when the grouping field is blank or missing
+                  default: "unknown"
+                filter:
+                  type: string
+                  description: Optional expression for filtering which records participate in the grouping
+                value_expression:
+                  type: string
+                  description: Expression evaluated for each grouped record to produce the numeric contribution
+                aggregation:
+                  type: string
+                  description: Aggregation strategy applied across grouped values (currently only "sum" is supported)
+                  enum: ["sum"]
+                  default: "sum"
+                name_template:
+                  type: string
+                  description: Template for component names using {{group}} or {{label}} placeholders
+                description_template:
+                  type: string
+                  description: Template for component descriptions using {{group}} or {{label}} placeholders
+                overflow_strategy:
+                  type: string
+                  description: Strategy for handling grouped totals that exceed the base value
+                  enum: ["none", "cap_to_base"]
+                  default: "none"
+              required:
+                - source
+                - field
+                - value_expression
+          required:
+            - name
+            - base_expression
+            - components
       validations:
         type: array
         description: Validation rules to check data quality
@@ -251,6 +358,58 @@ properties:
             - rule
             - severity
             - message
+  summaries:
+    type: array
+    description: Optional declarative summaries to include within the extract payload
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Identifier for the summary block
+        label:
+          type: string
+          description: Human readable label for display
+        format:
+          type: string
+          description: Presentation hint (e.g., "count", "currency")
+        total:
+          type: object
+          description: Total value definition for the summary
+          properties:
+            expression:
+              type: string
+              description: Expression evaluated to compute the total value
+          required:
+            - expression
+        components:
+          type: array
+          description: Components that compose the summary total
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Identifier for the summary component
+              label:
+                type: string
+                description: Human readable label for the component
+              expression:
+                type: string
+                description: Expression evaluated to compute the component value
+              remainder:
+                type: boolean
+                description: When true, component captures the remaining portion of the total after other components
+              format:
+                type: string
+                description: Presentation hint (e.g., "count", "currency")
+            required:
+              - name
+            additionalProperties: false
+      required:
+        - name
+        - total
+        - components
 required:
   - record_type
   - match_selectors

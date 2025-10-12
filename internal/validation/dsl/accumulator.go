@@ -6,30 +6,45 @@ package dsl
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 // NewAccumulator creates a new accumulator from a configuration.
 func NewAccumulator(config AccumulationConfig) (*Accumulator, error) {
-	var filter *FilterExpression
-	var err error
+	var (
+		filter     *FilterExpression
+		filterExpr *Expression
+		err        error
+	)
 
 	if config.Filter != "" {
-		filter, err = ParseFilter(config.Filter)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse filter for accumulation %s: %w", config.Name, err)
+		filterStr := strings.TrimSpace(config.Filter)
+		advanced := strings.Contains(filterStr, "&&") || strings.Contains(filterStr, "||") || strings.Contains(filterStr, "(") || strings.Contains(filterStr, ")")
+
+		if advanced {
+			filterExpr, err = ParseExpression(filterStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse filter expression for accumulation %s: %w", config.Name, err)
+			}
+		} else {
+			filter, err = ParseFilter(filterStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse filter for accumulation %s: %w", config.Name, err)
+			}
 		}
 	}
 
 	acc := &Accumulator{
-		Name:      config.Name,
-		Operation: config.Operation,
-		Field:     config.Field,
-		Filter:    filter,
-		Count:     0,
-		Sum:       0.0,
-		Min:       math.Inf(1),  // Positive infinity
-		Max:       math.Inf(-1), // Negative infinity
-		values:    []float64{},
+		Name:       config.Name,
+		Operation:  config.Operation,
+		Field:      config.Field,
+		Filter:     filter,
+		FilterExpr: filterExpr,
+		Count:      0,
+		Sum:        0.0,
+		Min:        math.Inf(1),  // Positive infinity
+		Max:        math.Inf(-1), // Negative infinity
+		values:     []float64{},
 	}
 
 	return acc, nil
@@ -38,7 +53,20 @@ func NewAccumulator(config AccumulationConfig) (*Accumulator, error) {
 // Update updates the accumulator with a new record.
 func (acc *Accumulator) Update(record map[string]interface{}) error {
 	// Evaluate filter if present
-	if acc.Filter != nil {
+	if acc.FilterExpr != nil {
+		evaluator := NewEvaluator(record)
+		result, err := evaluator.EvaluateExpression(acc.FilterExpr)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate filter expression for accumulation %s: %w", acc.Name, err)
+		}
+		boolResult, ok := result.(bool)
+		if !ok {
+			return fmt.Errorf("filter expression for accumulation %s did not return boolean result", acc.Name)
+		}
+		if !boolResult {
+			return nil
+		}
+	} else if acc.Filter != nil {
 		evaluator := NewEvaluator(nil)
 		matches, err := evaluator.EvaluateFilter(acc.Filter, record)
 		if err != nil {

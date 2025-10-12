@@ -102,7 +102,7 @@ func TestProcessFilePolymorphicArray(t *testing.T) {
 	}
 	extractCfg.OutputSchema = schemaMap
 
-	result := ProcessFile(inputPath, signature, extractCfg, nil)
+	result := ProcessFile(inputPath, signature, extractCfg, nil, false)
 	if result.Error != nil {
 		t.Fatalf("unexpected extraction error: %v", result.Error)
 	}
@@ -112,13 +112,34 @@ func TestProcessFilePolymorphicArray(t *testing.T) {
 	}
 
 	record := result.Records[0]
-	if gotID, ok := record["identifier"].(string); !ok || gotID != "rec-001" {
-		t.Fatalf("unexpected identifier value: %#v", record["identifier"])
+	extractBlock, ok := record["extract"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("extract block missing or wrong type: %#v", record["extract"])
+	}
+	dataBlock, ok := extractBlock["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("extract data missing or wrong type: %#v", extractBlock["data"])
 	}
 
-	entriesVal, ok := record["entries"].([]map[string]interface{})
-	if !ok {
-		t.Fatalf("entries field missing or wrong type: %#v", record["entries"])
+	if gotID, ok := dataBlock["identifier"].(string); !ok || gotID != "rec-001" {
+		t.Fatalf("unexpected identifier value: %#v", dataBlock["identifier"])
+	}
+
+	var entriesVal []map[string]interface{}
+	switch v := dataBlock["entries"].(type) {
+	case []map[string]interface{}:
+		entriesVal = v
+	case []interface{}:
+		entriesVal = make([]map[string]interface{}, 0, len(v))
+		for _, entry := range v {
+			m, ok := entry.(map[string]interface{})
+			if !ok {
+				t.Fatalf("entries element has wrong type: %#v", entry)
+			}
+			entriesVal = append(entriesVal, m)
+		}
+	default:
+		t.Fatalf("entries field missing or wrong type: %#v", dataBlock["entries"])
 	}
 
 	expected := []map[string]interface{}{
@@ -477,4 +498,131 @@ func TestMatchesSignature(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessFile_LargeFileProtection(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Test 1: Small file should work without flag
+	t.Run("small file without flag", func(t *testing.T) {
+		smallFile := filepath.Join(tmpDir, "small.xml")
+		xmlContent := `<?xml version="1.0"?><Envelope><Record><ID>123</ID></Record></Envelope>`
+		if err := os.WriteFile(smallFile, []byte(xmlContent), 0o600); err != nil {
+			t.Fatalf("failed to write small file: %v", err)
+		}
+
+		signature := &FileSignature{
+			ConfidenceThreshold: 0.5,
+			MatchPatterns: []MatchPattern{
+				{Selector: "/Envelope", Weight: 1.0},
+			},
+		}
+
+		extractCfg := &ExtractRecordMatch{
+			RecordType:     "test",
+			MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+			FieldMappings: []FieldMapping{
+				{OutputField: "id", XPath: "ID", Type: "string"},
+			},
+		}
+
+		result := ProcessFile(smallFile, signature, extractCfg, nil, false)
+		if result.Error != nil {
+			t.Fatalf("small file should process without error, got: %v", result.Error)
+		}
+	})
+
+	// Test 2: Large file (>1GB) should fail without flag
+	t.Run("large file without flag", func(t *testing.T) {
+		largeFile := filepath.Join(tmpDir, "large.xml")
+		// Create a file > 1GB
+		file, err := os.Create(largeFile)
+		if err != nil {
+			t.Fatalf("failed to create large file: %v", err)
+		}
+		// Write 1.1GB of data
+		const chunkSize = 1024 * 1024 // 1MB
+		chunk := make([]byte, chunkSize)
+		for i := range chunk {
+			chunk[i] = 'x'
+		}
+		for i := 0; i < 1100; i++ { // 1.1GB
+			if _, err := file.Write(chunk); err != nil {
+				_ = file.Close()
+				t.Fatalf("failed to write to large file: %v", err)
+			}
+		}
+		_ = file.Close()
+
+		signature := &FileSignature{
+			ConfidenceThreshold: 0.5,
+			MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+		}
+		extractCfg := &ExtractRecordMatch{
+			RecordType:     "test",
+			MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+			FieldMappings:  []FieldMapping{{OutputField: "id", XPath: "ID", Type: "string"}},
+		}
+
+		result := ProcessFile(largeFile, signature, extractCfg, nil, false)
+		if result.Error == nil {
+			t.Fatal("expected error for large file without flag, got nil")
+		}
+		if !strings.Contains(result.Error.Error(), "exceeds 1GB limit") {
+			t.Fatalf("expected size limit error, got: %v", result.Error)
+		}
+	})
+
+	// Test 3: Large file should work WITH flag
+	t.Run("large file with flag", func(t *testing.T) {
+		largeFile := filepath.Join(tmpDir, "large-with-flag.xml")
+		// Create a file just > 1GB but with valid XML
+		file, err := os.Create(largeFile)
+		if err != nil {
+			t.Fatalf("failed to create large file: %v", err)
+		}
+
+		// Write header
+		if _, err := file.WriteString(`<?xml version="1.0"?><Envelope><Record><ID>123</ID></Record>`); err != nil {
+			_ = file.Close()
+			t.Fatalf("failed to write header: %v", err)
+		}
+
+		// Pad to > 1GB
+		const chunkSize = 1024 * 1024 // 1MB
+		chunk := make([]byte, chunkSize)
+		for i := range chunk {
+			chunk[i] = ' '
+		}
+		for i := 0; i < 1100; i++ { // 1.1GB
+			if _, err := file.Write(chunk); err != nil {
+				_ = file.Close()
+				t.Fatalf("failed to write padding: %v", err)
+			}
+		}
+
+		// Write footer
+		if _, err := file.WriteString(`</Envelope>`); err != nil {
+			_ = file.Close()
+			t.Fatalf("failed to write footer: %v", err)
+		}
+		_ = file.Close()
+
+		signature := &FileSignature{
+			ConfidenceThreshold: 0.5,
+			MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+		}
+		extractCfg := &ExtractRecordMatch{
+			RecordType:     "test",
+			MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+			FieldMappings:  []FieldMapping{{OutputField: "id", XPath: "ID", Type: "string"}},
+		}
+
+		// With allowLargeFiles=true, it should attempt to process (though it may fail for other reasons like memory)
+		result := ProcessFile(largeFile, signature, extractCfg, nil, true)
+		// We don't check for success here since we may actually OOM, but we verify it doesn't fail with size check error
+		if result.Error != nil && strings.Contains(result.Error.Error(), "exceeds 1GB limit") {
+			t.Fatalf("should not fail with size limit when flag is set, got: %v", result.Error)
+		}
+	})
 }

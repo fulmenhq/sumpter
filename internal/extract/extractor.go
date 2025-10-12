@@ -1,12 +1,18 @@
 package extract
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/antchfx/xmlquery"
 	xpath "github.com/antchfx/xpath"
@@ -15,6 +21,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/validation"
+	"github.com/fulmenhq/sumpter/internal/validation/dsl"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
@@ -170,8 +177,74 @@ func compileFieldMapping(mapping *FieldMapping) error {
 	return nil
 }
 
+// readFileContent reads file content with transparent .gz decompression support
+func readFileContent(filePath string, allowLargeFiles bool) ([]byte, error) {
+	const maxFileSizeWithoutFlag = 1 * 1024 * 1024 * 1024 // 1GB
+
+	// Get file size
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
+	fileSize := fileInfo.Size()
+
+	// For compressed files, estimate decompressed size (conservative 10x ratio)
+	// For XML, typical compression is 5-20x, so 10x is a reasonable middle ground
+	estimatedSize := fileSize
+	if isCompressed {
+		estimatedSize = fileSize * 10
+	}
+
+	// Check size limit if flag not set
+	if !allowLargeFiles && estimatedSize > maxFileSizeWithoutFlag {
+		sizeGB := float64(estimatedSize) / (1024 * 1024 * 1024)
+		return nil, fmt.Errorf(
+			"file exceeds 1GB limit (estimated %.2f GB uncompressed); use --allow-large-files flag to process anyway (warning: may cause out-of-memory errors on large files)",
+			sizeGB,
+		)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if file is gzip-compressed by extension
+	if isCompressed {
+		reader, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			// If gzip decompression fails, return the original data
+			// (file might have .gz extension but not be compressed)
+			return data, nil
+		}
+		defer func() {
+			_ = reader.Close() // Ignore close error
+		}()
+
+		decompressed, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decompress gzip file: %w", err)
+		}
+
+		// Verify actual decompressed size if we're checking limits
+		if !allowLargeFiles && int64(len(decompressed)) > maxFileSizeWithoutFlag {
+			sizeGB := float64(len(decompressed)) / (1024 * 1024 * 1024)
+			return nil, fmt.Errorf(
+				"decompressed file exceeds 1GB limit (%.2f GB); use --allow-large-files flag to process anyway (warning: may cause out-of-memory errors on large files)",
+				sizeGB,
+			)
+		}
+
+		return decompressed, nil
+	}
+
+	return data, nil
+}
+
 // ProcessFile processes a single file for extraction
-func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}) ExtractResult {
+func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, allowLargeFiles bool) ExtractResult {
 	logger := logging.GetLogger()
 	if logger == nil {
 		logger = zap.NewNop()
@@ -180,15 +253,20 @@ func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMa
 
 	result := ExtractResult{File: filePath}
 
-	// Read file content
+	// Read file content (with transparent .gz decompression if needed)
 	logger.Debug("Reading file content", zap.String("file", filePath))
-	content, err := os.ReadFile(filePath) // #nosec G304 - filePath comes from user-provided file list or directory scan
+	content, err := readFileContent(filePath, allowLargeFiles) // #nosec G304 - filePath comes from user-provided file list or directory scan
 	if err != nil {
 		logger.Error("Failed to read file", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to read file: %w", err)
 		return result
 	}
-	logger.Debug("File read successfully", zap.String("file", filePath), zap.Int("size", len(content)))
+	isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
+	if isCompressed {
+		logger.Debug("File decompressed successfully", zap.String("file", filePath), zap.Int("decompressed_size", len(content)))
+	} else {
+		logger.Debug("File read successfully", zap.String("file", filePath), zap.Int("size", len(content)))
+	}
 
 	// Parse XML document
 	logger.Debug("Parsing XML document", zap.String("file", filePath))
@@ -231,6 +309,12 @@ func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMa
 		return result
 	}
 	logger.Debug("Record extraction complete", zap.String("file", filePath), zap.Int("record_count", len(records)))
+
+	if err := enrichRecords(records, filePath, sigCfg, extCfg); err != nil {
+		logger.Error("Failed to apply metadata", zap.String("file", filePath), zap.Error(err))
+		result.Error = err
+		return result
+	}
 
 	result.Records = records
 	return result
@@ -351,6 +435,333 @@ func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields 
 	}
 
 	return records, nil
+}
+
+func enrichRecords(records []map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch) error {
+	if len(records) == 0 {
+		return nil
+	}
+
+	for _, record := range records {
+		if err := applyMetadataAndSummaries(record, sourceFile, sigCfg, cfg); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func applyMetadataAndSummaries(record map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch) error {
+	showSummaries := true
+	showValidation := true
+	if cfg.OutputOptions != nil {
+		if cfg.OutputOptions.ShowSummaries != nil {
+			showSummaries = *cfg.OutputOptions.ShowSummaries
+		}
+		if cfg.OutputOptions.ShowValidationMetadata != nil {
+			showValidation = *cfg.OutputOptions.ShowValidationMetadata
+		}
+	}
+
+	dataCopy := make(map[string]interface{}, len(record))
+	for k, v := range record {
+		dataCopy[k] = v
+	}
+
+	var (
+		runtime          *dsl.ValidationRuntime
+		validationReport map[string]interface{}
+		err              error
+	)
+
+	if cfg.ValidationMetadata != nil && cfg.ValidationMetadata.Enable {
+		runtime, err = dsl.RunValidation(cfg.ValidationMetadata, record)
+		if err != nil {
+			return fmt.Errorf("validation execution failed: %w", err)
+		}
+
+		validationReport, err = dsl.BuildValidationReport(cfg.ValidationMetadata, runtime)
+		if err != nil {
+			return fmt.Errorf("failed to build validation metadata: %w", err)
+		}
+	}
+
+	var summary map[string]interface{}
+	if showSummaries {
+		summary, err = buildSummaries(cfg.Summaries, runtime, record)
+		if err != nil {
+			return fmt.Errorf("failed to build summaries: %w", err)
+		}
+	}
+
+	runtimeMetadata := buildRuntimeMetadata(sourceFile, sigCfg, cfg, runtime, showSummaries && len(summary) > 0, showValidation && validationReport != nil)
+
+	final := make(map[string]interface{}, 3)
+	final["_runtime"] = runtimeMetadata
+
+	if showValidation && validationReport != nil {
+		final["_validation"] = validationReport
+	}
+
+	extractBlock := map[string]interface{}{
+		"data": dataCopy,
+	}
+	if showSummaries && len(summary) > 0 {
+		extractBlock["summary"] = summary
+	}
+	final["extract"] = extractBlock
+
+	for k := range record {
+		delete(record, k)
+	}
+	for k, v := range final {
+		record[k] = v
+	}
+
+	if runtime != nil && cfg.ValidationMetadata != nil {
+		shouldFail, failureErr := runtime.ShouldFailExtraction(cfg.ValidationMetadata.FailurePolicy)
+		if shouldFail {
+			if failureErr != nil {
+				return failureErr
+			}
+			return fmt.Errorf("validation failed")
+		}
+	}
+
+	return nil
+}
+
+func buildSummaries(configs []SummaryConfig, runtime *dsl.ValidationRuntime, record map[string]interface{}) (map[string]interface{}, error) {
+	if len(configs) == 0 {
+		return nil, nil
+	}
+
+	variables, err := buildVariableMap(runtime, record)
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make(map[string]interface{}, len(configs))
+
+	for _, cfg := range configs {
+		total, err := evaluateNumericExpression(cfg.Total.Expression, variables)
+		if err != nil {
+			return nil, fmt.Errorf("summary %s total: %w", cfg.Name, err)
+		}
+
+		components := make([]map[string]interface{}, 0, len(cfg.Components))
+		componentSum := 0.0
+		var remainderCfg *SummaryComponentConfig
+
+		for i := range cfg.Components {
+			componentCfg := cfg.Components[i]
+			if componentCfg.Remainder {
+				temp := componentCfg
+				remainderCfg = &temp
+				continue
+			}
+
+			value, err := evaluateNumericExpression(componentCfg.Expression, variables)
+			if err != nil {
+				return nil, fmt.Errorf("summary %s component %s: %w", cfg.Name, componentCfg.Name, err)
+			}
+
+			componentSum += value
+
+			component := map[string]interface{}{
+				"name":  componentCfg.Name,
+				"label": componentCfg.Label,
+				"value": normalizeNumber(value),
+			}
+
+			if componentCfg.Format != "" {
+				component["format"] = componentCfg.Format
+			}
+
+			if total != 0 {
+				component["share"] = normalizeNumber(value / total)
+			}
+
+			components = append(components, component)
+		}
+
+		if remainderCfg != nil {
+			remainderValue := total - componentSum
+			if math.Abs(remainderValue) < 1e-9 {
+				remainderValue = 0
+			}
+
+			component := map[string]interface{}{
+				"name":  remainderCfg.Name,
+				"label": remainderCfg.Label,
+				"value": normalizeNumber(remainderValue),
+			}
+
+			if remainderCfg.Format != "" {
+				component["format"] = remainderCfg.Format
+			}
+
+			if total != 0 {
+				component["share"] = normalizeNumber(remainderValue / total)
+			}
+
+			components = append(components, component)
+			componentSum += remainderValue
+		}
+
+		summary := map[string]interface{}{
+			"label":      cfg.Label,
+			"total":      normalizeNumber(total),
+			"components": components,
+		}
+
+		if cfg.Format != "" {
+			summary["format"] = cfg.Format
+		}
+
+		if math.Abs(total-componentSum) > 1e-6 {
+			summary["unreconciled"] = normalizeNumber(total - componentSum)
+		}
+
+		summaries[cfg.Name] = summary
+	}
+
+	return summaries, nil
+}
+
+func buildVariableMap(runtime *dsl.ValidationRuntime, record map[string]interface{}) (map[string]interface{}, error) {
+	variables := make(map[string]interface{})
+
+	for key, value := range record {
+		variables[key] = value
+	}
+
+	if runtime == nil {
+		return variables, nil
+	}
+
+	for name, acc := range runtime.Accumulators {
+		result, err := acc.GetResult()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get accumulator %s result: %w", name, err)
+		}
+		variables[name] = result
+	}
+
+	for name, value := range runtime.AggregationResults {
+		variables[name] = value
+	}
+
+	if runtime.ReconciliationScalars != nil {
+		for name, value := range runtime.ReconciliationScalars {
+			variables[name] = value
+		}
+	}
+
+	return variables, nil
+}
+
+func evaluateNumericExpression(expression string, variables map[string]interface{}) (float64, error) {
+	expression = strings.TrimSpace(expression)
+	if expression == "" {
+		return 0, nil
+	}
+
+	expr, err := dsl.ParseExpression(expression)
+	if err != nil {
+		return 0, err
+	}
+
+	evaluator := dsl.NewEvaluator(variables)
+	value, err := evaluator.EvaluateExpression(expr)
+	if err != nil {
+		return 0, err
+	}
+
+	return coerceToFloat(value)
+}
+
+func normalizeNumber(value float64) interface{} {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return value
+	}
+
+	rounded := math.Round(value*1e6) / 1e6
+	if math.Abs(rounded-math.Round(rounded)) < 1e-6 {
+		return int64(math.Round(rounded))
+	}
+
+	return rounded
+}
+
+func coerceToFloat(value interface{}) (float64, error) {
+	switch v := value.(type) {
+	case float64:
+		return v, nil
+	case float32:
+		return float64(v), nil
+	case int:
+		return float64(v), nil
+	case int64:
+		return float64(v), nil
+	case int32:
+		return float64(v), nil
+	case uint:
+		return float64(v), nil
+	case uint32:
+		return float64(v), nil
+	case uint64:
+		return float64(v), nil
+	case bool:
+		if v {
+			return 1, nil
+		}
+		return 0, nil
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0, nil
+		}
+		num, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse numeric string %q: %w", s, err)
+		}
+		return num, nil
+	default:
+		return 0, fmt.Errorf("unsupported numeric expression result type %T", value)
+	}
+}
+
+func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtime *dsl.ValidationRuntime, summariesIncluded, validationIncluded bool) map[string]interface{} {
+	metadata := map[string]interface{}{
+		"generated_at":        time.Now().UTC().Format(time.RFC3339),
+		"source_file":         sourceFile,
+		"record_type":         cfg.RecordType,
+		"summaries_included":  summariesIncluded,
+		"validation_included": validationIncluded,
+	}
+
+	if sigCfg != nil {
+		if sigCfg.SignatureID != "" {
+			metadata["signature_id"] = sigCfg.SignatureID
+		}
+		if sigCfg.Name != "" {
+			metadata["signature_name"] = sigCfg.Name
+		}
+	}
+
+	if cfg.ValidationMetadata != nil {
+		metadata["validation_enabled"] = cfg.ValidationMetadata.Enable
+		if cfg.ValidationMetadata.ArrayPath != "" {
+			metadata["validation_array_path"] = cfg.ValidationMetadata.ArrayPath
+		}
+	}
+
+	if runtime != nil {
+		metadata["validation_record_count"] = runtime.RecordCount
+	}
+
+	return metadata
 }
 
 // extractValue extracts a value using XPath
