@@ -27,8 +27,12 @@ func NewRecordScanner(reader io.Reader, recordSelector string) *RecordScanner {
 	// For now, we support simple patterns like "//ElementName" or "/path/to/ElementName"
 	elementName := extractElementName(recordSelector)
 
+	// Wrap reader to track byte position
+	cr := &countingReader{r: reader, count: 0}
+
 	return &RecordScanner{
-		decoder:        xml.NewDecoder(reader),
+		decoder:        xml.NewDecoder(cr),
+		reader:         cr,
 		recordSelector: recordSelector,
 		elementName:    elementName,
 		buffer:         make([]xml.Token, 0, 128),
@@ -81,8 +85,12 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 	s.buffer = s.buffer[:0]
 	s.inRecord = false
 	s.recordDepth = -1
+	var recordStartOffset int64 // Track XML stream offset when entering record
 
 	for {
+		// Capture XML stream offset before reading next token
+		offsetBeforeToken := s.decoder.InputOffset()
+
 		token, err := s.decoder.Token()
 		if err != nil {
 			if err == io.EOF {
@@ -107,6 +115,8 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 				s.inRecord = true
 				s.recordDepth = s.depth
 				s.recordCount++
+				// Use XML stream offset from BEFORE this token was read
+				recordStartOffset = offsetBeforeToken
 			}
 
 			// If we're in a record, buffer this token
@@ -129,9 +139,16 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 					return nil, s.err
 				}
 
+				// Capture XML stream offset at end of record (after reading end tag)
+				endOffset := s.decoder.InputOffset()
+				sizeBytes := endOffset - recordStartOffset
+
 				result := &RecordBuffer{
-					XML:       recordXML,
-					RecordNum: s.recordCount,
+					XML:         recordXML,
+					RecordNum:   s.recordCount,
+					StartOffset: recordStartOffset,
+					EndOffset:   endOffset,
+					SizeBytes:   sizeBytes,
 				}
 
 				s.depth--
@@ -179,6 +196,14 @@ func (s *RecordScanner) serializeTokens() (string, error) {
 // RecordCount returns the number of records scanned so far
 func (s *RecordScanner) RecordCount() int {
 	return s.recordCount
+}
+
+// BytesRead returns the total number of bytes read from the input stream so far
+func (s *RecordScanner) BytesRead() int64 {
+	if s.reader == nil {
+		return 0
+	}
+	return s.reader.Bytes()
 }
 
 // Close closes the scanner and releases resources

@@ -416,3 +416,174 @@ func TestRecordScanner_CommentsAndProcessingInstructions(t *testing.T) {
 		t.Errorf("record XML missing processing instruction: %s", record.XML)
 	}
 }
+
+func TestRecordScanner_ByteTracking(t *testing.T) {
+	xmlData := `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <Record id="1">
+    <name>First</name>
+    <value>100</value>
+  </Record>
+  <Record id="2">
+    <name>Second</name>
+    <value>200</value>
+  </Record>
+</root>`
+
+	scanner := NewRecordScanner(strings.NewReader(xmlData), "//Record")
+
+	// Initial state: no bytes read yet (decoder may buffer some)
+	initialBytes := scanner.BytesRead()
+	if initialBytes < 0 {
+		t.Errorf("initial BytesRead() = %d, should be non-negative", initialBytes)
+	}
+
+	// Scan first record
+	record1, err := scanner.Next()
+	if err != nil {
+		t.Fatalf("unexpected error on first record: %v", err)
+	}
+
+	// Check that offsets are populated
+	if record1.StartOffset <= 0 {
+		t.Errorf("first record StartOffset = %d, want > 0", record1.StartOffset)
+	}
+	if record1.EndOffset <= record1.StartOffset {
+		t.Errorf("first record EndOffset = %d, want > StartOffset (%d)", record1.EndOffset, record1.StartOffset)
+	}
+	if record1.SizeBytes <= 0 {
+		t.Errorf("first record SizeBytes = %d, want > 0", record1.SizeBytes)
+	}
+	if record1.SizeBytes != (record1.EndOffset - record1.StartOffset) {
+		t.Errorf("first record SizeBytes = %d, want %d (EndOffset - StartOffset)",
+			record1.SizeBytes, record1.EndOffset-record1.StartOffset)
+	}
+
+	// Scan second record
+	record2, err := scanner.Next()
+	if err != nil {
+		t.Fatalf("unexpected error on second record: %v", err)
+	}
+
+	// Second record should start after first record ends
+	if record2.StartOffset <= record1.EndOffset {
+		t.Errorf("second record StartOffset = %d, should be > first EndOffset (%d)",
+			record2.StartOffset, record1.EndOffset)
+	}
+	if record2.EndOffset <= record2.StartOffset {
+		t.Errorf("second record EndOffset = %d, want > StartOffset (%d)", record2.EndOffset, record2.StartOffset)
+	}
+	if record2.SizeBytes <= 0 {
+		t.Errorf("second record SizeBytes = %d, want > 0", record2.SizeBytes)
+	}
+
+	// BytesRead should be at least as much as the second record's end
+	finalBytes := scanner.BytesRead()
+	if finalBytes < record2.EndOffset {
+		t.Errorf("BytesRead() = %d, should be >= second record EndOffset (%d)",
+			finalBytes, record2.EndOffset)
+	}
+
+	// Total file size should be approximately equal to BytesRead after EOF
+	_, err = scanner.Next() // Should get EOF
+	if err != io.EOF {
+		t.Errorf("expected EOF, got %v", err)
+	}
+
+	totalBytes := scanner.BytesRead()
+	expectedSize := int64(len(xmlData))
+	if totalBytes != expectedSize {
+		t.Errorf("total BytesRead() = %d, want %d (file size)", totalBytes, expectedSize)
+	}
+}
+
+func TestRecordScanner_ByteTrackingSingleRecord(t *testing.T) {
+	xmlData := `<root><Record>test</Record></root>`
+
+	scanner := NewRecordScanner(strings.NewReader(xmlData), "//Record")
+
+	record, err := scanner.Next()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify byte tracking fields are populated
+	if record.StartOffset == 0 {
+		t.Error("StartOffset should be > 0 after XML prolog/root element")
+	}
+	if record.EndOffset <= record.StartOffset {
+		t.Errorf("EndOffset (%d) should be > StartOffset (%d)", record.EndOffset, record.StartOffset)
+	}
+	if record.SizeBytes <= 0 {
+		t.Errorf("SizeBytes = %d, want > 0", record.SizeBytes)
+	}
+
+	// Verify size calculation is correct
+	calculatedSize := record.EndOffset - record.StartOffset
+	if record.SizeBytes != calculatedSize {
+		t.Errorf("SizeBytes = %d, want %d (EndOffset - StartOffset)",
+			record.SizeBytes, calculatedSize)
+	}
+}
+
+func TestRecordScanner_BytesReadMethod(t *testing.T) {
+	xmlData := `<root><Record>A</Record><Record>B</Record><Record>C</Record></root>`
+
+	scanner := NewRecordScanner(strings.NewReader(xmlData), "//Record")
+
+	// Track bytes read as we scan
+	bytesBeforeScan := scanner.BytesRead()
+	if bytesBeforeScan < 0 {
+		t.Errorf("BytesRead() before scan = %d, want >= 0", bytesBeforeScan)
+	}
+
+	// Scan all records
+	recordCount := 0
+	for {
+		bytesBeforeNext := scanner.BytesRead()
+		record, err := scanner.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		recordCount++
+		bytesAfterNext := scanner.BytesRead()
+
+		// BytesRead should be monotonically increasing (never decrease)
+		if bytesAfterNext < bytesBeforeNext {
+			t.Errorf("BytesRead decreased: %d -> %d", bytesBeforeNext, bytesAfterNext)
+		}
+
+		// Note: xml.Decoder buffers input, so BytesRead() may not increase
+		// incrementally for every record. It typically reads the entire input
+		// on the first Token() call, so BytesRead() will jump to the file size
+		// immediately and remain constant thereafter.
+
+		// Record offsets use InputOffset() which tracks XML stream position,
+		// not underlying reader position. So we can't directly compare them.
+		// Just verify offsets are reasonable.
+		if record.StartOffset < 0 {
+			t.Errorf("Record %d StartOffset (%d) is negative",
+				recordCount, record.StartOffset)
+		}
+		if record.EndOffset < record.StartOffset {
+			t.Errorf("Record %d EndOffset (%d) < StartOffset (%d)",
+				recordCount, record.EndOffset, record.StartOffset)
+		}
+	}
+
+	if recordCount != 3 {
+		t.Errorf("scanned %d records, want 3", recordCount)
+	}
+
+	// After EOF, BytesRead should equal file size
+	// (decoder should have read the entire input by now)
+	finalBytes := scanner.BytesRead()
+	expectedSize := int64(len(xmlData))
+	if finalBytes != expectedSize {
+		t.Errorf("final BytesRead() = %d, want %d", finalBytes, expectedSize)
+	}
+}
