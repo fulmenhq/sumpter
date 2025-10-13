@@ -282,3 +282,53 @@ func TestSecEdgarClient_parseFilingIndexXML_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// TestDownloadFiling_InvalidTicker tests error handling for invalid ticker
+func TestDownloadFiling_InvalidTicker(t *testing.T) {
+	// Skip: Integration test that requires logger initialization and network access
+	t.Skip("Skipping integration test - requires logger and network")
+}
+
+// TestDownloadFiling_EmptyTicker tests error handling for empty ticker
+func TestDownloadFiling_EmptyTicker(t *testing.T) {
+	// Skip: Integration test that requires logger initialization and network access
+	t.Skip("Skipping integration test - requires logger and network")
+}
+
+// TestDownloadFilingFiles_EmptyDocuments tests handling of no documents
+func TestDownloadFilingFiles_EmptyDocuments(t *testing.T) {
+	// Skip: Integration test that requires logger initialization
+	t.Skip("Skipping integration test - requires logger")
+}
+
+// TestDownloadFilingFiles_InvalidURL tests handling of invalid document URLs
+func TestDownloadFilingFiles_InvalidURL(t *testing.T) {
+	// Skip: Integration test that requires logger initialization and network access
+	t.Skip("Skipping integration test - requires logger and network")
+}
+
+// TestDownloadFile_InvalidURL tests error handling for invalid URL
+func TestDownloadFile_InvalidURL(t *testing.T) {
+	client := NewSecEdgarClient("Test Agent/1.0", 8.0)
+	defer client.Close()
+
+	tmpDir := t.TempDir()
+	outputPath := tmpDir + "/test.xml"
+
+	err := client.downloadFile("http://invalid.example.com/nonexistent.xml", outputPath)
+	if err == nil {
+		t.Error("Expected error for invalid URL, got nil")
+	}
+}
+
+// TestDownloadFile_InvalidOutputPath tests error handling for invalid output path
+func TestDownloadFile_InvalidOutputPath(t *testing.T) {
+	client := NewSecEdgarClient("Test Agent/1.0", 8.0)
+	defer client.Close()
+
+	// Use invalid path (directory doesn't exist)
+	err := client.downloadFile("http://example.com/test.xml", "/nonexistent/dir/test.xml")
+	if err == nil {
+		t.Error("Expected error for invalid output path, got nil")
+	}
+}

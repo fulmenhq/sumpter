@@ -410,6 +410,38 @@ properties:
         - name
         - total
         - components
+  optimization:
+    type: object
+    description: Optional optimization hints for processing large files (see ADR-0005)
+    properties:
+      streaming_mode:
+        type: string
+        enum: ["auto", "enabled", "disabled"]
+        default: "auto"
+        description: |
+          Controls hybrid streaming XML processing for large files:
+          - auto: Automatically use streaming for files > 100MB (default)
+          - enabled: Always use streaming mode
+          - disabled: Never use streaming mode
+      expected_record_size:
+        type: string
+        enum: ["small", "medium", "large"]
+        default: "medium"
+        description: |
+          Hint about typical record size for memory allocation optimization:
+          - small: < 10KB per record (e.g., simple transactions)
+          - medium: 10KB - 500KB per record (e.g., detailed events)
+          - large: > 500KB per record (e.g., complex documents)
+      notes:
+        type: string
+        description: |
+          Additional notes about file characteristics or processing considerations.
+          Streaming mode uses constant memory (10-50MB) regardless of file size by:
+          - Scanning XML token-by-token to find record boundaries
+          - Parsing each record as a mini-DOM
+          - Extracting data using existing XPath logic
+          - Discarding each record before processing the next
+          Best suited for files with many independent top-level records.
 required:
   - record_type
   - match_selectors

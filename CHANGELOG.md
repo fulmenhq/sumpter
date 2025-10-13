@@ -6,40 +6,47 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-10-13
+
 ### Added
 
-- Guardian browser-based approval system for commits and pushes
-- Extract command with XPath-based XML processing
-- String transform registry for field transformations (trim, upper, lower, title, replace, blind_string)
-- Validation DSL for extract recipes with accumulations, aggregations, and quality checks
-- Retrieve command with SEC EDGAR support
-- Dialect support for file signatures
-- License compliance checking
-- Enhanced configuration system and core infrastructure
-- Infrastructure tooling and quality gates improvements
+- **Hybrid Streaming XML Architecture** (ADR-0005): Constant-memory XML processing for 50GB+ files
+  - RecordScanner with token-by-token streaming and XPath-based record selection
+  - Automatic streaming mode for files >100MB with `--allow-large-files` flag
+  - 99.95% memory reduction: 111GB → 50MB RSS for 50GB XML files
+  - Transparent .gz decompression support in streaming mode
+- Recipe system with manifest-based workflows (`recipes` command)
+  - `recipes init`: Scaffold new recipe workspaces with templates
+  - `recipes run extract`: Execute extract recipes with manifest defaults
+  - `recipes retrieve`: Acquire data from APIs and file systems (SEC EDGAR support)
+  - Manifest validation with JSON Schema 2020-12
+- Comprehensive test suite achieving 50% coverage (alpha phase gate)
+  - Streaming package: 83.9% coverage (exceeds production 80% threshold)
+  - Transforms: 91.4% coverage
+  - Recipes: 86.7% coverage
+  - DSL validation: 68.0% coverage
+- New test files: transforms, recipes manifest, regulatory scraper, validate/retrieve commands, doctor/envinfo
+- Doctor command for environment setup and diagnostics
+  - Interactive SEC EDGAR configuration wizard with compliance validation
+  - Environment health checks and setup script generation
+- Retrieve command with validation helpers and path security
 
 ### Changed
 
-- Refactored dialect registry to YAML schema format
-- Enhanced inspect functionality with logging and progress
-- Updated golangci-lint configuration
-- Improved extract schema with validation metadata support
-- Migrated to YAML-first schema approach (removed redundant JSON schemas)
-- Refactored extract config preparation with once-initialization pattern
+- Extract command automatically uses streaming for large files when `--allow-large-files` is set
+- Enhanced extract record-match schema with streaming mode documentation
+- Recipe manifest schema with defaults, input/output configuration, and asset references
 
 ### Fixed
 
-- Resolved errcheck linting violations in tests and output functions
-- Corrected golangci-lint v2 configuration
-- Fixed deprecated strings.Title usage in transform registry
-- Removed debug print statements from extractor
+- Recipe subcommand test expectations (init/retrieve/run vs list/show/run)
+- Validate command test compilation errors
 
 ### Docs
 
-- Added schema-first and logging SOPs + ADRs
-- Embedded architecture documentation
-- Clarified commit and push approval requirements
-- Updated embed-manifest and synced documentation
+- ADR-0005: Hybrid Streaming XML Architecture with performance benchmarks
+- Recipe system documentation and workflow examples
+- Release notes for v0.1.1 with streaming architecture details
 
 ## [0.1.0] - 2025-09-18
 

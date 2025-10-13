@@ -2,6 +2,7 @@ package extract
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -625,4 +626,232 @@ func TestProcessFile_LargeFileProtection(t *testing.T) {
 			t.Fatalf("should not fail with size limit when flag is set, got: %v", result.Error)
 		}
 	})
+}
+
+// TestProcessFileStreaming_vs_NonStreaming verifies that streaming mode produces
+// identical results to non-streaming mode for the same input
+func TestProcessFileStreaming_vs_NonStreaming(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "multi-record.xml")
+
+	// Create test XML with multiple records
+	xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<Envelope>
+  <Record id="1">
+    <Name>First Record</Name>
+    <Value>100.5</Value>
+    <Active>true</Active>
+  </Record>
+  <Record id="2">
+    <Name>Second Record</Name>
+    <Value>200.75</Value>
+    <Active>false</Active>
+  </Record>
+  <Record id="3">
+    <Name>Third Record</Name>
+    <Value>300.25</Value>
+    <Active>true</Active>
+  </Record>
+</Envelope>`
+
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test-streaming",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns: []MatchPattern{
+			{Selector: "/Envelope", Weight: 1.0},
+		},
+	}
+
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "test_record",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//Record"}, // Same XPath for both modes now
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "id", XPath: "@id", Type: "string"},
+			{OutputField: "name", XPath: "Name", Type: "string"},
+			{OutputField: "value", XPath: "Value", Type: "number"},
+			{OutputField: "active", XPath: "Active", Type: "boolean"},
+		},
+	}
+
+	externalFields := map[string]interface{}{
+		"test_run": "comparison",
+	}
+
+	// Run non-streaming extraction
+	resultNonStreaming := ProcessFile(testFile, signature, extractCfg, externalFields, false)
+	if resultNonStreaming.Error != nil {
+		t.Fatalf("non-streaming extraction failed: %v", resultNonStreaming.Error)
+	}
+
+	// Run streaming extraction (same config works now!)
+	resultStreaming := ProcessFileStreaming(testFile, signature, extractCfg, externalFields)
+	if resultStreaming.Error != nil {
+		t.Fatalf("streaming extraction failed: %v", resultStreaming.Error)
+	}
+
+	// Compare record counts
+	if len(resultNonStreaming.Records) != len(resultStreaming.Records) {
+		t.Fatalf("record count mismatch: non-streaming=%d, streaming=%d",
+			len(resultNonStreaming.Records), len(resultStreaming.Records))
+	}
+
+	// Compare each record
+	for i := range resultNonStreaming.Records {
+		nonStreamRec := resultNonStreaming.Records[i]
+		streamRec := resultStreaming.Records[i]
+
+		// Extract data blocks for comparison (ignore runtime metadata)
+		nonStreamData := extractDataBlock(t, nonStreamRec)
+		streamData := extractDataBlock(t, streamRec)
+
+		if !reflect.DeepEqual(nonStreamData, streamData) {
+			nonStreamJSON, _ := json.MarshalIndent(nonStreamData, "", "  ")
+			streamJSON, _ := json.MarshalIndent(streamData, "", "  ")
+			t.Fatalf("record %d data mismatch:\nNon-streaming:\n%s\n\nStreaming:\n%s",
+				i, string(nonStreamJSON), string(streamJSON))
+		}
+	}
+
+	t.Logf("✓ Streaming and non-streaming produce identical results for %d records", len(resultNonStreaming.Records))
+}
+
+// extractDataBlock extracts the data portion from a record for comparison
+func extractDataBlock(t *testing.T, record map[string]interface{}) map[string]interface{} {
+	t.Helper()
+
+	extractBlock, ok := record["extract"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("extract block missing or wrong type: %T", record["extract"])
+	}
+
+	dataBlock, ok := extractBlock["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data block missing or wrong type: %T", extractBlock["data"])
+	}
+
+	return dataBlock
+}
+
+// TestProcessFileStreaming_LargeRecordCount tests streaming with many records
+func TestProcessFileStreaming_LargeRecordCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping large record count test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "many-records.xml")
+
+	// Create XML with 1000 records
+	file, err := os.Create(testFile)
+	if err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	defer func() {
+		_ = file.Close() // Best effort close in test
+	}()
+
+	if _, err := file.WriteString(`<?xml version="1.0" encoding="UTF-8"?><Envelope>`); err != nil {
+		t.Fatalf("failed to write XML header: %v", err)
+	}
+	for i := 0; i < 1000; i++ {
+		if _, err := fmt.Fprintf(file, `<Record><ID>%d</ID><Value>%d.5</Value></Record>`, i, i*10); err != nil {
+			t.Fatalf("failed to write record %d: %v", i, err)
+		}
+	}
+	if _, err := file.WriteString(`</Envelope>`); err != nil {
+		t.Fatalf("failed to write XML footer: %v", err)
+	}
+
+	signature := &FileSignature{
+		ConfidenceThreshold: 0.5,
+		MatchPatterns: []MatchPattern{
+			{Selector: "/Envelope", Weight: 1.0},
+		},
+	}
+
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "test_record",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//Record"}, // Use normal XPath - ProcessFileStreaming will adjust internally
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "id", XPath: "ID", Type: "string"},
+			{OutputField: "value", XPath: "Value", Type: "number"},
+		},
+	}
+
+	result := ProcessFileStreaming(testFile, signature, extractCfg, nil)
+	if result.Error != nil {
+		t.Fatalf("streaming extraction failed: %v", result.Error)
+	}
+
+	if len(result.Records) != 1000 {
+		t.Fatalf("expected 1000 records, got %d", len(result.Records))
+	}
+
+	// Verify first and last records
+	firstData := extractDataBlock(t, result.Records[0])
+	if firstData["id"] != "0" {
+		t.Errorf("first record id = %v, want '0'", firstData["id"])
+	}
+
+	lastData := extractDataBlock(t, result.Records[999])
+	if lastData["id"] != "999" {
+		t.Errorf("last record id = %v, want '999'", lastData["id"])
+	}
+
+	t.Logf("✓ Successfully processed 1000 records via streaming")
+}
+
+// TestProcessFileStreaming_Debug is a simple debug test
+func TestProcessFileStreaming_Debug(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "debug.xml")
+
+	xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<Envelope>
+  <Record id="1">
+    <Name>Test</Name>
+  </Record>
+</Envelope>`
+
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+	}
+
+	extractCfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}}, // Use normal XPath
+		FieldMappings: []FieldMapping{
+			{OutputField: "id", XPath: "@id", Type: "string"},
+			{OutputField: "name", XPath: "Name", Type: "string"},
+		},
+	}
+
+	result := ProcessFileStreaming(testFile, signature, extractCfg, nil)
+
+	t.Logf("Result error: %v", result.Error)
+	t.Logf("Result records: %d", len(result.Records))
+
+	if result.Error != nil {
+		t.Fatalf("streaming failed: %v", result.Error)
+	}
+
+	if len(result.Records) == 0 {
+		t.Fatal("expected at least 1 record, got 0")
+	}
+
+	t.Logf("First record: %+v", result.Records[0])
 }
