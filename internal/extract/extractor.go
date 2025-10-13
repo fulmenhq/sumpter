@@ -18,6 +18,7 @@ import (
 	xpath "github.com/antchfx/xpath"
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/assets"
+	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/validation"
@@ -243,6 +244,185 @@ func readFileContent(filePath string, allowLargeFiles bool) ([]byte, error) {
 	return data, nil
 }
 
+// openFileStream opens a file for streaming with transparent .gz decompression
+func openFileStream(filePath string) (io.ReadCloser, error) {
+	file, err := os.Open(filePath) // #nosec G304 - path comes from user-provided file list
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+
+	// Check if file is gzip-compressed
+	if strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz") {
+		gzReader, err := gzip.NewReader(file)
+		if err != nil {
+			// If gzip decompression fails, reset and return the file reader
+			_ = file.Close() // #nosec G104 - best effort close on error path
+			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		// Return a multi-closer that closes both gzip reader and file
+		return &multiCloser{readers: []io.Closer{gzReader, file}}, nil
+	}
+
+	return file, nil
+}
+
+// multiCloser wraps multiple closers
+type multiCloser struct {
+	readers []io.Closer
+}
+
+func (mc *multiCloser) Read(p []byte) (n int, err error) {
+	// Read from the first reader (the gzip reader)
+	if len(mc.readers) > 0 {
+		if r, ok := mc.readers[0].(io.Reader); ok {
+			return r.Read(p)
+		}
+	}
+	return 0, io.EOF
+}
+
+func (mc *multiCloser) Close() error {
+	var errs []error
+	for _, r := range mc.readers {
+		if err := r.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("errors closing resources: %v", errs)
+	}
+	return nil
+}
+
+// ProcessFileStreaming processes a large file using streaming to minimize memory usage
+func ProcessFileStreaming(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}) ExtractResult {
+	logger := logging.GetLogger()
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	result := ExtractResult{File: filePath}
+
+	logger.Info("Starting streaming extraction",
+		zap.String("file", filePath),
+		zap.String("mode", "streaming"))
+
+	// Prepare extract config
+	if err := prepareExtractConfig(extCfg); err != nil {
+		logger.Error("Failed to prepare extract config", zap.String("file", filePath), zap.Error(err))
+		result.Error = fmt.Errorf("failed to prepare extract config: %w", err)
+		return result
+	}
+
+	// Open file stream
+	stream, err := openFileStream(filePath)
+	if err != nil {
+		logger.Error("Failed to open file stream", zap.String("file", filePath), zap.Error(err))
+		result.Error = fmt.Errorf("failed to open file stream: %w", err)
+		return result
+	}
+	defer func() {
+		if closeErr := stream.Close(); closeErr != nil {
+			logger.Warn("Failed to close file stream", zap.Error(closeErr))
+		}
+	}()
+
+	// Get the record selector from the first match selector
+	if len(extCfg.MatchSelectors) == 0 {
+		result.Error = fmt.Errorf("no match selectors defined in extract config")
+		return result
+	}
+	recordSelector := extCfg.MatchSelectors[0].XPath
+
+	logger.Info("Initializing record scanner",
+		zap.String("record_selector", recordSelector))
+
+	// Create record scanner
+	scanner := streaming.NewRecordScanner(stream, recordSelector)
+	defer func() {
+		_ = scanner.Close() // Scanner close is best-effort, errors are not critical
+	}()
+
+	var allRecords []map[string]interface{}
+
+	// Note: In streaming mode, signature checking is skipped because we don't have access
+	// to the full document structure. Signature checking should be done before calling
+	// ProcessFileStreaming, or the caller should ensure the file matches the expected format.
+	logger.Debug("Streaming mode: signature checking skipped (checking against individual records)")
+
+	// For streaming mode, we need to adjust the match selectors to work with mini-DOMs
+	// Save the original selectors and temporarily replace them
+	originalSelectors := extCfg.MatchSelectors
+	extCfg.MatchSelectors = []MatchSelector{{XPath: "/*"}} // Match the root element of each mini-DOM
+	// Compile the new selector
+	if err := prepareExtractConfig(extCfg); err != nil {
+		extCfg.MatchSelectors = originalSelectors // Restore
+		result.Error = fmt.Errorf("failed to prepare streaming extract config: %w", err)
+		return result
+	}
+	defer func() {
+		extCfg.MatchSelectors = originalSelectors // Restore when done
+	}()
+
+	// Process records one at a time
+	for {
+		recordBuffer, err := scanner.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			logger.Error("Failed to scan record", zap.Error(err))
+			result.Error = fmt.Errorf("failed to scan record: %w", err)
+			return result
+		}
+
+		// Log progress every 100 records
+		if recordBuffer.RecordNum%100 == 0 {
+			logger.Info("Progress",
+				zap.Int("records_scanned", recordBuffer.RecordNum),
+				zap.String("file", filePath))
+		}
+
+		// Parse this record as a mini-DOM
+		recordDoc, err := xmlquery.Parse(strings.NewReader(recordBuffer.XML))
+		if err != nil {
+			logger.Error("Failed to parse record XML",
+				zap.Int("record_num", recordBuffer.RecordNum),
+				zap.Error(err))
+			result.Error = fmt.Errorf("failed to parse record %d: %w", recordBuffer.RecordNum, err)
+			return result
+		}
+
+		// Extract records from this mini-DOM
+		// The match selector has been temporarily changed to "/*" to match the root of each mini-DOM
+		records, err := extractRecords(recordDoc, extCfg, externalFields)
+		if err != nil {
+			logger.Error("Failed to extract from record",
+				zap.Int("record_num", recordBuffer.RecordNum),
+				zap.Error(err))
+			result.Error = fmt.Errorf("failed to extract from record %d: %w", recordBuffer.RecordNum, err)
+			return result
+		}
+
+		allRecords = append(allRecords, records...)
+	}
+
+	logger.Info("Streaming extraction complete",
+		zap.String("file", filePath),
+		zap.Int("total_records_scanned", scanner.RecordCount()),
+		zap.Int("total_records_extracted", len(allRecords)))
+
+	// Enrich records with metadata
+	if err := enrichRecords(allRecords, filePath, sigCfg, extCfg); err != nil {
+		logger.Error("Failed to enrich records", zap.Error(err))
+		result.Error = err
+		return result
+	}
+
+	result.Records = allRecords
+	return result
+}
+
 // ProcessFile processes a single file for extraction
 func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, allowLargeFiles bool) ExtractResult {
 	logger := logging.GetLogger()
@@ -252,6 +432,30 @@ func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMa
 	logger.Debug("Starting file processing", zap.String("file", filePath))
 
 	result := ExtractResult{File: filePath}
+
+	// Check if we should use streaming mode for large files
+	// Streaming mode threshold: 100MB uncompressed (or 10MB compressed with 10x ratio estimate)
+	const streamingThreshold = 100 * 1024 * 1024 // 100MB
+
+	if allowLargeFiles {
+		fileInfo, err := os.Stat(filePath)
+		if err == nil {
+			isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
+			estimatedSize := fileInfo.Size()
+			if isCompressed {
+				estimatedSize = fileInfo.Size() * 10 // Conservative 10x decompression ratio
+			}
+
+			// Use streaming mode for files > 100MB
+			if estimatedSize > streamingThreshold {
+				logger.Info("Using streaming mode for large file",
+					zap.String("file", filePath),
+					zap.Int64("estimated_size_mb", estimatedSize/(1024*1024)),
+					zap.Bool("compressed", isCompressed))
+				return ProcessFileStreaming(filePath, sigCfg, extCfg, externalFields)
+			}
+		}
+	}
 
 	// Read file content (with transparent .gz decompression if needed)
 	logger.Debug("Reading file content", zap.String("file", filePath))

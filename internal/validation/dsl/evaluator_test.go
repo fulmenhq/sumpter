@@ -306,3 +306,349 @@ func TestCompareValues(t *testing.T) {
 		})
 	}
 }
+
+// TestFunctionCalls tests all function call evaluations
+func TestFunctionCalls(t *testing.T) {
+	tests := []struct {
+		name       string
+		exprStr    string
+		variables  map[string]interface{}
+		wantResult interface{}
+		wantErr    bool
+	}{
+		// abs() function
+		{
+			name:       "abs of negative",
+			exprStr:    "abs(-42.5)",
+			wantResult: 42.5,
+		},
+		{
+			name:       "abs of positive",
+			exprStr:    "abs(10)",
+			wantResult: 10.0,
+		},
+		{
+			name:       "abs with variable",
+			exprStr:    "abs(diff)",
+			variables:  map[string]interface{}{"diff": -15.7},
+			wantResult: 15.7,
+		},
+
+		// round() function
+		{
+			name:       "round default (no decimal places)",
+			exprStr:    "round(3.7)",
+			wantResult: 4.0,
+		},
+		{
+			name:       "round to 2 decimals",
+			exprStr:    "round(3.14159, 2)",
+			wantResult: 3.14,
+		},
+		{
+			name:       "round with negative precision",
+			exprStr:    "round(123.456, -1)",
+			wantResult: 123.0, // Treats negative as 0
+		},
+		{
+			name:       "round with variable",
+			exprStr:    "round(value, 1)",
+			variables:  map[string]interface{}{"value": 9.87},
+			wantResult: 9.9,
+		},
+
+		// min() function
+		{
+			name:       "min of two values",
+			exprStr:    "min(10, 5)",
+			wantResult: 5.0,
+		},
+		{
+			name:       "min of three values",
+			exprStr:    "min(100, 50, 75)",
+			wantResult: 50.0,
+		},
+		{
+			name:       "min with variables",
+			exprStr:    "min(a, b, c)",
+			variables:  map[string]interface{}{"a": 30, "b": 10, "c": 20},
+			wantResult: 10.0,
+		},
+
+		// max() function
+		{
+			name:       "max of two values",
+			exprStr:    "max(10, 5)",
+			wantResult: 10.0,
+		},
+		{
+			name:       "max of three values",
+			exprStr:    "max(100, 50, 75)",
+			wantResult: 100.0,
+		},
+		{
+			name:       "max with variables",
+			exprStr:    "max(a, b, c)",
+			variables:  map[string]interface{}{"a": 30, "b": 10, "c": 20},
+			wantResult: 30.0,
+		},
+
+		// count() function
+		{
+			name:       "count from variable",
+			exprStr:    "count",
+			variables:  map[string]interface{}{"count": 42},
+			wantResult: 42,
+		},
+		{
+			name:       "count() call",
+			exprStr:    "count()",
+			variables:  map[string]interface{}{"count": 25},
+			wantResult: 25,
+		},
+		{
+			name:       "count() with no variable defaults to 0",
+			exprStr:    "count()",
+			variables:  map[string]interface{}{},
+			wantResult: 0,
+		},
+
+		// sum() function
+		{
+			name:       "sum from variable",
+			exprStr:    "sum",
+			variables:  map[string]interface{}{"sum": 150.5},
+			wantResult: 150.5,
+		},
+		{
+			name:       "sum() call",
+			exprStr:    "sum()",
+			variables:  map[string]interface{}{"sum": 200.0},
+			wantResult: 200.0,
+		},
+		{
+			name:       "sum() with no variable defaults to 0",
+			exprStr:    "sum()",
+			variables:  map[string]interface{}{},
+			wantResult: 0.0,
+		},
+
+		// Error cases
+		{
+			name:      "unknown function",
+			exprStr:   "unknown_func(10)",
+			variables: map[string]interface{}{},
+			wantErr:   true,
+		},
+		{
+			name:      "abs with wrong arg count",
+			exprStr:   "abs(1, 2)",
+			variables: map[string]interface{}{},
+			wantErr:   true,
+		},
+		{
+			name:      "round with too many args",
+			exprStr:   "round(1, 2, 3)",
+			variables: map[string]interface{}{},
+			wantErr:   true,
+		},
+		{
+			name:      "min with no args",
+			exprStr:   "min()",
+			variables: map[string]interface{}{},
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := ParseExpression(tt.exprStr)
+			if err != nil {
+				t.Fatalf("ParseExpression() error = %v", err)
+			}
+
+			eval := NewEvaluator(tt.variables)
+			result, err := eval.EvaluateExpression(expr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("EvaluateExpression() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			// For float comparisons, use approximate equality
+			if resFloat, ok := result.(float64); ok {
+				if wantFloat, ok := tt.wantResult.(float64); ok {
+					if resFloat != wantFloat {
+						t.Errorf("result = %v, want %v", resFloat, wantFloat)
+					}
+					return
+				}
+			}
+
+			if result != tt.wantResult {
+				t.Errorf("result = %v (type %T), want %v (type %T)",
+					result, result, tt.wantResult, tt.wantResult)
+			}
+		})
+	}
+}
+
+// TestGetNestedField tests nested field access with dot notation
+func TestGetNestedField(t *testing.T) {
+	tests := []struct {
+		name      string
+		record    map[string]interface{}
+		fieldPath string
+		want      interface{}
+	}{
+		{
+			name:      "top-level field",
+			record:    map[string]interface{}{"name": "John"},
+			fieldPath: "name",
+			want:      "John",
+		},
+		{
+			name: "nested field one level",
+			record: map[string]interface{}{
+				"user": map[string]interface{}{
+					"name": "Jane",
+				},
+			},
+			fieldPath: "user.name",
+			want:      "Jane",
+		},
+		{
+			name: "nested field two levels",
+			record: map[string]interface{}{
+				"order": map[string]interface{}{
+					"customer": map[string]interface{}{
+						"email": "test@example.com",
+					},
+				},
+			},
+			fieldPath: "order.customer.email",
+			want:      "test@example.com",
+		},
+		{
+			name: "nested field with numeric value",
+			record: map[string]interface{}{
+				"transaction": map[string]interface{}{
+					"amount": 150.50,
+				},
+			},
+			fieldPath: "transaction.amount",
+			want:      150.50,
+		},
+		{
+			name:      "missing top-level field",
+			record:    map[string]interface{}{"name": "John"},
+			fieldPath: "missing",
+			want:      nil,
+		},
+		{
+			name: "missing nested field",
+			record: map[string]interface{}{
+				"user": map[string]interface{}{
+					"name": "Jane",
+				},
+			},
+			fieldPath: "user.missing",
+			want:      nil,
+		},
+		{
+			name: "path through non-map",
+			record: map[string]interface{}{
+				"value": "string_value",
+			},
+			fieldPath: "value.nested",
+			want:      nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getNestedField(tt.record, tt.fieldPath)
+			if got != tt.want {
+				t.Errorf("getNestedField() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestArithmeticEdgeCases tests edge cases in arithmetic operations
+func TestArithmeticEdgeCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		exprStr    string
+		variables  map[string]interface{}
+		wantResult interface{}
+		wantErr    bool
+	}{
+		{
+			name:      "division by zero",
+			exprStr:   "10 / 0",
+			variables: map[string]interface{}{},
+			wantErr:   true,
+		},
+		{
+			name:       "multiplication with zero",
+			exprStr:    "100 * 0",
+			variables:  map[string]interface{}{},
+			wantResult: 0.0,
+		},
+		{
+			name:       "division resulting in fraction",
+			exprStr:    "10 / 3",
+			variables:  map[string]interface{}{},
+			wantResult: 3.3333333333333335,
+		},
+		{
+			name:       "negative subtraction",
+			exprStr:    "5 - 10",
+			variables:  map[string]interface{}{},
+			wantResult: -5.0,
+		},
+		{
+			name:       "complex nested arithmetic",
+			exprStr:    "(a + b) * c / d",
+			variables:  map[string]interface{}{"a": 10, "b": 5, "c": 2, "d": 3},
+			wantResult: 10.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := ParseExpression(tt.exprStr)
+			if err != nil {
+				t.Fatalf("ParseExpression() error = %v", err)
+			}
+
+			eval := NewEvaluator(tt.variables)
+			result, err := eval.EvaluateExpression(expr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("EvaluateExpression() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			if resFloat, ok := result.(float64); ok {
+				if wantFloat, ok := tt.wantResult.(float64); ok {
+					if resFloat != wantFloat {
+						t.Errorf("result = %v, want %v", resFloat, wantFloat)
+					}
+					return
+				}
+			}
+
+			if result != tt.wantResult {
+				t.Errorf("result = %v, want %v", result, tt.wantResult)
+			}
+		})
+	}
+}

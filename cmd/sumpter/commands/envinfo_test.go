@@ -913,3 +913,65 @@ func TestJSONValidation(t *testing.T) {
 		}
 	})
 }
+
+// TestWriteHelpers tests the writeFprintf and writeFprintln helper functions
+func TestWriteHelpers(t *testing.T) {
+	t.Run("writeFprintf basic", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := writeFprintf(&buf, "Hello %s", "World")
+		if err != nil {
+			t.Errorf("writeFprintf() error = %v", err)
+		}
+		if buf.String() != "Hello World" {
+			t.Errorf("writeFprintf() = %q, want %q", buf.String(), "Hello World")
+		}
+	})
+
+	t.Run("writeFprintf with numbers", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := writeFprintf(&buf, "Count: %d, Float: %.2f", 42, 3.14159)
+		if err != nil {
+			t.Errorf("writeFprintf() error = %v", err)
+		}
+		expected := "Count: 42, Float: 3.14"
+		if buf.String() != expected {
+			t.Errorf("writeFprintf() = %q, want %q", buf.String(), expected)
+		}
+	})
+
+	t.Run("writeFprintln basic", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := writeFprintln(&buf, "Hello", "World")
+		if err != nil {
+			t.Errorf("writeFprintln() error = %v", err)
+		}
+		expected := "Hello World\n"
+		if buf.String() != expected {
+			t.Errorf("writeFprintln() = %q, want %q", buf.String(), expected)
+		}
+	})
+
+	t.Run("writeFprintln with single arg", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := writeFprintln(&buf, "Test")
+		if err != nil {
+			t.Errorf("writeFprintln() error = %v", err)
+		}
+		expected := "Test\n"
+		if buf.String() != expected {
+			t.Errorf("writeFprintln() = %q, want %q", buf.String(), expected)
+		}
+	})
+
+	t.Run("writeFprintln with no args", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := writeFprintln(&buf)
+		if err != nil {
+			t.Errorf("writeFprintln() error = %v", err)
+		}
+		expected := "\n"
+		if buf.String() != expected {
+			t.Errorf("writeFprintln() = %q, want %q", buf.String(), expected)
+		}
+	})
+}
