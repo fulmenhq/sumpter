@@ -1,0 +1,503 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: XML Inspection Report
+description: Analysis report for XML file structure and streaming suitability
+type: object
+version: "inspect-report/v0.1.1"
+properties:
+  version:
+    type: string
+    const: "inspect-report/v0.1.1"
+    description: Report schema version
+  input:
+    type: object
+    description: Input file metadata
+    properties:
+      path:
+        type: string
+        description: Path to the input file
+      size_bytes:
+        type: integer
+        minimum: 0
+        description: Size of the input file in bytes
+      encoding_detected:
+        type: string
+        description: Detected character encoding
+      compressed:
+        type: boolean
+        description: Whether the input file is compressed
+      compression:
+        type: string
+        enum: ["gzip", "none", "bzip2", "xz"]
+        description: Compression type of the input file
+    required:
+      - path
+      - size_bytes
+      - encoding_detected
+      - compressed
+      - compression
+  metrics:
+    type: object
+    description: File analysis metrics
+    properties:
+      bytes_processed:
+        type: integer
+        minimum: 0
+        description: Total bytes processed from input
+      elapsed_ms:
+        type: integer
+        minimum: 0
+        description: Analysis duration in milliseconds
+      throughput_bytes_per_sec:
+        type: number
+        minimum: 0
+        description: Processing throughput in bytes per second
+      replacement_count:
+        type: integer
+        minimum: 0
+        description: Number of encoding replacements made
+      rss_peak_mb:
+        type: number
+        minimum: 0
+        description: Peak RSS memory usage in megabytes
+    required:
+      - bytes_processed
+      - elapsed_ms
+      - throughput_bytes_per_sec
+      - replacement_count
+  paths:
+    type: array
+    description: List of unique element paths found in the file
+    items:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Dot-notation path to the element
+        count:
+          type: integer
+          minimum: 0
+          description: Number of occurrences of this path
+        attributes:
+          type: array
+          description: Attributes found on this path
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Attribute name
+              count:
+                type: integer
+                minimum: 0
+                description: Number of occurrences
+            required:
+              - name
+              - count
+        samples:
+          type: array
+          description: Sample text values found at this path
+          items:
+            type: string
+      required:
+        - path
+        - count
+  caps:
+    type: object
+    description: Capacity limits and truncation indicators
+    properties:
+      paths_truncated:
+        type: boolean
+        description: Whether paths were truncated due to limits
+      attributes_truncated:
+        type: boolean
+        description: Whether attributes were truncated due to limits
+      samples_truncated:
+        type: boolean
+        description: Whether samples were truncated due to limits
+    required:
+      - paths_truncated
+      - attributes_truncated
+      - samples_truncated
+  record_analysis:
+    type: object
+    description: Record boundary analysis results
+    properties:
+      record_candidates:
+        type: array
+        description: Candidate elements for record-based processing
+        items:
+          type: object
+          properties:
+            element:
+              type: string
+              description: Element name (namespace-agnostic)
+            xpath:
+              type: string
+              description: XPath selector for this element
+            count:
+              type: integer
+              minimum: 0
+              description: Number of occurrences of this element
+            depth:
+              type: integer
+              minimum: 0
+              description: Typical depth of this element
+            size_stats:
+              type: object
+              properties:
+                avg_kb:
+                  type: number
+                  minimum: 0
+                  description: Average size in kilobytes
+                p50_kb:
+                  type: integer
+                  minimum: 0
+                  description: 50th percentile size in kilobytes
+                p95_kb:
+                  type: integer
+                  minimum: 0
+                  description: 95th percentile size in kilobytes
+                p99_kb:
+                  type: integer
+                  minimum: 0
+                  description: 99th percentile size in kilobytes
+                max_kb:
+                  type: integer
+                  minimum: 0
+                  description: Maximum size in kilobytes
+                min_kb:
+                  type: integer
+                  minimum: 0
+                  description: Minimum size in kilobytes
+              required:
+                - avg_kb
+                - p50_kb
+                - p95_kb
+                - p99_kb
+                - max_kb
+                - min_kb
+            first_seen_offset:
+              type: integer
+              minimum: 0
+              description: Byte offset where this element was first seen
+            sample_offsets:
+              type: array
+              maxItems: 3
+              description: Sample byte offsets for this element (max 3)
+              items:
+                type: integer
+                minimum: 0
+          required:
+            - element
+            - xpath
+            - count
+            - depth
+            - size_stats
+            - first_seen_offset
+            - sample_offsets
+      streaming_analysis:
+        type: object
+        description: Analysis of streaming suitability
+        properties:
+          suitable_for_streaming:
+            type: boolean
+            description: Whether the file is suitable for streaming processing
+          recommended_selector:
+            type: string
+            description: Recommended XPath selector for record extraction
+          confidence:
+            type: string
+            enum: ["high", "medium", "low"]
+            description: Confidence level in the streaming recommendation
+          reasoning:
+            type: string
+            description: Explanation of the streaming suitability assessment
+          warnings:
+            type: array
+            description: Warnings about streaming processing
+            items:
+              type: object
+              properties:
+                severity:
+                  type: string
+                  enum: ["info", "warning", "critical"]
+                  description: Severity level of the warning
+                message:
+                  type: string
+                  description: Warning message
+                recommendation:
+                  type: string
+                  description: Recommended action
+              required:
+                - severity
+                - message
+                - recommendation
+          memory_estimates:
+            type: object
+            properties:
+              streaming_typical_mb:
+                type: integer
+                minimum: 0
+                description: Typical memory usage in MB for streaming mode
+              streaming_worst_mb:
+                type: integer
+                minimum: 0
+                description: Worst-case memory usage in MB for streaming mode
+              non_streaming_gb:
+                type: integer
+                minimum: 0
+                description: Estimated memory usage in GB for non-streaming mode
+            required:
+              - streaming_typical_mb
+              - streaming_worst_mb
+              - non_streaming_gb
+          performance_estimates:
+            type: object
+            properties:
+              streaming_sequential:
+                type: string
+                description: Estimated time for sequential streaming processing
+              manifest_parallel_32x:
+                type: string
+                description: Estimated time for parallel processing with 32 workers
+            required:
+              - streaming_sequential
+              - manifest_parallel_32x
+        required:
+          - suitable_for_streaming
+          - recommended_selector
+          - confidence
+          - reasoning
+          - warnings
+          - memory_estimates
+          - performance_estimates
+      oom_summary:
+        type: object
+        description: Summary of out-of-memory risk analysis
+        properties:
+          threshold_mb:
+            type: integer
+            minimum: 0
+            description: OOM warning threshold in megabytes
+          large_record_count:
+            type: integer
+            minimum: 0
+            description: Number of records exceeding the threshold
+          max_size_kb:
+            type: integer
+            minimum: 0
+            description: Size of the largest record in kilobytes
+          largest_records:
+            type: array
+            maxItems: 5
+            description: Details of the largest records (max 5)
+            items:
+              type: object
+              properties:
+                record_num:
+                  type: integer
+                  minimum: 1
+                  description: Record number (1-based)
+                size_kb:
+                  type: integer
+                  minimum: 0
+                  description: Record size in kilobytes
+                offset_start:
+                  type: integer
+                  minimum: 0
+                  description: Starting byte offset of the record
+              required:
+                - record_num
+                - size_kb
+                - offset_start
+        required:
+          - threshold_mb
+          - large_record_count
+          - max_size_kb
+          - largest_records
+  streaming_analysis:
+    type: object
+    description: Analysis of streaming suitability
+    properties:
+      suitable_for_streaming:
+        type: boolean
+        description: Whether the file is suitable for streaming processing
+      recommended_selector:
+        type: string
+        description: Recommended XPath selector for record extraction
+      confidence:
+        type: string
+        enum: ["high", "medium", "low"]
+        description: Confidence level in the streaming recommendation
+      reasoning:
+        type: string
+        description: Explanation of the streaming suitability assessment
+      warnings:
+        type: array
+        description: Warnings about streaming processing
+        items:
+          type: object
+          properties:
+            severity:
+              type: string
+              enum: ["info", "warning", "critical"]
+              description: Severity level of the warning
+            message:
+              type: string
+              description: Warning message
+            recommendation:
+              type: string
+              description: Recommended action
+          required:
+            - severity
+            - message
+            - recommendation
+      memory_estimates:
+        type: object
+        properties:
+          streaming_typical_mb:
+            type: integer
+            minimum: 0
+            description: Typical memory usage in MB for streaming mode
+          streaming_worst_mb:
+            type: integer
+            minimum: 0
+            description: Worst-case memory usage in MB for streaming mode
+          non_streaming_gb:
+            type: integer
+            minimum: 0
+            description: Estimated memory usage in GB for non-streaming mode
+        required:
+          - streaming_typical_mb
+          - streaming_worst_mb
+          - non_streaming_gb
+      performance_estimates:
+        type: object
+        properties:
+          streaming_sequential:
+            type: string
+            description: Estimated time for sequential streaming processing
+          manifest_parallel_32x:
+            type: string
+            description: Estimated time for parallel processing with 32 workers
+        required:
+          - streaming_sequential
+          - manifest_parallel_32x
+    required:
+      - suitable_for_streaming
+      - recommended_selector
+      - confidence
+      - reasoning
+      - warnings
+      - memory_estimates
+      - performance_estimates
+  oom_summary:
+    type: object
+    description: Summary of out-of-memory risk analysis
+    properties:
+      threshold_mb:
+        type: integer
+        minimum: 0
+        description: OOM warning threshold in megabytes
+      large_record_count:
+        type: integer
+        minimum: 0
+        description: Number of records exceeding the threshold
+      max_size_kb:
+        type: integer
+        minimum: 0
+        description: Size of the largest record in kilobytes
+      largest_records:
+        type: array
+        maxItems: 5
+        description: Details of the largest records (max 5)
+        items:
+          type: object
+          properties:
+            record_num:
+              type: integer
+              minimum: 1
+              description: Record number (1-based)
+            size_kb:
+              type: integer
+              minimum: 0
+              description: Record size in kilobytes
+            offset_start:
+              type: integer
+              minimum: 0
+              description: Starting byte offset of the record
+          required:
+            - record_num
+            - size_kb
+            - offset_start
+    required:
+      - threshold_mb
+      - large_record_count
+      - max_size_kb
+      - largest_records
+  analysis_metadata:
+    type: object
+    description: Metadata about the analysis process
+    properties:
+      analyzed_at:
+        type: string
+        format: date-time
+        description: When the analysis was performed
+      duration_ms:
+        type: integer
+        minimum: 0
+        description: Analysis duration in milliseconds
+      records_analyzed:
+        type: integer
+        minimum: 0
+        description: Number of records analyzed for statistics
+      analysis_options:
+        type: object
+        properties:
+          analyze_records:
+            type: boolean
+            description: Whether record analysis was enabled
+          record_selector:
+            type: string
+            description: Record selector used for analysis
+          oom_threshold_mb:
+            type: integer
+            minimum: 0
+            description: OOM threshold used for analysis
+          max_candidates:
+            type: integer
+            minimum: 1
+            description: Maximum number of candidates to analyze
+          max_records:
+            type: integer
+            minimum: 0
+            description: Maximum number of records to analyze for statistics
+        required:
+          - analyze_records
+          - oom_threshold_mb
+          - max_candidates
+          - max_records
+    required:
+      - analyzed_at
+      - duration_ms
+      - records_analyzed
+      - analysis_options
+required:
+  - version
+  - input
+  - metrics
+  - paths
+  - analysis_metadata
+# Conditional requirements
+if:
+  properties:
+    analysis_metadata:
+      properties:
+        analysis_options:
+          properties:
+            analyze_records:
+              const: true
+then:
+  required:
+    - record_candidates
+    - streaming_analysis

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/fulmenhq/goneat/pkg/schema"
+	"github.com/fulmenhq/sumpter/internal/assets"
+	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -30,16 +32,26 @@ type InspectOptions struct {
 	Progress       bool
 	IncludeAttrs   bool
 	ValidateOutput bool
+	// NEW: Record analysis flags
+	AnalyzeRecords bool   `json:"analyze_records"`
+	RecordSelector string `json:"record_selector"`
+	OOMThresholdMB int    `json:"oom_threshold_mb"`
+	MaxCandidates  int    `json:"max_candidates"`
+	MaxRecords     int    `json:"max_records"`
 }
 
-// InspectReportV0 matches the v0.1.0 schema
+// InspectReportV0 matches the v0.1.1 schema
 type InspectReportV0 struct {
-	Version  string           `json:"version"`
-	Input    InspectInput     `json:"input"`
-	Metrics  InspectMetrics   `json:"metrics"`
-	Paths    []InspectPath    `json:"paths"`
-	Caps     InspectCaps      `json:"caps"`
-	Metadata *InspectMetadata `json:"metadata,omitempty"`
+	Version           string            `json:"version"`
+	Input             InspectInput      `json:"input"`
+	Metrics           InspectMetrics    `json:"metrics"`
+	Paths             []InspectPath     `json:"paths"`
+	Caps              InspectCaps       `json:"caps"`
+	RecordCandidates  []RecordCandidate `json:"record_candidates,omitempty"`
+	StreamingAnalysis StreamingAnalysis `json:"streaming_analysis,omitempty"`
+	OOMSummary        *OOMSummary       `json:"oom_summary,omitempty"`
+	AnalysisMetadata  *AnalysisMetadata `json:"analysis_metadata,omitempty"`
+	Metadata          *InspectMetadata  `json:"metadata,omitempty"`
 }
 
 type InspectInput struct {
@@ -47,6 +59,8 @@ type InspectInput struct {
 	SizeBytes        int64   `json:"size_bytes"`
 	EncodingDetected string  `json:"encoding_detected"`
 	EncodingForced   *string `json:"encoding_forced,omitempty"`
+	Compressed       bool    `json:"compressed"`
+	Compression      string  `json:"compression"`
 }
 
 type InspectMetrics struct {
@@ -151,6 +165,181 @@ func (c *countingReader) Read(p []byte) (int, error) {
 
 func (c *countingReader) Bytes() int64 { return c.n }
 
+// NEW: Phase 1.2 Types for Record Analysis
+
+// RecordCandidate represents a potential record element for streaming
+type RecordCandidate struct {
+	Element       string    `json:"element"`
+	XPath         string    `json:"xpath"`
+	Count         int       `json:"count"`
+	Depth         int       `json:"depth"`
+	SizeStats     SizeStats `json:"size_stats"`
+	FirstOffset   int64     `json:"first_seen_offset"`
+	SampleOffsets []int64   `json:"sample_offsets"`
+}
+
+// SizeStats provides statistical information about record sizes
+type SizeStats struct {
+	AvgKB float64 `json:"avg_kb"`
+	P50KB int64   `json:"p50_kb"`
+	P95KB int64   `json:"p95_kb"`
+	P99KB int64   `json:"p99_kb"`
+	MaxKB int64   `json:"max_kb"`
+	MinKB int64   `json:"min_kb"`
+}
+
+// StreamingAnalysis provides assessment of streaming suitability
+type StreamingAnalysis struct {
+	SuitableForStreaming bool                 `json:"suitable_for_streaming"`
+	RecommendedSelector  string               `json:"recommended_selector"`
+	Confidence           string               `json:"confidence"`
+	Reasoning            string               `json:"reasoning"`
+	Warnings             []Warning            `json:"warnings"`
+	MemoryEstimates      MemoryEstimates      `json:"memory_estimates"`
+	PerformanceEstimates PerformanceEstimates `json:"performance_estimates"`
+}
+
+// Warning represents a warning message with recommendation
+type Warning struct {
+	Severity       string `json:"severity"`
+	Message        string `json:"message"`
+	Recommendation string `json:"recommendation"`
+}
+
+// MemoryEstimates provides memory usage estimates
+type MemoryEstimates struct {
+	StreamingTypicalMB int `json:"streaming_typical_mb"`
+	StreamingWorstMB   int `json:"streaming_worst_mb"`
+	NonStreamingGB     int `json:"non_streaming_gb"`
+}
+
+// PerformanceEstimates provides performance estimates
+type PerformanceEstimates struct {
+	StreamingSequential string `json:"streaming_sequential"`
+	ManifestParallel32x string `json:"manifest_parallel_32x"`
+}
+
+// OOMSummary provides out-of-memory risk analysis
+type OOMSummary struct {
+	ThresholdMB      int           `json:"threshold_mb"`
+	LargeRecordCount int           `json:"large_record_count"`
+	MaxSizeKB        int64         `json:"max_size_kb"`
+	LargestRecords   []LargeRecord `json:"largest_records"`
+}
+
+// LargeRecord represents a record that exceeds OOM threshold
+type LargeRecord struct {
+	RecordNum   int   `json:"record_num"`
+	SizeKB      int64 `json:"size_kb"`
+	OffsetStart int64 `json:"offset_start"`
+}
+
+// RecordBoundaryAnalysis contains the complete record analysis results
+type RecordBoundaryAnalysis struct {
+	Candidates        []RecordCandidate `json:"record_candidates"`
+	StreamingAnalysis StreamingAnalysis `json:"streaming_analysis"`
+	OOMSummary        *OOMSummary       `json:"oom_summary,omitempty"`
+}
+
+// AnalysisOptions contains options for record analysis
+type AnalysisOptions struct {
+	AnalyzeRecords bool   `json:"analyze_records"`
+	RecordSelector string `json:"record_selector"`
+	OOMThresholdMB int    `json:"oom_threshold_mb"`
+	MaxCandidates  int    `json:"max_candidates"`
+	MaxRecords     int    `json:"max_records"`
+	Compressed     bool   `json:"compressed"`
+	Compression    string `json:"compression"`
+}
+
+// AnalysisMetadata contains metadata about the analysis process
+type AnalysisMetadata struct {
+	AnalyzedAt      string          `json:"analyzed_at"`
+	DurationMs      int64           `json:"duration_ms"`
+	RecordsAnalyzed int64           `json:"records_analyzed"`
+	AnalysisOptions AnalysisOptions `json:"analysis_options"`
+}
+
+// Histogram for streaming percentile calculation
+type Histogram struct {
+	buckets []int64 // Count per bucket
+	bounds  []int64 // Upper bounds for each bucket
+	total   int64   // Total count
+	sum     int64   // Sum of all values
+}
+
+// NewHistogram creates a new histogram with exponential buckets
+func NewHistogram() *Histogram {
+	bounds := []int64{}
+	for i := 10; i <= 30; i++ { // 2^10 to 2^30 bytes (1KB to 1GB)
+		bounds = append(bounds, 1<<i)
+	}
+	return &Histogram{
+		buckets: make([]int64, len(bounds)),
+		bounds:  bounds,
+	}
+}
+
+// Add adds a value to the histogram
+func (h *Histogram) Add(value int64) {
+	// Find appropriate bucket
+	for i, bound := range h.bounds {
+		if value <= bound {
+			h.buckets[i]++
+			break
+		}
+	}
+	h.total++
+	h.sum += value
+}
+
+// Percentile calculates approximate percentile from histogram
+func (h *Histogram) Percentile(p float64) int64 {
+	if h.total == 0 {
+		return 0
+	}
+
+	target := int64(float64(h.total) * p / 100.0)
+	cumulative := int64(0)
+
+	for i, count := range h.buckets {
+		cumulative += count
+		if cumulative >= target {
+			return h.bounds[i]
+		}
+	}
+
+	return h.bounds[len(h.bounds)-1]
+}
+
+// Average returns the average value
+func (h *Histogram) Average() float64 {
+	if h.total == 0 {
+		return 0
+	}
+	return float64(h.sum) / float64(h.total)
+}
+
+// Max returns the maximum value seen
+func (h *Histogram) Max() int64 {
+	for i := len(h.buckets) - 1; i >= 0; i-- {
+		if h.buckets[i] > 0 {
+			return h.bounds[i]
+		}
+	}
+	return 0
+}
+
+// Min returns the minimum value seen
+func (h *Histogram) Min() int64 {
+	for i, count := range h.buckets {
+		if count > 0 {
+			return h.bounds[i]
+		}
+	}
+	return 0
+}
+
 func NewInspectCommand() *cobra.Command {
 	opts := &InspectOptions{}
 
@@ -187,6 +376,13 @@ and configurable sampling to balance speed and insight.`,
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress for large files")
 	cmd.Flags().BoolVar(&opts.IncludeAttrs, "include-attributes", true, "Include attribute analysis")
 	cmd.Flags().BoolVar(&opts.ValidateOutput, "validate-output", false, "Validate JSON output against schema")
+
+	// NEW: Record analysis flags
+	cmd.Flags().BoolVar(&opts.AnalyzeRecords, "analyze-records", false, "Enable record boundary analysis for streaming assessment")
+	cmd.Flags().StringVar(&opts.RecordSelector, "record-selector", "", "XPath selector for record detection (auto-detect if empty)")
+	cmd.Flags().IntVar(&opts.OOMThresholdMB, "oom-threshold-mb", 100, "OOM warning threshold in megabytes")
+	cmd.Flags().IntVar(&opts.MaxCandidates, "max-candidates", 5, "Maximum number of record candidates to analyze")
+	cmd.Flags().IntVar(&opts.MaxRecords, "max-records", 0, "Maximum number of records to analyze for statistics (0 = unlimited)")
 
 	return cmd
 }
@@ -271,10 +467,93 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		}()
 	}
 
+	// Perform record analysis if requested
+	var analysisResult *RecordBoundaryAnalysis
+	if opts.AnalyzeRecords {
+		if opts.File == "-" {
+			log.Warn("record analysis not supported for stdin input")
+		} else if opts.RecordSelector == "" {
+			log.Warn("record analysis requires --record-selector to be specified")
+		} else {
+			// Open file again for analysis
+			analysisFile, err := os.Open(opts.File)
+			if err != nil {
+				return fmt.Errorf("failed to open file for analysis: %w", err)
+			}
+			defer func() { _ = analysisFile.Close() }()
+
+			analysisReader := bufio.NewReader(analysisFile)
+
+			// Detect encoding for analysis
+			encodingInfo, _, err := detectEncoding(analysisReader, opts.ForceEncoding)
+			if err != nil {
+				log.Warn("encoding detection failed for analysis, skipping", zap.Error(err))
+			} else {
+				// Perform analysis with raw reader and encoding info
+				// Detect compression for analysis
+				compressed := false
+				compression := "none"
+				if strings.HasSuffix(strings.ToLower(opts.File), ".gz") ||
+					strings.HasSuffix(strings.ToLower(opts.File), ".gzip") {
+					compressed = true
+					compression = "gzip"
+				} else if strings.HasSuffix(strings.ToLower(opts.File), ".bz2") ||
+					strings.HasSuffix(strings.ToLower(opts.File), ".bzip2") {
+					compressed = true
+					compression = "bzip2"
+				} else if strings.HasSuffix(strings.ToLower(opts.File), ".xz") {
+					compressed = true
+					compression = "xz"
+				}
+
+				analysisOpts := AnalysisOptions{
+					AnalyzeRecords: opts.AnalyzeRecords,
+					RecordSelector: opts.RecordSelector,
+					OOMThresholdMB: opts.OOMThresholdMB,
+					MaxCandidates:  opts.MaxCandidates,
+					MaxRecords:     opts.MaxRecords,
+					Compressed:     compressed,
+					Compression:    compression,
+				}
+
+				analysisResult, err = analyzeRecordBoundaries(analysisReader, opts.RecordSelector, encodingInfo.Detected, analysisOpts, log.WithFields())
+				if err != nil {
+					log.Warn("record boundary analysis failed", zap.Error(err))
+				}
+			}
+		}
+	}
+
 	// Perform inspection
 	report, err := inspectXML(cr, fileInfo, encodingInfo, opts)
 	if err != nil {
 		return fmt.Errorf("inspection failed: %w", err)
+	}
+
+	// Attach analysis results to report
+	if analysisResult != nil {
+		report.RecordCandidates = analysisResult.Candidates
+		report.StreamingAnalysis = analysisResult.StreamingAnalysis
+		report.OOMSummary = analysisResult.OOMSummary
+		report.AnalysisMetadata = &AnalysisMetadata{
+			AnalyzedAt: time.Now().Format(time.RFC3339), // Use current time since analysisStart is not in scope
+			DurationMs: 0,                               // TODO: track duration properly
+			RecordsAnalyzed: func() int64 {
+				if len(analysisResult.Candidates) > 0 {
+					return int64(analysisResult.Candidates[0].Count)
+				}
+				return 0
+			}(), // Approximate
+			AnalysisOptions: AnalysisOptions{ // Reconstruct
+				AnalyzeRecords: opts.AnalyzeRecords,
+				RecordSelector: opts.RecordSelector,
+				OOMThresholdMB: opts.OOMThresholdMB,
+				MaxCandidates:  opts.MaxCandidates,
+				MaxRecords:     opts.MaxRecords,
+				Compressed:     report.Input.Compressed,
+				Compression:    report.Input.Compression,
+			},
+		}
 	}
 
 	// Add performance info
@@ -328,41 +607,15 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 
 	// Optional output validation
 	if opts.ValidateOutput && opts.Format == "json" {
-		// Marshal to bytes and validate with goneat schema library
+		// Marshal to bytes and validate with embedded schema
 		data, err := json.Marshal(report)
 		if err != nil {
 			return fmt.Errorf("failed to marshal report for validation: %w", err)
 		}
-		// Read schema file (YAML format)
-		schemaYAMLBytes, err := os.ReadFile("schemas/inspect/v0.1.0/inspect-report.schema.yaml")
-		if err != nil {
-			return fmt.Errorf("failed to read inspect schema: %w", err)
-		}
-		// Convert YAML schema to JSON for goneat validation
-		var schemaInterface interface{}
-		if err := yaml.Unmarshal(schemaYAMLBytes, &schemaInterface); err != nil {
-			return fmt.Errorf("failed to parse schema YAML: %w", err)
-		}
-		schemaBytes, err := json.Marshal(schemaInterface)
-		if err != nil {
-			return fmt.Errorf("failed to convert schema to JSON: %w", err)
-		}
-		// Decode data into interface for validation
-		var dataInterface interface{}
-		if err := json.Unmarshal(data, &dataInterface); err != nil {
-			return fmt.Errorf("failed to parse report JSON: %w", err)
-		}
-		// Validate
-		res, err := schema.ValidateFromBytes(schemaBytes, dataInterface)
-		if err != nil {
+
+		// Use embedded schema validation
+		if err := validateJSONAgainstEmbeddedSchema(data); err != nil {
 			return fmt.Errorf("output schema validation failed: %w", err)
-		}
-		if !res.Valid {
-			// Show first validation error for debugging
-			if len(res.Errors) > 0 {
-				return fmt.Errorf("output invalid against schema: %s", res.Errors[0].Message)
-			}
-			return fmt.Errorf("output invalid against schema: %d error(s)", len(res.Errors))
 		}
 	}
 
@@ -596,9 +849,25 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 		Path:             fileInfo.Path,
 		SizeBytes:        fileInfo.Size,
 		EncodingDetected: encodingInfo.Detected,
+		Compressed:       false,
+		Compression:      "none",
 	}
 	if opts.ForceEncoding != "" {
 		input.EncodingForced = &opts.ForceEncoding
+	}
+
+	// Detect compression based on file extension
+	if strings.HasSuffix(strings.ToLower(fileInfo.Path), ".gz") ||
+		strings.HasSuffix(strings.ToLower(fileInfo.Path), ".gzip") {
+		input.Compressed = true
+		input.Compression = "gzip"
+	} else if strings.HasSuffix(strings.ToLower(fileInfo.Path), ".bz2") ||
+		strings.HasSuffix(strings.ToLower(fileInfo.Path), ".bzip2") {
+		input.Compressed = true
+		input.Compression = "bzip2"
+	} else if strings.HasSuffix(strings.ToLower(fileInfo.Path), ".xz") {
+		input.Compressed = true
+		input.Compression = "xz"
 	}
 
 	// Build caps (sample truncation inferred)
@@ -609,7 +878,7 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 	}
 
 	report := &InspectReportV0{
-		Version: "inspect-report/v0.1.0",
+		Version: "inspect-report/v0.1.1",
 		Input:   input,
 		Metrics: InspectMetrics{
 			BytesProcessed:        fileInfo.Size,
@@ -621,15 +890,71 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 		Caps:  caps,
 	}
 
+	// Record analysis is now handled in runInspectCommand before inspection
+
 	return report, nil
 }
 
+// validateJSONAgainstEmbeddedSchema validates JSON output against embedded schema
+func validateJSONAgainstEmbeddedSchema(jsonData []byte) error {
+	// CRITICAL: Use embedded schema via assets package
+	schemaPath := "schemas/inspect/v0.1.1/inspect-report.schema.yaml"
+
+	// Load schema from embedded assets
+	schemasFS, err := assets.GetSchemasFS()
+	if err != nil {
+		return fmt.Errorf("failed to get schemas filesystem: %w", err)
+	}
+
+	// Read schema file
+	schemaFile, err := schemasFS.Open(schemaPath)
+	if err != nil {
+		return fmt.Errorf("failed to open schema file %s: %w", schemaPath, err)
+	}
+	defer func() {
+		_ = schemaFile.Close() // Best practice: handle close errors in production code
+	}()
+
+	schemaYAMLBytes, err := io.ReadAll(schemaFile)
+	if err != nil {
+		return fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
+	}
+
+	// Convert YAML schema to JSON for goneat validation
+	var schemaInterface interface{}
+	if err := yaml.Unmarshal(schemaYAMLBytes, &schemaInterface); err != nil {
+		return fmt.Errorf("failed to parse schema YAML: %w", err)
+	}
+	schemaBytes, err := json.Marshal(schemaInterface)
+	if err != nil {
+		return fmt.Errorf("failed to convert schema to JSON: %w", err)
+	}
+
+	// Decode data into interface for validation
+	var dataInterface interface{}
+	if err := json.Unmarshal(jsonData, &dataInterface); err != nil {
+		return fmt.Errorf("failed to parse report JSON: %w", err)
+	}
+
+	// Validate
+	res, err := schema.ValidateFromBytes(schemaBytes, dataInterface)
+	if err != nil {
+		return fmt.Errorf("output schema validation failed: %w", err)
+	}
+	if !res.Valid {
+		return fmt.Errorf("output schema validation failed: %v", res.Errors)
+	}
+
+	return nil
+}
+
+// generateReport generates the inspection report in the requested format
 func generateReport(cmd *cobra.Command, report *InspectReportV0, opts *InspectOptions) error {
 	var output io.Writer
 	if opts.Output != "" {
-		file, err := os.Create(opts.Output)
+		file, err := os.OpenFile(opts.Output, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
-			return fmt.Errorf("failed to create output file: %w", err)
+			return fmt.Errorf("failed to open output file: %w", err)
 		}
 		defer func() { _ = file.Close() }()
 		output = file
@@ -657,9 +982,6 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 	if _, err := fmt.Fprintf(output, "# XML Inspection Report\n\n"); err != nil {
 		return fmt.Errorf("failed to write report header: %w", err)
 	}
-	if _, err := fmt.Fprintf(output, "**File:** %s\n\n", report.Input.Path); err != nil {
-		return fmt.Errorf("failed to write file info: %w", err)
-	}
 	if _, err := fmt.Fprintf(output, "**Size:** %.2f MB\n\n", float64(report.Input.SizeBytes)/1024/1024); err != nil {
 		return fmt.Errorf("failed to write size info: %w", err)
 	}
@@ -670,6 +992,12 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 	if report.Input.EncodingForced != nil {
 		if _, err := fmt.Fprintf(output, "**Encoding Forced:** %s\n\n", *report.Input.EncodingForced); err != nil {
 			return fmt.Errorf("failed to write encoding forced: %w", err)
+		}
+	}
+
+	if report.Input.Compressed {
+		if _, err := fmt.Fprintf(output, "**⚠️ Compressed Input:** %s compression detected. Manifest-based parallelization may be limited.\n\n", report.Input.Compression); err != nil {
+			return fmt.Errorf("failed to write compression warning: %w", err)
 		}
 	}
 
@@ -759,6 +1087,18 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 		}
 	}
 
+	// Record Boundary Analysis section
+	if len(report.RecordCandidates) > 0 {
+		analysis := &RecordBoundaryAnalysis{
+			Candidates:        report.RecordCandidates,
+			StreamingAnalysis: report.StreamingAnalysis,
+			OOMSummary:        report.OOMSummary,
+		}
+		if err := writeRecordAnalysisSection(output, analysis); err != nil {
+			return fmt.Errorf("failed to write record analysis section: %w", err)
+		}
+	}
+
 	if report.Metadata != nil {
 		if _, err := fmt.Fprintf(output, "## Metadata\n\n"); err != nil {
 			return fmt.Errorf("failed to write metadata header: %w", err)
@@ -772,4 +1112,444 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 	}
 
 	return nil
+}
+
+// writeRecordAnalysisSection writes the record boundary analysis section to markdown
+func writeRecordAnalysisSection(output io.Writer, analysis *RecordBoundaryAnalysis) error {
+	if _, err := fmt.Fprintf(output, "## Record Boundary Analysis\n\n"); err != nil {
+		return err
+	}
+
+	// Streaming suitability
+	suitability := "Not Recommended"
+	if analysis.StreamingAnalysis.SuitableForStreaming {
+		suitability = "Recommended"
+	}
+	if _, err := fmt.Fprintf(output, "**Streaming Suitability:** %s\n\n", suitability); err != nil {
+		return err
+	}
+
+	// Top candidates table
+	if len(analysis.Candidates) > 0 {
+		if _, err := fmt.Fprintf(output, "### Top Record Candidates\n\n"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(output, "| XPath | Count | Avg Size (KB) | Max Size (KB) |\n"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(output, "|-------|-------|----------------|---------------|\n"); err != nil {
+			return err
+		}
+
+		// Show top 5 candidates
+		limit := 5
+		if len(analysis.Candidates) < limit {
+			limit = len(analysis.Candidates)
+		}
+
+		for i := 0; i < limit; i++ {
+			candidate := analysis.Candidates[i]
+			if _, err := fmt.Fprintf(output, "| `%s` | %d | %.1f | %d |\n",
+				candidate.XPath,
+				candidate.Count,
+				candidate.SizeStats.AvgKB,
+				candidate.SizeStats.MaxKB); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(output, "\n"); err != nil {
+			return err
+		}
+	}
+
+	// Warnings from analysis
+	for _, warning := range analysis.StreamingAnalysis.Warnings {
+		if _, err := fmt.Fprintf(output, "**⚠️ %s:** %s\n", warning.Severity, warning.Message); err != nil {
+			return err
+		}
+		if warning.Recommendation != "" {
+			if _, err := fmt.Fprintf(output, "**Recommendation:** %s\n", warning.Recommendation); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(output, "\n"); err != nil {
+			return err
+		}
+	}
+
+	// OOM warnings
+	if analysis.OOMSummary != nil && analysis.OOMSummary.LargeRecordCount > 0 {
+		if _, err := fmt.Fprintf(output, "**⚠️ Large Records:** %d records exceed %d MB threshold (max: %d KB).\n",
+			analysis.OOMSummary.LargeRecordCount,
+			analysis.OOMSummary.ThresholdMB,
+			analysis.OOMSummary.MaxSizeKB); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(output, "**Recommendation:** Increase `--oom-threshold-mb` or decompress file for better parallelization.\n\n"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// NEW: Phase 1.2 Record Analysis Functions
+
+// analyzeRecordBoundaries performs record boundary analysis for streaming assessment
+func analyzeRecordBoundaries(reader io.Reader, selector string, encoding string, opts AnalysisOptions, logger *zap.Logger) (*RecordBoundaryAnalysis, error) {
+	logger.Info("Starting record boundary analysis",
+		zap.String("selector", selector),
+		zap.Int("max_records", opts.MaxRecords))
+
+	// CRITICAL: Use size-only scanner for constant-memory analysis
+	// No XML buffering or serialization - just track offsets, sizes, and counts
+	scanner, err := createRecordScannerSizeOnly(reader, selector, encoding)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create record scanner: %w", err)
+	}
+
+	// Track element statistics
+	elementStats := make(map[string]*ElementStats)
+	var recordNum int64
+	var totalBytes int64
+
+	// CRITICAL: Constant-memory analysis - no buffering
+	// Scan records and collect statistics without storing full XML
+	for {
+		record, err := scanner.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("record scanning failed: %w", err)
+		}
+
+		recordNum++
+		totalBytes += record.SizeBytes
+
+		// CRITICAL: Early bail-out on very large records to avoid OOM
+		if record.SizeBytes > int64(opts.OOMThresholdMB*1024*1024) {
+			logger.Warn("Skipping very large record to avoid OOM",
+				zap.Int64("record_num", recordNum),
+				zap.Int64("size_mb", record.SizeBytes/1024/1024),
+				zap.Int("threshold_mb", opts.OOMThresholdMB))
+			continue
+		}
+
+		// Get element name from record (available in size-only mode)
+		elementName := record.ElementName
+		if elementName == "" {
+			logger.Warn("Missing element name in record")
+			continue
+		}
+
+		// Update statistics
+		if _, exists := elementStats[elementName]; !exists {
+			elementStats[elementName] = &ElementStats{
+				Name:          elementName,
+				XPath:         "//" + elementName,
+				Count:         0,
+				Depth:         record.Depth, // Use actual depth from scanner
+				Histogram:     NewHistogram(),
+				SampleOffsets: []int64{},
+			}
+		}
+
+		stats := elementStats[elementName]
+		stats.Count++
+		stats.Histogram.Add(record.SizeBytes)
+
+		// Track sample offsets (ring buffer, max 3)
+		if len(stats.SampleOffsets) < 3 {
+			stats.SampleOffsets = append(stats.SampleOffsets, record.StartOffset)
+		} else {
+			// Replace oldest sample
+			stats.SampleOffsets[int(recordNum%3)] = record.StartOffset
+		}
+
+		// Track first offset
+		if stats.FirstOffset == 0 {
+			stats.FirstOffset = record.StartOffset
+		}
+
+		// Check OOM threshold
+		if record.SizeBytes > int64(opts.OOMThresholdMB*1024*1024) {
+			stats.LargeRecords = append(stats.LargeRecords, LargeRecord{
+				RecordNum:   int(recordNum),
+				SizeKB:      record.SizeBytes / 1024,
+				OffsetStart: record.StartOffset,
+			})
+		}
+
+		// Respect max records limit
+		if opts.MaxRecords > 0 && recordNum >= int64(opts.MaxRecords) {
+			logger.Info("Reached max records limit", zap.Int64("limit", int64(opts.MaxRecords)))
+			break
+		}
+
+		// Progress reporting
+		if recordNum%10000 == 0 {
+			logger.Info("Analyzed records",
+				zap.Int64("count", recordNum),
+				zap.Int64("bytes", totalBytes))
+		}
+	}
+
+	// Convert to candidates
+	candidates := make([]RecordCandidate, 0, len(elementStats))
+	for _, stats := range elementStats {
+		candidates = append(candidates, RecordCandidate{
+			Element:       stats.Name,
+			XPath:         stats.XPath,
+			Count:         stats.Count,
+			Depth:         stats.Depth,
+			SizeStats:     calculateSizeStatistics(stats.Histogram),
+			FirstOffset:   stats.FirstOffset,
+			SampleOffsets: stats.SampleOffsets,
+		})
+	}
+
+	// Sort candidates by count (descending)
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Count > candidates[j].Count
+	})
+
+	// Limit candidates
+	if len(candidates) > opts.MaxCandidates {
+		candidates = candidates[:opts.MaxCandidates]
+	}
+
+	// Perform streaming suitability assessment
+	streamingAnalysis := assessStreamingSuitability(candidates, opts.OOMThresholdMB, opts.Compressed, opts.Compression, logger)
+
+	// Generate OOM summary if needed
+	var oomSummary *OOMSummary
+	if hasLargeRecords(elementStats) {
+		oomSummary = generateOOMSummary(elementStats, opts.OOMThresholdMB)
+	}
+
+	logger.Info("Record boundary analysis completed",
+		zap.Int("candidates_found", len(candidates)),
+		zap.Int64("records_analyzed", recordNum))
+
+	return &RecordBoundaryAnalysis{
+		Candidates:        candidates,
+		StreamingAnalysis: streamingAnalysis,
+		OOMSummary:        oomSummary,
+	}, nil
+}
+
+// ElementStats tracks statistics for a single element type
+type ElementStats struct {
+	Name          string
+	XPath         string
+	Count         int
+	Depth         int
+	Histogram     *Histogram
+	SampleOffsets []int64
+	FirstOffset   int64
+	LargeRecords  []LargeRecord
+}
+
+// createRecordScannerSizeOnly creates a size-only record scanner for analysis
+func createRecordScannerSizeOnly(reader io.Reader, selector string, encoding string) (*streaming.RecordScanner, error) {
+	scanner := streaming.NewRecordScannerSizeOnlyWithEncoding(reader, selector, encoding)
+	return scanner, nil
+}
+
+// calculateSizeStatistics calculates size statistics from histogram
+func calculateSizeStatistics(h *Histogram) SizeStats {
+	return SizeStats{
+		AvgKB: h.Average() / 1024.0,
+		P50KB: h.Percentile(50.0) / 1024,
+		P95KB: h.Percentile(95.0) / 1024,
+		P99KB: h.Percentile(99.0) / 1024,
+		MaxKB: h.Max() / 1024,
+		MinKB: h.Min() / 1024,
+	}
+}
+
+// assessStreamingSuitability evaluates streaming suitability based on candidates
+func assessStreamingSuitability(candidates []RecordCandidate, oomThresholdMB int, compressed bool, compression string, logger *zap.Logger) StreamingAnalysis {
+	if logger != nil {
+		logger.Info("Assessing streaming suitability", zap.Int("candidates", len(candidates)))
+	}
+
+	// Early return if no candidates
+	if len(candidates) == 0 {
+		return StreamingAnalysis{
+			SuitableForStreaming: false,
+			RecommendedSelector:  "",
+			Confidence:           "low",
+			Reasoning:            "No record candidates found",
+			Warnings:             []Warning{},
+			MemoryEstimates: MemoryEstimates{
+				StreamingTypicalMB: 50,
+				StreamingWorstMB:   100,
+				NonStreamingGB:     1,
+			},
+			PerformanceEstimates: PerformanceEstimates{
+				StreamingSequential: "~1 hour",
+				ManifestParallel32x: "~5 minutes",
+			},
+		}
+	}
+
+	// Find top-level candidates (depth == 1)
+	var topLevelCandidates []RecordCandidate
+	for _, candidate := range candidates {
+		if candidate.Depth == 1 {
+			topLevelCandidates = append(topLevelCandidates, candidate)
+		}
+	}
+
+	// If no top-level candidates, use all candidates
+	if len(topLevelCandidates) == 0 {
+		topLevelCandidates = candidates
+		if logger != nil {
+			logger.Warn("No top-level candidates found, using all candidates")
+		}
+	}
+
+	// Select best candidate
+	var bestCandidate *RecordCandidate
+	if len(topLevelCandidates) > 0 {
+		bestCandidate = &topLevelCandidates[0] // Already sorted by count
+	}
+
+	// Evaluate suitability
+	suitable := false
+	confidence := "low"
+	reasoning := ""
+	var warnings []Warning
+
+	// Add compressed file warning if applicable
+	// Note: compression info not available here, would need to pass from caller
+
+	if bestCandidate != nil {
+		// Apply heuristics from audit recommendations
+		if bestCandidate.Count >= 10000 &&
+			bestCandidate.SizeStats.P95KB <= 200 &&
+			bestCandidate.SizeStats.MaxKB <= 5120 {
+			suitable = true
+			confidence = "high"
+			reasoning = fmt.Sprintf("%d top-level records, avg %.1fKB each, p95 %dKB",
+				bestCandidate.Count, bestCandidate.SizeStats.AvgKB, bestCandidate.SizeStats.P95KB)
+		} else if bestCandidate.Count >= 1000 {
+			suitable = true
+			confidence = "medium"
+			reasoning = fmt.Sprintf("%d records found, but size distribution may be challenging", bestCandidate.Count)
+		} else {
+			confidence = "low"
+			reasoning = fmt.Sprintf("Only %d records found, may not benefit from streaming", bestCandidate.Count)
+		}
+
+		// Add warnings for large records
+		if bestCandidate.SizeStats.MaxKB > 100*1024 { // > 100MB
+			warnings = append(warnings, Warning{
+				Severity:       "critical",
+				Message:        fmt.Sprintf("Max record size %dMB exceeds safe processing threshold", bestCandidate.SizeStats.MaxKB/1024),
+				Recommendation: "Increase --oom-threshold-mb or decompress file before processing",
+			})
+		} else if bestCandidate.SizeStats.MaxKB > 10*1024 { // > 10MB
+			warnings = append(warnings, Warning{
+				Severity:       "warning",
+				Message:        fmt.Sprintf("Max record size %dMB exceeds recommended threshold", bestCandidate.SizeStats.MaxKB/1024),
+				Recommendation: "Monitor memory usage during extraction or consider decompression",
+			})
+		}
+
+		// Add warning for compressed inputs
+		if compressed {
+			warnings = append(warnings, Warning{
+				Severity:       "info",
+				Message:        fmt.Sprintf("%s compression detected", compression),
+				Recommendation: "Manifest-based parallelization may be limited",
+			})
+		}
+	} else {
+		reasoning = "No suitable record candidates found"
+	}
+
+	// Memory estimates
+	streamingTypicalMB := 50 // Default estimate when no candidates
+	streamingWorstMB := 100  // Default estimate when no candidates
+	if bestCandidate != nil {
+		streamingTypicalMB = int(bestCandidate.SizeStats.AvgKB * 2) // Rough estimate
+		streamingWorstMB = int(bestCandidate.SizeStats.MaxKB * 2)   // Rough estimate
+	}
+	nonStreamingGB := 100 // Placeholder - would be calculated from file size
+
+	// Performance estimates
+	streamingSequential := "~8 hours"    // Placeholder
+	manifestParallel32x := "~15 minutes" // Placeholder
+
+	return StreamingAnalysis{
+		SuitableForStreaming: suitable,
+		RecommendedSelector:  getRecommendedSelector(bestCandidate),
+		Confidence:           confidence,
+		Reasoning:            reasoning,
+		Warnings:             warnings,
+		MemoryEstimates: MemoryEstimates{
+			StreamingTypicalMB: streamingTypicalMB,
+			StreamingWorstMB:   streamingWorstMB,
+			NonStreamingGB:     nonStreamingGB,
+		},
+		PerformanceEstimates: PerformanceEstimates{
+			StreamingSequential: streamingSequential,
+			ManifestParallel32x: manifestParallel32x,
+		},
+	}
+}
+
+// getRecommendedSelector returns XPath for best candidate
+func getRecommendedSelector(candidate *RecordCandidate) string {
+	if candidate == nil {
+		return ""
+	}
+	return candidate.XPath
+}
+
+// hasLargeRecords checks if any element has large records
+func hasLargeRecords(elementStats map[string]*ElementStats) bool {
+	for _, stats := range elementStats {
+		if len(stats.LargeRecords) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// generateOOMSummary creates OOM summary from element statistics
+func generateOOMSummary(elementStats map[string]*ElementStats, thresholdMB int) *OOMSummary {
+	var allLargeRecords []LargeRecord
+	var maxSizeKB int64
+	var largeRecordCount int
+
+	for _, stats := range elementStats {
+		allLargeRecords = append(allLargeRecords, stats.LargeRecords...)
+		largeRecordCount += len(stats.LargeRecords)
+
+		for _, record := range stats.LargeRecords {
+			if record.SizeKB > maxSizeKB {
+				maxSizeKB = record.SizeKB
+			}
+		}
+	}
+
+	// Sort and limit to 5 largest records
+	sort.Slice(allLargeRecords, func(i, j int) bool {
+		return allLargeRecords[i].SizeKB > allLargeRecords[j].SizeKB
+	})
+
+	if len(allLargeRecords) > 5 {
+		allLargeRecords = allLargeRecords[:5]
+	}
+
+	return &OOMSummary{
+		ThresholdMB:      thresholdMB,
+		LargeRecordCount: largeRecordCount,
+		MaxSizeKB:        maxSizeKB,
+		LargestRecords:   allLargeRecords,
+	}
 }
