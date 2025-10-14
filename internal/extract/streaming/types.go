@@ -19,6 +19,7 @@ type RecordScanner struct {
 	elementName    string          // Element name we're looking for (extracted from selector)
 	recordCount    int             // Number of records scanned so far
 	err            error           // Last error encountered
+	sizeOnly       bool            // If true, skip buffering and serialization for size-only analysis
 }
 
 // countingReader wraps an io.Reader to track bytes read
@@ -40,11 +41,13 @@ func (c *countingReader) Bytes() int64 {
 
 // RecordBuffer holds a complete XML record as a string
 type RecordBuffer struct {
-	XML         string // Raw XML content of the record
+	XML         string // Raw XML content of the record (empty in size-only mode)
 	RecordNum   int    // Sequential record number (1-based)
 	StartOffset int64  // Byte offset where record started (if available)
 	EndOffset   int64  // Byte offset where record ended (if available)
 	SizeBytes   int64  // Size of the record in bytes
+	ElementName string // Name of the root element for this record
+	Depth       int    // Nesting depth of the record element (1 = top-level)
 }
 
 // ScanResult represents the result of scanning for the next record

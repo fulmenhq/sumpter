@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"golang.org/x/net/html/charset"
 )
 
 // NewRecordScanner creates a new scanner for streaming XML records.
@@ -23,6 +25,26 @@ import (
 //	    // Process record.XML
 //	}
 func NewRecordScanner(reader io.Reader, recordSelector string) *RecordScanner {
+	return newRecordScanner(reader, recordSelector, false)
+}
+
+// NewRecordScannerSizeOnly creates a scanner that only tracks record sizes and offsets
+// without buffering or serializing XML content. This enables constant-memory analysis
+// of large XML files for record boundary detection.
+func NewRecordScannerSizeOnly(reader io.Reader, recordSelector string) *RecordScanner {
+	return newRecordScanner(reader, recordSelector, true)
+}
+
+// NewRecordScannerSizeOnlyWithEncoding creates a size-only scanner with encoding support
+// for proper offset tracking in transcoded streams.
+func NewRecordScannerSizeOnlyWithEncoding(reader io.Reader, recordSelector string, encoding string) *RecordScanner {
+	scanner := newRecordScanner(reader, recordSelector, true)
+	// Set CharsetReader to handle encoding internally, ensuring InputOffset tracks raw bytes
+	scanner.decoder.CharsetReader = charset.NewReaderLabel
+	return scanner
+}
+
+func newRecordScanner(reader io.Reader, recordSelector string, sizeOnly bool) *RecordScanner {
 	// Extract element name from XPath selector
 	// For now, we support simple patterns like "//ElementName" or "/path/to/ElementName"
 	elementName := extractElementName(recordSelector)
@@ -40,6 +62,7 @@ func NewRecordScanner(reader io.Reader, recordSelector string) *RecordScanner {
 		recordDepth:    -1,
 		inRecord:       false,
 		recordCount:    0,
+		sizeOnly:       sizeOnly,
 	}
 }
 
@@ -64,6 +87,11 @@ func extractElementName(selector string) string {
 		// Remove predicates like [1] or [@attr='value']
 		if idx := strings.Index(elementName, "["); idx >= 0 {
 			elementName = elementName[:idx]
+		}
+
+		// If a namespace prefix is present (e.g., ns:Record), drop the prefix
+		if colon := strings.Index(elementName, ":"); colon >= 0 {
+			elementName = elementName[colon+1:]
 		}
 
 		return strings.TrimSpace(elementName)
@@ -119,24 +147,28 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 				recordStartOffset = offsetBeforeToken
 			}
 
-			// If we're in a record, buffer this token
-			if s.inRecord {
+			// If we're in a record, buffer this token (unless size-only mode)
+			if s.inRecord && !s.sizeOnly {
 				s.buffer = append(s.buffer, xml.CopyToken(token))
 			}
 
 		case xml.EndElement:
-			// If we're in a record, buffer this token
-			if s.inRecord {
+			// If we're in a record, buffer this token (unless size-only mode)
+			if s.inRecord && !s.sizeOnly {
 				s.buffer = append(s.buffer, xml.CopyToken(token))
 			}
 
 			// Check if this closes the current record
 			if s.inRecord && s.depth == s.recordDepth {
-				// We've completed a record - serialize and return it
-				recordXML, err := s.serializeTokens()
-				if err != nil {
-					s.err = fmt.Errorf("failed to serialize record %d: %w", s.recordCount, err)
-					return nil, s.err
+				var recordXML string
+				if !s.sizeOnly {
+					// We've completed a record - serialize and return it
+					var err error
+					recordXML, err = s.serializeTokens()
+					if err != nil {
+						s.err = fmt.Errorf("failed to serialize record %d: %w", s.recordCount, err)
+						return nil, s.err
+					}
 				}
 
 				// Capture XML stream offset at end of record (after reading end tag)
@@ -149,6 +181,8 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 					StartOffset: recordStartOffset,
 					EndOffset:   endOffset,
 					SizeBytes:   sizeBytes,
+					ElementName: s.elementName,
+					Depth:       s.recordDepth,
 				}
 
 				s.depth--
@@ -158,8 +192,8 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 			s.depth--
 
 		case xml.CharData, xml.Comment, xml.ProcInst, xml.Directive:
-			// If we're in a record, buffer these tokens
-			if s.inRecord {
+			// If we're in a record, buffer these tokens (unless size-only mode)
+			if s.inRecord && !s.sizeOnly {
 				s.buffer = append(s.buffer, xml.CopyToken(token))
 			}
 		}
