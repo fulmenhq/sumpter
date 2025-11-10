@@ -335,6 +335,13 @@ func TestInspectReportV0_JSON_Schema_Validation(t *testing.T) {
 }
 
 func TestInspectCommand_Integration_AnalyzeRecords(t *testing.T) {
+	// Use the pre-built binary from dist/ (Makefile builds it there)
+	// Path is relative from cmd/sumpter/commands/ to dist/
+	binaryPath := "../../../dist/sumpter"
+	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+		t.Fatalf("Binary not found at %s - run 'make build' first", binaryPath)
+	}
+
 	// Create a temporary XML file with multiple records (same as working unit test)
 	xmlContent := `<root><record id="1"><data>text content</data></record><record id="2"><data>more text</data></record></root>`
 
@@ -354,21 +361,18 @@ func TestInspectCommand_Integration_AnalyzeRecords(t *testing.T) {
 		t.Fatalf("Failed to close temp file: %v", err)
 	}
 
-	// Build the binary
-	buildCmd := exec.Command("go", "build", "-o", "sumpter-integration-test", "..")
-	output, err := buildCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Failed to build binary: %v\nOutput: %s", err, string(output))
-	}
-	defer func() { _ = os.Remove("sumpter-integration-test") }()
-
-	// Run inspect command with --analyze-records
-	cmd := exec.Command("./sumpter-integration-test", "inspect",
+	// Run inspect command with --analyze-records using pre-built binary
+	cmd := exec.Command(binaryPath, "inspect",
 		"--analyze-records",
 		"--record-selector", "//record",
 		"--force-encoding", "utf-8",
 		"--format", "json",
 		tmpFile.Name())
+
+	// Set HOME environment variable if not set (needed for -race tests)
+	if os.Getenv("HOME") == "" {
+		cmd.Env = append(os.Environ(), "HOME="+os.TempDir())
+	}
 
 	cmdOutput, err := cmd.CombinedOutput()
 	if err != nil {

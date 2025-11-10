@@ -28,7 +28,7 @@ These protocols ensure professional development standards and enterprise readine
 **🚨 DO NOT BYPASS COMMITS**
 
 - **CRITICAL**: Never bypass git hooks or use GIT_NO_HOOKS without explicit supervisor approval
-- **CRITICAL**: Never use --force or --no-verify without explicit supervisor approval  
+- **CRITICAL**: Never use --force or --no-verify without explicit supervisor approval
 - **CRITICAL**: Never commit without explicit per-occurrence authorization from @3leapsdave
 
 **🚨 PUSHES REQUIRE FULL STOP AND REVIEW**
