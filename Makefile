@@ -199,8 +199,8 @@ test: ## Run all tests with coverage
 	@echo "$(BLUE)Running tests with coverage...$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) $(TEST_FLAGS) ./...
-	@$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
-	@echo "$(GREEN)Coverage report generated: $(COVERAGE_DIR)/coverage.html$(NC)"
+	@echo "$(GREEN)Tests completed. Coverage: $(COVERAGE_DIR)/coverage.out$(NC)"
+	@echo "$(CYAN)Run 'make test-coverage' for detailed HTML report$(NC)"
 
 .PHONY: test-short
 test-short: ## Run tests without network dependencies
@@ -225,16 +225,28 @@ test-coverage: ## Run tests with detailed coverage analysis
 	@echo "$(BLUE)Running tests with detailed coverage analysis...$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) $(TEST_FLAGS) ./...
+	@echo "$(CYAN)Coverage Summary:$(NC)"
 	@$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | tail -1
-	@$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
-	@echo "$(GREEN)Coverage report: $(COVERAGE_DIR)/coverage.html$(NC)"
+	@echo "$(GREEN)Coverage data saved to: $(COVERAGE_DIR)/coverage.out$(NC)"
+	@echo "$(CYAN)To generate HTML report: go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html$(NC)"
 
 .PHONY: test-coverage-report
 test-coverage-report: test ## Generate coverage report and show summary
 	@echo "$(BLUE)Coverage Summary:$(NC)"
 	@$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep -E "(total|coverage)"
 	@echo ""
-	@echo "$(GREEN)Detailed HTML report: $(COVERAGE_DIR)/coverage.html$(NC)"
+	@echo "$(CYAN)Generate HTML with: make coverage-html$(NC)"
+
+.PHONY: coverage-html
+coverage-html: ## Generate HTML coverage report (requires prior test run)
+	@echo "$(BLUE)Generating HTML coverage report...$(NC)"
+	@if [ ! -f "$(COVERAGE_DIR)/coverage.out" ]; then \
+		echo "$(RED)❌ No coverage data found. Run 'make test' first.$(NC)"; \
+		exit 1; \
+	fi
+	@$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
+	@echo "$(GREEN)✅ HTML report: $(COVERAGE_DIR)/coverage.html$(NC)"
+	@echo "$(CYAN)Open with: open $(COVERAGE_DIR)/coverage.html$(NC)"
 
 .PHONY: test-commands
 test-commands: ## Run tests for command packages only
@@ -245,6 +257,7 @@ test-commands: ## Run tests for command packages only
 .PHONY: test-cleanup
 test-cleanup: ## Clean test artifacts and temporary files
 	@echo "$(BLUE)Cleaning test artifacts...$(NC)"
+	@$(GOCMD) clean -testcache
 	@rm -rf $(COVERAGE_DIR) $(TEMP_DIR)
 	@find . -name "*.test" -type f -delete 2>/dev/null || true
 	@find . -name "*.out" -type f -delete 2>/dev/null || true
@@ -401,7 +414,7 @@ clean-all: clean ## Clean everything including dependencies
 
 # Pre-commit and CI
 .PHONY: pre-commit
-pre-commit: check-all test-cleanup test-short coverage-check-dynamic fmt-docs ## Run pre-commit validation
+pre-commit: check-all build test-cleanup test-short coverage-check-dynamic fmt-docs ## Run pre-commit validation
 	@echo "$(GREEN)✅ Pre-commit checks passed!$(NC)"
 
 .PHONY: pre-push
