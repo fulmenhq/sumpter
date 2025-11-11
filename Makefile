@@ -392,6 +392,60 @@ govulncheck: ## Check for known vulnerabilities
 security-scan: gosec govulncheck ## Run all security scans
 	@echo "$(GREEN)✅ Security scanning completed!$(NC)"
 
+# Dependency management
+.PHONY: deps-licenses
+deps-licenses: ## Check license compliance (offline)
+	@echo "$(BLUE)Checking license compliance...$(NC)"
+	@if command -v goneat >/dev/null; then \
+		goneat dependencies --licenses --fail-on high; \
+	else \
+		echo "$(RED)goneat not found. Install from: https://github.com/fulmenhq/goneat$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ License compliance check passed!$(NC)"
+
+.PHONY: deps-cooling
+deps-cooling: ## Check package cooling policy (requires network)
+	@echo "$(BLUE)Checking package cooling policy...$(NC)"
+	@echo "$(YELLOW)⚠️  This check requires network access to package registries$(NC)"
+	@if command -v goneat >/dev/null; then \
+		goneat dependencies --cooling --fail-on high; \
+	else \
+		echo "$(RED)goneat not found. Install from: https://github.com/fulmenhq/goneat$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Package cooling policy check passed!$(NC)"
+
+.PHONY: deps-sbom
+deps-sbom: ## Generate SBOM (Software Bill of Materials)
+	@echo "$(BLUE)Generating SBOM...$(NC)"
+	@if command -v goneat >/dev/null; then \
+		goneat dependencies --sbom; \
+	else \
+		echo "$(RED)goneat not found. Install from: https://github.com/fulmenhq/goneat$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ SBOM generated successfully!$(NC)"
+
+.PHONY: deps-check
+deps-check: deps-licenses ## Check dependencies (fast, offline - licenses only)
+	@echo "$(GREEN)✅ Dependency checks passed!$(NC)"
+
+.PHONY: deps-check-full
+deps-check-full: deps-licenses deps-cooling ## Full dependency check (includes network-based cooling)
+	@echo "$(GREEN)✅ Full dependency validation passed!$(NC)"
+
+.PHONY: deps-assess
+deps-assess: ## Run comprehensive dependency assessment via goneat assess
+	@echo "$(BLUE)Running comprehensive dependency assessment...$(NC)"
+	@if command -v goneat >/dev/null; then \
+		goneat assess --categories dependencies --fail-on high; \
+	else \
+		echo "$(RED)goneat not found. Install from: https://github.com/fulmenhq/goneat$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Dependency assessment passed!$(NC)"
+
 # Module management
 .PHONY: mod-tidy
 mod-tidy: ## Clean up go.mod and go.sum
@@ -410,6 +464,7 @@ clean: ## Clean build artifacts
 .PHONY: clean-all
 clean-all: clean ## Clean everything including dependencies
 	@echo "$(BLUE)Cleaning all artifacts and dependencies...$(NC)"
+	@rm -rf sbom/
 	$(GOMOD) clean
 
 # Pre-commit and CI
@@ -418,7 +473,7 @@ pre-commit: check-all build test-cleanup test-short coverage-check-dynamic fmt-d
 	@echo "$(GREEN)✅ Pre-commit checks passed!$(NC)"
 
 .PHONY: pre-push
-pre-push: check-all test-cleanup test coverage-check-dynamic security-scan ## Run pre-push validation (integration tests removed - no test suite exists)
+pre-push: check-all test-cleanup test coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation with full dependency checks
 	@echo "$(GREEN)✅ Pre-push checks passed!$(NC)"
 
 .PHONY: ci
