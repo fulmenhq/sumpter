@@ -1,0 +1,155 @@
+# ============================================================================
+# Sumpter Dependency Protection Configuration
+# ============================================================================
+# License compliance, package cooling (supply chain security), and SBOM
+# generation for Sumpter XML streaming engine.
+#
+# Documentation:
+#   goneat docs show user-guide/commands/dependencies
+#   goneat docs show user-guide/workflows/dependency-gating
+#
+# ============================================================================
+
+version: v1
+
+# ============================================================================
+# LICENSE COMPLIANCE POLICY
+# ============================================================================
+# Automatically detect and enforce license policies across dependencies.
+# Works OFFLINE - uses local go.mod/vendor directories.
+#
+# Commands:
+#   goneat dependencies --licenses
+#   goneat assess --categories dependencies
+#
+licenses:
+  # Forbidden licenses (build fails if detected)
+  forbidden:
+    - GPL-3.0      # Strong copyleft - requires derivative works to be GPL
+    - AGPL-3.0     # Network copyleft - triggers on network use
+    - MPL-2.0      # Mozilla Public License - weak copyleft with patent concerns
+
+  # Explicitly allowed permissive licenses only
+  allowed:
+    - MIT
+    - Apache-2.0
+    - BSD-3-Clause
+    - BSD-2-Clause
+    - ISC
+    - 0BSD
+    - Unlicense
+
+# ============================================================================
+# PACKAGE COOLING POLICY (Supply Chain Security)
+# ============================================================================
+# Enforces waiting period before adopting newly published packages.
+# Protects against supply chain attacks (compromised accounts, malicious code).
+#
+# ⚠️  REQUIRES NETWORK ACCESS - queries package registries
+#
+# Best Practices:
+#   - Use in pre-push hooks (not pre-commit - too slow)
+#   - Use in CI/CD pipelines
+#   - Start with alert_only=true for team onboarding
+#
+# Commands:
+#   goneat dependencies --cooling
+#   goneat assess --categories dependencies
+#
+cooling:
+  enabled: true
+
+  # Minimum package age (days since publication)
+  # 7 days = 80% of supply chain attacks detected
+  # 14 days = 95% detection rate
+  min_age_days: 7
+
+  # Minimum total downloads (lifetime adoption)
+  min_downloads: 100
+
+  # Minimum downloads in last 30 days (active maintenance)
+  min_downloads_recent: 10
+
+  # Enforcement mode
+  # alert_only: false = FAIL BUILD on violations
+  # alert_only: true = WARN ONLY (good for gradual rollout)
+  alert_only: false
+
+  # Grace period (days) to fix violations without blocking
+  grace_period_days: 3
+
+  # Trusted package exceptions
+  # ⚠️  USE SPARINGLY - each exception reduces security
+  exceptions:
+    # Trust FulmenHQ organization's internal packages
+    - pattern: "github.com/fulmenhq/*"
+      reason: "Internal FulmenHQ packages are pre-vetted by maintainers"
+      approved_by: "@3leapsdave"
+      approved_date: "2025-11-10"
+
+    # Trust established Go standard library extensions
+    - pattern: "golang.org/x/*"
+      reason: "Official Go project packages"
+      approved_by: "@3leapsdave"
+      approved_date: "2025-11-10"
+
+    # Trust established XML processing libraries
+    - pattern: "github.com/antchfx/*"
+      reason: "Established XML processing library (xmlquery, xpath)"
+      approved_by: "@3leapsdave"
+      approved_date: "2025-11-10"
+
+# ============================================================================
+# POLICY ENGINE CONFIGURATION
+# ============================================================================
+# Note: Language auto-detection handles Go projects automatically via go.mod
+# No explicit languages: configuration needed for standard single-language repos
+#
+# goneat uses embedded OPA (Open Policy Agent) for policy evaluation.
+#
+policy_engine:
+  type: embedded  # Recommended for most use cases
+
+# ============================================================================
+# SBOM CONFIGURATION (Software Bill of Materials)
+# ============================================================================
+# Generate SBOMs for compliance, security auditing, and transparency.
+# Works OFFLINE - uses local dependency graph.
+#
+# Commands:
+#   goneat dependencies --sbom
+#   goneat dependencies --sbom --sbom-output custom/path.json
+#
+# ⚠️  IMPORTANT: Add 'sbom/' to .gitignore
+#
+# Uncomment to customize SBOM settings:
+# sbom:
+#   output_dir: sbom
+#   format: cyclonedx-json
+#   include_dev_dependencies: false
+
+# ============================================================================
+# ASSESSMENT INTEGRATION
+# ============================================================================
+# The 'goneat assess --categories dependencies' command uses this config.
+#
+# Hook Integration Examples:
+#
+# Pre-commit (fast, offline only):
+#   - command: assess
+#     args: ["--categories", "dependencies", "--fail-on", "high"]
+#     # Note: Only runs license checks (cooling requires network)
+#
+# Pre-push (comprehensive, includes cooling):
+#   - command: assess
+#     args: ["--categories", "dependencies", "--fail-on", "high"]
+#     # Runs both license and cooling checks
+#
+# CI/CD (full validation with SBOM):
+#   - command: dependencies
+#     args: ["--licenses", "--cooling", "--sbom", "--fail-on", "high"]
+#
+# For complete workflow patterns, see:
+#   goneat docs show user-guide/workflows/dependency-gating
+#
+# ============================================================================

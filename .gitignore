@@ -228,3 +228,4 @@ docs/.codex-meta/
 # Asset Management (SSOT in sumpter-codex)
 /assets/*
 !/assets/.gitkeep
+sbom/
