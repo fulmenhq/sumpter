@@ -47,7 +47,9 @@ LDFLAGS := -ldflags "-X 'github.com/fulmenhq/sumpter/cmd/sumpter/commands.Versio
 BUILD_FLAGS := $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)
 
 # Test flags
-TEST_FLAGS := -v -race -coverprofile=$(COVERAGE_DIR)/coverage.out
+# Note: -race flag removed from default (too slow). Use test-race for race detection.
+TEST_FLAGS := -v -coverprofile=$(COVERAGE_DIR)/coverage.out
+TEST_FLAGS_RACE := -v -race -coverprofile=$(COVERAGE_DIR)/coverage.out
 BENCH_FLAGS := -bench=. -benchmem
 PRE_PUSH_COVERAGE := 80
 
@@ -218,7 +220,7 @@ test-verbose: ## Run tests with verbose output
 test-parallel: ## Run tests with parallel execution and race detection
 	@echo "$(BLUE)Running parallel tests with race detection...$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
-	$(GOTEST) -parallel=4 -race $(TEST_FLAGS) ./...
+	$(GOTEST) -parallel=4 $(TEST_FLAGS_RACE) ./...
 
 .PHONY: test-coverage
 test-coverage: ## Run tests with detailed coverage analysis
@@ -229,6 +231,14 @@ test-coverage: ## Run tests with detailed coverage analysis
 	@$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | tail -1
 	@echo "$(GREEN)Coverage data saved to: $(COVERAGE_DIR)/coverage.out$(NC)"
 	@echo "$(CYAN)To generate HTML report: go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html$(NC)"
+
+.PHONY: test-race
+test-race: ## Run tests with race detector (slower but thorough)
+	@echo "$(BLUE)Running tests with race detection...$(NC)"
+	@echo "$(YELLOW)⚠️  Race detection is slower - use for final validation$(NC)"
+	@mkdir -p $(COVERAGE_DIR)
+	$(GOTEST) $(TEST_FLAGS_RACE) ./...
+	@echo "$(GREEN)✅ Race detection tests passed!$(NC)"
 
 .PHONY: test-coverage-report
 test-coverage-report: test ## Generate coverage report and show summary
@@ -473,7 +483,7 @@ pre-commit: check-all build test-cleanup test-short coverage-check-dynamic fmt-d
 	@echo "$(GREEN)✅ Pre-commit checks passed!$(NC)"
 
 .PHONY: pre-push
-pre-push: check-all test-cleanup test coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation with full dependency checks
+pre-push: check-all test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation with full dependency checks (includes race detection)
 	@echo "$(GREEN)✅ Pre-push checks passed!$(NC)"
 
 .PHONY: ci
