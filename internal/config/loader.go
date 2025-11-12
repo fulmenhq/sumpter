@@ -10,6 +10,7 @@ import (
 
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/assets"
+	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/fulmenhq/sumpter/internal/validation"
 	"gopkg.in/yaml.v3"
 )
@@ -51,8 +52,13 @@ func (l *Loader) LoadMainConfig() (*MainConfig, error) {
 		return l.getDefaultMainConfig(), nil
 	}
 
+	// Validate user-provided config path
+	if err := utils.ValidateUserPathForRead(configPath, utils.RootHome, l.paths.Home); err != nil {
+		return nil, fmt.Errorf("invalid config path: %w", err)
+	}
+
 	// Load config file
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) // #nosec G304 - Path validated by ValidateUserPathForRead
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
@@ -86,8 +92,13 @@ func (l *Loader) LoadLoggerConfig() (*LoggerConfig, error) {
 		return l.getDefaultLoggerConfig(), nil
 	}
 
+	// Validate user-provided config path
+	if err := utils.ValidateUserPathForRead(configPath, utils.RootHome, l.paths.Home); err != nil {
+		return nil, fmt.Errorf("invalid logger config path: %w", err)
+	}
+
 	// Load config file
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) // #nosec G304 - Path validated by ValidateUserPathForRead
 	if err != nil {
 		return nil, fmt.Errorf("failed to read logger config file %s: %w", configPath, err)
 	}
@@ -121,8 +132,13 @@ func (l *Loader) LoadPIIConfig() (*PIIConfig, error) {
 		return l.getDefaultPIIConfig(), nil
 	}
 
+	// Validate user-provided config path
+	if err := utils.ValidateUserPathForRead(configPath, utils.RootHome, l.paths.Home); err != nil {
+		return nil, fmt.Errorf("invalid PII config path: %w", err)
+	}
+
 	// Load config file
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) // #nosec G304 - Path validated by ValidateUserPathForRead
 	if err != nil {
 		return nil, fmt.Errorf("failed to read PII config file %s: %w", configPath, err)
 	}
@@ -164,7 +180,7 @@ func (l *Loader) SavePIIConfig(config *PIIConfig) error {
 // saveConfig is a helper to save any config to YAML file
 func (l *Loader) saveConfig(path string, config interface{}) error {
 	// Ensure config directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -173,7 +189,7 @@ func (l *Loader) saveConfig(path string, config interface{}) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file %s: %w", path, err)
 	}
 
@@ -324,15 +340,20 @@ func (l *Loader) LoadRetrieveConfig(configPath string) (*RetrieveConfig, error) 
 		return l.getDefaultRetrieveConfig(), nil
 	}
 
+	// Validate user-provided config path
+	if err := utils.ValidateUserPathForRead(configPath, utils.RootHome, l.paths.Home); err != nil {
+		return nil, fmt.Errorf("invalid retrieve config path: %w", err)
+	}
+
 	// Load config file
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) // #nosec G304 - Path validated by ValidateUserPathForRead
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source data config file %s: %w", configPath, err)
 	}
 
 	const schemaRelPath = "retrieve/v0.1.0/retrieve-config.schema.yaml"
 	schemaPath := filepath.Join(l.paths.Home, "schemas", schemaRelPath)
-	schemaBytes, err := os.ReadFile(schemaPath)
+	schemaBytes, err := os.ReadFile(schemaPath) // #nosec G304 - Internal schema loading, controlled path
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)

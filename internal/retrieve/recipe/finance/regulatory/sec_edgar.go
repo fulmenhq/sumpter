@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fulmenhq/sumpter/internal/logging"
+	"github.com/fulmenhq/sumpter/internal/utils"
 	"go.uber.org/zap"
 )
 
@@ -356,7 +357,18 @@ func (c *SecEdgarClient) downloadFile(url, filepath string) (err error) {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	out, err := os.Create(filepath)
+	// Get current working directory for path validation
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Validate user-provided file path
+	if err := utils.ValidateUserPathForCreate(filepath, utils.RootCwd, cwd); err != nil {
+		return fmt.Errorf("invalid download path: %w", err)
+	}
+
+	out, err := os.Create(filepath) // #nosec G304 - Path validated by ValidateUserPathForCreate
 	if err != nil {
 		return err
 	}

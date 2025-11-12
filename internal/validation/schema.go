@@ -115,7 +115,7 @@ func (v *SchemaValidator) loadSchema(parts ...string) ([]byte, error) {
 	}
 
 	full := filepath.Join(append([]string{v.schemaDir}, parts...)...)
-	return os.ReadFile(full)
+	return os.ReadFile(full) // #nosec G304 - Internal schema loading, controlled path
 }
 
 // validateAgainstSchema validates data against a schema file
@@ -174,7 +174,7 @@ func (v *SchemaValidator) validateAgainstSchema(data []byte, schemaBytes []byte,
 // ValidateFile validates a config file against its appropriate schema
 func (v *SchemaValidator) ValidateFile(configFile string) (*ValidationResult, error) {
 	// Read config file
-	data, err := os.ReadFile(configFile)
+	data, err := os.ReadFile(configFile) // #nosec G304 - Internal config validation, controlled path
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configFile, err)
 	}

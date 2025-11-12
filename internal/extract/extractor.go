@@ -207,7 +207,9 @@ func readFileContent(filePath string, allowLargeFiles bool) ([]byte, error) {
 		)
 	}
 
-	data, err := os.ReadFile(filePath)
+	// Note: No path validation here because users explicitly specify which XML file to process
+	// Users should be able to process any XML file they have OS permissions to access
+	data, err := os.ReadFile(filePath) // #nosec G304 - User-specified XML file (top-level input)
 	if err != nil {
 		return nil, err
 	}

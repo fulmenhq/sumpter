@@ -28,7 +28,7 @@ func NewRegistryDeserializer(logger Logger, schemaDir string) *RegistryDeseriali
 // DeserializeRegistryFile reads and validates a dialect registry file
 func (d *RegistryDeserializer) DeserializeRegistryFile(registryPath string) (*DialectRegistry, error) {
 	// Read the registry file
-	registryBytes, err := os.ReadFile(registryPath)
+	registryBytes, err := os.ReadFile(registryPath) // #nosec G304 - Internal dialect registry loading
 	if err != nil {
 		return nil, fmt.Errorf("failed to read registry file %s: %w", registryPath, err)
 	}
@@ -62,7 +62,7 @@ func (d *RegistryDeserializer) validateRegistryFile(registryPath string, registr
 	schemaPath := filepath.Join(d.schemaDir, "dialects", "v0.1.0", "dialect-registry.schema.yaml")
 
 	// Read schema file
-	schemaBytes, err := os.ReadFile(schemaPath)
+	schemaBytes, err := os.ReadFile(schemaPath) // #nosec G304 - Internal schema path, controlled
 	if err != nil {
 		return fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
 	}
@@ -122,7 +122,7 @@ func (d *RegistryDeserializer) DeserializeRegistryFromBytes(registryBytes []byte
 
 	// Read schema file
 	schemaPath := filepath.Join(d.schemaDir, "dialects", "v0.1.0", "dialect-registry.schema.yaml")
-	schemaBytes, err := os.ReadFile(schemaPath)
+	schemaBytes, err := os.ReadFile(schemaPath) // #nosec G304 - Internal schema path, controlled
 	if err != nil {
 		return nil, fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
 	}
@@ -165,14 +165,14 @@ func (d *RegistryDeserializer) ValidateRegistryFile(registryPath string) error {
 	d.logger.Debug("validating registry file", zap.String("path", registryPath))
 
 	// Read the file
-	registryBytes, err := os.ReadFile(registryPath)
+	registryBytes, err := os.ReadFile(registryPath) // #nosec G304 - Internal dialect registry loading
 	if err != nil {
 		return fmt.Errorf("failed to read registry file: %w", err)
 	}
 
 	// Read schema file
 	schemaPath := filepath.Join(d.schemaDir, "dialects", "v0.1.0", "dialect-registry.schema.yaml")
-	schemaBytes, err := os.ReadFile(schemaPath)
+	schemaBytes, err := os.ReadFile(schemaPath) // #nosec G304 - Internal schema path, controlled
 	if err != nil {
 		return fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
 	}

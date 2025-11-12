@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/assets"
+	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/fulmenhq/sumpter/internal/validation"
 	"gopkg.in/yaml.v3"
 )
@@ -93,8 +94,11 @@ type OutputDefaults struct {
 }
 
 // LoadManifest reads and validates a manifest from disk.
+// Note: This function does not restrict the manifestPath because users explicitly
+// specify which manifest file to load. Security validation happens in OpenRelativeFile
+// to prevent traversal attacks when opening assets relative to the manifest directory.
 func LoadManifest(manifestPath string) (*Manifest, error) {
-	data, err := os.ReadFile(manifestPath)
+	data, err := os.ReadFile(manifestPath) // #nosec G304 - User-specified manifest file (top-level input)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest %s: %w", manifestPath, err)
 	}
@@ -223,7 +227,12 @@ func OpenRelativeFile(base, candidate string) (*os.File, error) {
 		return nil, fmt.Errorf("path %s escapes workspace", candidate)
 	}
 
-	return os.Open(cleanResolved)
+	// Final validation before opening
+	if err := utils.ValidateUserPathForRead(cleanResolved, utils.RootCwd, cleanBase); err != nil {
+		return nil, fmt.Errorf("invalid asset path: %w", err)
+	}
+
+	return os.Open(cleanResolved) // #nosec G304 - Path validated by ValidateUserPathForRead
 }
 
 // ListAssets resolves all asset paths contained in the manifest.

@@ -952,7 +952,7 @@ func validateJSONAgainstEmbeddedSchema(jsonData []byte) error {
 func generateReport(cmd *cobra.Command, report *InspectReportV0, opts *InspectOptions) error {
 	var output io.Writer
 	if opts.Output != "" {
-		file, err := os.OpenFile(opts.Output, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		file, err := os.OpenFile(opts.Output, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 		if err != nil {
 			return fmt.Errorf("failed to open output file: %w", err)
 		}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +26,7 @@ func validateReadablePath(path string) error {
 	}
 
 	// Check if readable
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 - User-specified source path (top-level input)
 	if err != nil {
 		return fmt.Errorf("path is not readable: %s: %w", path, err)
 	}
@@ -101,8 +102,11 @@ func validateWritableFile(filePath string) error {
 		return fmt.Errorf("cannot write to file (directory issue): %s: %w", filePath, err)
 	}
 
+	// Note: No path validation here because users explicitly specify where to write files
+	// Users should be able to write to any location they have OS permissions for
+
 	// Try to create the file (this will fail if file exists and is not writable)
-	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304 - User-specified output file
 	if err != nil {
 		return fmt.Errorf("cannot create/write to file: %s: %w", filePath, err)
 	}
@@ -280,10 +284,20 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 
 	output := os.Stdout
 	if outputPath != "" {
-		var err error
-		output, err = os.Create(outputPath)
+		// Get current working directory for path validation
+		cwd, err := os.Getwd()
 		if err != nil {
-			return fmt.Errorf("failed to create output file: %w", err)
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		// Validate user-provided output path
+		if err := utils.ValidateUserPathForCreate(outputPath, utils.RootCwd, cwd); err != nil {
+			return fmt.Errorf("invalid output path: %w", err)
+		}
+		var err2 error
+		output, err2 = os.Create(outputPath) // #nosec G304 - Path validated by ValidateUserPathForCreate
+		if err2 != nil {
+			return fmt.Errorf("failed to create output file: %w", err2)
 		}
 		_ = output.Close()
 	}

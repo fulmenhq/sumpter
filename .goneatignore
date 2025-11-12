@@ -17,6 +17,9 @@ bin/
 # Dependencies
 vendor/
 
+# Go module cache (do not scan)
+.cache/
+
 # Coverage reports
 coverage.out
 *.cover
