@@ -9,9 +9,7 @@
 #   goneat docs show user-guide/workflows/dependency-gating
 #
 # ============================================================================
-
 version: v1
-
 # ============================================================================
 # LICENSE COMPLIANCE POLICY
 # ============================================================================
@@ -25,10 +23,9 @@ version: v1
 licenses:
   # Forbidden licenses (build fails if detected)
   forbidden:
-    - GPL-3.0      # Strong copyleft - requires derivative works to be GPL
-    - AGPL-3.0     # Network copyleft - triggers on network use
-    - MPL-2.0      # Mozilla Public License - weak copyleft with patent concerns
-
+    - GPL-3.0 # Strong copyleft - requires derivative works to be GPL
+    - AGPL-3.0 # Network copyleft - triggers on network use
+    - MPL-2.0 # Mozilla Public License - weak copyleft with patent concerns
   # Explicitly allowed permissive licenses only
   allowed:
     - MIT
@@ -38,7 +35,6 @@ licenses:
     - ISC
     - 0BSD
     - Unlicense
-
 # ============================================================================
 # PACKAGE COOLING POLICY (Supply Chain Security)
 # ============================================================================
@@ -58,26 +54,20 @@ licenses:
 #
 cooling:
   enabled: true
-
   # Minimum package age (days since publication)
   # 7 days = 80% of supply chain attacks detected
   # 14 days = 95% detection rate
   min_age_days: 7
-
   # Minimum total downloads (lifetime adoption)
   min_downloads: 100
-
   # Minimum downloads in last 30 days (active maintenance)
   min_downloads_recent: 10
-
   # Enforcement mode
   # alert_only: false = FAIL BUILD on violations
   # alert_only: true = WARN ONLY (good for gradual rollout)
   alert_only: false
-
   # Grace period (days) to fix violations without blocking
   grace_period_days: 3
-
   # Trusted package exceptions
   # ⚠️  USE SPARINGLY - each exception reduces security
   exceptions:
@@ -86,19 +76,16 @@ cooling:
       reason: "Internal FulmenHQ packages are pre-vetted by maintainers"
       approved_by: "@3leapsdave"
       approved_date: "2025-11-10"
-
     # Trust established Go standard library extensions
     - pattern: "golang.org/x/*"
       reason: "Official Go project packages"
       approved_by: "@3leapsdave"
       approved_date: "2025-11-10"
-
     # Trust established XML processing libraries
     - pattern: "github.com/antchfx/*"
       reason: "Established XML processing library (xmlquery, xpath)"
       approved_by: "@3leapsdave"
       approved_date: "2025-11-10"
-
 # ============================================================================
 # POLICY ENGINE CONFIGURATION
 # ============================================================================
@@ -108,7 +95,7 @@ cooling:
 # goneat uses embedded OPA (Open Policy Agent) for policy evaluation.
 #
 policy_engine:
-  type: embedded  # Recommended for most use cases
+  type: embedded # Recommended for most use cases
 
 # ============================================================================
 # SBOM CONFIGURATION (Software Bill of Materials)

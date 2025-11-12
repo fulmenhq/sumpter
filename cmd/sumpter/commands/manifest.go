@@ -9,6 +9,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/logging"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/text/cases"
@@ -222,14 +223,25 @@ func discoverWorkspaceAssets(workspaceDir string, kind recipesmanifest.Kind) (*r
 }
 
 func writeManifestToFile(manifest *recipesmanifest.Manifest, manifestPath string) error {
+	// Get current working directory for path validation
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(manifestPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
+	// Validate user-provided manifest path
+	if err := utils.ValidateUserPathForCreate(manifestPath, utils.RootCwd, cwd); err != nil {
+		return fmt.Errorf("invalid manifest path: %w", err)
+	}
+
 	// Write manifest
-	file, err := os.Create(manifestPath)
+	file, err := os.Create(manifestPath) // #nosec G304 - Path validated by ValidateUserPathForCreate
 	if err != nil {
 		return fmt.Errorf("failed to create manifest file: %w", err)
 	}

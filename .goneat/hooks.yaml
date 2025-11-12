@@ -1,6 +1,6 @@
 version: 1.0.0
 hooks:
-  pre-commit:
+  precommit:
     - command: assess
       args:
         - --categories
@@ -10,7 +10,7 @@ hooks:
         - --package-mode
       priority: 10
       timeout: 2m
-  pre-push:
+  prepush:
     - command: assess
       args:
         - --categories

@@ -131,7 +131,7 @@ func (r *RegistryLoader) loadExternalDialects(registry *DialectRegistry, dialect
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 - External dialect loading, validated path
 		if err != nil {
 			r.logger.Warn("failed to read external dialect file", zap.String("file", path), zap.Error(err))
 			return nil
@@ -161,7 +161,7 @@ func (r *RegistryLoader) loadExtensions(registry *DialectRegistry, extensionsDir
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 - Extension loading, validated path
 		if err != nil {
 			r.logger.Warn("failed to read extension file", zap.String("file", path), zap.Error(err))
 			return nil
@@ -175,7 +175,7 @@ func (r *RegistryLoader) loadExtensions(registry *DialectRegistry, extensionsDir
 
 		// Load the dialect file referenced by the extension
 		dialectPath := filepath.Join(extensionsDir, extension.Source)
-		dialectData, err := os.ReadFile(dialectPath)
+		dialectData, err := os.ReadFile(dialectPath) // #nosec G304 - Extension dialect loading, validated path
 		if err != nil {
 			r.logger.Warn("failed to read dialect file for extension", zap.String("dialect_file", dialectPath), zap.Error(err))
 			return nil

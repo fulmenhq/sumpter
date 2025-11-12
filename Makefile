@@ -12,15 +12,15 @@
 # Quality Assurance Workflow:
 #   1. make check-all    - Fast quality checks (formatting, linting, vetting)
 #   2. make test         - Run tests with coverage
-#   3. make pre-commit   - Pre-commit validation (dynamic, lifecycle-aware)
-#   4. make pre-push     - Pre-push validation (80% production threshold)
+#   3. make precommit    - Pre-commit validation (dynamic, lifecycle-aware)
+#   4. make prepush      - Pre-push validation (80% production threshold)
 #   5. make build        - Build the final binary
 #   6. make install      - Install binary to PATH
 #
 # Coverage Strategy:
-#   • Pre-commit: Dynamic via LIFECYCLE_PHASE + config/coverage-thresholds.yaml
+#   • Precommit:  Dynamic via LIFECYCLE_PHASE + config/coverage-thresholds.yaml
 #                 (alpha 50%, beta 70%, production 80%).
-#   • Pre-push:   80% threshold, comprehensive validation
+#   • Prepush:    80% threshold, comprehensive validation
 
 # Variables
 BINARY_NAME := sumpter
@@ -76,7 +76,7 @@ help: ## Show this help message
 	@echo "  $(CYAN)make test$(NC)          - Run tests with coverage"
 	@echo "  $(CYAN)make test-coverage$(NC) - Detailed coverage analysis"
 	@echo "  $(CYAN)make coverage-check-dynamic$(NC) - Dynamic coverage check"
-	@echo "  $(CYAN)make pre-commit$(NC)    - Pre-commit validation"
+	@echo "  $(CYAN)make precommit$(NC)     - Pre-commit validation"
 	@echo "  $(CYAN)make build$(NC)         - Build the binary"
 	@echo "  $(CYAN)make dev$(NC)           - Setup development environment"
 
@@ -112,7 +112,7 @@ fmt: ## Format Go code only
 .PHONY: fmt-strict
 fmt-strict: ## Strictly check Go code formatting, fails if issues found
 	@echo "$(BLUE)Checking code formatting...$(NC)"
-	@if find . -name "*.go" -not -path "./vendor/*" -not -path "./.plans/*" | xargs gofmt -l | grep .; then \
+	@if find . -name "*.go" -not -path "./vendor/*" -not -path "./.plans/*" -not -path "./.cache/*" | xargs gofmt -l | grep .; then \
 		echo "$(RED)❌ Formatting issues found. Run 'make fmt' to fix.$(NC)"; \
 		exit 1; \
 	fi
@@ -152,7 +152,7 @@ fmt-json: ## Format JSON files using yq
 .PHONY: fmt-markdown
 fmt-markdown: ## Format Markdown files (trailing whitespace cleanup)
 	@echo "  📋 Formatting Markdown files..."
-	@find . -name "*.md" | grep -v vendor/ | grep -v node_modules/ | while read file; do \
+	@find . -name "*.md" | grep -v vendor/ | grep -v node_modules/ | grep -v .cache/ | while read file; do \
 		echo "    Cleaning: $$file"; \
 		sed -i.bak 's/[[:space:]]*$$//' "$$file" && rm -f "$$file.bak"; \
 	done
@@ -161,7 +161,7 @@ fmt-markdown: ## Format Markdown files (trailing whitespace cleanup)
 fmt-whitespace: ## Fix end-of-file and trailing whitespace issues
 	@echo "  ✂️ Fixing whitespace and end-of-file issues..."
 	@find . -type f \( -name "*.go" -o -name "*.md" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.txt" -o -name "*.sh" -o -name "Makefile" -o -name "Dockerfile*" \) \
-		| grep -v vendor/ | grep -v node_modules/ | grep -v .git/ | grep -v dist/ | grep -v bin/ \
+		| grep -v vendor/ | grep -v node_modules/ | grep -v .git/ | grep -v dist/ | grep -v bin/ | grep -v .cache/ \
 		| while read file; do \
 			sed -i.bak 's/[[:space:]]*$$//' "$$file" && rm -f "$$file.bak"; \
 			if [ -s "$$file" ]; then \
@@ -478,13 +478,20 @@ clean-all: clean ## Clean everything including dependencies
 	$(GOMOD) clean
 
 # Pre-commit and CI
-.PHONY: pre-commit
-pre-commit: check-all build test-cleanup test-short coverage-check-dynamic fmt-docs ## Run pre-commit validation
+.PHONY: precommit
+precommit: check-all build test-cleanup test-short coverage-check-dynamic fmt-docs ## Run pre-commit validation
 	@echo "$(GREEN)✅ Pre-commit checks passed!$(NC)"
 
-.PHONY: pre-push
-pre-push: check-all test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation with full dependency checks (includes race detection)
+.PHONY: prepush
+prepush: check-all test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation with full dependency checks (includes race detection)
 	@echo "$(GREEN)✅ Pre-push checks passed!$(NC)"
+
+# Aliases for backward compatibility
+.PHONY: pre-commit
+pre-commit: precommit ## Deprecated: use 'precommit' instead
+
+.PHONY: pre-push
+pre-push: prepush ## Deprecated: use 'prepush' instead
 
 .PHONY: ci
 ci: check-all test coverage-check build ## Run CI pipeline

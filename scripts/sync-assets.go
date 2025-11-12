@@ -44,7 +44,7 @@ func syncDir(source, target string) error {
 		targetPath := filepath.Join(target, relPath)
 
 		if d.IsDir() {
-			return os.MkdirAll(targetPath, 0755)
+			return os.MkdirAll(targetPath, 0750)
 		}
 
 		// Copy file
@@ -54,17 +54,17 @@ func syncDir(source, target string) error {
 
 func copyFile(src, dst string) error {
 	// Ensure target directory exists
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0750); err != nil {
 		return err
 	}
 
-	srcFile, err := os.Open(src)
+	srcFile, err := os.Open(src) // #nosec G304 - Internal asset sync, paths are controlled
 	if err != nil {
 		return err
 	}
 	defer func() { _ = srcFile.Close() }()
 
-	dstFile, err := os.Create(dst)
+	dstFile, err := os.Create(dst) // #nosec G304 - Internal asset sync, paths are controlled
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/config"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
+	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -73,7 +74,7 @@ func newRecipeInitCommand() *cobra.Command {
 				filepath.Join(absPath, "outputs"),
 			}
 			for _, dir := range dirs {
-				if err := os.MkdirAll(dir, 0o755); err != nil {
+				if err := os.MkdirAll(dir, 0o750); err != nil {
 					return fmt.Errorf("failed to create directory %s: %w", dir, err)
 				}
 			}
@@ -463,7 +464,7 @@ func ensureEmptyOrMissing(path string) error {
 	}
 
 	if os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(path, 0o755); mkErr != nil {
+		if mkErr := os.MkdirAll(path, 0o750); mkErr != nil {
 			return fmt.Errorf("failed to create directory %s: %w", path, mkErr)
 		}
 		return nil
@@ -483,7 +484,18 @@ func renderTemplate(fsys fs.FS, source, target string, data templateData) (err e
 		return fmt.Errorf("failed to parse template %s: %w", source, err)
 	}
 
-	file, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	// Get current working directory for path validation
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Validate user-provided target path
+	if err := utils.ValidateUserPathForCreate(target, utils.RootCwd, cwd); err != nil {
+		return fmt.Errorf("invalid target path: %w", err)
+	}
+
+	file, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 - Path validated by ValidateUserPathForCreate
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", target, err)
 	}
