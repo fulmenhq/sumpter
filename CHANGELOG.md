@@ -6,6 +6,32 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+## [0.1.2] - In Progress
+
+### Added
+
+- **XML Record Index CLI** (`sumpter index` commands) - Phase 2 of high-scale XML processing
+  - Record index generation with byte offsets and integrity metadata for parallel extraction
+  - SHA256 verification and tamper detection for safe distributed processing
+  - Support for both seekable and compressed (.gz) sources with documented limitations
+- Inspect command enhancements for streaming suitability analysis
+  - Record-level size statistics (avg, p95, p99, max) for OOM risk assessment
+  - Streaming mode recommendations with confidence levels
+  - Memory estimates for streaming vs non-streaming modes
+
+### Changed
+
+- Build tooling improvements: renamed `pre-commit`/`pre-push` to `precommit`/`prepush` with backward compatibility aliases
+- Test coverage maintained at 68% (above 50% alpha phase threshold)
+
+### Fixed
+
+- Routine security improvements from audit findings (path validation hardening, root enforcement)
+
+### Docs
+
+- High-scale XML processing plan (`.plans/active/v0.1.2/xml_highscale_mvp.md`)
+
 ## [0.1.1] - 2025-10-13
 
 ### Added
