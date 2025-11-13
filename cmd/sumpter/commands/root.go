@@ -63,6 +63,7 @@ func init() {
 	rootCmd.AddCommand(NewDoctorCommand())
 	rootCmd.AddCommand(NewRecipesCommand())
 	rootCmd.AddCommand(NewManifestCommand())
+	rootCmd.AddCommand(NewIndexCommand())
 }
 
 // initializeEnvironment sets up the Sumpter environment
