@@ -1,0 +1,60 @@
+{
+  "version": "record-index/v0.1.0",
+  "source": {
+    "path": "/data/genomics/clinvar_vcv_2024.xml",
+    "size_bytes": 53687091200,
+    "sha256": "a7b3c9e2f8d4e6b9c1a5d7e3f2b8c4d6e9f1a3b5c7d9e2f4a6b8c1d3e5f7a9b2",
+    "compressed": false,
+    "compression_format": "none",
+    "created_at": "2025-01-15T10:30:45Z",
+    "encoding": "UTF-8"
+  },
+  "selector": {
+    "xpath": "//VariationArchive",
+    "element_name": "VariationArchive"
+  },
+  "records": [
+    {
+      "record_num": 1,
+      "start_offset": 1024,
+      "end_offset": 12288,
+      "size_bytes": 11264,
+      "sha256": "e4f7a2b9c3d1e5f6a8b2c4d7e9f1a3b5c6d8e2f4a7b9c1d3e5f7a8b2c4d6e8f1",
+      "element_name": "VariationArchive",
+      "depth": 1
+    },
+    {
+      "record_num": 2,
+      "start_offset": 12288,
+      "end_offset": 38912,
+      "size_bytes": 26624,
+      "sha256": "b2c4d6e8f1a3b5c7d9e2f4a6b8c1d3e5f7a9b2c4d6e8f1a3b5c7d9e2f4a6b8c1",
+      "element_name": "VariationArchive",
+      "depth": 1
+    },
+    {
+      "record_num": 3,
+      "start_offset": 38912,
+      "end_offset": 51200,
+      "size_bytes": 12288,
+      "sha256": "d6e8f1a3b5c7d9e2f4a6b8c1d3e5f7a9b2c4d6e8f1a3b5c7d9e2f4a6b8c1d3e5",
+      "element_name": "VariationArchive",
+      "depth": 1
+    }
+  ],
+  "summary": {
+    "total_records": 2400000,
+    "total_bytes": 51200000000,
+    "avg_record_size_bytes": 21333.33,
+    "min_record_size_bytes": 2048,
+    "max_record_size_bytes": 153600,
+    "p50_record_size_bytes": 25600,
+    "p95_record_size_bytes": 46080,
+    "p99_record_size_bytes": 87040
+  },
+  "metadata": {
+    "generator": "sumpter index build v0.1.2",
+    "build_duration_ms": 548230,
+    "sumpter_version": "0.1.2"
+  }
+}
