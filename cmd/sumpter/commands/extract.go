@@ -11,6 +11,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/extract/parallel"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
+	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -295,10 +296,16 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		zap.String("index", opts.RecordIndex),
 		zap.Int("workers", opts.Workers))
 
+	// Load index to get source path
+	idx, err := index.LoadIndex(opts.RecordIndex)
+	if err != nil {
+		return fmt.Errorf("failed to load record index: %w", err)
+	}
+
 	// Create parallel extraction options
 	parallelOpts := parallel.ExtractionOptions{
 		IndexPath:        opts.RecordIndex,
-		SourcePath:       "", // Will be derived from index
+		SourcePath:       idx.Source.Path,
 		Workers:          opts.Workers,
 		MaxRecordSizeMB:  opts.MaxRecordSizeMB,
 		SkipLargeRecords: opts.SkipLargeRecords,
