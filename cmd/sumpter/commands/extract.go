@@ -9,6 +9,7 @@ import (
 
 	"github.com/fulmenhq/goneat/pkg/pathfinder"
 	"github.com/fulmenhq/sumpter/internal/extract"
+	"github.com/fulmenhq/sumpter/internal/extract/parallel"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/spf13/cobra"
@@ -33,6 +34,11 @@ type ExtractOptions struct {
 	ClientID        string
 	SiteID          string
 	AllowLargeFiles bool
+	// Parallel extraction options
+	RecordIndex      string // Path to record index file
+	MaxRecordSizeMB  int    // Maximum record size in MB (0 = no limit)
+	SkipLargeRecords bool   // If true, skip oversized records; if false, fail
+	VerifyIndex      bool   // Run SHA verification before extraction
 }
 
 func NewExtractCommand() *cobra.Command {
@@ -91,6 +97,12 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().StringVar(&opts.ExtractConfig, "extract-config-path", "", "Path to extract configuration YAML file")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Client ID to blend into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Site ID to blend into extracted records")
+
+	// Parallel extraction flags
+	cmd.Flags().StringVar(&opts.RecordIndex, "record-index", "", "Path to record index file (enables parallel extraction)")
+	cmd.Flags().IntVar(&opts.MaxRecordSizeMB, "max-record-size-mb", 0, "Maximum record size in MB (0 = no limit)")
+	cmd.Flags().BoolVar(&opts.SkipLargeRecords, "skip-large-records", false, "Skip oversized records instead of failing")
+	cmd.Flags().BoolVar(&opts.VerifyIndex, "verify-index", false, "Verify index integrity with SHA-256 before extraction")
 
 	_ = cmd.MarkFlagRequired("signature-config-path")
 	_ = cmd.MarkFlagRequired("extract-config-path")
@@ -162,6 +174,24 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	logger.Debug("Extract config loaded", zap.String("record_type", extCfg.RecordType))
 
+	// Prepare external fields
+	externalFields := make(map[string]interface{})
+	if opts.ClientID != "" {
+		externalFields["client_id"] = opts.ClientID
+	}
+	if opts.SiteID != "" {
+		externalFields["site_id"] = opts.SiteID
+	}
+
+	// Route to parallel extraction if --record-index is provided
+	if opts.RecordIndex != "" {
+		logger.Info("Parallel extraction mode enabled", zap.String("record_index", opts.RecordIndex))
+		return runParallelExtraction(opts, sigCfg, extCfg, externalFields)
+	}
+
+	// Continue with sequential extraction
+	logger.Debug("Sequential extraction mode")
+
 	// Get file list
 	var files []string
 	if opts.Files != "" {
@@ -194,15 +224,6 @@ func runExtract(opts *ExtractOptions) error {
 			zap.Int("file_count", len(files)),
 			zap.String("signature", sigCfg.SignatureID),
 			zap.String("record_type", extCfg.RecordType))
-	}
-
-	// Prepare external fields
-	externalFields := make(map[string]interface{})
-	if opts.ClientID != "" {
-		externalFields["client_id"] = opts.ClientID
-	}
-	if opts.SiteID != "" {
-		externalFields["site_id"] = opts.SiteID
 	}
 
 	// Process files
@@ -263,6 +284,68 @@ func runExtract(opts *ExtractOptions) error {
 					zap.Error(err))
 			}
 		}
+	}
+
+	return nil
+}
+
+func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, externalFields map[string]interface{}) error {
+	logger := logging.GetLogger()
+	logger.Info("Starting parallel extraction",
+		zap.String("index", opts.RecordIndex),
+		zap.Int("workers", opts.Workers))
+
+	// Create parallel extraction options
+	parallelOpts := parallel.ExtractionOptions{
+		IndexPath:        opts.RecordIndex,
+		SourcePath:       "", // Will be derived from index
+		Workers:          opts.Workers,
+		MaxRecordSizeMB:  opts.MaxRecordSizeMB,
+		SkipLargeRecords: opts.SkipLargeRecords,
+		VerifyIndex:      opts.VerifyIndex,
+		ExtractConfig:    extCfg,
+		SignatureConfig:  sigCfg,
+		ExternalFields:   externalFields,
+		ShowProgress:     opts.Progress,
+	}
+
+	// Create parallel extractor
+	extractor := parallel.NewParallelExtractor(parallelOpts)
+
+	// Extract records
+	records, err := extractor.Extract()
+	if err != nil {
+		return fmt.Errorf("parallel extraction failed: %w", err)
+	}
+
+	logger.Info("Parallel extraction complete", zap.Int("record_count", len(records)))
+
+	// Output records (same as sequential path)
+	if opts.OutputPath == "" {
+		// Output to stdout
+		for _, record := range records {
+			if opts.Format == "json" {
+				if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
+					logger.Error("Failed to encode record", zap.Error(err))
+				}
+			} else {
+				// For now, only JSON supported
+				logger.Warn("Only JSON format supported, outputting JSON")
+				if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
+					logger.Error("Failed to encode record", zap.Error(err))
+				}
+			}
+		}
+	} else {
+		// Write to file
+		outputFile := filepath.Join(opts.OutputPath, "extract-parallel.json")
+		if err := writeRecordsToFile(outputFile, records); err != nil {
+			logger.Error("Failed to write output file",
+				zap.String("file", outputFile),
+				zap.Error(err))
+			return fmt.Errorf("failed to write output: %w", err)
+		}
+		logger.Info("Output written", zap.String("file", outputFile), zap.Int("records", len(records)))
 	}
 
 	return nil
