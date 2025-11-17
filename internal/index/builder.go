@@ -1,6 +1,7 @@
 package index
 
 import (
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -62,8 +63,24 @@ func (b *Builder) Build() (*RecordIndex, error) {
 	}
 	defer func() { _ = file.Close() }()
 
+	// Wrap reader in decompressor if needed
+	var reader io.Reader = file
+	if compressed {
+		switch compressionFormat {
+		case "gzip":
+			gzReader, err := gzip.NewReader(file)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+			}
+			defer func() { _ = gzReader.Close() }()
+			reader = gzReader
+		default:
+			return nil, fmt.Errorf("unsupported compression format: %s", compressionFormat)
+		}
+	}
+
 	// Create record scanner in size-only mode for memory efficiency
-	scanner := streaming.NewRecordScannerSizeOnly(file, b.opts.Selector)
+	scanner := streaming.NewRecordScannerSizeOnly(reader, b.opts.Selector)
 	defer func() { _ = scanner.Close() }()
 
 	// Collect records with incremental statistics
