@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2025-09-29
 **Deciders:** @3leapsdave, Sumpter contributor
-**Context:** Alpha phase - validating Retail journal extraction recipes
+**Context:** Alpha phase - validating retail extraction recipes
 
 ## Context
 
@@ -13,7 +13,7 @@ Sumpter's extract recipes need validation capabilities to ensure data quality du
 2. **Aggregate data** post-extraction (e.g., verify prepay/completion pairs match)
 3. **Validate results** with severity-based rules (info/warning/error/fatal)
 
-Example use case from Retail journal:
+Example use case from a retail transaction journal:
 
 - Extract representative transactions including paired settlements
 - Validate prepay count matches completion count (prevent double-counting)
@@ -216,7 +216,7 @@ internal/validation/
 - [JMESPath Specification](https://jmespath.org/)
 - [JSONata](https://jsonata.org/)
 - [CEL Specification](https://github.com/google/cel-spec)
-- [Retail journal Extract Recipe](.scratchpad/extract/retail-journal-extract.yaml)
+- Example recipes and fixtures live outside this repo (private workspaces)
 
 ## Notes
 

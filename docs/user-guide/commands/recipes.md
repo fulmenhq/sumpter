@@ -75,8 +75,8 @@ Every workspace includes a manifest that documents the recipe metadata and runti
 ```yaml
 version: "recipe/v0.1.0"
 kind: "extract"
-id: journal_retail_v1
-display_name: "Retail journal Daily Sales"
+id: retail_daily_sales_v1
+display_name: "Retail Daily Sales"
 created_at: "2025-10-02T14:00:00Z"
 assets:
   signature: signature/retail-journal-signature.yaml
@@ -121,8 +121,8 @@ sumpter extract files \
 
 ```bash
 sumpter recipes init \
-  --path ./recipes/customer/journal \
-  --id journal_retail_v1 \
+  --path ./recipes/customer/retail-daily-sales \
+  --id retail_daily_sales_v1 \
   --git-init
 ```
 
@@ -140,9 +140,9 @@ The filing is saved under `$SUMPTER_HOME/work/retrieve/<ticker>/<filing-type>/â€
 ### Execute an Extract Recipe from the Manifest
 
 ```bash
-sumpter recipes run extract ./recipes/customer/journal \
-  --input-path ./recipes/customer/journal/testdata \
-  --output-path ./recipes/customer/journal/outputs/journal.json
+sumpter recipes run extract ./recipes/customer/retail-daily-sales \
+  --input-path ./recipes/customer/retail-daily-sales/testdata \
+  --output-path ./recipes/customer/retail-daily-sales/outputs/retail.json
 ```
 
 The command resolves signature/extract configs via the manifest, applies defaults for include patterns and output format, and delegates to the extract engine.

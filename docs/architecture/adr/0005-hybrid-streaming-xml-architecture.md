@@ -34,7 +34,7 @@ ClinVar represents an **extreme but real** test case that validates architecture
 
 1. **Biomedical**: ClinVar (50GB), UniProt (100GB+), PubMed XML (multi-TB)
 2. **Financial**: XBRL instance documents (100MB-5GB)
-3. **Retail**: Retail transaction journals (50-200MB, 10K-100K transactions)
+3. **Retail**: POS transaction journals (50-200MB, 10K-100K transactions)
 4. **Regulatory**: SEC EDGAR filings, clinical trial data, legal documents
 
 If we can process ClinVar efficiently, we can handle **any** record-based XML at scale.
@@ -179,7 +179,7 @@ The hybrid approach succeeds because:
 1. **Record Size Reality**: XML records are typically small
    - ClinVar `<VariationArchive>`: 2-50KB
    - XBRL facts/contexts: 1-20KB
-   - Retail transactions: 0.5-5KB
+   - Retail POS transactions: 0.5-5KB
    - Even complex nested records: <500KB
 
 2. **DOM-per-Record is Cheap**:
@@ -300,7 +300,7 @@ sumpter --allow-large-files recipes run extract clinvar-recipe
 - ✅ **Process files 50x larger than RAM** (process 50GB on 1GB machine)
 - ✅ **Zero extract config changes** (all XPath mappings work unchanged)
 - ✅ **One-pass streaming** (no temp files, no multi-pass overhead)
-- ✅ **Works for all record-based XML** (XBRL, Retail, clinical, genomics)
+- ✅ **Works for all record-based XML** (XBRL, clinical, genomics, retail journals)
 - ✅ **Progressive output** (start emitting records immediately)
 - ✅ **Transparent compression** (handles .gz/.bz2 natively)
 
@@ -389,7 +389,7 @@ sumpter --allow-large-files recipes run extract clinvar-recipe
 
 - **Similar Datasets**:
   - XBRL instance documents (100MB-5GB financial filings)
-  - Retail transaction journals (50-200MB retail data)
+  - POS transaction journals (50-200MB retail data)
   - PubMed XML (multi-TB biomedical literature)
 
 - **Go Streaming APIs**:

@@ -37,8 +37,8 @@ Use the CLI to create a new recipe directory structure:
 
 ```bash
 sumpter recipes init \
-  --path ./recipes/customer/journal \
-  --id journal_retail_v1 \
+  --path ./recipes/customer/retail-daily-sales \
+  --id retail_daily_sales_v1 \
   --git-init
 ```
 
@@ -49,9 +49,9 @@ This command creates the standard folders (`signature/`, `extract/`, `validation
 Once the manifest points to real signature and extract configs, execute the recipe directly:
 
 ```bash
-sumpter recipes run extract ./recipes/customer/journal \
-  --input-path ./recipes/customer/journal/testdata \
-  --output-path ./recipes/customer/journal/outputs/journal.json \
+sumpter recipes run extract ./recipes/customer/retail-daily-sales \
+  --input-path ./recipes/customer/retail-daily-sales/testdata \
+  --output-path ./recipes/customer/retail-daily-sales/outputs/retail.json \
   --progress
 ```
 
@@ -130,8 +130,8 @@ Recipes will reuse the same `output_options` block. Additional NDJSON-specific f
 {
   "_runtime": {
     "generated_at": "2025-10-02T11:39:30Z",
-    "source_file": ".scratchpad/data/retail/journal01082024001607.xml",
-    "record_type": "journal_daily_sales",
+    "source_file": ".scratchpad/data/retail/transactions.xml",
+    "record_type": "retail_daily_sales",
     "summaries_included": true,
     "validation_included": true
   },

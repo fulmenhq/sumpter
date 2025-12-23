@@ -9,7 +9,7 @@
 Enterprises still rely heavily on XML for transactions, trades, and compliance data. These files are:
 
 - **Massive**: 100MB–10GB+ logs and reports.
-- **Variant-heavy**: 5–10 vendor dialects per domain (e.g., ARTS vs. Retail, FIXML variants).
+- **Variant-heavy**: 5–10 vendor dialects per domain (e.g., competing retail POS dialects, FIXML variants).
 - **Malformed**: encoding issues, mixed namespaces, partial truncation.
 - **Critical**: used in compliance reporting, finance, and retail operations.
 
@@ -59,7 +59,7 @@ This combination enables teams to move from raw XML to queryable tables **in min
 
 ## 4. Usage Scenarios
 
-### Retail (ARTS/Retail)
+### Retail (POS Transaction Journals)
 
 - Inspect POS logs → auto-config → extract transactions.
 - Output: `transactions.parquet` for BI queries.
