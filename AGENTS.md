@@ -17,6 +17,15 @@ These protocols ensure professional development standards and enterprise readine
 
 ## 🔒 **Repository Operations Requirements**
 
+### **CRITICAL: Never Commit Gitignored Content**
+
+- **DO NOT commit** any files or directories that are covered by `.gitignore`.
+  - Common examples: `.plans/`, `.scratchpad/`, `dist/`, `tmp/`, `coverage*/`, `test-results/`, and other local artifacts.
+- Before any commit, **always** run `git status` and ensure only intended, non-ignored files are staged.
+- **NEVER remove or weaken** ignore rules in `.gitignore` without explicit maintainer approval.
+  - If a file is ignored but you think it should be tracked, stop and ask.
+
+
 ### **CRITICAL: Commit and Push Protocols**
 
 **🚨 COMMITS REQUIRE APPROVAL**

@@ -65,20 +65,9 @@ NC := \033[0m # No Color
 
 .PHONY: help
 help: ## Show this help message
-	@echo "$(CYAN)Sumpter - XML Streaming Engine$(NC)"
-	@echo "$(YELLOW)High-performance Go-based XML processing$(NC)"
-	@echo ""
-	@echo "$(WHITE)Available commands:$(NC)"
+	@printf "%b\n" "$(CYAN)Sumpter - XML Streaming Engine$(NC)" "$(YELLOW)High-performance Go-based XML processing$(NC)" "" "$(WHITE)Available commands:$(NC)"
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
-	@echo ""
-	@echo "$(WHITE)Quick workflow:$(NC)"
-	@echo "  $(CYAN)make check-all$(NC)     - Fast quality checks"
-	@echo "  $(CYAN)make test$(NC)          - Run tests with coverage"
-	@echo "  $(CYAN)make test-coverage$(NC) - Detailed coverage analysis"
-	@echo "  $(CYAN)make coverage-check-dynamic$(NC) - Dynamic coverage check"
-	@echo "  $(CYAN)make precommit$(NC)     - Pre-commit validation"
-	@echo "  $(CYAN)make build$(NC)         - Build the binary"
-	@echo "  $(CYAN)make dev$(NC)           - Setup development environment"
+	@printf "%b\n" "" "$(WHITE)Quick workflow:$(NC)" "  $(CYAN)make check-all$(NC)     - Fast quality checks" "  $(CYAN)make test$(NC)          - Run tests with coverage" "  $(CYAN)make test-coverage$(NC) - Detailed coverage analysis" "  $(CYAN)make coverage-check-dynamic$(NC) - Dynamic coverage check" "  $(CYAN)make precommit$(NC)     - Pre-commit validation" "  $(CYAN)make build$(NC)         - Build the binary" "  $(CYAN)make dev$(NC)           - Setup development environment"
 
 # Development setup
 .PHONY: dev
@@ -86,9 +75,7 @@ dev: ## Set up development environment
 	@echo "$(BLUE)Setting up Sumpter development environment...$(NC)"
 	$(GOMOD) download
 	$(GOMOD) tidy
-	@mkdir -p $(BUILD_DIR)
-	@mkdir -p $(COVERAGE_DIR)
-	@mkdir -p $(TEMP_DIR)
+	@mkdir -p $(BUILD_DIR) $(COVERAGE_DIR) $(TEMP_DIR)
 	@echo "$(GREEN)✅ Development environment ready!$(NC)"
 
 # Quality checks
@@ -185,15 +172,8 @@ vet: ## Run go vet
 .PHONY: lint
 lint: ## Run golangci-lint (install if needed)
 	@echo "$(BLUE)Running linter...$(NC)"
-	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "$(YELLOW)Installing golangci-lint...$(NC)"; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$((go env GOPATH))/bin; \
-	fi
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run; \
-	else \
-		$$(go env GOPATH)/bin/golangci-lint run; \
-	fi
+	@if ! command -v golangci-lint >/dev/null 2>&1; then echo "$(YELLOW)Installing golangci-lint...$(NC)"; curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$((go env GOPATH))/bin; fi
+	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run; else $$(go env GOPATH)/bin/golangci-lint run; fi
 
 # Testing
 .PHONY: test
@@ -331,13 +311,7 @@ build: embed-assets clean ## Build the binary
 	@echo "$(BLUE)Building $(BINARY_NAME) v$(VERSION)...$(NC)"
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(BUILD_FLAGS) ./$(CMD_DIR)
-	@echo "$(GREEN)✅ Build completed: $(BUILD_DIR)/$(BINARY_NAME)$(NC)"
-	@echo ""
-	@echo "$(WHITE)Usage examples:$(NC)"
-	@echo "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) --help$(NC)"
-	@echo "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) version$(NC)"
-	@echo "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) envinfo$(NC)"
-	@echo "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) docs list$(NC)"
+	@printf "%b\n" "$(GREEN)✅ Build completed: $(BUILD_DIR)/$(BINARY_NAME)$(NC)" "" "$(WHITE)Usage examples:$(NC)" "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) --help$(NC)" "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) version$(NC)" "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) envinfo$(NC)" "  $(CYAN)./$(BUILD_DIR)/$(BINARY_NAME) docs list$(NC)"
 
 .PHONY: build-race
 build-race: ## Build with race detector
@@ -379,24 +353,12 @@ install: build ## Install binary to GOPATH/bin
 .PHONY: gosec
 gosec: ## Run gosec security scanner
 	@echo "$(BLUE)Running gosec security scanner...$(NC)"
-	@if command -v gosec >/dev/null; then \
-		gosec ./...; \
-	else \
-		echo "$(YELLOW)gosec not found. Install with: make install-dev-tools$(NC)"; \
-		echo "$(RED)Security scanning failed - gosec required$(NC)"; \
-		exit 1; \
-	fi
+	@if command -v gosec >/dev/null; then gosec ./...; else echo "$(YELLOW)gosec not found. Install with: make install-dev-tools$(NC)"; echo "$(RED)Security scanning failed - gosec required$(NC)"; exit 1; fi
 
 .PHONY: govulncheck
 govulncheck: ## Check for known vulnerabilities
 	@echo "$(BLUE)Checking for known vulnerabilities...$(NC)"
-	@if command -v govulncheck >/dev/null; then \
-		govulncheck ./...; \
-	else \
-		echo "$(YELLOW)govulncheck not found. Install with: make install-dev-tools$(NC)"; \
-		echo "$(RED)Vulnerability check failed - govulncheck required$(NC)"; \
-		exit 1; \
-	fi
+	@if command -v govulncheck >/dev/null; then govulncheck ./...; else echo "$(YELLOW)govulncheck not found. Install with: make install-dev-tools$(NC)"; echo "$(RED)Vulnerability check failed - govulncheck required$(NC)"; exit 1; fi
 
 .PHONY: security-scan
 security-scan: gosec govulncheck ## Run all security scans
@@ -646,6 +608,9 @@ version-set: ## Set explicit version (usage: make version-set VERSION_NEW=1.2.3)
 	@echo "$(BLUE)Setting version to $(VERSION_NEW)...$(NC)"
 	@echo "$(VERSION_NEW)" > VERSION
 	@echo "$(GREEN)Version set to $(VERSION_NEW)$(NC)"
+
+.PHONY: all
+all: build ## Build default target
 
 # Default target
 .DEFAULT_GOAL := help

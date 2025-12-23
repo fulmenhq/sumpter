@@ -66,9 +66,9 @@ func TestResolvePath(t *testing.T) {
 		},
 		{
 			name:      "nested relative path",
-			base:      "/recipes/naxml",
-			candidate: "assets/extract/cpjr.yaml",
-			want:      "/recipes/naxml/assets/extract/cpjr.yaml",
+			base:      "/recipes/retail",
+			candidate: "assets/extract/journal.yaml",
+			want:      "/recipes/retail/assets/extract/journal.yaml",
 		},
 		{
 			name:      "single file",

@@ -75,12 +75,12 @@ Every workspace includes a manifest that documents the recipe metadata and runti
 ```yaml
 version: "recipe/v0.1.0"
 kind: "extract"
-id: cpjr_naxml_v1
-display_name: "NAXML CPJR Daily Sales"
+id: retail_daily_sales_v1
+display_name: "Retail Daily Sales"
 created_at: "2025-10-02T14:00:00Z"
 assets:
-  signature: signature/naxml-cpjr-signature.yaml
-  extract: extract/naxml-cpjr-extract.yaml
+  signature: signature/retail-journal-signature.yaml
+  extract: extract/retail-journal-extract.yaml
   validation: ""
 defaults:
   input:
@@ -110,8 +110,8 @@ The manifest is validated against `schemas/recipes/v0.1.0/recipe.schema.yaml`. U
 
 ```bash
 sumpter extract files \
-  --signature-config-path signature/naxml-cpjr-signature.yaml \
-  --extract-config-path extract/naxml-cpjr-extract.yaml \
+  --signature-config-path signature/retail-journal-signature.yaml \
+  --extract-config-path extract/retail-journal-extract.yaml \
   --files testdata/sample.xml
 ```
 
@@ -121,8 +121,8 @@ sumpter extract files \
 
 ```bash
 sumpter recipes init \
-  --path ./recipes/customer/cpjr \
-  --id cpjr_naxml_v1 \
+  --path ./recipes/customer/retail-daily-sales \
+  --id retail_daily_sales_v1 \
   --git-init
 ```
 
@@ -140,9 +140,9 @@ The filing is saved under `$SUMPTER_HOME/work/retrieve/<ticker>/<filing-type>/â€
 ### Execute an Extract Recipe from the Manifest
 
 ```bash
-sumpter recipes run extract ./recipes/customer/cpjr \
-  --input-path ./recipes/customer/cpjr/testdata \
-  --output-path ./recipes/customer/cpjr/outputs/cpjr.json
+sumpter recipes run extract ./recipes/customer/retail-daily-sales \
+  --input-path ./recipes/customer/retail-daily-sales/testdata \
+  --output-path ./recipes/customer/retail-daily-sales/outputs/retail.json
 ```
 
 The command resolves signature/extract configs via the manifest, applies defaults for include patterns and output format, and delegates to the extract engine.
