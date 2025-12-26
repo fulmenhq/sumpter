@@ -2,8 +2,10 @@ package commands
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/fulmenhq/sumpter/internal/config"
@@ -33,6 +35,7 @@ Use 'sumpter index build' to create an index and 'sumpter index verify' to valid
 
 	cmd.AddCommand(newIndexBuildCommand())
 	cmd.AddCommand(newIndexVerifyCommand())
+	cmd.AddCommand(newIndexStreamCommand())
 
 	return cmd
 }
@@ -317,4 +320,153 @@ func formatBool(b bool) string {
 		return "match"
 	}
 	return "MISMATCH"
+}
+
+func newIndexStreamCommand() *cobra.Command {
+	var (
+		progressEvery int
+		limit         int
+		verifySummary bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "stream <index-json-file>",
+		Short: "Stream-walk a record index without loading it fully",
+		Long: `Stream-walk a record index by iterating records one at a time.
+
+This command is intended for dogfooding at extreme scale (multi-GB JSON indexes),
+where loading the full records array into memory is undesirable.
+
+For RSS-level memory measurements, run with your OS time tool, e.g.:
+  /usr/bin/time -l sumpter index stream path/to/index.recordindex.json`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger := logging.Component("index-stream")
+			indexPath := args[0]
+
+			absPath, err := filepath.Abs(indexPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve index path: %w", err)
+			}
+
+			if _, err := os.Stat(absPath); err != nil {
+				return fmt.Errorf("index file not found: %w", err)
+			}
+
+			stream, err := index.OpenRecordIndexStream(absPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = stream.Close() }()
+
+			var memStart runtime.MemStats
+			runtime.ReadMemStats(&memStart)
+
+			start := time.Now()
+			header, err := stream.Header()
+			if err != nil {
+				return err
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Index: %s\n", absPath)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Schema: %s\n", header.Version)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Source: %s\n", header.Source.Path)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Selector: %s\n", header.Selector.XPath)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\n")
+
+			var (
+				count      int
+				totalBytes int64
+				minSize    int64
+				maxSize    int64
+				lastNum    int
+			)
+
+			for limit == 0 || count < limit {
+				rec, err := stream.NextRecord()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return err
+				}
+
+				count++
+				totalBytes += rec.SizeBytes
+
+				if minSize == 0 || rec.SizeBytes < minSize {
+					minSize = rec.SizeBytes
+				}
+				if rec.SizeBytes > maxSize {
+					maxSize = rec.SizeBytes
+				}
+
+				if rec.RecordNum != 0 {
+					if lastNum != 0 && rec.RecordNum != lastNum+1 {
+						return fmt.Errorf("non-contiguous record numbers: got %d after %d", rec.RecordNum, lastNum)
+					}
+					lastNum = rec.RecordNum
+				}
+
+				if progressEvery > 0 && count%progressEvery == 0 {
+					elapsed := time.Since(start)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "... scanned %d records in %s\n", count, elapsed.Round(time.Second))
+				}
+			}
+
+			elapsed := time.Since(start)
+			var memEnd runtime.MemStats
+			runtime.ReadMemStats(&memEnd)
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Scanned records: %d\n", count)
+			if count > 0 {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Computed sizes: min=%0.2f KB max=%0.2f KB avg=%0.2f KB\n",
+					float64(minSize)/1024,
+					float64(maxSize)/1024,
+					float64(totalBytes)/float64(count)/1024,
+				)
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Elapsed: %s\n", elapsed.Round(time.Millisecond))
+			if elapsed > 0 {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Throughput: %0.0f records/sec\n", float64(count)/elapsed.Seconds())
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nHeap (start): alloc=%0.2f MB sys=%0.2f MB num_gc=%d\n",
+				float64(memStart.HeapAlloc)/(1024*1024),
+				float64(memStart.HeapSys)/(1024*1024),
+				memStart.NumGC,
+			)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Heap (end):   alloc=%0.2f MB sys=%0.2f MB num_gc=%d\n",
+				float64(memEnd.HeapAlloc)/(1024*1024),
+				float64(memEnd.HeapSys)/(1024*1024),
+				memEnd.NumGC,
+			)
+
+			if verifySummary {
+				if limit > 0 {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nSummary verification: skipped (limit enabled)\n")
+				} else {
+					if header.Summary.TotalRecords != count {
+						return fmt.Errorf("summary mismatch: header total_records=%d, scanned=%d", header.Summary.TotalRecords, count)
+					}
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nSummary verification: ok\n")
+				}
+			}
+
+			logger.Info("Index stream scan completed",
+				zap.String("index", absPath),
+				zap.Int("records_scanned", count),
+				zap.Duration("duration", elapsed),
+				zap.Int("limit", limit),
+			)
+
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&progressEvery, "progress-every", 250000, "Print progress every N records (0 disables)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Stop after scanning N records (0 scans all)")
+	cmd.Flags().BoolVar(&verifySummary, "verify-summary", true, "Verify scanned record count matches index summary (only when --limit=0)")
+
+	return cmd
 }
