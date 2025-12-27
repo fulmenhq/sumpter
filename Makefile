@@ -265,6 +265,12 @@ test-integration-short: build ## Run integration tests (short mode - no external
 	@mkdir -p tmp/integration-tests
 	$(GOTEST) -short -v -race -timeout=120s ./tests/integration/...
 
+.PHONY: test-seekablezstd
+test-seekablezstd: ## Run seekable-zstd integration tests (requires CGO)
+	@echo "$(BLUE)Running seekable-zstd integration tests...$(NC)"
+	@echo "$(YELLOW)⚠️  Requires CGO_ENABLED=1 and seekable-zstd library$(NC)"
+	CGO_ENABLED=1 $(GOTEST) -v -tags seekablezstd ./internal/index/store/...
+
 .PHONY: benchmark
 benchmark: ## Run benchmarks
 	@echo "$(BLUE)Running benchmarks...$(NC)"
