@@ -1,11 +1,12 @@
 package parallel
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
-	"github.com/fulmenhq/sumpter/internal/index"
+	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"go.uber.org/zap"
 )
@@ -24,40 +25,66 @@ func NewParallelExtractor(opts ExtractionOptions) *ParallelExtractor {
 	}
 }
 
-// Extract performs parallel extraction and returns ordered results
+// Extract performs parallel extraction and returns ordered results.
+//
+// Uses streaming record access to avoid loading full []RecordMetadata into memory.
 func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 	pe.logger.Info("Starting parallel extraction",
 		zap.String("index", pe.opts.IndexPath),
 		zap.String("source", pe.opts.SourcePath),
 		zap.Int("workers", pe.opts.Workers))
 
-	// Load record index
-	idx, err := index.LoadIndex(pe.opts.IndexPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load record index: %w", err)
+	// Use provided IndexStore or open a new one
+	var indexStore store.IndexStore
+	var err error
+	ownsStore := false
+
+	if pe.opts.IndexStore != nil {
+		// Use pre-opened store (caller retains ownership)
+		indexStore = pe.opts.IndexStore
+		pe.logger.Debug("Using pre-opened index store")
+	} else {
+		// Open index store for streaming access
+		indexStore, err = store.Open(pe.opts.IndexPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open record index: %w", err)
+		}
+		ownsStore = true
 	}
 
-	pe.logger.Info("Record index loaded",
-		zap.String("version", idx.Version),
-		zap.Int("total_records", len(idx.Records)),
-		zap.String("selector", idx.Selector.XPath))
+	// Only close if we own the store
+	if ownsStore {
+		defer func() { _ = indexStore.Close() }()
+	}
+
+	// Get header for logging and verification
+	header, err := indexStore.Header()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read index header: %w", err)
+	}
+
+	pe.logger.Info("Record index opened (streaming mode)",
+		zap.String("version", header.Version),
+		zap.Int("total_records", header.Summary.TotalRecords),
+		zap.String("selector", header.Selector.XPath))
 
 	// Safety verification (if enabled)
 	if pe.opts.VerifyIndex {
-		verifier := NewSafetyVerifier(idx, pe.opts.SourcePath, pe.opts.IndexPath)
+		verifier := NewSafetyVerifierFromHeader(header, pe.opts.SourcePath, pe.opts.IndexPath)
 		if err := verifier.VerifyIntegrity(); err != nil {
 			return nil, fmt.Errorf("safety verification failed: %w", err)
 		}
 		pe.logger.Info("Safety verification passed")
 	}
 
-	// Create work scheduler
-	scheduler, err := NewWorkScheduler(idx, pe.opts)
+	// Create work scheduler using streaming store
+	ctx := context.Background()
+	scheduler, err := NewWorkSchedulerFromStore(ctx, indexStore, pe.opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create work scheduler: %w", err)
 	}
 
-	// Schedule work (starts goroutine that populates work channel)
+	// Schedule work (starts goroutine that streams records)
 	if err := scheduler.ScheduleWork(); err != nil {
 		return nil, fmt.Errorf("failed to schedule work: %w", err)
 	}
@@ -101,9 +128,9 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 	}()
 
 	// Create result aggregator
-	aggregator := NewResultAggregator(len(idx.Records))
+	aggregator := NewResultAggregator(header.Summary.TotalRecords)
 	skippedRecords := scheduler.GetSkippedRecords()
-	aggregator.Collect(scheduler.GetResultChannelForRead(), skippedRecords, len(idx.Records))
+	aggregator.Collect(scheduler.GetResultChannelForRead(), skippedRecords, header.Summary.TotalRecords)
 
 	// Collect ordered results
 	var results []map[string]interface{}
@@ -112,7 +139,6 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 			pe.logger.Error("Record extraction failed",
 				zap.Int("record_num", result.RecordNum),
 				zap.Error(result.Error))
-			// Continue processing other records
 			continue
 		}
 		results = append(results, result.Data)

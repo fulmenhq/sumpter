@@ -11,7 +11,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/extract/parallel"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
-	"github.com/fulmenhq/sumpter/internal/index"
+	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -296,16 +296,25 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		zap.String("index", opts.RecordIndex),
 		zap.Int("workers", opts.Workers))
 
-	// Load index to get source path
-	idx, err := index.LoadIndex(opts.RecordIndex)
+	// Open index store to get header (avoids loading full records array)
+	indexStore, err := store.Open(opts.RecordIndex)
 	if err != nil {
-		return fmt.Errorf("failed to load record index: %w", err)
+		return fmt.Errorf("failed to open record index: %w", err)
+	}
+	defer func() { _ = indexStore.Close() }()
+
+	// Get header for source path
+	header, err := indexStore.Header()
+	if err != nil {
+		return fmt.Errorf("failed to read index header: %w", err)
 	}
 
 	// Create parallel extraction options
+	// Pass the already-opened store to avoid double-open
 	parallelOpts := parallel.ExtractionOptions{
 		IndexPath:        opts.RecordIndex,
-		SourcePath:       idx.Source.Path,
+		SourcePath:       header.Source.Path,
+		IndexStore:       indexStore, // Pass pre-opened store to avoid double-open
 		Workers:          opts.Workers,
 		MaxRecordSizeMB:  opts.MaxRecordSizeMB,
 		SkipLargeRecords: opts.SkipLargeRecords,

@@ -1,9 +1,11 @@
 package parallel
 
 import (
+	"context"
 	"sync"
 
 	"github.com/fulmenhq/sumpter/internal/index"
+	"github.com/fulmenhq/sumpter/internal/index/store"
 )
 
 // WorkItem represents a single record extraction task
@@ -26,6 +28,11 @@ type ExtractionOptions struct {
 	// Index path and source file
 	IndexPath  string
 	SourcePath string
+
+	// Pre-opened index store (optional, avoids double-open)
+	// If provided, Extract() will use this store instead of opening IndexPath.
+	// Caller retains ownership and must close the store after Extract() returns.
+	IndexStore store.IndexStore
 
 	// Worker pool configuration
 	Workers int // Number of parallel workers
@@ -84,7 +91,9 @@ func (s *ExtractionStats) GetStats() (total, processed, skipped, failed int) {
 
 // WorkScheduler distributes extraction work across workers
 type WorkScheduler struct {
-	index          *index.RecordIndex
+	index          *index.RecordIndex // Legacy: full index (deprecated, will be nil when streaming)
+	indexStore     store.IndexStore   // New: streaming index store
+	ctx            context.Context    // Context for cancellation
 	opts           ExtractionOptions
 	workChan       chan WorkItem
 	resultChan     chan WorkResult
