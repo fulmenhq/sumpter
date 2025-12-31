@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -237,8 +238,13 @@ Verification detects:
   • Index file corruption
   • Mismatched index/source pairs
 
+Supports both JSON and seekable-zstd index formats:
+  • *.recordindex.json - JSON format
+  • *.recordindex.header.json - Seekable-zstd format (with companion .records.szst)
+
 Example:
   sumpter index verify clinvar.xml --index clinvar.recordindex.json
+  sumpter index verify clinvar.xml --index clinvar.recordindex.header.json
   sumpter index verify clinvar.xml --index clinvar.recordindex.json --verify-records`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -284,7 +290,14 @@ Example:
 				}
 			}
 
-			// Verify index
+			// Open index using format-agnostic store abstraction
+			indexStore, err := store.Open(finalIndexPath)
+			if err != nil {
+				return fmt.Errorf("failed to open index: %w", err)
+			}
+			defer func() { _ = indexStore.Close() }()
+
+			// Verify index using the store provider
 			verifyOpts := index.VerifyOptions{
 				InputPath:     absPath,
 				IndexPath:     finalIndexPath,
@@ -293,7 +306,7 @@ Example:
 			}
 
 			verifier := index.NewVerifier(verifyOpts)
-			result, err := verifier.Verify()
+			result, err := verifier.VerifyWithProvider(&storeAdapter{indexStore})
 			if err != nil {
 				return fmt.Errorf("verification error: %w", err)
 			}
@@ -371,17 +384,22 @@ func newIndexStreamCommand() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "stream <index-json-file>",
+		Use:   "stream <index-file>",
 		Short: "Stream-walk a record index without loading it fully",
 		Long: `Stream-walk a record index by iterating records one at a time.
 
 This command is intended for dogfooding at extreme scale (multi-GB JSON indexes),
 where loading the full records array into memory is undesirable.
 
+Supports both JSON and seekable-zstd index formats:
+  • *.recordindex.json - JSON format
+  • *.recordindex.header.json - Seekable-zstd format (with companion .records.szst)
+
 For RSS-level memory measurements, run with your OS time tool, e.g.:
   /usr/bin/time -l sumpter index stream path/to/index.recordindex.json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
 			logger := logging.Component("index-stream")
 			indexPath := args[0]
 
@@ -394,19 +412,20 @@ For RSS-level memory measurements, run with your OS time tool, e.g.:
 				return fmt.Errorf("index file not found: %w", err)
 			}
 
-			stream, err := index.OpenRecordIndexStream(absPath)
+			// Use store.Open() for format-agnostic access (JSON or seekable-zstd)
+			indexStore, err := store.Open(absPath)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to open index store: %w", err)
 			}
-			defer func() { _ = stream.Close() }()
+			defer func() { _ = indexStore.Close() }()
 
 			var memStart runtime.MemStats
 			runtime.ReadMemStats(&memStart)
 
 			start := time.Now()
-			header, err := stream.Header()
+			header, err := indexStore.Header()
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to read index header: %w", err)
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Index: %s\n", absPath)
@@ -414,6 +433,13 @@ For RSS-level memory measurements, run with your OS time tool, e.g.:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Source: %s\n", header.Source.Path)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Selector: %s\n", header.Selector.XPath)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\n")
+
+			// Get record iterator
+			iter, err := indexStore.Records(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to create record iterator: %w", err)
+			}
+			defer func() { _ = iter.Close() }()
 
 			var (
 				count      int
@@ -424,12 +450,12 @@ For RSS-level memory measurements, run with your OS time tool, e.g.:
 			)
 
 			for limit == 0 || count < limit {
-				rec, err := stream.NextRecord()
+				rec, err := iter.Next()
 				if err == io.EOF {
 					break
 				}
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to read record: %w", err)
 				}
 
 				count++
@@ -510,4 +536,39 @@ For RSS-level memory measurements, run with your OS time tool, e.g.:
 	cmd.Flags().BoolVar(&verifySummary, "verify-summary", true, "Verify scanned record count matches index summary (only when --limit=0)")
 
 	return cmd
+}
+
+// storeAdapter wraps store.IndexStore to satisfy index.RecordProvider interface.
+// This adapter bridges the store package types to the index package interface.
+type storeAdapter struct {
+	store store.IndexStore
+}
+
+func (a *storeAdapter) Header() (*index.RecordIndex, error) {
+	return a.store.Header()
+}
+
+func (a *storeAdapter) Records(ctx context.Context) (index.RecordIterator, error) {
+	iter, err := a.store.Records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &iteratorAdapter{iter: iter}, nil
+}
+
+func (a *storeAdapter) Close() error {
+	return a.store.Close()
+}
+
+// iteratorAdapter wraps store.RecordIterator to satisfy index.RecordIterator interface.
+type iteratorAdapter struct {
+	iter store.RecordIterator
+}
+
+func (a *iteratorAdapter) Next() (*index.RecordMetadata, error) {
+	return a.iter.Next()
+}
+
+func (a *iteratorAdapter) Close() error {
+	return a.iter.Close()
 }
