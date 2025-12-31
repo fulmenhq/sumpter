@@ -6,31 +6,39 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
-## [0.1.2] - In Progress
+## [0.1.2] - TBD
 
 ### Added
 
-- **XML Record Index CLI** (`sumpter index` commands) - Phase 2 of high-scale XML processing
-  - Record index generation with byte offsets and integrity metadata for parallel extraction
-  - SHA256 verification and tamper detection for safe distributed processing
-  - Support for both seekable and compressed (.gz) sources with documented limitations
-- Inspect command enhancements for streaming suitability analysis
-  - Record-level size statistics (avg, p95, p99, max) for OOM risk assessment
-  - Streaming mode recommendations with confidence levels
-  - Memory estimates for streaming vs non-streaming modes
+- **Seekable-Zstd Compressed Index Store** - 10-20x smaller indexes with parallel random access
+  - Two-file format: `*.recordindex.header.json` (metadata) + `*.recordindex.records.szst` (compressed records)
+  - `--emit-szst` flag for `index build` command
+  - Automatic format detection in all index commands
+  - CGO bindings with pre-built libraries for Linux glibc and musl
+- **Format-Agnostic Index CLI** - All index commands support both JSON and seekable-zstd formats
+  - `index stream`: Stream-walk indexes without loading into memory
+  - `index verify`: Verify index integrity against source XML
+  - `index build`: Generate indexes in JSON, seekable-zstd, or both formats
+- **CI/CD for Cross-Platform Builds** - GitHub Actions workflow validates CGO linking
+  - Linux glibc (Debian Bookworm) validation
+  - Linux musl (Alpine) validation
 
 ### Changed
 
-- Build tooling improvements: renamed `pre-commit`/`pre-push` to `precommit`/`prepush` with backward compatibility aliases
-- Test coverage maintained at 68% (above 50% alpha phase threshold)
+- Parallel extraction orchestrator now streams records on-demand (constant memory)
+- Index commands auto-detect format by file extension
+- Build tooling improvements: renamed `pre-commit`/`pre-push` to `precommit`/`prepush`
 
 ### Fixed
 
-- Routine security improvements from audit findings (path validation hardening, root enforcement)
+- Yamllint issues in CI workflow files
+- Routine security improvements from audit findings
 
 ### Docs
 
-- High-scale XML processing plan (`.plans/active/v0.1.2/xml_highscale_mvp.md`)
+- Comprehensive index workflow guide with seekable-zstd documentation
+- Container deployment patterns for CGO builds
+- v0.1.2 release notes with migration guide
 
 ## [0.1.1] - 2025-10-13
 

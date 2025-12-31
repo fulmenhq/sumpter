@@ -17,29 +17,50 @@ Sumpter is a high-performance, Go-based streaming XML engine that transforms mas
 
 - Go 1.25+
 - Standard build toolchain
+- (Optional) CGO for seekable-zstd compressed indexes
 
 **Build from source**
 
 ```bash
-# Option A: using Makefile
+# Standard build (JSON indexes only)
 make build
 
-# Option B: direct go build
-go build -o bin/sumpter ./cmd/sumpter
+# Build with seekable-zstd support (requires CGO)
+CGO_ENABLED=1 go build -tags seekablezstd -o bin/sumpter ./cmd/sumpter
 ```
 
-**Run Inspect**
+**Inspect XML Structure**
 
 ```bash
-# Markdown report to stdout
+# Analyze XML structure
 bin/sumpter inspect --file ./data/retail_pos.xml --progress
 
-# JSON report to file
-bin/sumpter inspect --file ./data/finance_fixml.xml \
-  --format json --output ./out/report.json --max-paths 500
+# JSON report with record analysis
+bin/sumpter inspect --file ./data/large-dataset.xml \
+  --format json --analyze-records --record-selector "//Transaction"
+```
 
-# Read from stdin with forced encoding
-cat ./data/vendor_sample.xml | bin/sumpter inspect --file - --force-encoding windows-1252
+**Build and Use Record Indexes**
+
+```bash
+# Build index for parallel extraction
+bin/sumpter index build large-file.xml \
+  --selector "//Record" \
+  --progress
+
+# Build compressed index (10-20x smaller, requires CGO build)
+bin/sumpter index build large-file.xml \
+  --selector "//Record" \
+  --emit-szst
+
+# Verify index integrity
+bin/sumpter index verify large-file.xml --index large-file.recordindex.json
+
+# Extract with parallel workers
+bin/sumpter extract files \
+  --record-index large-file.recordindex.json \
+  --workers 8 \
+  --output-path outputs/
 ```
 
 ---
@@ -65,12 +86,14 @@ See `schemas/envinfo/README.md` for details and validation examples.
 
 ## 🔑 Features
 
-- **Streaming-first**: token-by-token parsing, constant memory profile (<50MB RSS).
-- **Encoding resilience**: normalize to UTF-8, handle BOMs and legacy encodings.
-- **Structure discovery**: `inspect` surfaces element paths, attributes, and samples.
-- **Config generation**: `--generate-config` produces starter YAML with >80% accuracy.
-- **Outputs**: NDJSON (Day 3), Parquet & DuckDB (Day 4).
-- **Observability**: structured logs, Prometheus metrics, health endpoints.
+- **Streaming-first**: Token-by-token parsing with constant memory profile (<50MB RSS)
+- **Record Indexing**: Build seekable indexes for parallel extraction of multi-GB XML files
+- **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
+- **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors
+- **Encoding resilience**: Normalize to UTF-8, handle BOMs and legacy encodings
+- **Structure discovery**: `inspect` surfaces element paths, attributes, and samples
+- **Integrity verification**: SHA-256 checksums at file and record level
+- **Observability**: Structured logs, progress tracking, and diagnostics
 
 ---
 
@@ -91,16 +114,18 @@ See also:
 
 ## 📂 Project Status
 
-We are in the bootstrap phase, focused on:
+**Current Version:** v0.1.2 (Alpha)
 
-- Reliable `inspect` command
-- Config generation accuracy
-- Extraction to NDJSON, Parquet, DuckDB
-- Test corpus strategy (synthetic + hybrid)
+Core capabilities available:
+- ✅ XML inspection and structure discovery
+- ✅ Record indexing with byte offsets and checksums
+- ✅ Seekable-zstd compressed indexes (10-20x smaller)
+- ✅ Parallel extraction with worker pools
+- ✅ Streaming mode for 50GB+ files
+- 🔄 NDJSON output (in progress)
+- 🔜 Parquet & DuckDB outputs (planned)
 
-See `docs/sumpter_overview.md` for a deeper backgrounder.
-
-Schemas: See `schemas/` for versioned JSON Schemas (SSOT). Inspect JSON conforms to `schemas/inspect-report/v0.1.0/inspect-report.schema.json`. Rendering guidance: `docs/output_rendering.md`.
+See `docs/releases/` for detailed release notes and `docs/user-guide/` for workflow documentation.
 
 ---
 
@@ -134,4 +159,4 @@ Sumpter uses an enterprise-friendly home/workdir layout with user overrides. See
 
 See `docs/standards/application-environment.md`.
 
-# Test commit to verify goneat hooks
+
