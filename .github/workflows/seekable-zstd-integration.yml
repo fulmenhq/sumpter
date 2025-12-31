@@ -1,3 +1,4 @@
+---
 # Seekable-Zstd Integration CI
 #
 # Validates that seekable-zstd CGO bindings link and run correctly on:
@@ -12,7 +13,8 @@ name: Seekable-Zstd Integration
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - 'internal/index/**'
       - 'internal/extract/parallel/**'
@@ -21,7 +23,8 @@ on:
       - 'go.sum'
       - '.github/workflows/seekable-zstd-integration.yml'
   pull_request:
-    branches: [main]
+    branches:
+      - main
     paths:
       - 'internal/index/**'
       - 'internal/extract/parallel/**'
@@ -71,7 +74,8 @@ jobs:
       - name: Locate seekable-zstd module
         run: |
           echo "=== Module Location ==="
-          MODDIR=$(go list -m -f '{{.Dir}}' github.com/3leaps/seekable-zstd/bindings/go)
+          SZST_MOD="github.com/3leaps/seekable-zstd/bindings/go"
+          MODDIR=$(go list -m -f '{{.Dir}}' "$SZST_MOD")
           echo "seekable-zstd module: $MODDIR"
 
           echo ""
@@ -82,7 +86,8 @@ jobs:
           else
             echo "Library directory not found at $LIBDIR"
             echo "Checking alternate locations..."
-            find "$MODDIR" -name "*.a" -type f 2>/dev/null || echo "No .a files found"
+            find "$MODDIR" -name "*.a" -type f 2>/dev/null \
+              || echo "No .a files found"
           fi
 
       - name: Build with seekablezstd tag
@@ -138,7 +143,8 @@ jobs:
       - name: Locate seekable-zstd module
         run: |
           echo "=== Module Location ==="
-          MODDIR=$(go list -m -f '{{.Dir}}' github.com/3leaps/seekable-zstd/bindings/go)
+          SZST_MOD="github.com/3leaps/seekable-zstd/bindings/go"
+          MODDIR=$(go list -m -f '{{.Dir}}' "$SZST_MOD")
           echo "seekable-zstd module: $MODDIR"
 
           echo ""
@@ -149,7 +155,8 @@ jobs:
           else
             echo "Library directory not found at $LIBDIR"
             echo "Checking alternate locations..."
-            find "$MODDIR" -name "*.a" -type f 2>/dev/null || echo "No .a files found"
+            find "$MODDIR" -name "*.a" -type f 2>/dev/null \
+              || echo "No .a files found"
           fi
 
       - name: Build with seekablezstd and musl tags
@@ -160,7 +167,8 @@ jobs:
       - name: Run seekable-zstd tests
         run: |
           echo "=== Running seekable-zstd integration tests ==="
-          CGO_ENABLED=1 go test -v -tags "seekablezstd musl" ./internal/index/store/...
+          CGO_ENABLED=1 go test -v -tags "seekablezstd musl" \
+            ./internal/index/store/...
 
       - name: Run full test suite with seekablezstd
         run: |
