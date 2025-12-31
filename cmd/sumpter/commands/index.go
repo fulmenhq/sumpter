@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/fulmenhq/sumpter/internal/config"
 	"github.com/fulmenhq/sumpter/internal/index"
+	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -48,6 +50,8 @@ func newIndexBuildCommand() *cobra.Command {
 		includeP95 bool
 		includeP99 bool
 		progress   bool
+		emitJSON   bool
+		emitSzst   bool
 	)
 
 	cmd := &cobra.Command{
@@ -59,12 +63,16 @@ func newIndexBuildCommand() *cobra.Command {
   • Aggregate statistics (min/max/avg/percentiles)
   • Source file integrity metadata (SHA-256 hash)
 
-The index is written to a JSON file conforming to record-index/v0.1.0 schema.
+Output formats:
+  • JSON (default): Single *.recordindex.json file
+  • Seekable-zstd: *.recordindex.header.json + *.recordindex.records.szst
+    (requires CGO build with seekablezstd tag)
 
 Memory usage: <100MB regardless of source file size (streaming architecture).
 
 Example:
-  sumpter index build clinvar.xml --selector "//VariationArchive" --output clinvar.recordindex.json`,
+  sumpter index build clinvar.xml --selector "//VariationArchive" --output clinvar.recordindex.json
+  sumpter index build clinvar.xml --selector "//VariationArchive" --emit-szst --emit-json=false`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := logging.Component("index-build")
@@ -86,10 +94,15 @@ Example:
 				return fmt.Errorf("--selector is required (e.g., --selector '//Record')")
 			}
 
-			// Determine output path
-			finalOutputPath := outputPath
-			if finalOutputPath == "" {
-				// Default: ${SUMPTER_HOME}/indexes/<basename>.recordindex.json
+			// Validate at least one output format is enabled
+			if !emitJSON && !emitSzst {
+				return fmt.Errorf("at least one output format must be enabled (--emit-json or --emit-szst)")
+			}
+
+			// Determine output base path
+			var basePath string
+			if outputPath == "" {
+				// Default: ${SUMPTER_HOME}/indexes/<basename>
 				paths, err := config.ResolvePaths("", "")
 				if err != nil {
 					return fmt.Errorf("failed to resolve application paths: %w", err)
@@ -100,16 +113,25 @@ Example:
 					return fmt.Errorf("failed to create indexes directory: %w", err)
 				}
 
-				baseName := filepath.Base(absPath)
-				ext := filepath.Ext(baseName)
-				nameWithoutExt := baseName[:len(baseName)-len(ext)]
-				finalOutputPath = filepath.Join(indexesDir, nameWithoutExt+".recordindex.json")
+				inputBaseName := filepath.Base(absPath)
+				ext := filepath.Ext(inputBaseName)
+				nameWithoutExt := inputBaseName[:len(inputBaseName)-len(ext)]
+				basePath = filepath.Join(indexesDir, nameWithoutExt)
+			} else {
+				// Strip common suffixes to get base path
+				basePath = outputPath
+				basePath = strings.TrimSuffix(basePath, ".recordindex.json")
+				basePath = strings.TrimSuffix(basePath, ".recordindex.header.json")
 			}
+
+			jsonOutputPath := basePath + ".recordindex.json"
 
 			logger.Info("Building record index",
 				zap.String("input", absPath),
-				zap.String("output", finalOutputPath),
+				zap.String("base_path", basePath),
 				zap.String("selector", selector),
+				zap.Bool("emit_json", emitJSON),
+				zap.Bool("emit_szst", emitSzst),
 			)
 
 			// Get version for metadata
@@ -118,12 +140,14 @@ Example:
 			// Build index
 			buildOpts := index.BuildOptions{
 				InputPath:      absPath,
-				OutputPath:     finalOutputPath,
+				OutputPath:     jsonOutputPath,
 				Selector:       selector,
 				IncludeP50:     includeP50,
 				IncludeP95:     includeP95,
 				IncludeP99:     includeP99,
 				SumpterVersion: version,
+				EmitJSON:       emitJSON,
+				EmitSzst:       emitSzst,
 			}
 
 			builder := index.NewBuilder(buildOpts)
@@ -139,13 +163,26 @@ Example:
 			}
 			buildDuration := time.Since(startTime)
 
-			// Write index to file
-			if err := builder.WriteToFile(idx, finalOutputPath); err != nil {
-				return fmt.Errorf("failed to write index: %w", err)
+			// Write JSON format if enabled
+			if emitJSON {
+				if err := builder.WriteToFile(idx, jsonOutputPath); err != nil {
+					return fmt.Errorf("failed to write JSON index: %w", err)
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ JSON index created: %s\n", jsonOutputPath)
+			}
+
+			// Write seekable-zstd format if enabled
+			if emitSzst {
+				if err := store.WriteSeekableIndex(basePath, idx); err != nil {
+					return fmt.Errorf("failed to write seekable-zstd index: %w", err)
+				}
+				headerPath, recordsPath := store.DeriveSeekablePaths(basePath)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Seekable-zstd index created:\n")
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Header:  %s\n", headerPath)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Records: %s\n", recordsPath)
 			}
 
 			// Output summary
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Index created: %s\n", finalOutputPath)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Records: %d\n", idx.Summary.TotalRecords)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Total size: %.2f MB\n", float64(idx.Summary.TotalBytes)/(1024*1024))
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Avg record: %.2f KB\n", idx.Summary.AvgRecordSizeBytes/1024)
@@ -159,18 +196,22 @@ Example:
 				zap.Int("records", idx.Summary.TotalRecords),
 				zap.Int64("total_bytes", idx.Summary.TotalBytes),
 				zap.Duration("duration", buildDuration),
+				zap.Bool("emit_json", emitJSON),
+				zap.Bool("emit_szst", emitSzst),
 			)
 
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "Output path for index file (default: $SUMPTER_HOME/indexes/<input-basename>.recordindex.json)")
+	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "Output base path for index files (default: $SUMPTER_HOME/indexes/<input-basename>)")
 	cmd.Flags().StringVarP(&selector, "selector", "s", "", "XPath selector for record boundaries (required, e.g., '//Record')")
 	cmd.Flags().BoolVar(&includeP50, "p50", true, "Include p50 (median) in summary statistics")
 	cmd.Flags().BoolVar(&includeP95, "p95", true, "Include p95 in summary statistics")
 	cmd.Flags().BoolVar(&includeP99, "p99", true, "Include p99 in summary statistics")
 	cmd.Flags().BoolVarP(&progress, "progress", "p", true, "Show progress messages")
+	cmd.Flags().BoolVar(&emitJSON, "emit-json", true, "Emit JSON format (*.recordindex.json)")
+	cmd.Flags().BoolVar(&emitSzst, "emit-szst", false, "Emit seekable-zstd format (requires CGO build)")
 
 	return cmd
 }

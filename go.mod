@@ -14,7 +14,7 @@ require (
 )
 
 require (
-	github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251220190626-f09b78f6318d // indirect
+	github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251229210330-c1deba15f3cb // indirect
 	github.com/bmatcuk/doublestar/v4 v4.9.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect

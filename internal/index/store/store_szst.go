@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/index"
@@ -26,45 +27,8 @@ func SeekableZstdVersion() string {
 	return seekable.Version()
 }
 
-// SzstHeader represents the header schema for seekable-zstd record index stores.
-//
-// This is distinct from index.RecordIndex to support the MVP binary format
-// which includes record encoding metadata not present in the JSON schema.
-type SzstHeader struct {
-	// Version identifies the store format version.
-	Version string `json:"version"`
-
-	// Source describes the original XML file.
-	Source index.SourceInfo `json:"source"`
-
-	// Selector describes how records were identified.
-	Selector index.SelectorInfo `json:"selector"`
-
-	// Summary contains aggregate statistics.
-	Summary index.SummaryStats `json:"summary"`
-
-	// Records contains encoding metadata for the binary record table.
-	Records SzstRecordsMetadata `json:"records"`
-}
-
-// SzstRecordsMetadata describes the binary encoding of the records table.
-type SzstRecordsMetadata struct {
-	// RecordCount is the number of records in the .records.szst file.
-	RecordCount int64 `json:"record_count"`
-
-	// RecordWidthBytes is the fixed width of each record in bytes.
-	RecordWidthBytes int `json:"record_width_bytes"`
-
-	// SHAEncoding describes how SHA256 is stored: "raw32" (32 bytes) or "hex" (64 bytes).
-	SHAEncoding string `json:"sha_encoding"`
-
-	// Endianness describes byte order: "little" or "big".
-	Endianness string `json:"endianness"`
-
-	// ElementNameStrategy describes how element names are stored:
-	// "from_selector" (constant, not stored per-record) or "per_record" (stored in table).
-	ElementNameStrategy string `json:"element_name_strategy,omitempty"`
-}
+// Note: SzstIndexHeader and SzstRecordsMetadata types are defined in writer.go
+// to avoid redeclaration when both files are compiled together.
 
 // szstStore implements IndexStore for seekable-zstd binary format.
 //
@@ -74,24 +38,32 @@ type SzstRecordsMetadata struct {
 type szstStore struct {
 	headerPath  string
 	recordsPath string
-	szstHeader  *SzstHeader
+	szstHeader  *SzstIndexHeader
 	reader      *seekable.Reader
 }
 
 // openSeekableZstdStore opens a seekable-zstd record index store.
 func openSeekableZstdStore(headerPath string) (IndexStore, error) {
-	// Derive records path from header path
-	recordsPath := strings.TrimSuffix(headerPath, ".header.json") + ".records.szst"
-
-	// Load header JSON
+	// Load header JSON first to check for records_file override
 	headerData, err := os.ReadFile(headerPath) // #nosec G304 - path is user-provided
 	if err != nil {
 		return nil, fmt.Errorf("read header: %w", err)
 	}
 
-	var szstHeader SzstHeader
+	var szstHeader SzstIndexHeader
 	if err := json.Unmarshal(headerData, &szstHeader); err != nil {
 		return nil, fmt.Errorf("parse header: %w", err)
+	}
+
+	// Determine records path: honor records_file if present, otherwise derive from header path
+	var recordsPath string
+	if szstHeader.Records.RecordsFile != "" {
+		// records_file is relative to header directory
+		headerDir := filepath.Dir(headerPath)
+		recordsPath = filepath.Join(headerDir, szstHeader.Records.RecordsFile)
+	} else {
+		// Fall back to conventional naming
+		recordsPath = strings.TrimSuffix(headerPath, ".header.json") + ".records.szst"
 	}
 
 	// Validate required fields
@@ -215,25 +187,47 @@ func (it *szstRecordIterator) Next() (*index.RecordMetadata, error) {
 		byteOrder = binary.BigEndian
 	}
 
-	// Layout (64 bytes default): start(8) + end(8) + size(8) + depth(4) + sha256(32) + padding(4)
+	// Validate buffer size for chosen encoding
+	minSize := 32 // Fixed fields: start(8) + end(8) + size(8) + depth(4) + record_num(4)
+	switch it.shaEncoding {
+	case "raw32":
+		minSize += 32 // 32 bytes for raw SHA256
+	case "hex":
+		minSize += 64 // 64 bytes for hex-encoded SHA256
+	default:
+		minSize += 32 // Default to raw32
+	}
+	if it.recordWidth < minSize {
+		return nil, fmt.Errorf("record_width_bytes %d is too small for sha_encoding %q (need at least %d)",
+			it.recordWidth, it.shaEncoding, minSize)
+	}
+
+	// Layout (64 bytes for raw32):
+	//   start_offset: int64  (bytes 0-8)
+	//   end_offset:   int64  (bytes 8-16)
+	//   size_bytes:   int64  (bytes 16-24)
+	//   depth:        int32  (bytes 24-28)
+	//   record_num:   int32  (bytes 28-32)
+	//   sha256:       [32]b  (bytes 32-64) for raw32, or [64]b for hex
 	rec := &index.RecordMetadata{
 		StartOffset: int64(byteOrder.Uint64(buf[0:8])),
 		EndOffset:   int64(byteOrder.Uint64(buf[8:16])),
 		SizeBytes:   int64(byteOrder.Uint64(buf[16:24])),
 		Depth:       int(byteOrder.Uint32(buf[24:28])),
+		RecordNum:   int(byteOrder.Uint32(buf[28:32])),
 	}
 
-	// Decode SHA256 based on encoding
+	// Decode SHA256 based on encoding (starts at byte 32)
 	switch it.shaEncoding {
 	case "raw32":
-		// 32 raw bytes at offset 28, convert to hex string
-		rec.SHA256 = fmt.Sprintf("%x", buf[28:60])
+		// 32 raw bytes at offset 32, convert to hex string
+		rec.SHA256 = fmt.Sprintf("%x", buf[32:64])
 	case "hex":
-		// 64 hex characters stored directly (less efficient but human-readable)
-		rec.SHA256 = string(buf[28:92])
+		// 64 hex characters stored directly at offset 32
+		rec.SHA256 = string(buf[32:96])
 	default:
 		// Default to raw32 for backward compatibility
-		rec.SHA256 = fmt.Sprintf("%x", buf[28:60])
+		rec.SHA256 = fmt.Sprintf("%x", buf[32:64])
 	}
 
 	it.current++
