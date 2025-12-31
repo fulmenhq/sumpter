@@ -1,5 +1,7 @@
 github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251220190626-f09b78f6318d h1:6iK6oLAPcmsCug1w3HxguPqPOhR95od2f3CA9Cug17U=
 github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251220190626-f09b78f6318d/go.mod h1:nw9DJfJ3K6izWscHYWv5A0f0TqTeNQGd0CmAUmBGIy4=
+github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251229210330-c1deba15f3cb h1:+VcqvDJbaz49Qt0621ZG67binRO/o35cpJGutnI0IG4=
+github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251229210330-c1deba15f3cb/go.mod h1:nw9DJfJ3K6izWscHYWv5A0f0TqTeNQGd0CmAUmBGIy4=
 github.com/antchfx/xmlquery v1.4.4 h1:mxMEkdYP3pjKSftxss4nUHfjBhnMk4imGoR96FRY2dg=
 github.com/antchfx/xmlquery v1.4.4/go.mod h1:AEPEEPYE9GnA2mj5Ur2L5Q5/2PycJ0N9Fusrx9b12fc=
 github.com/antchfx/xpath v1.3.3 h1:tmuPQa1Uye0Ym1Zn65vxPgfltWb/Lxu2jeqIGteJSRs=

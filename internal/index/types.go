@@ -69,6 +69,8 @@ type BuildOptions struct {
 	IncludeP95     bool   // Include p95 in summary stats
 	IncludeP99     bool   // Include p99 in summary stats
 	SumpterVersion string // Sumpter version for metadata
+	EmitJSON       bool   // Emit JSON format (*.recordindex.json)
+	EmitSzst       bool   // Emit seekable-zstd format (*.recordindex.header.json + *.recordindex.records.szst)
 }
 
 // VerifyOptions configures index verification behavior
