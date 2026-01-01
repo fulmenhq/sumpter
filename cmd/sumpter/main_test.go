@@ -25,7 +25,8 @@ func TestRunMain(t *testing.T) {
 
 func TestMainExecution(t *testing.T) {
 	// Build the binary first
-	buildCmd := exec.Command("go", "build", "-o", "sumpter-test", ".")
+	// Use -buildvcs=false to avoid VCS stamping issues in containers
+	buildCmd := exec.Command("go", "build", "-buildvcs=false", "-o", "sumpter-test", ".")
 	output, err := buildCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v\nOutput: %s", err, output)
@@ -47,7 +48,8 @@ func TestMainExecution(t *testing.T) {
 
 func TestMainExitCodes(t *testing.T) {
 	// Build the binary
-	buildCmd := exec.Command("go", "build", "-o", "sumpter-test", ".")
+	// Use -buildvcs=false to avoid VCS stamping issues in containers
+	buildCmd := exec.Command("go", "build", "-buildvcs=false", "-o", "sumpter-test", ".")
 	if err := buildCmd.Run(); err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
@@ -72,7 +74,8 @@ func TestMainExitCodes(t *testing.T) {
 
 func TestMainVersionCommand(t *testing.T) {
 	// Build the binary
-	buildCmd := exec.Command("go", "build", "-o", "sumpter-test", ".")
+	// Use -buildvcs=false to avoid VCS stamping issues in containers
+	buildCmd := exec.Command("go", "build", "-buildvcs=false", "-o", "sumpter-test", ".")
 	if err := buildCmd.Run(); err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
