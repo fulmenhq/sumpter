@@ -1,4 +1,3 @@
----
 # Seekable-Zstd Integration CI
 #
 # Validates that seekable-zstd CGO bindings link and run correctly on:
@@ -8,9 +7,7 @@
 # This workflow proves the cross-platform compatibility required for v0.1.2.
 #
 # Reference: .plans/active/v0.1.2/seekable-zstd-integration-mvp.md
-
 name: Seekable-Zstd Integration
-
 on:
   push:
     branches:
@@ -33,7 +30,6 @@ on:
       - 'go.sum'
       - '.github/workflows/seekable-zstd-integration.yml'
   workflow_dispatch:
-
 jobs:
   # Linux glibc job - Debian Bookworm
   linux-glibc:
@@ -41,16 +37,13 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: golang:1.25-bookworm
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Install build dependencies
         run: |
           apt-get update
           apt-get install -y build-essential
-
       - name: Environment info
         run: |
           echo "=== System Info ==="
@@ -65,12 +58,10 @@ jobs:
           echo ""
           echo "=== libc version ==="
           ldd --version | head -1
-
       - name: Download dependencies
         run: |
           go mod download
           go mod verify
-
       - name: Locate seekable-zstd module
         run: |
           echo "=== Module Location ==="
@@ -89,37 +80,30 @@ jobs:
             find "$MODDIR" -name "*.a" -type f 2>/dev/null \
               || echo "No .a files found"
           fi
-
       - name: Build with seekablezstd tag
         run: |
           echo "=== Building with CGO + seekablezstd ==="
-          CGO_ENABLED=1 go build -tags seekablezstd ./...
-
+          CGO_ENABLED=1 go build -buildvcs=false -tags seekablezstd ./...
       - name: Run seekable-zstd tests
         run: |
           echo "=== Running seekable-zstd integration tests ==="
           CGO_ENABLED=1 go test -v -tags seekablezstd ./internal/index/store/...
-
       - name: Run full test suite with seekablezstd
         run: |
           echo "=== Running full test suite ==="
           CGO_ENABLED=1 go test -tags seekablezstd ./...
-
   # Linux musl job - Alpine
   linux-musl:
     name: Linux musl (Alpine)
     runs-on: ubuntu-latest
     container:
       image: golang:1.25-alpine
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Install build dependencies
         run: |
           apk add --no-cache build-base git
-
       - name: Environment info
         run: |
           echo "=== System Info ==="
@@ -134,12 +118,10 @@ jobs:
           echo ""
           echo "=== libc version ==="
           ldd 2>&1 | head -1 || echo "musl libc"
-
       - name: Download dependencies
         run: |
           go mod download
           go mod verify
-
       - name: Locate seekable-zstd module
         run: |
           echo "=== Module Location ==="
@@ -158,18 +140,15 @@ jobs:
             find "$MODDIR" -name "*.a" -type f 2>/dev/null \
               || echo "No .a files found"
           fi
-
       - name: Build with seekablezstd and musl tags
         run: |
           echo "=== Building with CGO + seekablezstd + musl ==="
-          CGO_ENABLED=1 go build -tags "seekablezstd musl" ./...
-
+          CGO_ENABLED=1 go build -buildvcs=false -tags "seekablezstd musl" ./...
       - name: Run seekable-zstd tests
         run: |
           echo "=== Running seekable-zstd integration tests ==="
           CGO_ENABLED=1 go test -v -tags "seekablezstd musl" \
             ./internal/index/store/...
-
       - name: Run full test suite with seekablezstd
         run: |
           echo "=== Running full test suite ==="
