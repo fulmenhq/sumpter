@@ -318,5 +318,6 @@ func percentile(sortedSizes []int64, p float64) int64 {
 
 	// Linear interpolation between lower and upper
 	weight := index - float64(lower)
-	return int64(float64(sortedSizes[lower])*(1-weight) + float64(sortedSizes[upper])*weight)
+	result := float64(sortedSizes[lower])*(1-weight) + float64(sortedSizes[upper])*weight
+	return int64(result + 0.5) // Round to nearest integer
 }
