@@ -15,7 +15,7 @@ on:
     paths:
       - 'internal/index/**'
       - 'internal/extract/parallel/**'
-      - 'cmd/sumpter/commands/**'
+      - 'cmd/sumpter/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/seekable-zstd-integration.yml'
@@ -25,7 +25,7 @@ on:
     paths:
       - 'internal/index/**'
       - 'internal/extract/parallel/**'
-      - 'cmd/sumpter/commands/**'
+      - 'cmd/sumpter/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/seekable-zstd-integration.yml'
