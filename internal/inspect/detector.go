@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+	"golang.org/x/net/html/charset"
 )
 
 // DialectDetector performs dialect detection on XML streams
@@ -35,6 +36,10 @@ func NewDialectDetector(registry *DialectRegistry, logger Logger, options Detect
 // DetectDialect analyzes an XML stream and returns the best matching dialect
 func (d *DialectDetector) DetectDialect(reader io.Reader) (*DetectionResult, error) {
 	decoder := xml.NewDecoder(reader)
+	// Wire a CharsetReader so XML files declaring non-UTF-8 encodings (e.g.
+	// "ISO-8859-1", "windows-1252") are decoded correctly instead of erroring
+	// with "Decoder.CharsetReader is nil".
+	decoder.CharsetReader = charset.NewReaderLabel
 
 	// Track element and attribute observations
 	elementCounts := make(map[string]int)

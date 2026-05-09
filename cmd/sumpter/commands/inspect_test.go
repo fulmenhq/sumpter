@@ -130,6 +130,38 @@ func TestInspectXML_Basic(t *testing.T) {
 	}
 }
 
+func TestInspectXML_NonUTF8Declaration(t *testing.T) {
+	// Regression: inspectXML used to error with
+	//   xml: encoding "ISO-8859-1" declared but Decoder.CharsetReader is nil
+	// when the XML declaration named a non-UTF-8 charset, even though the
+	// reader bytes had already been transcoded to UTF-8 by detectEncoding().
+	// The fix wires a passthrough CharsetReader so the encoding/xml
+	// declaration check is satisfied without re-transcoding.
+	xmlContent := `<?xml version="1.0" encoding="ISO-8859-1"?>` +
+		`<root><element id="1">text</element></root>`
+	reader := strings.NewReader(xmlContent)
+
+	fileInfo := FileInfo{Path: "test-iso8859.xml", Size: int64(len(xmlContent))}
+	encodingInfo := EncodingInfo{Detected: "ISO-8859-1"}
+	opts := &InspectOptions{MaxPaths: 10, SamplesPerPath: 2, IncludeAttrs: true}
+
+	report, err := inspectXML(reader, fileInfo, encodingInfo, opts)
+	if err != nil {
+		t.Fatalf("inspectXML on ISO-8859-1 declared XML failed: %v", err)
+	}
+
+	found := false
+	for _, p := range report.Paths {
+		if p.Path == "root.element" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected to find path 'root.element' in ISO-8859-1 declared XML")
+	}
+}
+
 func TestHistogram_PercentileApproximation(t *testing.T) {
 	tests := []struct {
 		name       string
