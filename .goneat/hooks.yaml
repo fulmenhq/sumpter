@@ -1,23 +1,29 @@
 version: 1.0.0
 hooks:
-  precommit:
+  pre-commit:
     - command: assess
       args:
         - --categories
         - format,lint,dates
         - --fail-on
-        - medium
+        - high
         - --package-mode
+        - --new-issues-only
+        - --new-issues-base
+        - main
       priority: 10
       timeout: 2m
-  prepush:
+  pre-push:
     - command: assess
       args:
         - --categories
         - format,lint,dates,static-analysis
         - --fail-on
-        - high
+        - critical
         - --package-mode
+        - --new-issues-only
+        - --new-issues-base
+        - main
       priority: 10
       timeout: 3m
 optimization:
