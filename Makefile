@@ -29,6 +29,7 @@ BUILD_DIR := dist
 COVERAGE_DIR := coverage
 TEMP_DIR := tmp
 CMD_DIR := cmd/sumpter
+INSTALL_DIR ?= $(HOME)/.local/bin
 
 # Go related variables
 GOCMD := go
@@ -350,10 +351,11 @@ build-all: ## Build for all platforms
 	@ls -la $(BUILD_DIR)/$(BINARY_NAME)-*
 
 .PHONY: install
-install: build ## Install binary to GOPATH/bin
-	@echo "$(BLUE)Installing $(BINARY_NAME)...$(NC)"
-	cp $(BUILD_DIR)/$(BINARY_NAME) $$((go env GOPATH))/bin/
-	@echo "$(GREEN)✅ Installed to $$((go env GOPATH))/bin/$(BINARY_NAME)$(NC)"
+install: build ## Install binary to $(INSTALL_DIR) (default ~/.local/bin; override with INSTALL_DIR=...)
+	@echo "$(BLUE)Installing $(BINARY_NAME) to $(INSTALL_DIR)...$(NC)"
+	@mkdir -p $(INSTALL_DIR)
+	cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/
+	@echo "$(GREEN)✅ Installed to $(INSTALL_DIR)/$(BINARY_NAME)$(NC)"
 
 # Security scanning
 .PHONY: gosec
