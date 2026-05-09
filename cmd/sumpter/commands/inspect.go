@@ -725,6 +725,13 @@ func detectEncoding(reader io.Reader, forceEncoding string) (EncodingInfo, io.Re
 
 func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, opts *InspectOptions) (*InspectReportV0, error) {
 	decoder := xml.NewDecoder(reader)
+	// The reader has already been transcoded to UTF-8 by detectEncoding(); use a
+	// passthrough CharsetReader so the encoding/xml package's check on the XML
+	// declaration is satisfied (it would otherwise error on any non-UTF-8 label
+	// like "ISO-8859-1") without re-transcoding the already-decoded bytes.
+	decoder.CharsetReader = func(label string, r io.Reader) (io.Reader, error) {
+		return r, nil
+	}
 
 	// Track element path stack
 	var pathStack []string
