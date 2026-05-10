@@ -77,7 +77,7 @@ The inspect command shows:
 ### Step 2: Build the Index
 
 ```bash
-# Basic index build
+# Basic index build (JSON format, default)
 sumpter index build data.xml \
   --selector "//Transaction" \
   --output data.recordindex.json
@@ -87,6 +87,13 @@ sumpter index build large-file.xml \
   --selector "//Record" \
   --output indexes/large-file.recordindex.json \
   --progress
+
+# Build with seekable-zstd format (v0.1.2+, requires CGO)
+sumpter index build large-file.xml \
+  --selector "//Record" \
+  --emit-szst \
+  --progress
+# Creates: large-file.recordindex.header.json + large-file.recordindex.records.szst
 ```
 
 **What Happens During Build:**
@@ -200,12 +207,21 @@ Output:
 ### Example 2: Genomics Variant Data (4.7 GB Compressed, 3.7M Records)
 
 ```bash
-# Build index for ClinVar release
+# Build index for ClinVar release (JSON format)
 sumpter index build ClinVarVCVRelease_00-latest.xml.gz \
   --selector "//VariationArchive" \
   --output ClinVarVCVRelease.recordindex.json \
   --progress \
   --allow-large-files
+
+# Or use seekable-zstd for 10-20x smaller index (v0.1.2+)
+sumpter index build ClinVarVCVRelease_00-latest.xml.gz \
+  --selector "//VariationArchive" \
+  --emit-szst \
+  --emit-json=false \
+  --progress \
+  --allow-large-files
+# Creates: ~50-100 MB compressed index instead of 1 GB JSON
 ```
 
 **Results:**
@@ -216,7 +232,7 @@ sumpter index build ClinVarVCVRelease_00-latest.xml.gz \
 - Min/Max: 1.94 KB / 2.97 MB
 - Build time: 17 minutes 45 seconds
 - Throughput: ~213,000 records/minute
-- Index file: 1.0 GB
+- Index file: 1.0 GB (JSON) or ~50-100 MB (seekable-zstd)
 
 **Record Size Distribution:**
 - P50 (median): 12.2 KB
@@ -228,7 +244,14 @@ Traditional DOM-based extraction of this file would require ~111 GB of RAM (1.88
 
 ## Index File Format
 
-### Structure
+Sumpter supports two index formats:
+
+| Format | Extension | Use Case |
+|--------|-----------|----------|
+| JSON | `*.recordindex.json` | Default, human-readable, debuggable |
+| Seekable-Zstd | `*.recordindex.header.json` | Large indexes (1M+ records), compressed |
+
+### JSON Format Structure
 
 ```json
 {
@@ -293,6 +316,105 @@ Traditional DOM-based extraction of this file would require ~111 GB of RAM (1.88
 - Helps estimate extraction performance
 - Percentiles show data distribution
 - Useful for capacity planning
+
+## Seekable-Zstd Format (v0.1.2+)
+
+For extreme-scale indexes (millions of records), Sumpter supports a compressed binary format using seekable-zstd. This format dramatically reduces disk usage while enabling parallel random access.
+
+### Why Seekable-Zstd?
+
+| Metric | JSON Format | Seekable-Zstd | Improvement |
+|--------|-------------|---------------|-------------|
+| Disk Size (3.7M records) | ~1 GB | ~50-100 MB | 10-20x smaller |
+| Memory (streaming) | Constant | Constant | Same |
+| Random Access | Sequential scan | O(1) seek | Parallel-ready |
+
+### Output Files
+
+The seekable-zstd format uses two files:
+
+```
+source.recordindex.header.json   # Metadata (~1 KB)
+source.recordindex.records.szst  # Binary records (compressed)
+```
+
+**Header file** contains:
+- Source file metadata (path, size, SHA-256)
+- Selector information
+- Summary statistics
+- Records encoding metadata (width, count, endianness)
+
+**Records file** contains:
+- Fixed-width binary records (64 bytes each)
+- Seekable-zstd compression with frame-level random access
+
+### Building Seekable-Zstd Indexes
+
+```bash
+# Build with seekable-zstd output
+sumpter index build clinvar.xml \
+  --selector "//VariationArchive" \
+  --emit-szst \
+  --progress
+
+# Output:
+#   clinvar.recordindex.header.json
+#   clinvar.recordindex.records.szst
+
+# Build both formats (JSON + szst) for transition
+sumpter index build data.xml \
+  --selector "//Record" \
+  --emit-json \
+  --emit-szst
+```
+
+### Using Seekable-Zstd Indexes
+
+All commands auto-detect the format by extension:
+
+```bash
+# Stream-walk compressed index
+sumpter index stream data.recordindex.header.json
+
+# Verify with compressed index
+sumpter index verify data.xml --index data.recordindex.header.json
+
+# Extract with compressed index (parallel workers)
+sumpter extract files \
+  --record-index data.recordindex.header.json \
+  --workers 8 \
+  --output-path outputs/
+```
+
+### Build Requirements
+
+Seekable-zstd requires CGO. Build with:
+
+```bash
+CGO_ENABLED=1 go build -tags seekablezstd ./cmd/sumpter
+```
+
+**Platform Support:**
+- Linux glibc (amd64): Pre-built static library
+- Linux musl (amd64): Pre-built static library
+- macOS: Requires building seekable-zstd from source
+- Windows: Not yet supported
+
+Without CGO, Sumpter falls back to JSON-only mode.
+
+### Container Deployment
+
+```dockerfile
+# Dockerfile with seekable-zstd support
+FROM golang:1.25-bookworm AS builder
+WORKDIR /build
+COPY . .
+RUN CGO_ENABLED=1 go build -tags seekablezstd -o sumpter ./cmd/sumpter
+
+FROM debian:bookworm-slim
+COPY --from=builder /build/sumpter /usr/local/bin/
+ENTRYPOINT ["sumpter"]
+```
 
 ## Compression Support
 

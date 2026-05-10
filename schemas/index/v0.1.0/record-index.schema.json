@@ -36,7 +36,12 @@
         "compression_format": {
           "type": "string",
           "description": "Compression format if compressed",
-          "enum": ["gzip", "bzip2", "xz", "none"]
+          "enum": [
+            "gzip",
+            "bzip2",
+            "xz",
+            "none"
+          ]
         },
         "created_at": {
           "type": "string",
@@ -46,7 +51,11 @@
         "encoding": {
           "type": "string",
           "description": "Detected character encoding of the source file",
-          "examples": ["UTF-8", "UTF-16LE", "ISO-8859-1"]
+          "examples": [
+            "UTF-8",
+            "UTF-16LE",
+            "ISO-8859-1"
+          ]
         }
       },
       "required": [
@@ -195,7 +204,9 @@
         "generator": {
           "type": "string",
           "description": "Tool and version that generated this index",
-          "examples": ["sumpter index build v0.1.2"]
+          "examples": [
+            "sumpter index build v0.1.2"
+          ]
         },
         "build_duration_ms": {
           "type": "integer",
