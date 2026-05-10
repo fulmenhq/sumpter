@@ -547,47 +547,55 @@ func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, error) {
 	return confidence >= cfg.ConfidenceThreshold, nil
 }
 
-// matchesPattern checks if a pattern matches the document
+// matchesPattern checks if a pattern matches the document.
+//
+// The selector is treated as a full XPath expression and evaluated via
+// xpath.Compile/Evaluate. Result-type coercion follows XPath 1.0's
+// boolean() conversion rules:
+//
+//   - bool         → returned as-is
+//   - float64      → true iff non-zero AND not NaN (per XPath 1.0 §4.3:
+//     "a number is true if and only if it is neither positive zero, negative
+//     zero, nor NaN" — e.g. number() over non-numeric text returns NaN)
+//   - string       → true iff non-empty (covers name(), local-name(), etc.)
+//   - NodeIterator → true iff at least one node matches
+//
+// This makes the matcher accept any well-formed XPath, including:
+//
+//	count(//Record) > 0          (legacy form, still works)
+//	count(//Record) > 1          (was returning false; now correct)
+//	count(//Record) = 1          (was returning false; now correct)
+//	count(//A) > 0 and count(//B) > 0
+//	boolean(//Record)
+//	//Record                     (plain node-set)
+//	/Envelope                    (absolute path)
+//
+// A compile error or evaluation error is treated as a non-match.
 func matchesPattern(doc *xmlquery.Node, pattern MatchPattern) bool {
-	// Handle different types of XPath expressions
 	selector := strings.TrimSpace(pattern.Selector)
-
-	// For boolean expressions (like count(...) > 0), evaluate as value
-	if strings.Contains(selector, ">") || strings.Contains(selector, "<") || strings.Contains(selector, "=") ||
-		strings.Contains(selector, " and ") || strings.Contains(selector, " or ") ||
-		strings.HasPrefix(selector, "boolean(") {
-		// For count(...) > 0 expressions, evaluate the count and compare
-		if strings.HasPrefix(selector, "count(") && strings.HasSuffix(selector, ") > 0") {
-			countPath := selector[6 : len(selector)-5] // Extract path from count(path) > 0
-			nodes, err := xmlquery.QueryAll(doc, countPath)
-			if err != nil {
-				return false
-			}
-			return len(nodes) > 0
-		}
-		// For other boolean expressions, fall back to false for now
+	if selector == "" {
 		return false
 	}
 
-	// For count() expressions without comparison, evaluate the count
-	if strings.HasPrefix(selector, "count(") && strings.HasSuffix(selector, ")") {
-		countPath := selector[6 : len(selector)-1] // Extract path from count(path)
-		nodes, err := xmlquery.QueryAll(doc, countPath)
-		if err != nil {
-			return false
-		}
-		// Return true if count > 0
-		return len(nodes) > 0
-	}
-
-	// For node selectors, check if any nodes match
-	nodes, err := xmlquery.QueryAll(doc, selector)
+	expr, err := xpath.Compile(selector)
 	if err != nil {
-		// If XPath evaluation fails, consider it not matching
 		return false
 	}
-	// If we found any nodes matching the XPath, it matches
-	return len(nodes) > 0
+
+	switch v := expr.Evaluate(xmlquery.CreateXPathNavigator(doc)).(type) {
+	case bool:
+		return v
+	case float64:
+		// Per XPath 1.0 §4.3 boolean(): a number is true iff non-zero AND not NaN.
+		return v != 0 && !math.IsNaN(v)
+	case string:
+		return v != ""
+	case *xpath.NodeIterator:
+		// Truthy iff at least one node is yielded.
+		return v != nil && v.MoveNext()
+	default:
+		return false
+	}
 }
 
 // extractRecords extracts records from document using the extract config

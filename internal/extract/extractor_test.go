@@ -501,6 +501,67 @@ func TestMatchesSignature(t *testing.T) {
 	}
 }
 
+// TestMatchesPattern_SelectorForms exercises the matcher across the full
+// range of selector forms the extractor supports — including the boolean
+// comparison forms that previously fell into a TODO branch and silently
+// returned false (count(X) > 1, count(X) = 1, etc.).
+func TestMatchesPattern_SelectorForms(t *testing.T) {
+	xmlContent := `<?xml version="1.0"?>
+<Envelope>
+  <Record><ID>1</ID></Record>
+  <Record><ID>2</ID></Record>
+  <Record><ID>3</ID></Record>
+</Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(xmlContent))
+	if err != nil {
+		t.Fatalf("failed to parse XML: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		selector string
+		want     bool
+	}{
+		{"absolute path matches", "/Envelope", true},
+		{"absolute path no match", "/Document", false},
+		{"descendant node-set matches", "//Record", true},
+		{"descendant node-set no match", "//Missing", false},
+		{"count > 0 (legacy form)", "count(//Record) > 0", true},
+		{"count > 0 false", "count(//Missing) > 0", false},
+		{"count > 1 true (regression: was always false)", "count(//Record) > 1", true},
+		{"count > 5 false", "count(//Record) > 5", false},
+		{"count = 3 true (regression: was always false)", "count(//Record) = 3", true},
+		{"count = 1 false", "count(//Record) = 1", false},
+		{"count >= 3 true", "count(//Record) >= 3", true},
+		{"count < 5 true", "count(//Record) < 5", true},
+		{"boolean(...) true", "boolean(//Record)", true},
+		{"boolean(...) false", "boolean(//Missing)", false},
+		{"compound and true", "count(//Record) > 0 and count(//Envelope) > 0", true},
+		{"compound and false", "count(//Record) > 0 and count(//Missing) > 0", false},
+		{"compound or true", "count(//Missing) > 0 or count(//Record) > 0", true},
+		{"empty selector returns false", "", false},
+		{"malformed xpath returns false", "count(//Record", false},
+		// XPath 1.0 §4.3: number is truthy iff non-zero AND not NaN.
+		// Existing fixture has <ID>1</ID> etc., so we need NaN producers
+		// that don't pass through valid numeric text.
+		{"number(non-numeric string) is NaN → false (regression)", "number('abc')", false},
+		{"number(name(...)) is NaN → false (regression)", "number(name(/Envelope))", false},
+		{"literal zero → false", "0", false},
+		{"literal non-zero → true", "1", true},
+		{"string-length of empty → false (zero numeric)", "string-length('')", false},
+		{"string-length of non-empty → true", "string-length('abc')", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesPattern(doc, MatchPattern{Selector: tt.selector, Weight: 1.0})
+			if got != tt.want {
+				t.Errorf("matchesPattern(%q) = %v, want %v", tt.selector, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestProcessFile_LargeFileProtection(t *testing.T) {
 	tmpDir := t.TempDir()
 
