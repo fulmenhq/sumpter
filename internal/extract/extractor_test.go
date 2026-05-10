@@ -541,6 +541,15 @@ func TestMatchesPattern_SelectorForms(t *testing.T) {
 		{"compound or true", "count(//Missing) > 0 or count(//Record) > 0", true},
 		{"empty selector returns false", "", false},
 		{"malformed xpath returns false", "count(//Record", false},
+		// XPath 1.0 §4.3: number is truthy iff non-zero AND not NaN.
+		// Existing fixture has <ID>1</ID> etc., so we need NaN producers
+		// that don't pass through valid numeric text.
+		{"number(non-numeric string) is NaN → false (regression)", "number('abc')", false},
+		{"number(name(...)) is NaN → false (regression)", "number(name(/Envelope))", false},
+		{"literal zero → false", "0", false},
+		{"literal non-zero → true", "1", true},
+		{"string-length of empty → false (zero numeric)", "string-length('')", false},
+		{"string-length of non-empty → true", "string-length('abc')", true},
 	}
 
 	for _, tt := range tests {

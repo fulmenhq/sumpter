@@ -550,11 +550,13 @@ func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, error) {
 // matchesPattern checks if a pattern matches the document.
 //
 // The selector is treated as a full XPath expression and evaluated via
-// xpath.Compile/Evaluate. Result-type coercion follows XPath's standard
-// truthiness rules:
+// xpath.Compile/Evaluate. Result-type coercion follows XPath 1.0's
+// boolean() conversion rules:
 //
 //   - bool         → returned as-is
-//   - float64      → true iff non-zero (covers count(X) > N, sum(...), etc.)
+//   - float64      → true iff non-zero AND not NaN (per XPath 1.0 §4.3:
+//     "a number is true if and only if it is neither positive zero, negative
+//     zero, nor NaN" — e.g. number() over non-numeric text returns NaN)
 //   - string       → true iff non-empty (covers name(), local-name(), etc.)
 //   - NodeIterator → true iff at least one node matches
 //
@@ -584,7 +586,8 @@ func matchesPattern(doc *xmlquery.Node, pattern MatchPattern) bool {
 	case bool:
 		return v
 	case float64:
-		return v != 0
+		// Per XPath 1.0 §4.3 boolean(): a number is true iff non-zero AND not NaN.
+		return v != 0 && !math.IsNaN(v)
 	case string:
 		return v != ""
 	case *xpath.NodeIterator:
