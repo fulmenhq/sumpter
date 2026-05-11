@@ -2,7 +2,7 @@
 
 **Project**: sumpter
 **Governance**: Fulmen Ecosystem Standards
-**Last Updated**: September 3, 2025
+**Last Updated**: May 10, 2026
 
 ## Overview
 
@@ -48,7 +48,7 @@ This document defines the acceptance criteria and transition procedures for each
 - [ ] Go module initialized with proper dependencies
 - [ ] Basic test framework established
 - [ ] Repository safety protocols documented
-- [ ] AI agent registry and attribution standards defined
+- [ ] Agent role model and attribution standards defined
 
 ### ✅ Exit Criteria (Must be met to transition to Beta)
 
@@ -399,7 +399,7 @@ echo "Feature validation complete"
 ## References
 
 - [Repository Operations SOP](repository-operations-sop.md)
-- [AGENTS.md](../AGENTS.md) - AI Agent Registry
+- [AGENTS.md](../AGENTS.md) - Agent identity and role model
 - [MAINTAINERS.md](../MAINTAINERS.md) - Project Governance
 - [REPOSITORY-SAFETY-PROTOCOLS.md](../REPOSITORY-SAFETY-PROTOCOLS.md)
 
