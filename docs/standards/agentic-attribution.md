@@ -57,12 +57,12 @@ Committer-of-Record: Dave Thompson <dave.thompson@3leaps.net> [@3leapsdave](http
 Sumpter uses the FulmenHQ/Lanyte role and team model. Do not use historical
 named-agent personas for new commits. Identify:
 
-| Field | Source | Purpose |
-| ----- | ------ | ------- |
-| Model name | Runtime/model metadata | Identifies what generated the contribution |
-| Interface | Tool in use (`Codex CLI`, `Claude Code`, etc.) | Identifies how the model was operated |
-| Role | `LANYTE_AGENT_ROLE` | Identifies the coordination function and team |
-| Committer-of-record | Human maintainer | Identifies the supervising human |
+| Field               | Source                                         | Purpose                                       |
+| ------------------- | ---------------------------------------------- | --------------------------------------------- |
+| Model name          | Runtime/model metadata                         | Identifies what generated the contribution    |
+| Interface           | Tool in use (`Codex CLI`, `Claude Code`, etc.) | Identifies how the model was operated         |
+| Role                | `LANYTE_AGENT_ROLE`                            | Identifies the coordination function and team |
+| Committer-of-record | Human maintainer                               | Identifies the supervising human              |
 
 #### Attribution Examples
 

@@ -188,6 +188,50 @@ git rebase origin/main
 git push origin feature/xml-streaming-parser
 ```
 
+### Pull Request Mode (Default)
+
+The `main` branch is protected: direct pushes are blocked. All changes land via
+feature branch → pull request → merge. Tags and releases follow the same flow
+through dedicated `release/v*` branches.
+
+```bash
+# After pushing your branch:
+gh pr create --base main --head feature/xml-streaming-parser \
+  --title "feat: implement XML streaming parser" \
+  --body "Describe scope, validation, and any sequencing dependencies"
+```
+
+PRs go to the `devrev` role for review. Approvals come from `@3leapsdave` or a
+designated reviewer; merges are squash- or merge-commit per branch convention.
+The local pre-push hook runs `goneat assess --new-issues-only --new-issues-base
+main` so pre-existing tech debt does not block new work; CI / PR review is the
+authoritative scan.
+
+### Working on Embedded SSOT
+
+When changes touch `docs/`, `schemas/`, `examples/`, or `templates/` (the SSOT
+trees that get embedded into the binary at build time):
+
+```bash
+make embed-assets    # regenerate internal/assets/embedded_* mirrors
+make verify-embeds   # confirm mirrors match SSOT (also runs in CI)
+```
+
+CI (`.github/workflows/verify-embeds.yml`) fails the PR if the mirrors drift
+from SSOT. Commit both the SSOT change and the embedded mirror change together.
+
+### Local-Only Planning Scratchpad
+
+Individual workstations may use a `.plans/active/` directory at repo root for
+in-flight design notes, release checkpoints, and strategy drafts. **This is
+local-only and not evergreen**: the path is in `.gitignore`, never travels to
+the OSS repo, and is not synchronized across machines. If you don't see it in
+a fresh clone, that is expected. (Prior practice used `AGENTS.local.md`; the
+`.plans/active/` convention extends that to a directory of dated documents.)
+
+Anything that needs to be shared, versioned, or evergreen belongs in `docs/`
+and goes through the normal PR flow.
+
 ## Lifecycle Phase Awareness
 
 ### Phase-Specific Requirements

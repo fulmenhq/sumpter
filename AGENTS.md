@@ -25,7 +25,6 @@ These protocols ensure professional development standards and enterprise readine
 - **NEVER remove or weaken** ignore rules in `.gitignore` without explicit maintainer approval.
   - If a file is ignored but you think it should be tracked, stop and ask.
 
-
 ### **CRITICAL: Commit and Push Protocols**
 
 **🚨 COMMITS REQUIRE APPROVAL**
@@ -49,6 +48,30 @@ These protocols ensure professional development standards and enterprise readine
 
 **Violation of these protocols will result in immediate work stoppage.**
 
+## 🤐 Confidentiality Posture (OSS Surface)
+
+Sumpter is an open-source extraction engine that supports many input formats
+and verticals. The OSS surface (this repo: code, docs, schemas, examples,
+fixtures, commit messages, PR descriptions, issue tracker) **must not name or
+telegraph specific clients, customer-facing product brands, proprietary trade
+formats, or vertical-trade identifiers**. Generic industry framing is fine
+(for example "retail POS journals", "genomics variants") and public open-data
+examples (ClinVar, SEC EDGAR XBRL) are encouraged. Client-specific recipes,
+fixtures, and workspaces live outside this repo and stay there.
+
+The forthcoming `limensafe` scanner will enforce this in CI/DX; until then,
+follow the posture manually and call out questionable wording in review.
+
+## 🗂️ Local-Only Scratchpads
+
+A `.plans/active/` directory at the repo root is the conventional location
+for **machine-local, non-evergreen** planning notes (in-flight design,
+release checkpoints, strategy drafts). It is gitignored — you will not find
+it in a fresh clone, and it is not synchronized across machines. (This
+replaces the older single-file `AGENTS.local.md` convention with a directory
+of dated documents.) Anything that needs to be shared or versioned belongs
+in `docs/` and goes through the normal PR flow.
+
 ## 📋 Quick Reference SOPs
 
 **CRITICAL**: Use these Standard Operating Procedures for common development tasks:
@@ -67,11 +90,11 @@ Sumpter now follows the FulmenHQ/Lanyte team model. Do not assume a persistent
 named agent persona from this repository. Derive identity from the environment
 for each session:
 
-| Variable | Purpose |
-| -------- | ------- |
-| `LANYTE_AGENT_ROLE` | Role slug, usually team-scoped (for example `india-devlead`, `india-devrev`) |
-| `LANYTE_AGENT_SCOPE` | Org scope (`fulmenhq`) |
-| `LANYTE_AGENT_TEAM` | NATO team name (`india` for Sumpter) |
+| Variable             | Purpose                                                                      |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `LANYTE_AGENT_ROLE`  | Role slug, usually team-scoped (for example `india-devlead`, `india-devrev`) |
+| `LANYTE_AGENT_SCOPE` | Org scope (`fulmenhq`)                                                       |
+| `LANYTE_AGENT_TEAM`  | NATO team name (`india` for Sumpter)                                         |
 
 The org-root warmup in [`../AGENTS.md`](../AGENTS.md) is authoritative for
 identity, Mattermost channel usage, and checkpointing. Repo guidance here is
@@ -79,15 +102,15 @@ authoritative for Sumpter build, safety, lifecycle, and XML-processing rules.
 
 Role functions are coordinated by slug rather than persona name:
 
-| Role family | Typical Sumpter focus |
-| ----------- | --------------------- |
-| `devlead` | Implementation, CLI behavior, XML/extract/index features |
-| `devrev` | Code review, regression risk, quality-gate assessment |
-| `qa` | Test strategy, coverage, fixtures, lifecycle validation |
-| `secrev` | XML/data security, redaction, dependency and scanner review |
-| `releng` | Release sequencing, CI/CD, tags, packaging |
-| `entarch` | Cross-repo architecture and Fulmen ecosystem alignment |
-| `dataeng` | Data pipeline ergonomics, extraction workflows, analytics outputs |
+| Role family | Typical Sumpter focus                                             |
+| ----------- | ----------------------------------------------------------------- |
+| `devlead`   | Implementation, CLI behavior, XML/extract/index features          |
+| `devrev`    | Code review, regression risk, quality-gate assessment             |
+| `qa`        | Test strategy, coverage, fixtures, lifecycle validation           |
+| `secrev`    | XML/data security, redaction, dependency and scanner review       |
+| `releng`    | Release sequencing, CI/CD, tags, packaging                        |
+| `entarch`   | Cross-repo architecture and Fulmen ecosystem alignment            |
+| `dataeng`   | Data pipeline ergonomics, extraction workflows, analytics outputs |
 
 ## 🔥 Agent Warmup Guidelines
 

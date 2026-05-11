@@ -24,11 +24,11 @@
 Sumpter uses the FulmenHQ/Lanyte role and team model rather than persistent
 named agent personas. Agents identify themselves per session from:
 
-| Variable | Purpose |
-| -------- | ------- |
-| `LANYTE_AGENT_ROLE` | Active role slug, such as `india-devlead`, `india-devrev`, or `india-releng` |
-| `LANYTE_AGENT_SCOPE` | Org scope, normally `fulmenhq` |
-| `LANYTE_AGENT_TEAM` | NATO team assignment, normally `india` for Sumpter |
+| Variable             | Purpose                                                                      |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `LANYTE_AGENT_ROLE`  | Active role slug, such as `india-devlead`, `india-devrev`, or `india-releng` |
+| `LANYTE_AGENT_SCOPE` | Org scope, normally `fulmenhq`                                               |
+| `LANYTE_AGENT_TEAM`  | NATO team assignment, normally `india` for Sumpter                           |
 
 Coordination happens in the FulmenHQ Mattermost workspace. Use the org-root
 [`../AGENTS.md`](../AGENTS.md) warmup for channel selection, checkpointing, and
@@ -36,15 +36,15 @@ team context.
 
 ### Active Role Families
 
-| Role family | Capabilities | Constraints |
-| ----------- | ------------ | ----------- |
-| `devlead` | Implementation, CLI behavior, XML/extract/index features | Human approval before commits and pushes |
-| `devrev` | Code review, bug finding, regression analysis, quality-gate assessment | Review stance; do not rewrite author work unless asked |
-| `qa` | Test design, coverage, fixtures, lifecycle validation | Coordinate with devlead for feature changes |
-| `secrev` | XML/data security, redaction, dependencies, vulnerability findings | Escalate sensitive data or credential concerns immediately |
-| `releng` | Release sequencing, CI/CD, tags, packaging | Tags, releases, pushes require explicit approval |
-| `entarch` | Cross-repo architecture, schemas, ecosystem alignment | Major architecture/config schema changes require review |
-| `dataeng` | Extraction workflows, analytics outputs, data-pipeline ergonomics | New integrations and data pipelines require scoped approval |
+| Role family | Capabilities                                                           | Constraints                                                 |
+| ----------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `devlead`   | Implementation, CLI behavior, XML/extract/index features               | Human approval before commits and pushes                    |
+| `devrev`    | Code review, bug finding, regression analysis, quality-gate assessment | Review stance; do not rewrite author work unless asked      |
+| `qa`        | Test design, coverage, fixtures, lifecycle validation                  | Coordinate with devlead for feature changes                 |
+| `secrev`    | XML/data security, redaction, dependencies, vulnerability findings     | Escalate sensitive data or credential concerns immediately  |
+| `releng`    | Release sequencing, CI/CD, tags, packaging                             | Tags, releases, pushes require explicit approval            |
+| `entarch`   | Cross-repo architecture, schemas, ecosystem alignment                  | Major architecture/config schema changes require review     |
+| `dataeng`   | Extraction workflows, analytics outputs, data-pipeline ergonomics      | New integrations and data pipelines require scoped approval |
 
 ### Agent Operational Guidelines
 
