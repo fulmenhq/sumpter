@@ -1,7 +1,8 @@
 # Golangci-lint Configuration - Version 2.4.0
 
 **Date**: 2025-09-23
-**Agent**: Polaris Navigator
+**Role**: `devlead` / `qa` (historical: this op predates the role-model
+shift; AI agent identity is captured in the originating commit)
 **Supervisor**: @3leapsdave
 **Lifecycle Phase**: Alpha (50% coverage requirement)
 

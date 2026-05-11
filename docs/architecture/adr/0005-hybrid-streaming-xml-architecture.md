@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2025-10-12
-**Deciders:** @3leapsdave, Orion Nexus
+**Deciders:** @3leapsdave (with `devlead` / `entarch` AI contribution)
 **Context:** Alpha phase - addressing extreme memory usage on large XML files
 
 ## Context
@@ -118,6 +118,7 @@ vs. Current: 111GB (entire file as full DOM tree)
 We evaluated three approaches:
 
 #### Option 1: Current DOM (Status Quo)
+
 ```
 ✗ Entire file → Full DOM → Extract all records
 Memory: O(file_size × 2-3) = 111GB for 50GB file
@@ -126,12 +127,14 @@ Memory: O(file_size × 2-3) = 111GB for 50GB file
 **Rejected**: Unsustainable for multi-GB files.
 
 #### Option 2: Pure SAX Streaming
+
 ```
 ✓ Token-by-token → Manual state tracking → Build records
 Memory: O(max_record_size) = ~50KB constant
 ```
 
 **Rejected**: Would require:
+
 - Rewriting all XPath-based field mapping logic
 - Manual XML path tracking for nested elements
 - State machines for complex record structures
@@ -139,12 +142,14 @@ Memory: O(max_record_size) = ~50KB constant
 - High maintenance burden for marginal memory gain (50MB → 10MB)
 
 #### Option 3: Hybrid Streaming (Selected)
+
 ```
 ✓ Stream to records → Mini-DOM per record → Existing XPath extraction
 Memory: O(stream_buffer + max_record_size) = ~50MB
 ```
 
 **Accepted**: Best trade-off:
+
 - ✅ 99.95% memory reduction (111GB → 50MB)
 - ✅ Zero changes to extract configs
 - ✅ Preserves XPath field mapping logic
@@ -154,6 +159,7 @@ Memory: O(stream_buffer + max_record_size) = ~50MB
 ### Memory Analysis
 
 **Current Architecture**:
+
 ```
 50GB XML file
 → 50GB in memory (file content)
@@ -162,6 +168,7 @@ Memory: O(stream_buffer + max_record_size) = ~50MB
 ```
 
 **Hybrid Architecture**:
+
 ```
 50GB XML file
 → 20MB streaming buffer (decompression + record buffering)
@@ -221,11 +228,13 @@ Close stream (never loaded full file)
 **New Package**: `internal/extract/streaming/`
 
 **Files**:
+
 - `scanner.go` - Record boundary scanner using `encoding/xml.Decoder`
 - `types.go` - Data structures for streaming
 - `scanner_test.go` - Unit tests
 
 **Key Types**:
+
 ```go
 type RecordScanner struct {
     decoder        *xml.Decoder
@@ -244,11 +253,13 @@ func (s *RecordScanner) Close() error
 **Modify**: `internal/extract/extractor.go`
 
 **Changes**:
+
 1. Add `ProcessFileStreaming()` function (new)
 2. Modify `ProcessFile()` to conditionally use streaming for large files
 3. Keep all existing extraction logic unchanged
 
 **Decision Logic**:
+
 ```go
 if allowLargeFiles && estimatedSize > 1GB {
     return ProcessFileStreaming(...)  // New path
@@ -262,10 +273,11 @@ if allowLargeFiles && estimatedSize > 1GB {
 **Update**: `schemas/extract/v0.1.0/extract-record-match-schema.yaml`
 
 **Add streaming hints** (optional optimization):
+
 ```yaml
 streaming_hints:
-  record_selector: "//VariationArchive"  # Override auto-detection
-  estimated_record_size_kb: 50           # Buffer sizing hint
+  record_selector: "//VariationArchive" # Override auto-detection
+  estimated_record_size_kb: 50 # Buffer sizing hint
 ```
 
 **Default behavior**: Use first `match_selector` XPath as record boundary.
@@ -273,17 +285,20 @@ streaming_hints:
 ### Phase 4: Testing Strategy
 
 **Unit Tests**:
+
 - `TestRecordScanner_BasicScan` - Scan 10 records from test XML
 - `TestRecordScanner_CompressedStream` - Handle .gz input
 - `TestRecordScanner_MalformedBoundary` - Error handling
 - `TestRecordScanner_LargeRecords` - 500KB record buffer
 
 **Integration Tests**:
+
 - `TestProcessFileStreaming_vs_ProcessFile` - Identical outputs
 - `TestProcessFileStreaming_MemoryUsage` - Verify <100MB for 2GB file
 - `TestProcessFileStreaming_Progress` - Stream progress reporting
 
 **Real-World Validation**:
+
 ```bash
 # ClinVar extraction (50GB uncompressed)
 sumpter --allow-large-files recipes run extract clinvar-recipe
@@ -324,6 +339,7 @@ sumpter --allow-large-files recipes run extract clinvar-recipe
 **Approach**: Use `mmap()` to page file contents on-demand.
 
 **Rejected**:
+
 - Still requires DOM building (doesn't solve 111GB problem)
 - OS page cache thrashing with multi-GB files
 - Not portable across platforms
@@ -334,6 +350,7 @@ sumpter --allow-large-files recipes run extract clinvar-recipe
 **Approach**: Load XML into embedded database, query with SQL.
 
 **Rejected**:
+
 - Requires two-pass processing (load DB, then query)
 - Disk I/O becomes bottleneck
 - Temporary storage requirements (50GB → 100GB on disk)
@@ -344,6 +361,7 @@ sumpter --allow-large-files recipes run extract clinvar-recipe
 **Approach**: Split large XML into smaller files, process separately.
 
 **Rejected**:
+
 - Requires preprocessing step (user workflow friction)
 - Loses atomicity (partial failures harder to handle)
 - Doesn't solve general problem (what if one record is huge?)
@@ -353,6 +371,7 @@ sumpter --allow-large-files recipes run extract clinvar-recipe
 ### For Existing Users
 
 **No action required**:
+
 - Streaming automatically enabled for files >1GB when `--allow-large-files` set
 - Existing extract configs work unchanged
 - Output format identical to non-streaming mode
@@ -360,6 +379,7 @@ sumpter --allow-large-files recipes run extract clinvar-recipe
 ### For New Users
 
 **Best practices**:
+
 - Test extract configs on sample files (<1GB) without streaming
 - Enable `--allow-large-files` for production-scale data
 - Monitor memory usage to verify streaming is active
@@ -367,6 +387,7 @@ sumpter --allow-large-files recipes run extract clinvar-recipe
 ### Future Enhancements
 
 **Potential optimizations**:
+
 - Parallel record processing (worker pool)
 - Adaptive buffering based on detected record sizes
 - Streaming signature matching (partial document checks)
@@ -405,4 +426,4 @@ The hybrid approach is the **pragmatic choice**: massive memory savings with min
 
 ---
 
-**Generated by Orion Nexus under supervision of @3leapsdave**
+**Generated by an AI agent under supervision of @3leapsdave (see `docs/standards/agentic-attribution.md`)**
