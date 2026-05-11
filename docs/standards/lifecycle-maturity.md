@@ -2,7 +2,7 @@
 
 **Project**: sumpter
 **Governance**: Fulmen Ecosystem Standards
-**Last Updated**: September 3, 2025
+**Last Updated**: May 10, 2026
 
 ## Overview
 
@@ -430,7 +430,7 @@ echo "All quality gates passed for $PHASE phase!"
 
 - [Repository Operations SOP](../sop/repository-operations-sop.md)
 - [Lifecycle Phase Acceptance Criteria](../sop/lifecycle-phase-acceptance-criteria.md)
-- [AGENTS.md](../../AGENTS.md) - AI Agent Registry
+- [AGENTS.md](../../AGENTS.md) - Agent identity and role model
 - [MAINTAINERS.md](../../MAINTAINERS.md) - Project Governance
 
 ---

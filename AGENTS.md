@@ -2,7 +2,7 @@
 
 **Project**: sumpter
 **Governance**: Fulmen Ecosystem Standards
-**Last Updated**: September 3, 2025
+**Last Updated**: May 10, 2026
 
 ## 🚨 Critical Safety Protocols
 
@@ -24,7 +24,6 @@ These protocols ensure professional development standards and enterprise readine
 - Before any commit, **always** run `git status` and ensure only intended, non-ignored files are staged.
 - **NEVER remove or weaken** ignore rules in `.gitignore` without explicit maintainer approval.
   - If a file is ignored but you think it should be tracked, stop and ask.
-
 
 ### **CRITICAL: Commit and Push Protocols**
 
@@ -49,40 +48,85 @@ These protocols ensure professional development standards and enterprise readine
 
 **Violation of these protocols will result in immediate work stoppage.**
 
+## 🤐 Confidentiality Posture (OSS Surface)
+
+Sumpter is an open-source extraction engine that supports many input formats
+and verticals. The OSS surface (this repo: code, docs, schemas, examples,
+fixtures, commit messages, PR descriptions, issue tracker) **must not name or
+telegraph specific clients, customer-facing product brands, proprietary trade
+formats, or vertical-trade identifiers**. Generic industry framing is fine
+(for example "retail POS journals", "genomics variants") and public open-data
+examples (ClinVar, SEC EDGAR XBRL) are encouraged. Client-specific recipes,
+fixtures, and workspaces live outside this repo and stay there.
+
+The forthcoming `limensafe` scanner will enforce this in CI/DX; until then,
+follow the posture manually and call out questionable wording in review.
+
+## 🗂️ Local-Only Scratchpads
+
+A `.plans/active/` directory at the repo root is the conventional location
+for **machine-local, non-evergreen** planning notes (in-flight design,
+release checkpoints, strategy drafts). It is gitignored — you will not find
+it in a fresh clone, and it is not synchronized across machines. (This
+replaces the older single-file `AGENTS.local.md` convention with a directory
+of dated documents.) Anything that needs to be shared or versioned belongs
+in `docs/` and goes through the normal PR flow.
+
 ## 📋 Quick Reference SOPs
 
 **CRITICAL**: Use these Standard Operating Procedures for common development tasks:
 
 - **[Repository Operations SOP](docs/sop/repository-operations-sop.md)** - "Check-all, stage, pre-commit, commit"
 - **[Lifecycle Phase Acceptance](docs/sop/lifecycle-phase-acceptance-criteria.md)** - "Phase validation and transition procedures"
-- **[Dynamic Coverage Gating](../config/coverage-thresholds.yaml)** - "Alpha: 50%, Beta: 70%, Production: 80%"
+- **[Dynamic Coverage Gating](config/coverage-thresholds.yaml)** - "Alpha: 50%, Beta: 70%, Production: 80%"
 
 **Usage**: Reference SOPs for consistent development practices across all Sumpter development tasks.
 
-## AI Agent Registry
+## Agent Identity and Coordination
 
-**For complete agent details, see [MAINTAINERS.md](MAINTAINERS.md)**
+**For maintainer and governance details, see [MAINTAINERS.md](MAINTAINERS.md).**
 
-Active AI agents working on Sumpter:
+Sumpter now follows the FulmenHQ/Lanyte team model. Do not assume a persistent
+named agent persona from this repository. Derive identity from the environment
+for each session:
 
-- 🧭 **Atlas Cartographer**: Lead enterprise & information architect, schema-driven extraction, enterprise architecture
-- 🔧 **Apex Quantum**: Data Engineering & DevOps Lead, pipeline development, QA & CI/CD
-- 🌐 **Orion Nexus**: Backend services, analytics integration, output optimization
+| Variable             | Purpose                                                                      |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `LANYTE_AGENT_ROLE`  | Role slug, usually team-scoped (for example `india-devlead`, `india-devrev`) |
+| `LANYTE_AGENT_SCOPE` | Org scope (`fulmenhq`)                                                       |
+| `LANYTE_AGENT_TEAM`  | NATO team name (`india` for Sumpter)                                         |
+
+The org-root warmup in [`../AGENTS.md`](../AGENTS.md) is authoritative for
+identity, Mattermost channel usage, and checkpointing. Repo guidance here is
+authoritative for Sumpter build, safety, lifecycle, and XML-processing rules.
+
+Role functions are coordinated by slug rather than persona name:
+
+| Role family | Typical Sumpter focus                                             |
+| ----------- | ----------------------------------------------------------------- |
+| `devlead`   | Implementation, CLI behavior, XML/extract/index features          |
+| `devrev`    | Code review, regression risk, quality-gate assessment             |
+| `qa`        | Test strategy, coverage, fixtures, lifecycle validation           |
+| `secrev`    | XML/data security, redaction, dependency and scanner review       |
+| `releng`    | Release sequencing, CI/CD, tags, packaging                        |
+| `entarch`   | Cross-repo architecture and Fulmen ecosystem alignment            |
+| `dataeng`   | Data pipeline ergonomics, extraction workflows, analytics outputs |
 
 ## 🔥 Agent Warmup Guidelines
 
 ### Known Interface Adapters
 
-| Agentic Interface | Definitive Prompt File | Interface Attribution Format                                                                                          |
-| ----------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Claude Code       | `CLAUDE.md`            | `Generated by <agentic identity> ([Claude Code](https://claude.ai/code)) under supervision of @3leapsdave`            |
-| Cursor            | `AGENTS.md`            | `Generated by <agentic identity> ([Cursor](https://cursor.sh/)) under supervision of @3leapsdave`                     |
-| Cline             | `AGENTS.md`            | `Generated by <agentic identity> ([Cline](https://cline.bot/)) under supervision of @3leapsdave`                      |
-| KiloCode          | `AGENTS.md`            | `Generated by <agentic identity> ([KiloCode](https://github.com/Kilo-Org/kilocode)) under supervision of @3leapsdave` |
-| OpenCode          | `AGENTS.md`            | `Generated by <agentic identity> ([OpenCode](https://opencode.ai/)) under supervision of @3leapsdave`                 |
-| Codex CLI         | `CODEX.md`             | `Generated by <agentic identity> ([Codex CLI](https://github.com/openai/codex)) under supervision of @3leapsdave`     |
+| Agentic Interface | Definitive Prompt File | Attribution interface value |
+| ----------------- | ---------------------- | --------------------------- |
+| Claude Code       | `CLAUDE.md`            | `Claude Code`               |
+| Cursor            | `AGENTS.md`            | `Cursor`                    |
+| Cline             | `AGENTS.md`            | `Cline`                     |
+| KiloCode          | `AGENTS.md`            | `KiloCode`                  |
+| OpenCode          | `AGENTS.md`            | `OpenCode`                  |
+| Codex CLI         | `CODEX.md`             | `Codex CLI`                 |
 
-**Note**: Replace `<agentic identity>` with your actual agent identity (e.g., "Atlas Cartographer", "Apex Quantum", "Orion Nexus").
+Attribution identifies the model and interface, while coordination identifies
+the active role slug from `LANYTE_AGENT_ROLE`.
 
 ## 📜 Critical Documents to Review and Follow
 
@@ -115,7 +159,7 @@ The following documents are critical to the safety and security of this reposito
 **🚨 MANDATORY READINGS (ALL AGENTS):**
 
 1. **Read AGENTS.md** - Review current role and responsibilities
-2. **Read MAINTAINERS.md** - Agent registry, roles, and coordination protocols
+2. **Read MAINTAINERS.md** - Maintainer governance, role families, and coordination protocols
 3. **Read REPOSITORY-SAFETY-PROTOCOLS.md** - Understand the repository's safety protocols
 4. **Read LIFECYCLE_PHASE** - Current repository lifecycle phase
 5. **Read config/coverage-thresholds.yaml** - Phase-specific coverage requirements
@@ -260,10 +304,11 @@ func TestSecurityFirst(t *testing.T) {
 **Quick Reference**:
 
 ```
-Generated by [Agent Name] ([Claude Code](https://claude.ai/code)) under supervision of [@3leapsdave](https://github.com/3leapsdave)
+Generated by [Model Name] via [Interface] under supervision of [@3leapsdave](https://github.com/3leapsdave)
 
-Co-Authored-By: [Agent Name] <noreply@sumpterhq.dev>
-Authored-By: Dave Thompson <dave.thompson@3leaps.net> [@3leapsdave](https://github.com/3leapsdave)
+Co-Authored-By: [Model Name] <noreply@fulmenhq.dev>
+Role: [LANYTE_AGENT_ROLE]
+Committer-of-Record: Dave Thompson <dave.thompson@3leaps.net> [@3leapsdave](https://github.com/3leapsdave)
 ```
 
 ## 📂 **Sumpter File Operation Rules**
@@ -389,7 +434,7 @@ make build                        # Multi-platform binary builds
 
 ---
 
-**AI Agent Team**: Atlas Cartographer (@atlas-cartographer), Apex Quantum (@apex-quantum), Orion Nexus (@orion-nexus)
+**Team Model**: FulmenHQ India team, role-driven via `LANYTE_AGENT_ROLE`
 **Technical Supervision**: @3leapsdave (David Thompson) - Technical Lead & Project Supervisor
 **Quality Standards**: Fulmen ecosystem compliance with lifecycle-aware development
 **Current Phase**: Alpha (50% coverage requirement, enterprise XML processing foundation)
