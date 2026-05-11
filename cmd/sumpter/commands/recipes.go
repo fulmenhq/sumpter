@@ -33,8 +33,101 @@ func NewRecipesCommand() *cobra.Command {
 	cmd.AddCommand(newRecipeInitCommand())
 	cmd.AddCommand(newRecipeRetrieveCommand())
 	cmd.AddCommand(newRecipeRunCommand())
+	cmd.AddCommand(newRecipeMigrateCommand())
 
 	return cmd
+}
+
+func newRecipeMigrateCommand() *cobra.Command {
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:   "migrate <path>",
+		Short: "Stamp content_version on legacy recipe manifests",
+		Long: `Stamp a starter content_version on recipe manifests that predate
+ADR-0006. Per the migration policy, manifests missing content_version receive
+` + fmt.Sprintf("content_version: %q", recipesmanifest.StarterContentVersion) + ` and authors are expected to manage the
+value going forward. v0.1.4 will treat missing content_version as a hard error.
+
+When <path> is a file, that single manifest is migrated. When <path> is a
+directory, the command walks the tree and migrates every file named
+` + fmt.Sprintf("%q", recipesmanifest.ManifestFileName) + `. The operation is idempotent — manifests that already
+declare content_version are reported and left untouched.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRecipeMigrate(cmd, args[0], dryRun)
+		},
+	}
+
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Report what would change without modifying any files")
+
+	return cmd
+}
+
+func runRecipeMigrate(cmd *cobra.Command, path string, dryRun bool) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat %s: %w", absPath, err)
+	}
+
+	var targets []string
+	if info.IsDir() {
+		walkErr := filepath.WalkDir(absPath, func(p string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if filepath.Base(p) == recipesmanifest.ManifestFileName {
+				targets = append(targets, p)
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return fmt.Errorf("failed to walk %s: %w", absPath, walkErr)
+		}
+		if len(targets) == 0 {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "No %s files found under %s\n", recipesmanifest.ManifestFileName, absPath); err != nil {
+				return fmt.Errorf("failed to write summary: %w", err)
+			}
+			return nil
+		}
+	} else {
+		targets = []string{absPath}
+	}
+
+	var stamped, alreadyStamped int
+	for _, target := range targets {
+		action, err := recipesmanifest.MigrateFile(target, dryRun)
+		if err != nil {
+			return err
+		}
+		prefix := "stamped"
+		if action == recipesmanifest.MigrationAlreadyStamped {
+			prefix = "already-stamped"
+			alreadyStamped++
+		} else {
+			stamped++
+		}
+		suffix := ""
+		if dryRun && action == recipesmanifest.MigrationStamped {
+			suffix = " (dry-run)"
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: %s%s\n", prefix, target, suffix); err != nil {
+			return fmt.Errorf("failed to write status: %w", err)
+		}
+	}
+
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d stamped, %d already-stamped (dry-run=%t)\n", stamped, alreadyStamped, dryRun); err != nil {
+		return fmt.Errorf("failed to write summary: %w", err)
+	}
+	return nil
 }
 
 func newRecipeInitCommand() *cobra.Command {
@@ -259,6 +352,15 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	manifest, err := recipesmanifest.LoadManifest(manifestPath)
 	if err != nil {
 		return err
+	}
+
+	// Emit ADR-0006 deprecation warnings (e.g. missing content_version)
+	// exactly once per load. DrainWarnings clears the slice so the same
+	// messages do not surface if the manifest is reloaded mid-session.
+	for _, warning := range manifest.DrainWarnings() {
+		if _, werr := fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warning); werr != nil {
+			return fmt.Errorf("failed to emit manifest warning: %w", werr)
+		}
 	}
 
 	if manifest.Kind != recipesmanifest.KindExtract {
