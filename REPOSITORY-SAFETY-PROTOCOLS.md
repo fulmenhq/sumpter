@@ -388,10 +388,10 @@ Emergency patch for XML processing security vulnerability"
 
 ---
 
-**Maintained by**: Sumpter contributor (DevSecOps/QA Lead)
+**Maintained by**: `secrev` (primary), `releng`, `devlead` — see [MAINTAINERS.md](MAINTAINERS.md)
 **Document Version**: 1.0
-**Last Updated**: September 3, 2025
-**Next Review**: December 3, 2025
+**Last Updated**: 2026-05-11
+**Next Review**: 2026-08-11
 **Approval**: @3leapsdave (David Thompson)
 **Based On**: [Fulmen Repository Safety Framework](https://codex.fulmenhq.dev/policies/repository-safety-framework/)
 

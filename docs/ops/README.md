@@ -164,6 +164,6 @@ Use standardized templates from `templates/` directory:
 
 ---
 
-**Maintained by**: Sumpter contributor under supervision of @3leapsdave
-**Last Updated**: 2025-09-09
+**Maintained by**: `entarch`, `devlead` under supervision of @3leapsdave — see [MAINTAINERS.md](../../MAINTAINERS.md)
+**Last Updated**: 2026-05-11
 **Version**: 1.0.0

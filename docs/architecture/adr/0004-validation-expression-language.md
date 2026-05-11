@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2025-09-29
-**Deciders:** @3leapsdave, Sumpter contributor
+**Deciders:** @3leapsdave (with `devlead` / `qa` AI contribution)
 **Context:** Alpha phase - validating retail extraction recipes
 
 ## Context
