@@ -361,10 +361,30 @@ install: build ## Install binary to $(INSTALL_DIR) (default ~/.local/bin; overri
 	@echo "$(GREEN)✅ Installed to $(INSTALL_DIR)/$(BINARY_NAME)$(NC)"
 
 # Security scanning
+#
+# gosec walks the filesystem (not Go-module aware), so we must explicitly
+# exclude the local module cache (.cache/go-mod, when GOMODCACHE is relocated
+# into the repo for hermetic builds), build output (dist/), vendored deps
+# (vendor/), and test fixtures (testdata/). Without these excludes a typical
+# run produces ~1000 false positives from third-party source in the module
+# cache, drowning out legitimate findings in first-party code.
+#
+# We do NOT use `gosec $(go list ./...)` as a module-aware alternative —
+# empirically that mode silently drops real findings in `package main` files
+# and files affected by build tags. Filesystem walk + explicit excludes is
+# the reliable pattern. See docs/sop/repository-operations-sop.md
+# § Security Scanning (gosec, govulncheck) for the canonical rationale.
 .PHONY: gosec
-gosec: ## Run gosec security scanner
+gosec: ## Run gosec security scanner (excludes module cache, vendored deps, generated code)
 	@echo "$(BLUE)Running gosec security scanner...$(NC)"
-	@if command -v gosec >/dev/null; then gosec ./...; else echo "$(YELLOW)gosec not found. Install with: make install-dev-tools$(NC)"; echo "$(RED)Security scanning failed - gosec required$(NC)"; exit 1; fi
+	@if command -v gosec >/dev/null; then \
+		gosec -exclude-dir=.cache -exclude-dir=dist -exclude-dir=vendor \
+		      -exclude-dir=testdata -exclude-generated ./...; \
+	else \
+		echo "$(YELLOW)gosec not found. Install with: make install-dev-tools$(NC)"; \
+		echo "$(RED)Security scanning failed - gosec required$(NC)"; \
+		exit 1; \
+	fi
 
 .PHONY: govulncheck
 govulncheck: ## Check for known vulnerabilities
