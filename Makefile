@@ -372,8 +372,8 @@ install: build ## Install binary to $(INSTALL_DIR) (default ~/.local/bin; overri
 # We do NOT use `gosec $(go list ./...)` as a module-aware alternative —
 # empirically that mode silently drops real findings in `package main` files
 # and files affected by build tags. Filesystem walk + explicit excludes is
-# the reliable pattern. See docs/sop/repository-operations-sop.md for the
-# canonical rationale.
+# the reliable pattern. See docs/sop/repository-operations-sop.md
+# § Security Scanning (gosec, govulncheck) for the canonical rationale.
 .PHONY: gosec
 gosec: ## Run gosec security scanner (excludes module cache, vendored deps, generated code)
 	@echo "$(BLUE)Running gosec security scanner...$(NC)"
