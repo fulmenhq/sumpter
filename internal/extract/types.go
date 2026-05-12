@@ -81,11 +81,17 @@ type MatchSelector struct {
 	CompiledXPath  *xpath.Expr            `yaml:"-" json:"-"`
 }
 
-// FieldMapping represents a mapping from XPath to output field
+// FieldMapping represents a mapping from XPath to output field.
+//
+// Description (added per ADR-0006) is an optional human-readable note
+// describing what the field captures and where it comes from. The
+// extract pipeline propagates Description into the provenance sidecar's
+// per-field manifest entry (manifest.recipe.field_provenance[]).
 type FieldMapping struct {
 	OutputField     string                 `yaml:"output_field" json:"output_field"`
 	XPath           string                 `yaml:"xpath" json:"xpath"`
 	Type            string                 `yaml:"type" json:"type"`
+	Description     string                 `yaml:"description,omitempty" json:"description,omitempty"`
 	Transform       string                 `yaml:"transform,omitempty" json:"transform,omitempty"`
 	TransformParams map[string]interface{} `yaml:"transform_params,omitempty" json:"transform_params,omitempty"`
 	ItemMapping     []FieldMapping         `yaml:"item_mapping,omitempty" json:"item_mapping,omitempty"`
