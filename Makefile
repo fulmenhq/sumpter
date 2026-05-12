@@ -13,14 +13,17 @@
 #   1. make check-all    - Fast quality checks (formatting, linting, vetting)
 #   2. make test         - Run tests with coverage
 #   3. make precommit    - Pre-commit validation (dynamic, lifecycle-aware)
-#   4. make prepush      - Pre-push validation (80% production threshold)
+#   4. make prepush      - Pre-push validation (dynamic threshold; matches CI)
 #   5. make build        - Build the final binary
 #   6. make install      - Install binary to PATH
 #
 # Coverage Strategy:
-#   • Precommit:  Dynamic via LIFECYCLE_PHASE + config/coverage-thresholds.yaml
-#                 (alpha 50%, beta 70%, production 80%).
-#   • Prepush:    80% threshold, comprehensive validation
+#   • Precommit:       Dynamic via LIFECYCLE_PHASE + config/coverage-thresholds.yaml
+#                      (alpha 50%, beta 70%, production 80%).
+#   • Prepush:         Same dynamic threshold; matches CI. No race detection.
+#   • Prepush-strict:  Adds the race detector (advisory; not enforced in CI as
+#                      of May 2026). Use for concurrency-sensitive work.
+#   • Race-check:      Standalone race detector alias.
 
 # Variables
 BINARY_NAME := sumpter
@@ -453,8 +456,15 @@ precommit: check-all build test-cleanup test-short coverage-check-dynamic fmt-do
 	@echo "$(GREEN)✅ Pre-commit checks passed!$(NC)"
 
 .PHONY: prepush
-prepush: check-all test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation with full dependency checks (includes race detection)
+prepush: check-all test-cleanup test-short coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation (matches CI; use `make race-check` or `make prepush-strict` to add race detection)
 	@echo "$(GREEN)✅ Pre-push checks passed!$(NC)"
+
+.PHONY: prepush-strict
+prepush-strict: check-all test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Pre-push with race detector (advisory: not run in CI as of May 2026; surfaces real races that CI cannot)
+	@echo "$(GREEN)✅ Pre-push (strict, with race detection) checks passed!$(NC)"
+
+.PHONY: race-check
+race-check: test-race ## Alias: run the race-detector against the full test suite (advisory)
 
 # Aliases for backward compatibility
 .PHONY: pre-commit
