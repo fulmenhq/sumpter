@@ -13,6 +13,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/assets"
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
 	"github.com/fulmenhq/sumpter/internal/utils"
@@ -312,6 +313,7 @@ func newRecipeRunExtractCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.OutputPattern, "output-pattern", "", "Override output filename pattern")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Blend client identifier into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Blend site identifier into extracted records")
+	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
 	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
 	cmd.Flags().StringVar(&opts.ExtractOverride, "extract", "", "Override manifest extract config path")
 
@@ -334,6 +336,7 @@ type recipeRunExtractOptions struct {
 	OutputPattern     string
 	ClientID          string
 	SiteID            string
+	RunID             string
 	SignatureOverride string
 	ExtractOverride   string
 }
@@ -380,6 +383,19 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	signaturePath = recipesmanifest.ResolvePath(absWorkspace, signaturePath)
 	extractPath = recipesmanifest.ResolvePath(absWorkspace, extractPath)
 
+	signatureBytes, err := os.ReadFile(signaturePath) // #nosec G304 - path resolved from recipe manifest or explicit CLI override
+	if err != nil {
+		return fmt.Errorf("failed to read signature asset for provenance: %w", err)
+	}
+	extractBytes, err := os.ReadFile(extractPath) // #nosec G304 - path resolved from recipe manifest or explicit CLI override
+	if err != nil {
+		return fmt.Errorf("failed to read extract asset for provenance: %w", err)
+	}
+	recipeContentHash, err := provenance.RecipeContentHash(signatureBytes, extractBytes)
+	if err != nil {
+		return fmt.Errorf("failed to compute recipe content hash: %w", err)
+	}
+
 	// Retrieve the allow-large-files flag from the persistent flags
 	allowLargeFiles, err := cmd.InheritedFlags().GetBool("allow-large-files")
 	if err != nil {
@@ -390,6 +406,11 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		SignatureConfig: signaturePath,
 		ExtractConfig:   extractPath,
 		AllowLargeFiles: allowLargeFiles,
+		RunID:           opts.RunID,
+		RuntimeProvenance: provenance.RuntimeOptions{
+			RecipeVersion:     manifest.ContentVersion,
+			RecipeContentHash: recipeContentHash,
+		},
 	}
 
 	defaults := manifest.Defaults

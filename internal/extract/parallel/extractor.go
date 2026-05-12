@@ -9,6 +9,7 @@ import (
 	"github.com/antchfx/xmlquery"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/logging"
+	"github.com/fulmenhq/sumpter/internal/provenance"
 	"go.uber.org/zap"
 )
 
@@ -18,16 +19,23 @@ type SeekableExtractor struct {
 	extCfg         *extract.ExtractRecordMatch
 	sigCfg         *extract.FileSignature
 	externalFields map[string]interface{}
+	provenance     provenance.RuntimeOptions
 	logger         *logging.ComponentLogger
 }
 
-// NewSeekableExtractor creates a new seekable extractor
-func NewSeekableExtractor(filePath string, extCfg *extract.ExtractRecordMatch, sigCfg *extract.FileSignature, externalFields map[string]interface{}) *SeekableExtractor {
+// NewSeekableExtractor creates a new seekable extractor.
+func NewSeekableExtractor(filePath string, extCfg *extract.ExtractRecordMatch, sigCfg *extract.FileSignature, externalFields map[string]interface{}, runtimeProvenance ...provenance.RuntimeOptions) *SeekableExtractor {
+	var runtimeFields provenance.RuntimeOptions
+	if len(runtimeProvenance) > 0 {
+		runtimeFields = runtimeProvenance[0]
+	}
+
 	return &SeekableExtractor{
 		filePath:       filePath,
 		extCfg:         extCfg,
 		sigCfg:         sigCfg,
 		externalFields: externalFields,
+		provenance:     runtimeFields,
 		logger:         logging.Component("parallel-extractor"),
 	}
 }
@@ -70,6 +78,11 @@ func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 		for k, v := range se.externalFields {
 			recordData[k] = v
 		}
+	}
+
+	if err := extract.EnrichRecord(recordData, se.filePath, se.sigCfg, se.extCfg, se.provenance); err != nil {
+		result.Error = fmt.Errorf("failed to enrich record %d: %w", item.RecordNum, err)
+		return result
 	}
 
 	result.Data = recordData

@@ -21,6 +21,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
 	"github.com/fulmenhq/sumpter/internal/logging"
+	"github.com/fulmenhq/sumpter/internal/provenance"
 	"github.com/fulmenhq/sumpter/internal/validation"
 	"github.com/fulmenhq/sumpter/internal/validation/dsl"
 	"go.uber.org/zap"
@@ -298,6 +299,12 @@ func (mc *multiCloser) Close() error {
 
 // ProcessFileStreaming processes a large file using streaming to minimize memory usage
 func ProcessFileStreaming(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}) ExtractResult {
+	return ProcessFileStreamingWithProvenance(filePath, sigCfg, extCfg, externalFields, provenance.RuntimeOptions{})
+}
+
+// ProcessFileStreamingWithProvenance processes a large file using streaming to
+// minimize memory usage and enriches each record with runtime provenance.
+func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
 	logger := logging.GetLogger()
 	if logger == nil {
 		logger = zap.NewNop()
@@ -415,7 +422,7 @@ func ProcessFileStreaming(filePath string, sigCfg *FileSignature, extCfg *Extrac
 		zap.Int("total_records_extracted", len(allRecords)))
 
 	// Enrich records with metadata
-	if err := enrichRecords(allRecords, filePath, sigCfg, extCfg); err != nil {
+	if err := enrichRecords(allRecords, filePath, sigCfg, extCfg, runtimeProvenance); err != nil {
 		logger.Error("Failed to enrich records", zap.Error(err))
 		result.Error = err
 		return result
@@ -427,6 +434,12 @@ func ProcessFileStreaming(filePath string, sigCfg *FileSignature, extCfg *Extrac
 
 // ProcessFile processes a single file for extraction
 func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, allowLargeFiles bool) ExtractResult {
+	return ProcessFileWithProvenance(filePath, sigCfg, extCfg, externalFields, allowLargeFiles, provenance.RuntimeOptions{})
+}
+
+// ProcessFileWithProvenance processes a single file for extraction and enriches
+// each record with runtime provenance.
+func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
 	logger := logging.GetLogger()
 	if logger == nil {
 		logger = zap.NewNop()
@@ -454,7 +467,7 @@ func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMa
 					zap.String("file", filePath),
 					zap.Int64("estimated_size_mb", estimatedSize/(1024*1024)),
 					zap.Bool("compressed", isCompressed))
-				return ProcessFileStreaming(filePath, sigCfg, extCfg, externalFields)
+				return ProcessFileStreamingWithProvenance(filePath, sigCfg, extCfg, externalFields, runtimeProvenance)
 			}
 		}
 	}
@@ -516,7 +529,7 @@ func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMa
 	}
 	logger.Debug("Record extraction complete", zap.String("file", filePath), zap.Int("record_count", len(records)))
 
-	if err := enrichRecords(records, filePath, sigCfg, extCfg); err != nil {
+	if err := enrichRecords(records, filePath, sigCfg, extCfg, runtimeProvenance); err != nil {
 		logger.Error("Failed to apply metadata", zap.String("file", filePath), zap.Error(err))
 		result.Error = err
 		return result
@@ -651,13 +664,13 @@ func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields 
 	return records, nil
 }
 
-func enrichRecords(records []map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch) error {
+func enrichRecords(records []map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtimeProvenance provenance.RuntimeOptions) error {
 	if len(records) == 0 {
 		return nil
 	}
 
 	for _, record := range records {
-		if err := applyMetadataAndSummaries(record, sourceFile, sigCfg, cfg); err != nil {
+		if err := EnrichRecord(record, sourceFile, sigCfg, cfg, runtimeProvenance); err != nil {
 			return err
 		}
 	}
@@ -665,7 +678,9 @@ func enrichRecords(records []map[string]interface{}, sourceFile string, sigCfg *
 	return nil
 }
 
-func applyMetadataAndSummaries(record map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch) error {
+// EnrichRecord wraps a raw extracted record in Sumpter's standard output
+// envelope and attaches safe runtime provenance fields.
+func EnrichRecord(record map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtimeProvenance provenance.RuntimeOptions) error {
 	showSummaries := true
 	showValidation := true
 	if cfg.OutputOptions != nil {
@@ -708,7 +723,7 @@ func applyMetadataAndSummaries(record map[string]interface{}, sourceFile string,
 		}
 	}
 
-	runtimeMetadata := buildRuntimeMetadata(sourceFile, sigCfg, cfg, runtime, showSummaries && len(summary) > 0, showValidation && validationReport != nil)
+	runtimeMetadata := buildRuntimeMetadata(sourceFile, sigCfg, cfg, runtime, showSummaries && len(summary) > 0, showValidation && validationReport != nil, runtimeProvenance)
 
 	final := make(map[string]interface{}, 3)
 	final["_runtime"] = runtimeMetadata
@@ -946,7 +961,7 @@ func coerceToFloat(value interface{}) (float64, error) {
 	}
 }
 
-func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtime *dsl.ValidationRuntime, summariesIncluded, validationIncluded bool) map[string]interface{} {
+func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtime *dsl.ValidationRuntime, summariesIncluded, validationIncluded bool, runtimeProvenance provenance.RuntimeOptions) map[string]interface{} {
 	metadata := map[string]interface{}{
 		"generated_at":        time.Now().UTC().Format(time.RFC3339),
 		"source_file":         sourceFile,
@@ -973,6 +988,10 @@ func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *Extract
 
 	if runtime != nil {
 		metadata["validation_record_count"] = runtime.RecordCount
+	}
+
+	for key, value := range runtimeProvenance.RuntimeFields() {
+		metadata[key] = value
 	}
 
 	return metadata

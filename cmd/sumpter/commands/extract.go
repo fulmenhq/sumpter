@@ -13,9 +13,12 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
 	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
+	"github.com/fulmenhq/sumpter/internal/provenance"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
+
+const runIDEnvVar = "SUMPTER_RUN_ID"
 
 type ExtractOptions struct {
 	Files           string
@@ -34,12 +37,14 @@ type ExtractOptions struct {
 	ExtractConfig   string
 	ClientID        string
 	SiteID          string
+	RunID           string
 	AllowLargeFiles bool
 	// Parallel extraction options
-	RecordIndex      string // Path to record index file
-	MaxRecordSizeMB  int    // Maximum record size in MB (0 = no limit)
-	SkipLargeRecords bool   // If true, skip oversized records; if false, fail
-	VerifyIndex      bool   // Run SHA verification before extraction
+	RecordIndex       string // Path to record index file
+	MaxRecordSizeMB   int    // Maximum record size in MB (0 = no limit)
+	SkipLargeRecords  bool   // If true, skip oversized records; if false, fail
+	VerifyIndex       bool   // Run SHA verification before extraction
+	RuntimeProvenance provenance.RuntimeOptions
 }
 
 func NewExtractCommand() *cobra.Command {
@@ -98,6 +103,7 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().StringVar(&opts.ExtractConfig, "extract-config-path", "", "Path to extract configuration YAML file")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Client ID to blend into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Site ID to blend into extracted records")
+	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
 
 	// Parallel extraction flags
 	cmd.Flags().StringVar(&opts.RecordIndex, "record-index", "", "Path to record index file (enables parallel extraction)")
@@ -175,6 +181,11 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	logger.Debug("Extract config loaded", zap.String("record_type", extCfg.RecordType))
 
+	runtimeProvenance, err := buildExtractRuntimeProvenance(opts)
+	if err != nil {
+		return err
+	}
+
 	// Prepare external fields
 	externalFields := make(map[string]interface{})
 	if opts.ClientID != "" {
@@ -187,7 +198,7 @@ func runExtract(opts *ExtractOptions) error {
 	// Route to parallel extraction if --record-index is provided
 	if opts.RecordIndex != "" {
 		logger.Info("Parallel extraction mode enabled", zap.String("record_index", opts.RecordIndex))
-		return runParallelExtraction(opts, sigCfg, extCfg, externalFields)
+		return runParallelExtraction(opts, sigCfg, extCfg, externalFields, runtimeProvenance)
 	}
 
 	// Continue with sequential extraction
@@ -232,7 +243,7 @@ func runExtract(opts *ExtractOptions) error {
 
 	// For now, serial processing
 	for _, file := range files {
-		result := extract.ProcessFile(file, sigCfg, extCfg, externalFields, opts.AllowLargeFiles)
+		result := extract.ProcessFileWithProvenance(file, sigCfg, extCfg, externalFields, opts.AllowLargeFiles, runtimeProvenance)
 		results <- result
 	}
 	close(results)
@@ -290,7 +301,20 @@ func runExtract(opts *ExtractOptions) error {
 	return nil
 }
 
-func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, externalFields map[string]interface{}) error {
+func buildExtractRuntimeProvenance(opts *ExtractOptions) (provenance.RuntimeOptions, error) {
+	runtimeProvenance := opts.RuntimeProvenance
+
+	runID, err := provenance.ResolveRunID(opts.RunID, os.Getenv(runIDEnvVar))
+	if err != nil {
+		return provenance.RuntimeOptions{}, fmt.Errorf("invalid run id: %w", err)
+	}
+	runtimeProvenance.RunID = runID
+	runtimeProvenance.SumpterVersion = getVersionFromBuild()
+
+	return runtimeProvenance, nil
+}
+
+func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions) error {
 	logger := logging.GetLogger()
 	logger.Info("Starting parallel extraction",
 		zap.String("index", opts.RecordIndex),
@@ -312,17 +336,18 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	// Create parallel extraction options
 	// Pass the already-opened store to avoid double-open
 	parallelOpts := parallel.ExtractionOptions{
-		IndexPath:        opts.RecordIndex,
-		SourcePath:       header.Source.Path,
-		IndexStore:       indexStore, // Pass pre-opened store to avoid double-open
-		Workers:          opts.Workers,
-		MaxRecordSizeMB:  opts.MaxRecordSizeMB,
-		SkipLargeRecords: opts.SkipLargeRecords,
-		VerifyIndex:      opts.VerifyIndex,
-		ExtractConfig:    extCfg,
-		SignatureConfig:  sigCfg,
-		ExternalFields:   externalFields,
-		ShowProgress:     opts.Progress,
+		IndexPath:         opts.RecordIndex,
+		SourcePath:        header.Source.Path,
+		IndexStore:        indexStore, // Pass pre-opened store to avoid double-open
+		Workers:           opts.Workers,
+		MaxRecordSizeMB:   opts.MaxRecordSizeMB,
+		SkipLargeRecords:  opts.SkipLargeRecords,
+		VerifyIndex:       opts.VerifyIndex,
+		ExtractConfig:     extCfg,
+		SignatureConfig:   sigCfg,
+		ExternalFields:    externalFields,
+		RuntimeProvenance: runtimeProvenance,
+		ShowProgress:      opts.Progress,
 	}
 
 	// Create parallel extractor
