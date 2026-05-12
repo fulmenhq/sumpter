@@ -54,6 +54,7 @@ _deps/
 .claude/
 .grok/
 .windsurf/
+AGENTS.local.md
 # Ignore .cursor directory but allow rules subdirectory
 .cursor/
 !.cursor/rules/

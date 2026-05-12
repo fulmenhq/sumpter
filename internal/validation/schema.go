@@ -94,6 +94,15 @@ func (v *SchemaValidator) ValidateRecipeManifest(data []byte, manifestFile strin
 	return v.validateAgainstSchema(data, schemaBytes, manifestFile, "recipe-manifest-v0.1.0")
 }
 
+// ValidateProvenanceManifest validates a provenance sidecar manifest.
+func (v *SchemaValidator) ValidateProvenanceManifest(data []byte, manifestFile string) (*ValidationResult, error) {
+	schemaBytes, err := v.loadSchema("provenance", "v1.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("provenance", "v1.json"), err)
+	}
+	return v.validateAgainstSchema(data, schemaBytes, manifestFile, "provenance-v1")
+}
+
 func (v *SchemaValidator) loadSchema(parts ...string) ([]byte, error) {
 	rel := path.Join(parts...)
 
