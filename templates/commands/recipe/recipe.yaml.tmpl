@@ -4,6 +4,10 @@ id: {{if .RecipeID}}{{.RecipeID}}{{else}}your-recipe-id{{end}}
 display_name: ""
 description: ""
 created_at: "{{.CreatedAt}}"
+# content_version is the SemVer of the recipe's extraction content
+# (signature + extract assets). Bump on every change that alters extracted
+# records. Provenance records this as `recipe_version`. See ADR-0006.
+content_version: "0.0.1"
 owners:
   - name: ""
     contact: ""

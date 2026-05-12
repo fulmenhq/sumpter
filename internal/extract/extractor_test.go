@@ -203,6 +203,65 @@ output_schema:
 	}
 }
 
+// TestLoadExtractConfig_FieldDescription exercises ADR-0006 PR-A.4/A.5:
+// the extract schema must admit an optional `description` on field_mappings
+// items (including nested item_mapping items), and the Go FieldMapping
+// struct must surface the field after YAML unmarshal so downstream provenance
+// can pick it up.
+func TestLoadExtractConfig_FieldDescription(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "extract.yaml")
+	configContent := `record_type: "sample"
+match_selectors:
+  - xpath: "//Envelope"
+field_mappings:
+  - output_field: "business_date"
+    xpath: "BusinessDate"
+    type: "string"
+    description: "POS-reported business date for the event."
+  - output_field: "line_items"
+    xpath: "Lines/Line"
+    type: "array"
+    description: "Line items recorded for this transaction."
+    item_mapping:
+      - output_field: "sku"
+        xpath: "SKU"
+        type: "string"
+        description: "Stock-keeping unit identifier."
+output_schema:
+  type: "object"
+  properties:
+    business_date:
+      type: "string"
+    line_items:
+      type: "array"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := LoadExtractConfig(configPath)
+	if err != nil {
+		t.Fatalf("expected schema + load success with description fields, got: %v", err)
+	}
+	if len(cfg.FieldMappings) != 2 {
+		t.Fatalf("expected 2 field mappings, got %d", len(cfg.FieldMappings))
+	}
+	if cfg.FieldMappings[0].Description != "POS-reported business date for the event." {
+		t.Errorf("top-level Description not unmarshalled: got %q", cfg.FieldMappings[0].Description)
+	}
+	if cfg.FieldMappings[1].Description != "Line items recorded for this transaction." {
+		t.Errorf("array Description not unmarshalled: got %q", cfg.FieldMappings[1].Description)
+	}
+	if len(cfg.FieldMappings[1].ItemMapping) != 1 {
+		t.Fatalf("expected 1 item mapping, got %d", len(cfg.FieldMappings[1].ItemMapping))
+	}
+	if cfg.FieldMappings[1].ItemMapping[0].Description != "Stock-keeping unit identifier." {
+		t.Errorf("nested item Description not unmarshalled: got %q",
+			cfg.FieldMappings[1].ItemMapping[0].Description)
+	}
+}
+
 func TestLoadExtractConfig_InvalidSchema(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "extract.yaml")

@@ -391,6 +391,115 @@ assets:
 	}
 }
 
+// TestContentVersionAndOwnerRole exercises ADR-0006 v3 PR-A.1/A.2 behavior:
+// the schema must accept the new `content_version` and `owners[].role`
+// fields (verifying PR-A.3 schema landed correctly), and the validate
+// logic must route missing/valid/invalid content_version per spec.
+func TestContentVersionAndOwnerRole(t *testing.T) {
+	tests := []struct {
+		name             string
+		manifestYAML     string
+		wantErr          bool
+		errContains      string
+		wantContentVer   string
+		wantWarningCount int
+		wantOwnerRole    string
+	}{
+		{
+			name: "valid semver content_version and owner role pass cleanly",
+			manifestYAML: `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "1.2.3"
+owners:
+  - name: "Test Author"
+    contact: "test@example.com"
+    role: "india-devlead"
+assets:
+  signature: sig.yaml
+  extract: ext.yaml`,
+			wantErr:          false,
+			wantContentVer:   "1.2.3",
+			wantWarningCount: 0,
+			wantOwnerRole:    "india-devlead",
+		},
+		{
+			name: "missing content_version warns but does not error",
+			manifestYAML: `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+owners:
+  - name: "Test Author"
+assets:
+  signature: sig.yaml
+  extract: ext.yaml`,
+			wantErr:          false,
+			wantContentVer:   UnversionedContent,
+			wantWarningCount: 1,
+		},
+		{
+			name: "invalid semver content_version is a hard error",
+			manifestYAML: `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "not-a-semver"
+assets:
+  signature: sig.yaml
+  extract: ext.yaml`,
+			wantErr:     true,
+			errContains: "content_version",
+		},
+		{
+			name: "owner without role still validates",
+			manifestYAML: `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+owners:
+  - name: "Anonymous"
+assets:
+  signature: sig.yaml
+  extract: ext.yaml`,
+			wantErr:        false,
+			wantContentVer: "0.0.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			manifestPath := filepath.Join(tmpDir, "recipe.yaml")
+			if err := os.WriteFile(manifestPath, []byte(tt.manifestYAML), 0o644); err != nil {
+				t.Fatalf("failed to write manifest: %v", err)
+			}
+
+			m, err := LoadManifest(manifestPath)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("LoadManifest() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Errorf("error %q does not contain %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if tt.wantContentVer != "" && m.ContentVersion != tt.wantContentVer {
+				t.Errorf("ContentVersion = %q, want %q", m.ContentVersion, tt.wantContentVer)
+			}
+			if len(m.Warnings) != tt.wantWarningCount {
+				t.Errorf("Warnings count = %d, want %d (got %v)",
+					len(m.Warnings), tt.wantWarningCount, m.Warnings)
+			}
+			if tt.wantOwnerRole != "" {
+				if len(m.Owners) == 0 || m.Owners[0].Role != tt.wantOwnerRole {
+					t.Errorf("Owner[0].Role = %v, want %q", m.Owners, tt.wantOwnerRole)
+				}
+			}
+		})
+	}
+}
+
 // Helper function to check if string contains substring
 func contains(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) >= len(substr) && findSubstring(s, substr))

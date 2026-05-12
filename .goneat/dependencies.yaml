@@ -23,9 +23,9 @@ version: v1
 licenses:
   # Forbidden licenses (build fails if detected)
   forbidden:
-    - GPL-3.0 # Strong copyleft - requires derivative works to be GPL
-    - AGPL-3.0 # Network copyleft - triggers on network use
-    - MPL-2.0 # Mozilla Public License - weak copyleft with patent concerns
+    - GPL-3.0  # Strong copyleft - requires derivative works to be GPL
+    - AGPL-3.0  # Network copyleft - triggers on network use
+    - MPL-2.0  # Mozilla Public License - weak copyleft with patent concerns
   # Explicitly allowed permissive licenses only
   allowed:
     - MIT
@@ -95,7 +95,7 @@ cooling:
 # goneat uses embedded OPA (Open Policy Agent) for policy evaluation.
 #
 policy_engine:
-  type: embedded # Recommended for most use cases
+  type: embedded  # Recommended for most use cases
 
 # ============================================================================
 # SBOM CONFIGURATION (Software Bill of Materials)

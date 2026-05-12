@@ -30,6 +30,16 @@ properties:
   created_at:
     type: string
     format: date-time
+  content_version:
+    description: |
+      Author-managed SemVer 2.0.0 version for the recipe's extraction
+      content (signature + extract assets). Optional in v0.1.3; sumpter
+      emits a deprecation warning when absent and records
+      `recipe_version` as "unversioned" in provenance. v0.1.4 will make
+      this a required field and bump the manifest schema to v0.2.0.
+      See ADR-0006 for the canonicalization and content-hash rules.
+    type: string
+    pattern: "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
   owners:
     type: array
     items:
@@ -40,6 +50,16 @@ properties:
         name:
           type: string
         contact:
+          description: |
+            Optional contact for the owner (typically an email). Required
+            when the recipe participates in v0.1.4+ signing/encryption
+            attestation.
+          type: string
+        role:
+          description: |
+            Optional role slug (e.g. "india-devlead") identifying the
+            owner's chain-of-trust position. Required when the recipe
+            participates in v0.1.4+ signing/encryption attestation.
           type: string
   documentation:
     type: object

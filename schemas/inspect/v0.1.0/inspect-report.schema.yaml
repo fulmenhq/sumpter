@@ -136,7 +136,7 @@ properties:
   metadata:
     type: object
     description: Optional metadata about the inspection process
-    additionalProperties: true # Allow flexible metadata
+    additionalProperties: true  # Allow flexible metadata
     properties:
       generator:
         type: string

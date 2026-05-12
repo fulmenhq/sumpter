@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/assets"
@@ -13,6 +14,10 @@ import (
 	"github.com/fulmenhq/sumpter/internal/validation"
 	"gopkg.in/yaml.v3"
 )
+
+// semverPattern matches a strict semver string (MAJOR.MINOR.PATCH with
+// optional pre-release and build metadata per SemVer 2.0.0). Anchored.
+var semverPattern = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 
 const (
 	// ManifestVersion is the supported manifest schema identifier.
@@ -29,25 +34,36 @@ const (
 
 // Manifest captures the metadata and defaults for a recipe workspace.
 type Manifest struct {
-	Version       string        `yaml:"version"`
-	ID            string        `yaml:"id"`
-	Kind          Kind          `yaml:"kind"`
-	DisplayName   string        `yaml:"display_name"`
-	Description   string        `yaml:"description"`
-	Tags          []string      `yaml:"tags"`
-	CreatedAt     string        `yaml:"created_at"`
-	Owners        []Owner       `yaml:"owners"`
-	Documentation Documentation `yaml:"documentation"`
-	Assets        Assets        `yaml:"assets"`
-	Defaults      Defaults      `yaml:"defaults"`
-	Notes         string        `yaml:"notes"`
+	Version        string        `yaml:"version"`
+	ID             string        `yaml:"id"`
+	Kind           Kind          `yaml:"kind"`
+	DisplayName    string        `yaml:"display_name"`
+	Description    string        `yaml:"description"`
+	Tags           []string      `yaml:"tags"`
+	CreatedAt      string        `yaml:"created_at"`
+	ContentVersion string        `yaml:"content_version,omitempty"`
+	Owners         []Owner       `yaml:"owners"`
+	Documentation  Documentation `yaml:"documentation"`
+	Assets         Assets        `yaml:"assets"`
+	Defaults       Defaults      `yaml:"defaults"`
+	Notes          string        `yaml:"notes"`
+
+	// Warnings is populated during Load with non-fatal validation messages
+	// (e.g., missing content_version on v0.1.3). Not serialized.
+	Warnings []string `yaml:"-"`
 }
 
 // Owner describes the maintainer of a recipe.
 type Owner struct {
 	Name    string `yaml:"name"`
-	Contact string `yaml:"contact"`
+	Contact string `yaml:"contact,omitempty"`
+	Role    string `yaml:"role,omitempty"`
 }
+
+// UnversionedContent is the placeholder recorded in provenance when a
+// recipe manifest is missing content_version. Per ADR-0006 this emits a
+// deprecation warning in v0.1.3 and a hard error in v0.1.4.
+const UnversionedContent = "unversioned"
 
 // Documentation references helpful collateral for the recipe.
 type Documentation struct {
@@ -171,6 +187,27 @@ func (m *Manifest) validate() error {
 		}
 	}
 
+	// Per ADR-0006: content_version is optional in v0.1.3 with a
+	// deprecation warning when missing; v0.1.4 will make it a hard error.
+	contentVersion := strings.TrimSpace(m.ContentVersion)
+	switch {
+	case contentVersion == "":
+		m.ContentVersion = UnversionedContent
+		m.Warnings = append(m.Warnings, fmt.Sprintf(
+			"recipe %s is missing `content_version` (semver). Provenance will "+
+				"record `recipe_version` as %q. v0.1.4 will treat this as a hard "+
+				"error. Run `sumpter recipes migrate` to stamp a starter version, "+
+				"or edit recipe.yaml manually.",
+			m.ID, UnversionedContent,
+		))
+	case !semverPattern.MatchString(contentVersion):
+		return fmt.Errorf(
+			"content_version %q is not a valid SemVer 2.0.0 string "+
+				"(expected MAJOR.MINOR.PATCH, e.g. \"0.1.0\")",
+			contentVersion,
+		)
+	}
+
 	return nil
 }
 
@@ -190,6 +227,19 @@ func (m *Manifest) applyDefaults() {
 	if m.Defaults.Workers <= 0 {
 		m.Defaults.Workers = 1
 	}
+}
+
+// DrainWarnings returns the manifest's accumulated non-fatal warnings and
+// clears them in place so subsequent callers do not re-emit the same
+// messages. Returns nil when there is nothing to emit, allowing callers to
+// guard with `if w := m.DrainWarnings(); len(w) > 0 { ... }`.
+func (m *Manifest) DrainWarnings() []string {
+	if m == nil || len(m.Warnings) == 0 {
+		return nil
+	}
+	w := m.Warnings
+	m.Warnings = nil
+	return w
 }
 
 // ResolvePath resolves a path relative to the manifest workspace.

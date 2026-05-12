@@ -52,7 +52,7 @@ $defs:
       options:
         type: object
         description: Additional realm-specific configuration options
-        additionalProperties: true # Allow flexible options per realm
+        additionalProperties: true  # Allow flexible options per realm
   credentialsConfig:
     type: object
     description: Authentication credentials for data source APIs

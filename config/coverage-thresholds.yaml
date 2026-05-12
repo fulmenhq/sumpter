@@ -60,12 +60,12 @@ phases:
 # Package-specific overrides (optional)
 packages:
   cmd/sumpter/commands:
-    alpha: 60 # Higher requirement for CLI commands
+    alpha: 60  # Higher requirement for CLI commands
     beta: 75
     production: 85
     mature: 90
   internal/config:
-    alpha: 40 # Lower requirement for internal packages
+    alpha: 40  # Lower requirement for internal packages
     beta: 65
     production: 75
     mature: 80
@@ -76,46 +76,46 @@ packages:
     mature: 85
 # Validation settings
 validation:
-  strict: true # Fail on coverage below threshold
-  include_generated: false # Exclude generated code from coverage
-  exclude_patterns: # Files/patterns to exclude
+  strict: true  # Fail on coverage below threshold
+  include_generated: false  # Exclude generated code from coverage
+  exclude_patterns:  # Files/patterns to exclude
     - "*/mocks/*"
     - "*/testdata/*"
     - "*_mock.go"
     - "*_generated.go"
   reporting:
-    format: "html" # html, xml, json, text
-    output_dir: "coverage" # Coverage report directory
-    badge: true # Generate coverage badge
-    history: true # Track coverage history
+    format: "html"  # html, xml, json, text
+    output_dir: "coverage"  # Coverage report directory
+    badge: true  # Generate coverage badge
+    history: true  # Track coverage history
 # Quality gate integration
 quality_gates:
   pre_commit:
     coverage: true
-    threshold: "phase_dynamic" # Use phase-specific threshold
-    fail_on_decline: true # Fail if coverage decreases
+    threshold: "phase_dynamic"  # Use phase-specific threshold
+    fail_on_decline: true  # Fail if coverage decreases
   pre_push:
     coverage: true
-    threshold: 80 # Fixed 80% for production readiness
-    integration_tests: true # Require integration tests
-    security_scan: true # Require security scanning
+    threshold: 80  # Fixed 80% for production readiness
+    integration_tests: true  # Require integration tests
+    security_scan: true  # Require security scanning
   ci_cd:
     coverage: true
     threshold: "phase_dynamic"
-    upload_results: true # Upload coverage to external service
-    generate_reports: true # Generate detailed HTML reports
+    upload_results: true  # Upload coverage to external service
+    generate_reports: true  # Generate detailed HTML reports
 # Emergency overrides (require supervisor approval)
 emergency:
-  enabled: false # Must be explicitly enabled
-  minimum_threshold: 30 # Absolute minimum allowed
-  duration_hours: 24 # Auto-disable after this period
-  approval_required: true # Require @3leapsdave approval
-  audit_required: true # Log emergency override usage
+  enabled: false  # Must be explicitly enabled
+  minimum_threshold: 30  # Absolute minimum allowed
+  duration_hours: 24  # Auto-disable after this period
+  approval_required: true  # Require @3leapsdave approval
+  audit_required: true  # Log emergency override usage
 # Notification settings
 notifications:
   slack:
     enabled: false
-    webhook_url: "" # Set via environment variable
+    webhook_url: ""  # Set via environment variable
     channels:
       - "#devops"
       - "#quality"
@@ -123,8 +123,8 @@ notifications:
     enabled: false
     recipients:
       - "devops@sumpterhq.dev"
-    threshold_alerts: true # Alert when approaching threshold
-    failure_alerts: true # Alert on coverage failures
+    threshold_alerts: true  # Alert when approaching threshold
+    failure_alerts: true  # Alert on coverage failures
 # Historical tracking
 history:
   enabled: true
@@ -134,16 +134,16 @@ history:
   regression_detection: true
 # Advanced settings
 advanced:
-  parallel_execution: true # Run tests in parallel
-  race_detection: true # Enable race condition detection
-  memory_profiling: true # Enable memory profiling
-  cpu_profiling: false # Enable CPU profiling (resource intensive)
+  parallel_execution: true  # Run tests in parallel
+  race_detection: true  # Enable race condition detection
+  memory_profiling: true  # Enable memory profiling
+  cpu_profiling: false  # Enable CPU profiling (resource intensive)
   coverage_types:
-    - "unit" # Unit test coverage
-    - "integration" # Integration test coverage
-    - "system" # System test coverage (future)
+    - "unit"  # Unit test coverage
+    - "integration"  # Integration test coverage
+    - "system"  # System test coverage (future)
   custom_metrics:
     enabled: false
-    mutation_testing: false # Enable mutation testing
-    fuzz_testing: false # Enable fuzz testing
-    performance_benchmarks: true # Include performance benchmarks
+    mutation_testing: false  # Enable mutation testing
+    fuzz_testing: false  # Enable fuzz testing
+    performance_benchmarks: true  # Include performance benchmarks

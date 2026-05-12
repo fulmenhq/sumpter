@@ -1,0 +1,58 @@
+version: 1
+# Sumpter assess configuration. Mirrors the goneat ecosystem default so
+# `goneat assess` (and the goneat-driven pre-commit hook in
+# `.git/hooks/pre-commit`) operates on a known scope rather than the entire
+# tree. YAML format/lint behavior is coordinated through `.yamlfmt` and
+# `.yamllint`; see goneat appnote "yaml-format-lint-alignment" for the
+# precedence model.
+#
+# Initial scope intentionally narrow (workflows + shell verify-only) to
+# match goneat's own .goneat/assess.yaml. Schema yamllint scope will be
+# added in a follow-up after the SemVer pattern long-line in
+# schemas/recipes/v0.1.0/recipe.schema.yaml is folded and the .goneat/
+# config files are cleaned up to satisfy yamllint defaults.
+lint:
+  yamllint:
+    enabled: true
+    strict: true
+    paths:
+      - ".github/workflows/**/*.yml"
+      - ".github/workflows/**/*.yaml"
+    ignore: []
+  shell:
+    shfmt:
+      enabled: true
+      fix: false
+    shellcheck:
+      enabled: false
+      path: ""
+    paths:
+      - "**/*.sh"
+      - "scripts/**/*.sh"
+    ignore:
+      - "**/node_modules/**"
+      - "**/.git/**"
+      - "**/vendor/**"
+      - "**/*.orig"
+      - "**/testdata/**"
+      - ".plans/**"
+      - ".cache/**"
+  github_actions:
+    actionlint:
+      enabled: true
+      paths:
+        - ".github/workflows/**/*.yml"
+        - ".github/workflows/**/*.yaml"
+      ignore: []
+  make:
+    checkmake:
+      enabled: true
+      config:
+        max_body_length: 55
+        min_phony_targets:
+          - all
+          - clean
+          - test
+    paths:
+      - "**/Makefile"
+    ignore: []

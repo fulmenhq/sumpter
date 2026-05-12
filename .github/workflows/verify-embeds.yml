@@ -1,11 +1,8 @@
----
 name: Verify Embedded Assets
-
 # Runs scripts/verify-embeds.sh on PRs and main pushes that touch SSOT or
 # embedded paths. Catches the class of bug where someone updates a source
 # doc/schema/example/template but forgets to re-run scripts/embed-assets.sh
 # (or vice versa), leaving the binary's embedded mirror out of sync.
-
 "on":
   pull_request:
     paths:
@@ -33,16 +30,13 @@ name: Verify Embedded Assets
       - "internal/assets/embedded_templates/**"
       - "scripts/embed-assets.sh"
       - "scripts/verify-embeds.sh"
-
 jobs:
   verify:
     name: scripts/verify-embeds.sh
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Confirm rsync is present
         run: rsync --version | head -1
-
       - name: Run verify-embeds
         run: make verify-embeds
