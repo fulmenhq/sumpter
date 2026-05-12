@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
+	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
 func TestNewSeekableExtractor(t *testing.T) {
@@ -133,6 +134,65 @@ func TestSeekableExtractor_ExtractRecord_InvalidXML(t *testing.T) {
 
 	if result.Error == nil {
 		t.Error("Expected error for invalid XML")
+	}
+}
+
+func TestSeekableExtractor_ExtractRecordAddsRuntimeProvenance(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "record.xml")
+	xmlContent := `<Record><name>alice</name></Record>`
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	extCfg := &extract.ExtractRecordMatch{
+		RecordType: "person",
+		MatchSelectors: []extract.MatchSelector{
+			{XPath: "/*"},
+		},
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "name", XPath: "name", Type: "string"},
+		},
+	}
+	sigCfg := &extract.FileSignature{SignatureID: "person-signature"}
+	runtimeProvenance := provenance.RuntimeOptions{
+		RunID:          "0190a3f4-1c2d-7abc-9def-0123456789ab",
+		SumpterVersion: "0.1.3-test",
+	}
+
+	extractor := NewSeekableExtractor(xmlPath, extCfg, sigCfg, nil, runtimeProvenance)
+	result := extractor.ExtractRecord(WorkItem{
+		RecordNum:   1,
+		StartOffset: 0,
+		EndOffset:   int64(len(xmlContent)),
+		SizeBytes:   int64(len(xmlContent)),
+	})
+
+	if result.Error != nil {
+		t.Fatalf("ExtractRecord() error = %v", result.Error)
+	}
+
+	runtimeBlock, ok := result.Data["_runtime"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("_runtime block missing or wrong type: %#v", result.Data["_runtime"])
+	}
+	if got := runtimeBlock["run_id"]; got != runtimeProvenance.RunID {
+		t.Fatalf("run_id = %#v, want %q", got, runtimeProvenance.RunID)
+	}
+	if got := runtimeBlock["sumpter_version"]; got != runtimeProvenance.SumpterVersion {
+		t.Fatalf("sumpter_version = %#v, want %q", got, runtimeProvenance.SumpterVersion)
+	}
+
+	extractBlock, ok := result.Data["extract"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("extract block missing or wrong type: %#v", result.Data["extract"])
+	}
+	dataBlock, ok := extractBlock["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("extract data missing or wrong type: %#v", extractBlock["data"])
+	}
+	if got := dataBlock["name"]; got != "alice" {
+		t.Fatalf("name = %#v, want alice", got)
 	}
 }
 
