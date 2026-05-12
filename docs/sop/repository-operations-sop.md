@@ -127,6 +127,60 @@ standalone `make race-check`) is the local way to surface real concurrency
 bugs that CI cannot catch. See [AGENTS.md § Commit and Push Protocols](../../AGENTS.md#commit-and-push-protocols)
 for the canonical pre-push policy.
 
+### Security Scanning (gosec, govulncheck)
+
+`make gosec` runs the gosec SAST scanner. `make govulncheck` runs the
+Go vulnerability database check. Both are bundled in `make security-scan`
+and called from `make prepush`.
+
+#### gosec invocation rationale
+
+Sumpter's gosec target uses **filesystem walk + explicit `-exclude-dir`**
+rather than `gosec $(go list ./...)` (the seemingly Go-module-aware
+alternative). The rationale:
+
+1. **gosec is not Go-module-aware in v2.x when given `./...` as a
+   filesystem expression.** It walks every directory under the repo root
+   and scans any `.go` file it finds, regardless of whether the file
+   belongs to the module's packages.
+
+2. **Sumpter relocates `$GOMODCACHE` into the repo (`.cache/go-mod`)** for
+   hermetic builds. Without exclusion, gosec scans the entire third-party
+   module download cache and produces ~1000 findings in code Sumpter does
+   not own. This drowns out the small number of legitimate findings in
+   first-party code.
+
+3. **The "module-aware" alternative is unsafe.** Passing
+   `$(go list ./...)` (a list of Go import paths) to gosec puts it in a
+   different mode that silently drops findings in `package main` files
+   and files affected by build tags. Empirically tested in May 2026: a
+   tree with 16 legitimate first-party findings reports 0 when invoked
+   this way. We avoid this mode as a primary invocation because masking
+   real signal is a worse failure mode than producing noise.
+
+The correct invocation, which `make gosec` uses:
+
+```bash
+gosec -exclude-dir=.cache \
+      -exclude-dir=dist \
+      -exclude-dir=vendor \
+      -exclude-dir=testdata \
+      -exclude-generated ./...
+```
+
+This keeps the filesystem walk (so `package main` files and build-tag
+code are scanned) while explicitly excluding directories that contain
+third-party, generated, or build-output code.
+
+#### Suppression policy
+
+Do not blanket-suppress findings. Where a finding is a verified false
+positive or has a documented mitigation, use `// #nosec <RULE_ID> -
+<rationale>` scoped to the single line. Sumpter follows this pattern in
+several places (search for `#nosec` in the tree for examples). The
+goneat assess pipeline can track suppressions via `--track-suppressions`
+if you want them surfaced in audit output.
+
 ## Commit Procedures
 
 ### Commit Message Standards
