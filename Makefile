@@ -13,14 +13,17 @@
 #   1. make check-all    - Fast quality checks (formatting, linting, vetting)
 #   2. make test         - Run tests with coverage
 #   3. make precommit    - Pre-commit validation (dynamic, lifecycle-aware)
-#   4. make prepush      - Pre-push validation (80% production threshold)
+#   4. make prepush      - Pre-push validation (dynamic threshold; matches CI)
 #   5. make build        - Build the final binary
 #   6. make install      - Install binary to PATH
 #
 # Coverage Strategy:
-#   • Precommit:  Dynamic via LIFECYCLE_PHASE + config/coverage-thresholds.yaml
-#                 (alpha 50%, beta 70%, production 80%).
-#   • Prepush:    80% threshold, comprehensive validation
+#   • Precommit:       Dynamic via LIFECYCLE_PHASE + config/coverage-thresholds.yaml
+#                      (alpha 50%, beta 70%, production 80%).
+#   • Prepush:         Same dynamic threshold; matches CI. No race detection.
+#   • Prepush-strict:  Adds the race detector (advisory; not enforced in CI as
+#                      of May 2026). Use for concurrency-sensitive work.
+#   • Race-check:      Standalone race detector alias.
 
 # Variables
 BINARY_NAME := sumpter
