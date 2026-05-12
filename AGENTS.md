@@ -25,28 +25,44 @@ These protocols ensure professional development standards and enterprise readine
 - **NEVER remove or weaken** ignore rules in `.gitignore` without explicit maintainer approval.
   - If a file is ignored but you think it should be tracked, stop and ask.
 
-### **CRITICAL: Commit and Push Protocols**
+### **Commit and Push Protocols**
 
-**🚨 COMMITS REQUIRE APPROVAL**
+Sumpter operates on a **feature-branch + PR review model**. The microtool-era
+"per-occurrence approval for every commit" rule has been relaxed in favor of
+human review at PR time and CI-enforced quality gates. Some controls remain
+strict because they cross the trust boundary or touch protected branches.
+This section is the canonical source of truth;
+[REPOSITORY-SAFETY-PROTOCOLS.md](REPOSITORY-SAFETY-PROTOCOLS.md) cross-references it.
 
-- All commits must receive explicit approval from @3leapsdave before creation
-- Never create commits without supervisor authorization
-- Follow the Repository Operations SOP: "Check-all, stage, pre-commit, commit"
+**On feature branches (the normal case):**
 
-**🚨 DO NOT BYPASS COMMITS**
+- ✅ Agents commit freely after running `make check-all` (or `make precommit`
+  for the heavier coverage gate). The goneat pre-commit hook is authoritative
+  for what blocks a commit.
+- ✅ Agents may stage, draft commit messages, and create commits without
+  per-occurrence supervisor approval. Review happens at PR time.
+- ✅ Follow the Repository Operations SOP for commit hygiene:
+  "check-all, stage, pre-commit, commit".
 
-- **CRITICAL**: Never bypass git hooks or use GIT_NO_HOOKS without explicit supervisor approval
-- **CRITICAL**: Never use --force or --no-verify without explicit supervisor approval
-- **CRITICAL**: Never commit without explicit per-occurrence authorization from @3leapsdave
+**Pushes still require per-occurrence approval:**
 
-**🚨 PUSHES REQUIRE FULL STOP AND REVIEW**
+- 🚨 `git push` to any remote branch requires explicit, real-time authorization
+  from a supervisor (typically @3leapsdave). This is unchanged.
+- 🚨 Pre-push review must include CI expectations, branch protection state, and
+  any race or security concerns surfaced by `make prepush`.
 
-- **MANDATORY FULL STOP**: No pushes allowed without explicit, per-occurrence approval
-- **Pre-Push Review Required**: Must review pre-commit hooks and quality gates before any push
-- **Specific Authorization**: Each push requires individual approval - no blanket permissions
-- **No Automated Pushes**: Never push without human supervisor review and authorization
+**Strict controls (unchanged from microtool-era policy):**
 
-**Violation of these protocols will result in immediate work stoppage.**
+- ❌ **Direct commits or pushes to `main` or release branches** require
+  per-occurrence approval, regardless of feature-branch policy.
+- ❌ **Bypassing git hooks** (`--no-verify`, `GIT_NO_HOOKS`, etc.) requires
+  per-occurrence supervisor approval with written justification.
+- ❌ **Force-push** (`--force`, `--force-with-lease`) requires per-occurrence
+  supervisor approval, including on feature branches.
+- ❌ **Weakening `.gitignore`** or quality gate thresholds requires maintainer
+  approval (see Confidentiality Posture and Quality Gates sections).
+
+**Violation of the strict controls results in immediate work stoppage.**
 
 ## 🤐 Confidentiality Posture (OSS Surface)
 
@@ -145,8 +161,9 @@ The following documents are critical to the safety and security of this reposito
 ```bash
 # ✅ Session Authorization Checklist
 □ Confirm role/team and supervisor (@3leapsdave)
-□ Confirm scope and allowed ops (read/edit code, run tests, create commits/PRs)
-□ Confirm constraints (CRITICAL: no pushes, no git config changes, no production secrets)
+□ Confirm scope and allowed ops (read/edit code, run tests, create commits/PRs on feature branches)
+□ Confirm push authority (CRITICAL: pushes still require per-occurrence approval; commits on feature branches do not)
+□ Confirm no main-branch ops, no git config changes, no production secrets
 □ Confirm current lifecycle phase (alpha/beta/production) from LIFECYCLE_PHASE
 □ Verify quality gates required (make pre-commit, coverage-check-dynamic)
 □ Verify Go tooling availability (go, gofmt, golangci-lint)

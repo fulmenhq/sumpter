@@ -453,8 +453,15 @@ precommit: check-all build test-cleanup test-short coverage-check-dynamic fmt-do
 	@echo "$(GREEN)✅ Pre-commit checks passed!$(NC)"
 
 .PHONY: prepush
-prepush: check-all test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation with full dependency checks (includes race detection)
+prepush: check-all test-cleanup test-short coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation (matches CI; use `make race-check` or `make prepush-strict` to add race detection)
 	@echo "$(GREEN)✅ Pre-push checks passed!$(NC)"
+
+.PHONY: prepush-strict
+prepush-strict: check-all test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Pre-push with race detector (advisory: not run in CI as of May 2026; surfaces real races that CI cannot)
+	@echo "$(GREEN)✅ Pre-push (strict, with race detection) checks passed!$(NC)"
+
+.PHONY: race-check
+race-check: test-race ## Alias: run the race-detector against the full test suite (advisory)
 
 # Aliases for backward compatibility
 .PHONY: pre-commit
