@@ -188,7 +188,15 @@ func ValidateLifecycleCompliance(phase string, coverage float64) error {
 
 **Prohibited Behaviors:**
 
+> **Note:** Commit-time approval on feature branches was relaxed in May 2026
+> as Sumpter moved from microtool mode to a feature-branch + PR review model.
+> See [AGENTS.md § Commit and Push Protocols](AGENTS.md#commit-and-push-protocols)
+> for the canonical current policy. The bullets below describe the controls
+> that **remain strict** under the new model.
+
 - ❌ **`git push` without explicit, real-time authorization**: Never push to any remote branch without direct, explicit, and immediate permission from a supervisor for that specific push.
+- ❌ **Direct commits or pushes to `main` or release branches** without per-occurrence approval, regardless of feature-branch policy.
+- ❌ **Bypassing git hooks** (`--no-verify`, `GIT_NO_HOOKS`, force-push) without per-occurrence supervisor approval.
 - ❌ **Automatic lifecycle transitions** without explicit validation and approval
 - ❌ **Quality gate bypasses** without supervisor approval and justification
 - ❌ **Coverage threshold modifications** without architecture review

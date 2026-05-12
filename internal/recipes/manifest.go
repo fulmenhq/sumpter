@@ -138,7 +138,7 @@ func validateAgainstSchema(data []byte, manifestPath string) error {
 		var sb strings.Builder
 		sb.WriteString("manifest validation failed:\n")
 		for _, verr := range result.Errors {
-			sb.WriteString(fmt.Sprintf("- %s: %s\n", verr.Path, verr.Message))
+			fmt.Fprintf(&sb, "- %s: %s\n", verr.Path, verr.Message)
 		}
 		return errors.New(strings.TrimSuffix(sb.String(), "\n"))
 	}
