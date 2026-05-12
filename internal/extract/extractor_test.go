@@ -11,6 +11,7 @@ import (
 
 	"github.com/antchfx/xmlquery"
 	"github.com/fulmenhq/goneat/pkg/schema"
+	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
 func TestProcessFilePolymorphicArray(t *testing.T) {
@@ -151,6 +152,67 @@ func TestProcessFilePolymorphicArray(t *testing.T) {
 
 	if !reflect.DeepEqual(entriesVal, expected) {
 		t.Fatalf("entries mismatch\nexpected: %#v\nactual:   %#v", expected, entriesVal)
+	}
+}
+
+func TestProcessFileWithProvenanceAddsRuntimeFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := filepath.Join(tmpDir, "sample.xml")
+	xmlContent := `<Envelope><Record><Identifier>rec-001</Identifier></Record></Envelope>`
+	if err := os.WriteFile(inputPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write xml fixture: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test-signature",
+		Name:                "Test Signature",
+		ConfidenceThreshold: 0.2,
+		MatchPatterns: []MatchPattern{
+			{PatternID: "root", Selector: "/Envelope", Weight: 1.0},
+		},
+	}
+
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "generic_record",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//Record"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "identifier", XPath: "Identifier", Type: "string"},
+		},
+	}
+
+	runtimeProvenance := provenance.RuntimeOptions{
+		RunID:             "0190a3f4-1c2d-7abc-9def-0123456789ab",
+		SumpterVersion:    "0.1.3-test",
+		RecipeVersion:     "1.2.3",
+		RecipeContentHash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+
+	result := ProcessFileWithProvenance(inputPath, signature, extractCfg, nil, false, runtimeProvenance)
+	if result.Error != nil {
+		t.Fatalf("unexpected extraction error: %v", result.Error)
+	}
+	if len(result.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(result.Records))
+	}
+
+	runtimeBlock, ok := result.Records[0]["_runtime"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("_runtime block missing or wrong type: %#v", result.Records[0]["_runtime"])
+	}
+
+	for key, want := range runtimeProvenance.RuntimeFields() {
+		if got := runtimeBlock[key]; got != want {
+			t.Fatalf("_runtime[%s] = %#v, want %#v", key, got, want)
+		}
+	}
+
+	if _, exists := runtimeBlock["signature_config_path"]; exists {
+		t.Fatal("_runtime must not include signature_config_path")
+	}
+	if _, exists := runtimeBlock["extract_config_path"]; exists {
+		t.Fatal("_runtime must not include extract_config_path")
 	}
 }
 

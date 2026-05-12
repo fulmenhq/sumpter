@@ -6,6 +6,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/index/store"
+	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
 // WorkItem represents a single record extraction task
@@ -49,6 +50,8 @@ type ExtractionOptions struct {
 	ExtractConfig   interface{} // Will be *extract.ExtractRecordMatch
 	SignatureConfig interface{} // Will be *extract.FileSignature
 	ExternalFields  map[string]interface{}
+
+	RuntimeProvenance provenance.RuntimeOptions
 }
 
 // ExtractionStats tracks extraction metrics

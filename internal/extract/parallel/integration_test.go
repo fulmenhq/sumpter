@@ -109,9 +109,29 @@ func TestParallelExtraction_EndToEnd(t *testing.T) {
 			continue
 		}
 
-		// Check external field was added
-		if source, ok := record["source"]; !ok || source != "test" {
-			t.Errorf("Record %d missing or incorrect source field: got %v", i, record["source"])
+		runtimeBlock, ok := record["_runtime"].(map[string]interface{})
+		if !ok {
+			t.Errorf("Record %d missing _runtime block: got %#v", i, record["_runtime"])
+			continue
+		}
+		if runtimeBlock["source_file"] != xmlPath {
+			t.Errorf("Record %d source_file = %v, want %s", i, runtimeBlock["source_file"], xmlPath)
+		}
+
+		extractBlock, ok := record["extract"].(map[string]interface{})
+		if !ok {
+			t.Errorf("Record %d missing extract block: got %#v", i, record["extract"])
+			continue
+		}
+		dataBlock, ok := extractBlock["data"].(map[string]interface{})
+		if !ok {
+			t.Errorf("Record %d missing extract.data block: got %#v", i, extractBlock["data"])
+			continue
+		}
+
+		// Check external field was added to the canonical data block.
+		if source, ok := dataBlock["source"]; !ok || source != "test" {
+			t.Errorf("Record %d missing or incorrect source field: got %v", i, dataBlock["source"])
 		}
 
 		// Note: Field extraction from XML may require additional configuration
@@ -119,7 +139,7 @@ func TestParallelExtraction_EndToEnd(t *testing.T) {
 		// - Index is loaded
 		// - Workers process records
 		// - Results are aggregated in order
-		// - External fields are merged
+		// - External fields are merged into extract.data
 	}
 
 	t.Logf("Successfully extracted %d records in parallel", len(records))

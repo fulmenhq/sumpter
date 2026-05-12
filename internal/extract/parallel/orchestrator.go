@@ -103,7 +103,7 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 		}
 	}
 
-	extractor := NewSeekableExtractor(pe.opts.SourcePath, extCfg, sigCfg, pe.opts.ExternalFields)
+	extractor := NewSeekableExtractor(pe.opts.SourcePath, extCfg, sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
 
 	// Start worker pool
 	var wg sync.WaitGroup
