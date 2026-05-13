@@ -134,6 +134,9 @@ config/development/
 *.local.json
 *.dev.yaml
 *.dev.json
+# Local-only agent guidance (engagement / operator-specific pointers, not OSS-safe)
+*.local.md
+AGENTS.local.md
 # Allow example configurations
 !config/examples/
 !*.example.yaml
