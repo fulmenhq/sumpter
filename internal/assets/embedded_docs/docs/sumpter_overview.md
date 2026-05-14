@@ -8,10 +8,10 @@
 
 Enterprises still rely heavily on XML for transactions, trades, and compliance data. These files are:
 
-- **Massive**: 100MB–10GB+ logs and reports.
-- **Variant-heavy**: 5–10 vendor dialects per domain (e.g., competing retail POS dialects, FIXML variants).
+- **Massive**: 100MB–10GB+ logs and reports (ClinVar releases run multi-GB compressed, multi-TB uncompressed across history).
+- **Variant-heavy**: multiple vendor or release dialects per domain (e.g., XBRL taxonomy variants across regulators, ClinVar revisions across releases, FIXML variants across brokerages, POS-journal dialects across vendors).
 - **Malformed**: encoding issues, mixed namespaces, partial truncation.
-- **Critical**: used in compliance reporting, finance, and retail operations.
+- **Critical**: used in compliance reporting, financial filings, clinical research, regulatory submissions, and operational analytics.
 
 Traditional DOM parsers crash on size. Heavy ETL tools require weeks of configuration. Custom scripts lack resilience, observability, and reuse.
 
