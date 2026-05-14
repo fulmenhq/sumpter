@@ -185,6 +185,103 @@ func TestEvaluateReconciliationsGroupByCapsAtBase(t *testing.T) {
 
 }
 
+// TestEvaluateReconciliationsGroupByFinancialFacts exercises the same
+// group_by reconciliation surface as the retail-tender test above but
+// against an XBRL-shaped record (per-period filing facts grouped by
+// reporting period). The two tests together demonstrate that the DSL
+// runtime is genuinely domain-neutral — the same code path handles
+// both a tender breakdown and a period breakdown without special-casing.
+func TestEvaluateReconciliationsGroupByFinancialFacts(t *testing.T) {
+	record := map[string]interface{}{
+		"period_total": 200.0,
+		"facts": []interface{}{
+			map[string]interface{}{"period": "Q1", "label": "Q1 2024", "value": 120.0, "is_reported": true},
+			map[string]interface{}{"period": "Q2", "label": "Q2 2024", "value": 50.0, "is_reported": true},
+			map[string]interface{}{"period": "Q2", "label": "Q2 2024", "value": 30.0, "is_reported": false},
+		},
+	}
+
+	metadata := &ValidationMetadata{
+		Enable: true,
+		Reconciliations: []ReconciliationConfig{
+			{
+				Name:           "period",
+				BaseExpression: "period_total",
+				Tolerance:      0.01,
+				GroupBy: &ReconciliationGroupByConfig{
+					Source:              "facts[]",
+					Field:               "period",
+					LabelField:          "label",
+					Filter:              "is_reported == true",
+					ValueExpression:     "value",
+					NameTemplate:        "{{group}}_reported",
+					DescriptionTemplate: "Reported in {{label}}",
+				},
+				Components: []ReconciliationComponentConfig{
+					{
+						Name:        "unreported",
+						Description: "Filed but not yet reported",
+						Expression:  "period_total - period_group_components_total",
+					},
+				},
+			},
+		},
+	}
+
+	runtime, err := RunValidation(metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+
+	if runtime == nil {
+		t.Fatalf("expected runtime to be populated")
+	}
+
+	if len(runtime.ReconciliationResults) != 1 {
+		t.Fatalf("expected 1 reconciliation result, got %d", len(runtime.ReconciliationResults))
+	}
+
+	result := runtime.ReconciliationResults[0]
+	if len(result.Components) != 3 {
+		t.Fatalf("expected 3 components (2 dynamic + 1 static), got %d", len(result.Components))
+	}
+
+	q1Component := result.Components[0]
+	if q1Component.Name != "Q1_reported" {
+		t.Fatalf("expected first component to be Q1_reported, got %s", q1Component.Name)
+	}
+	if !almostEqual(q1Component.Value, 120.0) {
+		t.Fatalf("expected Q1 component value 120.0, got %f", q1Component.Value)
+	}
+	if q1Component.Description != "Reported in Q1 2024" {
+		t.Fatalf("unexpected Q1 description: %s", q1Component.Description)
+	}
+
+	q2Component := result.Components[1]
+	if q2Component.Name != "Q2_reported" {
+		t.Fatalf("expected second component to be Q2_reported, got %s", q2Component.Name)
+	}
+	if !almostEqual(q2Component.Value, 50.0) {
+		t.Fatalf("expected Q2 component value 50.0, got %f", q2Component.Value)
+	}
+
+	unreported := result.Components[2]
+	if unreported.Name != "unreported" {
+		t.Fatalf("expected final component to be unreported, got %s", unreported.Name)
+	}
+	if !almostEqual(unreported.Value, 30.0) {
+		t.Fatalf("expected unreported value 30.0, got %f", unreported.Value)
+	}
+
+	if value, ok := runtime.ReconciliationScalars["period_group_components_total"].(float64); !ok || !almostEqual(value, 170.0) {
+		t.Fatalf("expected grouped total scalar 170.0, got %#v", runtime.ReconciliationScalars["period_group_components_total"])
+	}
+
+	if math.Abs(result.Residual) > 0.01 {
+		t.Fatalf("expected residual near zero, got %f", result.Residual)
+	}
+}
+
 func almostEqual(a, b float64) bool {
 	return math.Abs(a-b) < 1e-6
 }

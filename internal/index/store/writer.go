@@ -97,7 +97,7 @@ func WriteSeekableIndex(basePath string, idx *index.RecordIndex) error {
 func writeHeaderJSON(path string, header *SzstIndexHeader) error {
 	// Create output directory if needed
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
