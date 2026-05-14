@@ -110,7 +110,7 @@ Example:
 				}
 
 				indexesDir := filepath.Join(paths.Home, "indexes")
-				if err := os.MkdirAll(indexesDir, 0755); err != nil {
+				if err := os.MkdirAll(indexesDir, 0o750); err != nil {
 					return fmt.Errorf("failed to create indexes directory: %w", err)
 				}
 
