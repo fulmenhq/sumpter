@@ -314,6 +314,7 @@ func newRecipeRunExtractCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Blend client identifier into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Blend site identifier into extracted records")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
+	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
 	cmd.Flags().StringVar(&opts.ExtractOverride, "extract", "", "Override manifest extract config path")
 
@@ -337,6 +338,7 @@ type recipeRunExtractOptions struct {
 	ClientID          string
 	SiteID            string
 	RunID             string
+	NoManifest        bool
 	SignatureOverride string
 	ExtractOverride   string
 }
@@ -355,6 +357,10 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	manifest, err := recipesmanifest.LoadManifest(manifestPath)
 	if err != nil {
 		return err
+	}
+	manifestBytes, err := os.ReadFile(manifestPath) // #nosec G304 - path resolved from explicit recipe workspace/manifest flag
+	if err != nil {
+		return fmt.Errorf("failed to read recipe manifest for provenance: %w", err)
 	}
 
 	// Emit ADR-0006 deprecation warnings (e.g. missing content_version)
@@ -407,10 +413,13 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		ExtractConfig:   extractPath,
 		AllowLargeFiles: allowLargeFiles,
 		RunID:           opts.RunID,
+		NoManifest:      opts.NoManifest,
+		CommandName:     "sumpter recipes run extract",
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,
 		},
+		Recipe: buildRecipeProvenance(manifest, manifestBytes, signatureBytes, extractBytes, recipeContentHash),
 	}
 
 	defaults := manifest.Defaults
@@ -507,8 +516,58 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	if extractOpts.Files == "" && extractOpts.InputPath == "" {
 		return errors.New("no input source resolved: provide --files, --input-path, or define defaults.input in recipe.yaml")
 	}
+	extractOpts.Argv = buildRecipeExtractArgv(workspace, opts, extractOpts)
 
 	return runExtract(extractOpts)
+}
+
+func buildRecipeProvenance(manifest *recipesmanifest.Manifest, manifestBytes, signatureBytes, extractBytes []byte, contentHash string) *provenance.Recipe {
+	if manifest == nil {
+		return nil
+	}
+	owners := make([]provenance.Owner, 0, len(manifest.Owners))
+	for _, owner := range manifest.Owners {
+		owners = append(owners, provenance.Owner{
+			Name:    owner.Name,
+			Contact: owner.Contact,
+			Role:    owner.Role,
+		})
+	}
+	return &provenance.Recipe{
+		ID:                    manifest.ID,
+		ManifestSchemaVersion: manifest.Version,
+		ContentVersion:        manifest.ContentVersion,
+		ContentHash:           contentHash,
+		Owners:                owners,
+		ManifestYAML:          string(manifestBytes),
+		SignatureYAML:         string(signatureBytes),
+		ExtractYAML:           string(extractBytes),
+	}
+}
+
+func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, extractOpts *ExtractOptions) []string {
+	args := []string{"recipes", "run", "extract", workspace}
+	if opts == nil || extractOpts == nil {
+		return args
+	}
+	appendFlag := func(name, value string) {
+		if strings.TrimSpace(value) != "" {
+			args = append(args, name+"="+value)
+		}
+	}
+	appendFlag("--manifest", opts.ManifestPath)
+	appendFlag("--files", extractOpts.Files)
+	appendFlag("--input-path", extractOpts.InputPath)
+	appendFlag("--include-pattern", extractOpts.IncludePattern)
+	appendFlag("--exclude-pattern", extractOpts.ExcludePattern)
+	appendFlag("--format", extractOpts.Format)
+	appendFlag("--output-path", extractOpts.OutputPath)
+	appendFlag("--output-pattern", extractOpts.OutputPattern)
+	appendFlag("--run-id", opts.RunID)
+	if opts.NoManifest {
+		args = append(args, "--no-manifest")
+	}
+	return args
 }
 
 func resolveMaybeRelative(base, candidate string) string {
