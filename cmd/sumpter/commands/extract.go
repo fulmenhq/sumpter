@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fulmenhq/goneat/pkg/pathfinder"
 	"github.com/fulmenhq/sumpter/internal/extract"
@@ -38,7 +39,11 @@ type ExtractOptions struct {
 	ClientID        string
 	SiteID          string
 	RunID           string
+	NoManifest      bool
 	AllowLargeFiles bool
+	CommandName     string
+	Argv            []string
+	Recipe          *provenance.Recipe
 	// Parallel extraction options
 	RecordIndex       string // Path to record index file
 	MaxRecordSizeMB   int    // Maximum record size in MB (0 = no limit)
@@ -83,6 +88,8 @@ according to the extract configuration, producing structured output.`,
 				return fmt.Errorf("failed to get allow-large-files flag: %w", err)
 			}
 			opts.AllowLargeFiles = allowLargeFiles
+			opts.CommandName = "sumpter extract files"
+			opts.Argv = buildExtractArgv(opts)
 			return runExtract(opts)
 		},
 	}
@@ -104,6 +111,7 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Client ID to blend into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Site ID to blend into extracted records")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
+	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 
 	// Parallel extraction flags
 	cmd.Flags().StringVar(&opts.RecordIndex, "record-index", "", "Path to record index file (enables parallel extraction)")
@@ -156,6 +164,7 @@ func newExtractTransformsDescribeCommand() *cobra.Command {
 func runExtract(opts *ExtractOptions) error {
 	logger := logging.GetLogger()
 	logger.Debug("Starting extract command")
+	startedAt := time.Now().UTC()
 
 	// Validate options
 	if opts.Files == "" && opts.InputPath == "" {
@@ -180,6 +189,9 @@ func runExtract(opts *ExtractOptions) error {
 		return fmt.Errorf("failed to load extract config: %w", err)
 	}
 	logger.Debug("Extract config loaded", zap.String("record_type", extCfg.RecordType))
+	if opts.Recipe != nil && len(opts.Recipe.FieldProvenance) == 0 {
+		opts.Recipe.FieldProvenance = buildFieldProvenance(extCfg.FieldMappings)
+	}
 
 	runtimeProvenance, err := buildExtractRuntimeProvenance(opts)
 	if err != nil {
@@ -240,6 +252,11 @@ func runExtract(opts *ExtractOptions) error {
 
 	// Process files
 	results := make(chan extract.ExtractResult, len(files))
+	manifestEnabled := shouldWriteManifest(opts)
+	manifestInputs := make([]provenance.Input, 0, len(files))
+	manifestOutputs := make([]provenance.Output, 0, len(files))
+	countsByRecordType := make(map[string]int)
+	sanitizeRoots := manifestSanitizeRoots(opts)
 
 	// For now, serial processing
 	for _, file := range files {
@@ -254,7 +271,16 @@ func runExtract(opts *ExtractOptions) error {
 			logger.Error("Failed to process file",
 				zap.String("file", result.File),
 				zap.Error(result.Error))
-			continue
+			return fmt.Errorf("failed to process file %s: %w", result.File, result.Error)
+		}
+
+		if manifestEnabled {
+			input, err := provenance.BuildInputLedger(result.File, sanitizeRoots...)
+			if err != nil {
+				return err
+			}
+			input.RecordType = extCfg.RecordType
+			manifestInputs = append(manifestInputs, input)
 		}
 
 		if len(result.Records) == 0 {
@@ -294,8 +320,28 @@ func runExtract(opts *ExtractOptions) error {
 				logger.Error("Failed to write output file",
 					zap.String("file", outputFile),
 					zap.Error(err))
+				return fmt.Errorf("failed to write output %s: %w", outputFile, err)
+			}
+			if manifestEnabled {
+				manifestOutputs = append(manifestOutputs, provenance.Output{
+					Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
+					Format:      effectiveOutputFormat(opts.Format),
+					RecordCount: len(result.Records),
+				})
+				countsByRecordType[extCfg.RecordType] += len(result.Records)
 			}
 		}
+	}
+
+	if manifestEnabled {
+		manifestPath := filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
+		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+			return err
+		}
+		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+	} else if opts.OutputPath == "" && !opts.NoManifest {
+		logger.Warn("Skipping provenance manifest because --output-path is not set")
 	}
 
 	return nil
@@ -316,6 +362,7 @@ func buildExtractRuntimeProvenance(opts *ExtractOptions) (provenance.RuntimeOpti
 
 func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions) error {
 	logger := logging.GetLogger()
+	startedAt := time.Now().UTC()
 	logger.Info("Starting parallel extraction",
 		zap.String("index", opts.RecordIndex),
 		zap.Int("workers", opts.Workers))
@@ -362,6 +409,12 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	logger.Info("Parallel extraction complete", zap.Int("record_count", len(records)))
 
 	// Output records (same as sequential path)
+	manifestEnabled := shouldWriteManifest(opts)
+	sanitizeRoots := manifestSanitizeRoots(opts)
+	var manifestInputs []provenance.Input
+	var manifestOutputs []provenance.Output
+	countsByRecordType := make(map[string]int)
+
 	if opts.OutputPath == "" {
 		// Output to stdout
 		for _, record := range records {
@@ -387,9 +440,138 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 			return fmt.Errorf("failed to write output: %w", err)
 		}
 		logger.Info("Output written", zap.String("file", outputFile), zap.Int("records", len(records)))
+		if manifestEnabled {
+			input, err := provenance.BuildInputLedger(header.Source.Path, sanitizeRoots...)
+			if err != nil {
+				return err
+			}
+			input.RecordType = extCfg.RecordType
+			manifestInputs = append(manifestInputs, input)
+			manifestOutputs = append(manifestOutputs, provenance.Output{
+				Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
+				Format:      effectiveOutputFormat(opts.Format),
+				RecordCount: len(records),
+			})
+			countsByRecordType[extCfg.RecordType] = len(records)
+		}
+	}
+
+	if manifestEnabled {
+		manifestPath := filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
+		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+			return err
+		}
+		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+	} else if opts.OutputPath == "" && !opts.NoManifest {
+		logger.Warn("Skipping provenance manifest because --output-path is not set")
 	}
 
 	return nil
+}
+
+func shouldWriteManifest(opts *ExtractOptions) bool {
+	return opts != nil && !opts.NoManifest && opts.OutputPath != "" && !opts.DryRun
+}
+
+func effectiveOutputFormat(_ string) string {
+	return "json"
+}
+
+func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.RuntimeOptions, startedAt, completedAt time.Time, inputs []provenance.Input, outputs []provenance.Output, counts map[string]int, roots []string) provenance.Manifest {
+	commandName := opts.CommandName
+	if commandName == "" {
+		commandName = "sumpter extract files"
+	}
+	argv := opts.Argv
+	if len(argv) == 0 {
+		argv = buildExtractArgv(opts)
+	}
+	return provenance.Manifest{
+		SchemaVersion:      provenance.ManifestSchemaVersion,
+		RunID:              runtimeProvenance.RunID,
+		SumpterVersion:     runtimeProvenance.SumpterVersion,
+		StartedAt:          startedAt,
+		CompletedAt:        completedAt,
+		CLI:                provenance.CLI{Command: commandName, ArgvSanitized: provenance.SanitizeArgv(argv, roots...)},
+		Recipe:             opts.Recipe,
+		Inputs:             inputs,
+		Outputs:            outputs,
+		CountsByRecordType: counts,
+	}
+}
+
+func manifestSanitizeRoots(opts *ExtractOptions) []string {
+	var roots []string
+	if opts == nil {
+		return roots
+	}
+	for _, root := range []string{opts.OutputPath, opts.InputPath} {
+		if root != "" {
+			roots = append(roots, root)
+		}
+	}
+	if opts.Files != "" {
+		for _, file := range strings.Split(opts.Files, ",") {
+			file = strings.TrimSpace(file)
+			if file == "" {
+				continue
+			}
+			roots = append(roots, filepath.Dir(file))
+		}
+	}
+	return roots
+}
+
+func buildExtractArgv(opts *ExtractOptions) []string {
+	args := []string{"extract", "files"}
+	if opts == nil {
+		return args
+	}
+	appendFlag := func(name, value string) {
+		if strings.TrimSpace(value) != "" {
+			args = append(args, name+"="+value)
+		}
+	}
+	appendFlag("--files", opts.Files)
+	appendFlag("--input-path", opts.InputPath)
+	appendFlag("--include-pattern", opts.IncludePattern)
+	appendFlag("--exclude-pattern", opts.ExcludePattern)
+	appendFlag("--format", opts.Format)
+	appendFlag("--output-path", opts.OutputPath)
+	appendFlag("--output-pattern", opts.OutputPattern)
+	appendFlag("--signature-config-path", opts.SignatureConfig)
+	appendFlag("--extract-config-path", opts.ExtractConfig)
+	appendFlag("--record-index", opts.RecordIndex)
+	appendFlag("--run-id", opts.RunID)
+	if opts.NoManifest {
+		args = append(args, "--no-manifest")
+	}
+	return args
+}
+
+func buildFieldProvenance(mappings []extract.FieldMapping) []provenance.FieldProvenance {
+	var fields []provenance.FieldProvenance
+	var walk func([]extract.FieldMapping)
+	walk = func(items []extract.FieldMapping) {
+		for _, mapping := range items {
+			if strings.TrimSpace(mapping.OutputField) != "" && strings.TrimSpace(mapping.XPath) != "" {
+				fields = append(fields, provenance.FieldProvenance{
+					OutputField: mapping.OutputField,
+					XPath:       mapping.XPath,
+					Type:        mapping.Type,
+					Description: mapping.Description,
+					Transform:   mapping.Transform,
+				})
+			}
+			walk(mapping.ItemMapping)
+			for _, poly := range mapping.Polymorphic {
+				walk(poly.FieldMappings)
+			}
+		}
+	}
+	walk(mappings)
+	return fields
 }
 
 func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
