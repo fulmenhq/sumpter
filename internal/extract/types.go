@@ -34,28 +34,25 @@ type MatchPattern struct {
 	Dialect   string  `yaml:"dialect" json:"dialect"`
 }
 
-// Dialect represents a vendor-specific dialect configuration
+// Dialect represents a vendor-specific dialect configuration.
+//
+// Dialects describe variants of the same format family (for example,
+// different vendor implementations of a shared industry XML standard).
+// The OSS engine carries the dialect *shape* — identifiers, vendor,
+// version — and recipes bind the shape to concrete dialect instances.
+//
+// Per-dialect redaction / blinding rules are intentionally NOT a field
+// on this struct in the OSS engine. The v0.1.4+ redaction story (see
+// the design doc at .plans/active/v0.1.3/03-blindingconfig-refactor.md)
+// puts the redaction *rule shape* in the OSS schema layer and lets
+// recipes declare *category names* — so the engine type system never
+// names a specific vertical's redaction categories.
 type Dialect struct {
-	ID             string         `yaml:"id" json:"id"`
-	Name           string         `yaml:"name" json:"name"`
-	Description    string         `yaml:"description" json:"description"`
-	Vendor         string         `yaml:"vendor" json:"vendor"`
-	Version        string         `yaml:"version" json:"version"`
-	BlindingConfig BlindingConfig `yaml:"blinding_config" json:"blinding_config"`
-}
-
-// BlindingConfig represents configuration for data blinding
-type BlindingConfig struct {
-	Loyalty BlindingRule `yaml:"loyalty" json:"loyalty"`
-	Tender  BlindingRule `yaml:"tender" json:"tender"`
-}
-
-// BlindingRule represents a blinding rule for a data type
-type BlindingRule struct {
-	Enabled             bool     `yaml:"enabled" json:"enabled"`
-	MaxNonBlindedDigits int      `yaml:"max_non_blinded_digits" json:"max_non_blinded_digits"`
-	BlindingChars       []string `yaml:"blinding_chars" json:"blinding_chars"`
-	ExtractionMode      string   `yaml:"extraction_mode" json:"extraction_mode"`
+	ID          string `yaml:"id" json:"id"`
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description"`
+	Vendor      string `yaml:"vendor" json:"vendor"`
+	Version     string `yaml:"version" json:"version"`
 }
 
 // ExtractRecordMatch represents an extract configuration
