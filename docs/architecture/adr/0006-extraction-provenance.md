@@ -15,8 +15,8 @@ Sumpter's extract command produces JSONL records today with a per-record
   "_runtime": {
     "generated_at": "2026-05-09T17:13:46Z",
     "record_type": "saleevent_summary",
-    "signature_id": "naxml-saleevent-summary",
-    "signature_name": "NAXML SaleEvent or VoidEvent",
+    "signature_id": "pos-journal-saleevent-summary",
+    "signature_name": "POS Journal SaleEvent or VoidEvent",
     "source_file": "/abs/path/to/input.xml",
     "summaries_included": false,
     "validation_included": false
