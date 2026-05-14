@@ -474,12 +474,11 @@ changes only.
 - v0.1.4: same condition becomes a **hard error**. Manifest schema bumps
   to `recipe/v0.2.0` with `content_version` required. Sumpter detects
   `recipe/v0.1.0` manifests and instructs the user to migrate.
-- Engagement recipes (the workspace-local ones used in the
-  reflow-validation workspace, kept outside this repo) need
-  `content_version` added before the v0.1.4 cutover. A `sumpter recipes
-  migrate` helper lands alongside the v0.1.3 implementation to bulk-stamp
-  `content_version: "0.0.1"` on opt-in, and the same helper handles the
-  v0.1.4 schema-version bump.
+- Workspace-local recipes (the ones living in private engagement
+  workspaces outside this repo) need `content_version` added before the
+  v0.1.4 cutover. A `sumpter recipes migrate` helper lands alongside the
+  v0.1.3 implementation to bulk-stamp `content_version: "0.0.1"` on
+  opt-in, and the same helper handles the v0.1.4 schema-version bump.
 
 ## Out of scope (tracked for later)
 
