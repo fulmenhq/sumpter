@@ -1,24 +1,24 @@
-# ADR-0001: Validation Expression Language for Extract Recipes
+# ADR-0004: Validation Expression Language for Extract Recipes
 
 **Status:** Accepted
 **Date:** 2025-09-29
 **Deciders:** @3leapsdave (with `devlead` / `qa` AI contribution)
-**Context:** Alpha phase - validating retail extraction recipes
+**Context:** Alpha phase — validating extraction recipes for record-based XML formats
 
 ## Context
 
 Sumpter's extract recipes need validation capabilities to ensure data quality during extraction. Users need to:
 
-1. **Accumulate metrics** during extraction (e.g., count transactions, sum revenue)
-2. **Aggregate data** post-extraction (e.g., verify prepay/completion pairs match)
+1. **Accumulate metrics** during extraction (e.g., count records, sum measured values)
+2. **Aggregate data** post-extraction (e.g., verify per-category sums reconcile with reported totals)
 3. **Validate results** with severity-based rules (info/warning/error/fatal)
 
-Example use case from a retail transaction journal:
+Example use case — ClinVar variant-archive extraction:
 
-- Extract 540+ transactions including 48 fuel prepays
-- Validate prepay count matches completion count (prevent double-counting)
-- Verify revenue totals reconcile with journal headers
-- Fail extraction if data integrity is broken
+- Extract several thousand `VariationArchive` records, each carrying a clinical-significance classification
+- Accumulate per-classification counts during extraction
+- Aggregate against the release-level summary the corpus declares
+- Fail extraction if the per-classification counts don't reconcile with the declared totals
 
 ## Decision
 
@@ -74,24 +74,24 @@ validation_metadata:
   expression_language: "sumpter-dsl" # Explicit version
 
   accumulations:
-    - name: "suspended_count"
+    - name: "active_count"
       operation: "count"
-      filter: "is_suspended == true"
+      filter: "is_active == true"
 
-    - name: "revenue_total"
+    - name: "total_amount"
       operation: "sum"
-      field: "total_grand_amount"
-      filter: "is_suspended == false"
+      field: "amount"
+      filter: "is_active == true"
 
   aggregations:
-    - name: "revenue_match_pct"
-      expression: "100 * revenue_total / total_daily_grand_amount"
+    - name: "amount_match_pct"
+      expression: "100 * total_amount / reported_total"
 
   validations:
-    - name: "prepay_completion_balance"
-      rule: "suspended_count == completion_count"
+    - name: "count_balance"
+      rule: "active_count == expected_count"
       severity: "fatal"
-      message: "Prepay/completion mismatch: {suspended_count} vs {completion_count}"
+      message: "Count mismatch: {active_count} vs {expected_count}"
 ```
 
 ### Future Extension Points
