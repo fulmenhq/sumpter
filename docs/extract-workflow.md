@@ -57,6 +57,27 @@ sumpter recipes run extract ./recipes/customer/retail-daily-sales \
 
 The runner resolves relative paths via `recipe.yaml`, applies defaults for include/exclude patterns, and delegates to the extract engine. Override any option at the command line when experimenting.
 
+### Field Mappings
+
+`field_mappings` can extract values from XML with `xpath` or derive scalar fields with `expression`.
+
+```yaml
+field_mappings:
+  - output_field: a_count
+    xpath: "Counts/A"
+    type: integer
+  - output_field: b_count
+    xpath: "Counts/B"
+    type: integer
+  - output_field: ab_combined
+    expression: "a_count + b_count"
+    type: integer
+```
+
+Expression mappings use the same Sumpter DSL as validation metadata and summaries. Extraction runs in two passes: every top-level XPath mapping is populated first, then top-level expression mappings are evaluated in declaration order against the populated record. That means expression fields can reference any XPath field in the same record, and can reference earlier expression fields, but cannot reference expression fields declared later. Undefined names fail the extraction with the output field and expression in the error message.
+
+Each scalar mapping must declare exactly one of `xpath` or `expression`. Expression mappings are only supported for top-level scalar `field_mappings`; nested `item_mapping` and `polymorphic_mapping` fields remain XPath-only.
+
 ### Output Options
 
 ```

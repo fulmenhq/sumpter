@@ -152,6 +152,12 @@ pairs with `outputs/<run_id>/manifest.json`.
         "xpath": "BusinessDate",
         "type": "string",
         "description": "POS-reported business date for the event"
+      },
+      {
+        "output_field": "net_amount",
+        "expression": "gross_amount - discount_amount",
+        "type": "number",
+        "description": "Recipe-derived net amount"
       }
     ]
   },
@@ -184,6 +190,9 @@ Notes:
   rules live next to the env-var redaction helpers.
 - `signature_yaml` / `extract_yaml` are the *verbatim* loaded recipe
   bytes (not the canonicalized hash input). Audit-friendly.
+- Derived fields use `expression` instead of `xpath` in
+  `field_provenance` so consumers can distinguish recipe-computed values
+  from XML-sourced fields.
 
 The JSON Schema for this manifest ships as `schemas/provenance/v1.json`
 alongside the implementation (committed in PR-C).

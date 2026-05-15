@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,6 +245,170 @@ func TestValidateMainConfig(t *testing.T) {
 	}
 	if result.ErrorCount() == 0 {
 		t.Error("ValidateExtractConfig() should return validation errors for invalid config")
+	}
+
+	schemaCases := []struct {
+		name  string
+		field string
+		valid bool
+	}{
+		{
+			name: "expression field",
+			field: `{
+				"output_field": "total_count",
+				"expression": "a_count + b_count",
+				"type": "integer"
+			}`,
+			valid: true,
+		},
+		{
+			name: "both xpath and expression",
+			field: `{
+				"output_field": "total_count",
+				"xpath": "Total",
+				"expression": "a_count + b_count",
+				"type": "integer"
+			}`,
+			valid: false,
+		},
+		{
+			name: "neither xpath nor expression",
+			field: `{
+				"output_field": "total_count",
+				"type": "integer"
+			}`,
+			valid: false,
+		},
+		{
+			name: "unknown field mapping key",
+			field: `{
+				"output_field": "total_count",
+				"xpath": "Total",
+				"type": "integer",
+				"exprsesion": "a_count + b_count"
+			}`,
+			valid: false,
+		},
+		{
+			name: "array item mapping remains valid",
+			field: `{
+				"output_field": "items",
+				"xpath": "Item",
+				"type": "array",
+				"item_mapping": [
+					{
+						"output_field": "sku",
+						"xpath": "SKU",
+						"type": "string"
+					}
+				]
+			}`,
+			valid: true,
+		},
+		{
+			name: "array item mapping transform params remain valid",
+			field: `{
+				"output_field": "items",
+				"xpath": "Item",
+				"type": "array",
+				"item_mapping": [
+					{
+						"output_field": "sku",
+						"xpath": "SKU",
+						"type": "string",
+						"transform": "regex_extract",
+						"transform_params": {
+							"pattern": "SKU-(.*)",
+							"group": 1
+						}
+					}
+				]
+			}`,
+			valid: true,
+		},
+		{
+			name: "polymorphic mapping remains valid",
+			field: `{
+				"output_field": "items",
+				"xpath": "Item",
+				"type": "array",
+				"polymorphic_mapping": [
+					{
+						"element_type": "Sale",
+						"field_mappings": [
+							{
+								"output_field": "amount",
+								"xpath": "Amount",
+								"type": "number"
+							}
+						]
+					}
+				]
+			}`,
+			valid: true,
+		},
+		{
+			name: "polymorphic nested item mapping remains valid",
+			field: `{
+				"output_field": "items",
+				"xpath": "Item",
+				"type": "array",
+				"polymorphic_mapping": [
+					{
+						"element_type": "Sale",
+						"field_mappings": [
+							{
+								"output_field": "discounts",
+								"xpath": "Discount",
+								"type": "array",
+								"item_mapping": [
+									{
+										"output_field": "amount",
+										"xpath": "Amount",
+										"type": "number"
+									}
+								]
+							}
+						]
+					}
+				]
+			}`,
+			valid: true,
+		},
+		{
+			name: "nested expression remains out of scope",
+			field: `{
+				"output_field": "items",
+				"xpath": "Item",
+				"type": "array",
+				"item_mapping": [
+					{
+						"output_field": "derived",
+						"expression": "a + b",
+						"type": "integer"
+					}
+				]
+			}`,
+			valid: false,
+		},
+	}
+
+	for _, tt := range schemaCases {
+		t.Run(tt.name, func(t *testing.T) {
+			config := fmt.Sprintf(`{
+				"record_type": "test_record",
+				"match_selectors": [{"xpath": "//Record"}],
+				"field_mappings": [%s],
+				"output_schema": {"type": "object"}
+			}`, tt.field)
+			result, err := validator.ValidateExtractConfig([]byte(config), "test-extract.yaml")
+			if err != nil {
+				t.Fatalf("ValidateExtractConfig() error = %v", err)
+			}
+			if result.IsValid() != tt.valid {
+				t.Fatalf("IsValid() = %v, want %v; errors: %v", result.IsValid(), tt.valid, result.Errors)
+			}
+		})
 	}
 }
 

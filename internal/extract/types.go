@@ -78,7 +78,7 @@ type MatchSelector struct {
 	CompiledXPath  *xpath.Expr            `yaml:"-" json:"-"`
 }
 
-// FieldMapping represents a mapping from XPath to output field.
+// FieldMapping represents a mapping from an XPath or expression to output field.
 //
 // Description (added per ADR-0006) is an optional human-readable note
 // describing what the field captures and where it comes from. The
@@ -87,6 +87,7 @@ type MatchSelector struct {
 type FieldMapping struct {
 	OutputField     string                 `yaml:"output_field" json:"output_field"`
 	XPath           string                 `yaml:"xpath" json:"xpath"`
+	Expression      string                 `yaml:"expression,omitempty" json:"expression,omitempty"`
 	Type            string                 `yaml:"type" json:"type"`
 	Description     string                 `yaml:"description,omitempty" json:"description,omitempty"`
 	Transform       string                 `yaml:"transform,omitempty" json:"transform,omitempty"`

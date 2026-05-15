@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
@@ -136,6 +137,30 @@ func TestRunExtractWritesRecipeBackedManifest(t *testing.T) {
 	field := manifest.Recipe.FieldProvenance[0]
 	if field.OutputField != "name" || field.XPath != "name" || field.Description != "Sample name" {
 		t.Fatalf("unexpected field provenance: %#v", field)
+	}
+}
+
+func TestBuildFieldProvenanceIncludesExpressionMappings(t *testing.T) {
+	fields := buildFieldProvenance([]extract.FieldMapping{
+		{
+			OutputField: "a_count",
+			XPath:       "A",
+			Type:        "integer",
+		},
+		{
+			OutputField: "total_count",
+			Expression:  "a_count + b_count",
+			Type:        "integer",
+			Description: "Derived total count.",
+		},
+	})
+
+	if len(fields) != 2 {
+		t.Fatalf("field provenance len = %d, want 2", len(fields))
+	}
+	if fields[1].OutputField != "total_count" || fields[1].Expression != "a_count + b_count" ||
+		fields[1].XPath != "" || fields[1].Description != "Derived total count." {
+		t.Fatalf("unexpected expression provenance: %#v", fields[1])
 	}
 }
 

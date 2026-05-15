@@ -62,10 +62,11 @@ type Owner struct {
 	Role    string `json:"role,omitempty"`
 }
 
-// FieldProvenance describes the source expression for an output field.
+// FieldProvenance describes the source selector or expression for an output field.
 type FieldProvenance struct {
 	OutputField string `json:"output_field"`
-	XPath       string `json:"xpath"`
+	XPath       string `json:"xpath,omitempty"`
+	Expression  string `json:"expression,omitempty"`
 	Type        string `json:"type,omitempty"`
 	Description string `json:"description,omitempty"`
 	Transform   string `json:"transform,omitempty"`
