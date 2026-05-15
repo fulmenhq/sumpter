@@ -3,6 +3,7 @@ package inspect
 import (
 	"embed"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -122,7 +123,13 @@ func (r *RegistryLoader) loadEmbeddedDialects(registry *DialectRegistry) error {
 
 // loadExternalDialects loads dialects from external directory
 func (r *RegistryLoader) loadExternalDialects(registry *DialectRegistry, dialectsDir string) error {
-	return filepath.WalkDir(dialectsDir, func(path string, d fs.DirEntry, err error) error {
+	rootDir, root, err := openLocalRoot(dialectsDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	return filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -131,7 +138,7 @@ func (r *RegistryLoader) loadExternalDialects(registry *DialectRegistry, dialect
 			return nil
 		}
 
-		data, err := os.ReadFile(path) // #nosec G304 - External dialect loading, validated path
+		data, err := readWalkedRootFile(root, rootDir, path)
 		if err != nil {
 			r.logger.Warn("failed to read external dialect file", zap.String("file", path), zap.Error(err))
 			return nil
@@ -152,7 +159,13 @@ func (r *RegistryLoader) loadExternalDialects(registry *DialectRegistry, dialect
 
 // loadExtensions loads dialect extensions from user directory
 func (r *RegistryLoader) loadExtensions(registry *DialectRegistry, extensionsDir string) error {
-	return filepath.WalkDir(extensionsDir, func(path string, d fs.DirEntry, err error) error {
+	rootDir, root, err := openLocalRoot(extensionsDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	return filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -161,7 +174,7 @@ func (r *RegistryLoader) loadExtensions(registry *DialectRegistry, extensionsDir
 			return nil
 		}
 
-		data, err := os.ReadFile(path) // #nosec G304 - Extension loading, validated path
+		data, err := readWalkedRootFile(root, rootDir, path)
 		if err != nil {
 			r.logger.Warn("failed to read extension file", zap.String("file", path), zap.Error(err))
 			return nil
@@ -173,17 +186,16 @@ func (r *RegistryLoader) loadExtensions(registry *DialectRegistry, extensionsDir
 			return nil
 		}
 
-		// Load the dialect file referenced by the extension
-		dialectPath := filepath.Join(extensionsDir, extension.Source)
-		dialectData, err := os.ReadFile(dialectPath) // #nosec G304 - Extension dialect loading, validated path
+		// Load the dialect file referenced by the extension.
+		dialectData, err := readNamedRootFile(root, extension.Source)
 		if err != nil {
-			r.logger.Warn("failed to read dialect file for extension", zap.String("dialect_file", dialectPath), zap.Error(err))
+			r.logger.Warn("failed to read dialect file for extension", zap.String("dialect_file", extension.Source), zap.Error(err))
 			return nil
 		}
 
 		var dialect Dialect
 		if err := yaml.Unmarshal(dialectData, &dialect); err != nil {
-			r.logger.Warn("failed to parse dialect for extension", zap.String("dialect_file", dialectPath), zap.Error(err))
+			r.logger.Warn("failed to parse dialect for extension", zap.String("dialect_file", extension.Source), zap.Error(err))
 			return nil
 		}
 
@@ -197,6 +209,39 @@ func (r *RegistryLoader) loadExtensions(registry *DialectRegistry, extensionsDir
 
 		return nil
 	})
+}
+
+func openLocalRoot(dir string) (string, *os.Root, error) {
+	rootDir, err := filepath.Abs(filepath.Clean(dir))
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve directory %s: %w", dir, err)
+	}
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return "", nil, fmt.Errorf("open rooted directory %s: %w", rootDir, err)
+	}
+	return rootDir, root, nil
+}
+
+func readWalkedRootFile(root *os.Root, rootDir, path string) ([]byte, error) {
+	rel, err := filepath.Rel(rootDir, path)
+	if err != nil {
+		return nil, err
+	}
+	return readNamedRootFile(root, rel)
+}
+
+func readNamedRootFile(root *os.Root, name string) ([]byte, error) {
+	name = filepath.Clean(name)
+	if !filepath.IsLocal(name) {
+		return nil, fmt.Errorf("path %s escapes registry root", name)
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	return io.ReadAll(file)
 }
 
 // applyExtension applies an extension operation to the registry

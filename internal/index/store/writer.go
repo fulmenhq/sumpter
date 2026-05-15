@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/index"
@@ -24,6 +25,11 @@ import (
 //   - record_num: int32 (4 bytes)
 //   - sha256: [32]byte (32 bytes, raw binary)
 const BinaryRecordWidth = 64
+
+const (
+	maxInt64AsUint64 = uint64(1<<63 - 1)
+	maxUint32AsInt64 = int64(1<<32 - 1)
+)
 
 // SzstStoreVersion is the version identifier for the seekable-zstd store format.
 // This is distinct from the JSON schema version (record-index/v0.1.0) to allow
@@ -124,13 +130,37 @@ func EncodeBinaryRecord(buf []byte, rec *index.RecordMetadata) error {
 	if len(buf) < BinaryRecordWidth {
 		return fmt.Errorf("buffer too small: need %d, got %d", BinaryRecordWidth, len(buf))
 	}
+	if rec == nil {
+		return fmt.Errorf("record is required")
+	}
+
+	startOffset, err := checkedUint64FromInt64("start_offset", rec.StartOffset)
+	if err != nil {
+		return err
+	}
+	endOffset, err := checkedUint64FromInt64("end_offset", rec.EndOffset)
+	if err != nil {
+		return err
+	}
+	sizeBytes, err := checkedUint64FromInt64("size_bytes", rec.SizeBytes)
+	if err != nil {
+		return err
+	}
+	depth, err := checkedUint32FromInt("depth", rec.Depth)
+	if err != nil {
+		return err
+	}
+	recordNum, err := checkedUint32FromInt("record_num", rec.RecordNum)
+	if err != nil {
+		return err
+	}
 
 	// Encode fields in little-endian order
-	binary.LittleEndian.PutUint64(buf[0:8], uint64(rec.StartOffset))
-	binary.LittleEndian.PutUint64(buf[8:16], uint64(rec.EndOffset))
-	binary.LittleEndian.PutUint64(buf[16:24], uint64(rec.SizeBytes))
-	binary.LittleEndian.PutUint32(buf[24:28], uint32(rec.Depth))
-	binary.LittleEndian.PutUint32(buf[28:32], uint32(rec.RecordNum))
+	binary.LittleEndian.PutUint64(buf[0:8], startOffset)
+	binary.LittleEndian.PutUint64(buf[8:16], endOffset)
+	binary.LittleEndian.PutUint64(buf[16:24], sizeBytes)
+	binary.LittleEndian.PutUint32(buf[24:28], depth)
+	binary.LittleEndian.PutUint32(buf[28:32], recordNum)
 
 	// Decode hex SHA256 to raw bytes
 	sha256Bytes, err := hexToBytes32(rec.SHA256)
@@ -149,16 +179,68 @@ func DecodeBinaryRecord(buf []byte) (*index.RecordMetadata, error) {
 		return nil, fmt.Errorf("buffer too small: need %d, got %d", BinaryRecordWidth, len(buf))
 	}
 
+	startOffset, err := checkedInt64FromUint64("start_offset", binary.LittleEndian.Uint64(buf[0:8]))
+	if err != nil {
+		return nil, err
+	}
+	endOffset, err := checkedInt64FromUint64("end_offset", binary.LittleEndian.Uint64(buf[8:16]))
+	if err != nil {
+		return nil, err
+	}
+	sizeBytes, err := checkedInt64FromUint64("size_bytes", binary.LittleEndian.Uint64(buf[16:24]))
+	if err != nil {
+		return nil, err
+	}
+	depth, err := checkedIntFromUint32("depth", binary.LittleEndian.Uint32(buf[24:28]))
+	if err != nil {
+		return nil, err
+	}
+	recordNum, err := checkedIntFromUint32("record_num", binary.LittleEndian.Uint32(buf[28:32]))
+	if err != nil {
+		return nil, err
+	}
+
 	rec := &index.RecordMetadata{
-		StartOffset: int64(binary.LittleEndian.Uint64(buf[0:8])),
-		EndOffset:   int64(binary.LittleEndian.Uint64(buf[8:16])),
-		SizeBytes:   int64(binary.LittleEndian.Uint64(buf[16:24])),
-		Depth:       int(binary.LittleEndian.Uint32(buf[24:28])),
-		RecordNum:   int(binary.LittleEndian.Uint32(buf[28:32])),
+		StartOffset: startOffset,
+		EndOffset:   endOffset,
+		SizeBytes:   sizeBytes,
+		Depth:       depth,
+		RecordNum:   recordNum,
 		SHA256:      bytesToHex(buf[32:64]),
 	}
 
 	return rec, nil
+}
+
+func checkedUint64FromInt64(field string, value int64) (uint64, error) {
+	if value < 0 {
+		return 0, fmt.Errorf("%s must be non-negative, got %d", field, value)
+	}
+	return uint64(value), nil // #nosec G115 - non-negative int64 always fits uint64
+}
+
+func checkedUint32FromInt(field string, value int) (uint32, error) {
+	if value < 0 {
+		return 0, fmt.Errorf("%s must be non-negative, got %d", field, value)
+	}
+	if int64(value) > maxUint32AsInt64 {
+		return 0, fmt.Errorf("%s exceeds uint32 max: %d", field, value)
+	}
+	return uint32(value), nil // #nosec G115 - value is checked against uint32 max above
+}
+
+func checkedInt64FromUint64(field string, value uint64) (int64, error) {
+	if value > maxInt64AsUint64 {
+		return 0, fmt.Errorf("%s exceeds int64 max: %d", field, value)
+	}
+	return int64(value), nil // #nosec G115 - value is checked against int64 max above
+}
+
+func checkedIntFromUint32(field string, value uint32) (int, error) {
+	if strconv.IntSize == 32 && value > uint32(1<<31-1) {
+		return 0, fmt.Errorf("%s exceeds int max: %d", field, value)
+	}
+	return int(value), nil // #nosec G115 - value fits int on this architecture
 }
 
 // hexToBytes32 converts a 64-character hex string to a 32-byte array.
