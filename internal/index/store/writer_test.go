@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/index"
@@ -106,6 +107,57 @@ func TestEncodeBinaryRecord_InvalidSHA256(t *testing.T) {
 	err := EncodeBinaryRecord(buf, rec)
 	if err == nil {
 		t.Fatal("Expected error for invalid SHA256, got nil")
+	}
+}
+
+func TestEncodeBinaryRecord_RejectsOutOfRangeFields(t *testing.T) {
+	validSHA := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	tests := []struct {
+		name string
+		rec  *index.RecordMetadata
+	}{
+		{
+			name: "nil record",
+			rec:  nil,
+		},
+		{
+			name: "negative start offset",
+			rec:  &index.RecordMetadata{StartOffset: -1, SHA256: validSHA},
+		},
+		{
+			name: "negative end offset",
+			rec:  &index.RecordMetadata{EndOffset: -1, SHA256: validSHA},
+		},
+		{
+			name: "negative size",
+			rec:  &index.RecordMetadata{SizeBytes: -1, SHA256: validSHA},
+		},
+		{
+			name: "negative depth",
+			rec:  &index.RecordMetadata{Depth: -1, SHA256: validSHA},
+		},
+		{
+			name: "negative record number",
+			rec:  &index.RecordMetadata{RecordNum: -1, SHA256: validSHA},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := make([]byte, BinaryRecordWidth)
+			if err := EncodeBinaryRecord(buf, tc.rec); err == nil {
+				t.Fatal("expected range error, got nil")
+			}
+		})
+	}
+}
+
+func TestDecodeBinaryRecord_RejectsOutOfRangeInt64(t *testing.T) {
+	buf := make([]byte, BinaryRecordWidth)
+	binary.LittleEndian.PutUint64(buf[0:8], maxInt64AsUint64+1)
+
+	if _, err := DecodeBinaryRecord(buf); err == nil {
+		t.Fatal("expected int64 range error, got nil")
 	}
 }
 

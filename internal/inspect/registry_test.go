@@ -172,6 +172,36 @@ patterns:
 	}
 }
 
+func TestRegistryLoader_LoadExtensionsRejectsEscapingSource(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	loader := NewRegistryLoader(logger)
+
+	tempDir := t.TempDir()
+	outsideDialect := filepath.Join(t.TempDir(), "outside.yaml")
+	if err := os.WriteFile(outsideDialect, []byte(`dialect_id: "outside"
+name: "Outside"
+patterns: []
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile outside dialect: %v", err)
+	}
+
+	extension := `type: "blend"
+source: "../outside.yaml"
+version: "v0.1.0"
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "extension.yaml"), []byte(extension), 0o600); err != nil {
+		t.Fatalf("WriteFile extension: %v", err)
+	}
+
+	registry := &DialectRegistry{Dialects: []Dialect{}}
+	if err := loader.loadExtensions(registry, tempDir); err != nil {
+		t.Fatalf("loadExtensions: %v", err)
+	}
+	if len(registry.Dialects) != 0 {
+		t.Fatalf("escaping extension source loaded %d dialects, want 0", len(registry.Dialects))
+	}
+}
+
 func TestRegistryLoader_ApplyBlend(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	loader := NewRegistryLoader(logger)

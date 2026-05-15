@@ -23,10 +23,10 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT"
 
 EMBED_DIRS=(
-  internal/assets/embedded_docs
-  internal/assets/embedded_schemas
-  internal/assets/embedded_examples
-  internal/assets/embedded_templates
+	internal/assets/embedded_docs
+	internal/assets/embedded_schemas
+	internal/assets/embedded_examples
+	internal/assets/embedded_templates
 )
 
 echo "🔍 Verifying embedded assets are in sync with SSOT..."
@@ -34,26 +34,26 @@ echo "🔍 Verifying embedded assets are in sync with SSOT..."
 # Preflight: refuse if embedded paths are already dirty.
 # We cannot reliably detect drift if the user has uncommitted edits in
 # embedded_* — the post-sync diff would confuse those edits with sync drift.
-if ! git diff --quiet -- "${EMBED_DIRS[@]}" 2>/dev/null \
-   || ! git diff --cached --quiet -- "${EMBED_DIRS[@]}" 2>/dev/null; then
-  echo "ℹ️  Embedded mirror paths have uncommitted changes."
-  echo "    verify-embeds.sh refuses to run because it cannot distinguish your"
-  echo "    in-progress edits from drift introduced by an unsynced SSOT."
-  echo ""
-  echo "    Either commit/stash the embedded changes first, or run"
-  echo "    \`scripts/embed-assets.sh\` directly and inspect the result manually."
-  echo ""
-  echo "    Affected paths:"
-  git diff --name-only HEAD -- "${EMBED_DIRS[@]}" | sed 's/^/      /'
-  exit 2
+if ! git diff --quiet -- "${EMBED_DIRS[@]}" 2>/dev/null ||
+	! git diff --cached --quiet -- "${EMBED_DIRS[@]}" 2>/dev/null; then
+	echo "ℹ️  Embedded mirror paths have uncommitted changes."
+	echo "    verify-embeds.sh refuses to run because it cannot distinguish your"
+	echo "    in-progress edits from drift introduced by an unsynced SSOT."
+	echo ""
+	echo "    Either commit/stash the embedded changes first, or run"
+	echo "    \`scripts/embed-assets.sh\` directly and inspect the result manually."
+	echo ""
+	echo "    Affected paths:"
+	git diff --name-only HEAD -- "${EMBED_DIRS[@]}" | sed 's/^/      /'
+	exit 2
 fi
 
 echo "🔄 Running scripts/embed-assets.sh to regenerate mirrors from SSOT..."
-./scripts/embed-assets.sh > /dev/null 2>&1
+./scripts/embed-assets.sh >/dev/null 2>&1
 
 if git diff --quiet -- "${EMBED_DIRS[@]}"; then
-  echo "✅ Embedded mirrors match SSOT."
-  exit 0
+	echo "✅ Embedded mirrors match SSOT."
+	exit 0
 fi
 
 echo "❌ Drift detected — embedded mirrors differ from SSOT after running"
