@@ -324,6 +324,49 @@ output_schema:
 	}
 }
 
+func TestLoadExtractConfig_FieldExpression(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "extract.yaml")
+	configContent := `record_type: "sample"
+match_selectors:
+  - xpath: "//Envelope"
+field_mappings:
+  - output_field: "a_count"
+    xpath: "A"
+    type: "integer"
+  - output_field: "b_count"
+    xpath: "B"
+    type: "integer"
+  - output_field: "total_count"
+    expression: "a_count + b_count"
+    type: "integer"
+    description: "Derived total count."
+output_schema:
+  type: "object"
+  properties:
+    a_count:
+      type: "integer"
+    b_count:
+      type: "integer"
+    total_count:
+      type: "integer"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := LoadExtractConfig(configPath)
+	if err != nil {
+		t.Fatalf("expected schema + load success with expression field, got: %v", err)
+	}
+	if len(cfg.FieldMappings) != 3 {
+		t.Fatalf("expected 3 field mappings, got %d", len(cfg.FieldMappings))
+	}
+	if cfg.FieldMappings[2].Expression != "a_count + b_count" {
+		t.Fatalf("Expression not unmarshalled: got %q", cfg.FieldMappings[2].Expression)
+	}
+}
+
 func TestLoadExtractConfig_InvalidSchema(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "extract.yaml")
@@ -383,6 +426,78 @@ func TestExtractRecordsOutputSchemaValidation(t *testing.T) {
 	_, err = extractRecords(doc, cfg, nil)
 	if err == nil || !strings.Contains(err.Error(), "output schema validation failed") {
 		t.Fatalf("expected output schema validation failure, got %v", err)
+	}
+}
+
+func TestExtractRecordsExpressionFieldMappings(t *testing.T) {
+	docContent := `<?xml version="1.0"?><Envelope><Record><A>2</A><B>3</B></Record></Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	if err != nil {
+		t.Fatalf("failed to parse xml: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "a_count", XPath: "A", Type: "integer"},
+			{OutputField: "total_count", Expression: "a_count + b_count", Type: "integer"},
+			{OutputField: "b_count", XPath: "B", Type: "integer"},
+			{OutputField: "double_total", Expression: "total_count * 2", Type: "integer"},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	records, err := extractRecords(doc, cfg, nil)
+	if err != nil {
+		t.Fatalf("extractRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+	record := records[0]
+	if got := record["a_count"]; got != int64(2) {
+		t.Fatalf("a_count = %#v, want 2", got)
+	}
+	if got := record["b_count"]; got != int64(3) {
+		t.Fatalf("b_count = %#v, want 3", got)
+	}
+	if got := record["total_count"]; got != int64(5) {
+		t.Fatalf("total_count = %#v, want 5", got)
+	}
+	if got := record["double_total"]; got != int64(10) {
+		t.Fatalf("double_total = %#v, want 10", got)
+	}
+}
+
+func TestExtractRecordsExpressionFieldMappingUndefinedVariable(t *testing.T) {
+	docContent := `<?xml version="1.0"?><Envelope><Record><A>2</A></Record></Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	if err != nil {
+		t.Fatalf("failed to parse xml: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "bad_total", Expression: "missing_count + 1", Type: "integer"},
+			{OutputField: "a_count", XPath: "A", Type: "integer"},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	_, err = extractRecords(doc, cfg, nil)
+	if err == nil {
+		t.Fatal("expected undefined variable error")
+	}
+	if !strings.Contains(err.Error(), "bad_total") || !strings.Contains(err.Error(), "missing_count + 1") ||
+		!strings.Contains(err.Error(), "undefined variable: missing_count") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

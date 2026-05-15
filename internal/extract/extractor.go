@@ -631,9 +631,26 @@ func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields 
 			// Apply field mappings
 			for j := range cfg.FieldMappings {
 				mapping := &cfg.FieldMappings[j]
+				if strings.TrimSpace(mapping.Expression) != "" {
+					continue
+				}
 				value, err := extractValue(node, mapping)
 				if err != nil {
 					return nil, fmt.Errorf("failed to extract value for field %s: %w", mapping.OutputField, err)
+				}
+				if value != nil {
+					record[mapping.OutputField] = value
+				}
+			}
+
+			for j := range cfg.FieldMappings {
+				mapping := &cfg.FieldMappings[j]
+				if strings.TrimSpace(mapping.Expression) == "" {
+					continue
+				}
+				value, err := extractExpressionValue(mapping, record)
+				if err != nil {
+					return nil, err
 				}
 				if value != nil {
 					record[mapping.OutputField] = value
@@ -1048,6 +1065,47 @@ func extractValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, erro
 	}
 }
 
+func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}) (interface{}, error) {
+	if mapping == nil {
+		return nil, nil
+	}
+
+	expression := strings.TrimSpace(mapping.Expression)
+	if expression == "" {
+		return nil, nil
+	}
+	if strings.TrimSpace(mapping.Transform) != "" {
+		return nil, fmt.Errorf("transform %q is not supported for expression field %s", mapping.Transform, mapping.OutputField)
+	}
+	if len(mapping.TransformParams) > 0 {
+		return nil, fmt.Errorf("transform_params are not supported for expression field %s", mapping.OutputField)
+	}
+
+	expr, err := dsl.ParseExpression(expression)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse expression for field %s (%q): %w", mapping.OutputField, expression, err)
+	}
+
+	evaluator := dsl.NewEvaluator(record)
+	value, err := evaluator.EvaluateExpression(expr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate expression for field %s (%q): %w", mapping.OutputField, expression, err)
+	}
+
+	switch strings.ToLower(mapping.Type) {
+	case "number":
+		return coerceNumber(value)
+	case "integer":
+		return coerceInteger(value)
+	case "boolean":
+		return coerceBoolean(value)
+	case "string", "":
+		return coerceString(value)
+	default:
+		return value, nil
+	}
+}
+
 func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, error) {
 	if mapping == nil {
 		return nil, nil
@@ -1313,6 +1371,20 @@ func coerceNumber(value interface{}) (interface{}, error) {
 		return nil, nil
 	case float64:
 		return v, nil
+	case float32:
+		return float64(v), nil
+	case int:
+		return float64(v), nil
+	case int64:
+		return float64(v), nil
+	case int32:
+		return float64(v), nil
+	case uint:
+		return float64(v), nil
+	case uint32:
+		return float64(v), nil
+	case uint64:
+		return float64(v), nil
 	case string:
 		s := strings.TrimSpace(v)
 		if s == "" {
@@ -1338,6 +1410,23 @@ func coerceInteger(value interface{}) (interface{}, error) {
 	case nil:
 		return nil, nil
 	case float64:
+		return int64(v), nil
+	case float32:
+		return int64(v), nil
+	case int:
+		return int64(v), nil
+	case int64:
+		return v, nil
+	case int32:
+		return int64(v), nil
+	case uint:
+		return int64(v), nil
+	case uint32:
+		return int64(v), nil
+	case uint64:
+		if v > math.MaxInt64 {
+			return nil, fmt.Errorf("uint64 value %d overflows int64", v)
+		}
 		return int64(v), nil
 	case string:
 		s := strings.TrimSpace(v)
@@ -1373,6 +1462,20 @@ func coerceBoolean(value interface{}) (interface{}, error) {
 	case bool:
 		return v, nil
 	case float64:
+		return v != 0, nil
+	case float32:
+		return v != 0, nil
+	case int:
+		return v != 0, nil
+	case int64:
+		return v != 0, nil
+	case int32:
+		return v != 0, nil
+	case uint:
+		return v != 0, nil
+	case uint32:
+		return v != 0, nil
+	case uint64:
 		return v != 0, nil
 	case string:
 		s := strings.ToLower(strings.TrimSpace(v))

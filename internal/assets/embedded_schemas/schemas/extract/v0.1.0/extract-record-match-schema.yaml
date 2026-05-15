@@ -2,6 +2,62 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 title: Extract Record Match Schema
 description: User configuration for extracting specific records from XML files without hardcoding patterns. Enables dynamic extraction of structured data based on XPath selectors and field mappings.
 type: object
+$defs:
+  xpathFieldMapping:
+    type: object
+    properties:
+      output_field:
+        type: string
+        description: The field name in the output schema to map to.
+      xpath:
+        type: string
+        description: XPath expression relative to the current XML element.
+      type:
+        type: string
+        description: The expected data type of the field.
+        enum: ["string", "number", "integer", "boolean", "array"]
+      description:
+        type: string
+        description: Optional human-readable description of what this field captures and where it comes from.
+      transform:
+        type: string
+        description: Optional transformation function to apply to the extracted value.
+      transform_params:
+        type: object
+        description: Parameters to be supplied to the transform function.
+        additionalProperties: true
+      item_mapping:
+        type: array
+        description: For array types, defines how to map each array item.
+        items:
+          $ref: "#/$defs/xpathFieldMapping"
+      polymorphic_mapping:
+        type: array
+        description: For array types with varying item structures, defines polymorphic mappings.
+        items:
+          type: object
+          properties:
+            item_type:
+              type: string
+              description: Type identifier for this mapping.
+            match_xpath:
+              type: string
+              description: XPath expression to locate matching nodes.
+            element_type:
+              type: string
+              description: Element name to match when using child lookup.
+            field_mappings:
+              type: array
+              items:
+                $ref: "#/$defs/xpathFieldMapping"
+          required:
+            - field_mappings
+          additionalProperties: false
+    required:
+      - output_field
+      - xpath
+      - type
+    additionalProperties: false
 properties:
   record_type:
     type: string
@@ -63,6 +119,9 @@ properties:
         xpath:
           type: string
           description: XPath expression relative to the record element to extract the value.
+        expression:
+          type: string
+          description: Sumpter DSL expression evaluated against fields populated earlier in extraction.
         type:
           type: string
           description: The expected data type of the field.
@@ -86,30 +145,7 @@ properties:
           type: array
           description: For array types, defines how to map each array item.
           items:
-            type: object
-            properties:
-              output_field:
-                type: string
-                description: The field name in the array item.
-              xpath:
-                type: string
-                description: XPath relative to the array item element.
-              type:
-                type: string
-                enum: ["string", "number", "integer", "boolean", "array"]
-              description:
-                type: string
-                description: |
-                  Optional human-readable description for the array
-                  item field. Surfaces in the provenance sidecar
-                  alongside the parent field's provenance entry.
-              transform:
-                type: string
-                description: Optional transformation for the item field.
-            required:
-              - output_field
-              - xpath
-              - type
+            $ref: "#/$defs/xpathFieldMapping"
         polymorphic_mapping:
           type: array
           description: For array types with varying item structures, defines polymorphic mappings.
@@ -128,13 +164,33 @@ properties:
               field_mappings:
                 type: array
                 items:
-                  $ref: "#/properties/field_mappings/items"
+                  $ref: "#/$defs/xpathFieldMapping"
             required:
               - field_mappings
+            additionalProperties: false
       required:
         - output_field
-        - xpath
         - type
+      oneOf:
+        - required:
+            - xpath
+        - required:
+            - expression
+      not:
+        anyOf:
+          - required:
+              - expression
+              - item_mapping
+          - required:
+              - expression
+              - polymorphic_mapping
+          - required:
+              - expression
+              - transform
+          - required:
+              - expression
+              - transform_params
+      additionalProperties: false
   external_fields:
     type: array
     description: Fields that are provided externally at runtime, not extracted from the XML.

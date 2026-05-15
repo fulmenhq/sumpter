@@ -555,10 +555,11 @@ func buildFieldProvenance(mappings []extract.FieldMapping) []provenance.FieldPro
 	var walk func([]extract.FieldMapping)
 	walk = func(items []extract.FieldMapping) {
 		for _, mapping := range items {
-			if strings.TrimSpace(mapping.OutputField) != "" && strings.TrimSpace(mapping.XPath) != "" {
+			if strings.TrimSpace(mapping.OutputField) != "" && (strings.TrimSpace(mapping.XPath) != "" || strings.TrimSpace(mapping.Expression) != "") {
 				fields = append(fields, provenance.FieldProvenance{
 					OutputField: mapping.OutputField,
 					XPath:       mapping.XPath,
+					Expression:  mapping.Expression,
 					Type:        mapping.Type,
 					Description: mapping.Description,
 					Transform:   mapping.Transform,
