@@ -42,9 +42,10 @@ sumpter recipes run extract <workspace> [flags]
 - `--output-path` / `--output-pattern`: Override output destinations
 - `--format`: Override output format (`json`, `structured`, `ndjson`, etc.)
 - `--client-id`, `--site-id`: Blend identifiers into the output payload
+- `--parameter key=value`: Inject or override a recipe parameter; repeat the flag for multiple values
 - `--signature`, `--extract`: Override the manifest asset paths for debugging
 
-When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, and progress settings. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
+When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, progress settings, and any `defaults.parameters` values. Generic parameters are injected into every record after field extraction, and `--parameter` overrides the same key from the manifest. Parameter keys must not collide with `field_mappings[].output_field`; Sumpter fails the run instead of silently replacing content-derived fields. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
 
 ### `retrieve`
 
@@ -96,6 +97,11 @@ defaults:
     pattern: extract-{}.json
   client_id: ""
   site_id: ""
+  parameters:
+    region_id: "westcoast"
+    tenant_id: "1234"
+  parameters_required:
+    - tenant_id
   workers: 1
   progress: false
 ```
@@ -104,6 +110,7 @@ defaults:
 - **`defaults.input`** defines how the runner discovers XML (directory scanning or explicit file list).
 - **`defaults.output`** controls output formatting and destination, allowing NDJSON/structured JSON switches later.
 - **`defaults.client_id` / `site_id`** pre-populate metadata for downstream consumers.
+- **`defaults.parameters`** injects arbitrary string parameters into every record; **`defaults.parameters_required`** fails the run if a required key does not resolve from the manifest or CLI.
 - **`kind`** distinguishes extract vs. acquire recipes; additional kinds can be introduced without changing the runner syntax.
 
 The manifest is validated against `schemas/recipes/v0.1.0/recipe.schema.yaml`. Use `sumpter recipes init` to scaffold a workspace and then drop your signature/extract configs into the generated folders. For low-level debugging you can still call the extract command directly:

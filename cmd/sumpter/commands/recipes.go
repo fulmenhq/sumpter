@@ -313,6 +313,7 @@ func newRecipeRunExtractCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.OutputPattern, "output-pattern", "", "Override output filename pattern")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Blend client identifier into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Blend site identifier into extracted records")
+	cmd.Flags().StringSliceVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable, overrides manifest defaults.parameters)")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
@@ -337,6 +338,7 @@ type recipeRunExtractOptions struct {
 	OutputPattern     string
 	ClientID          string
 	SiteID            string
+	Parameters        []string
 	RunID             string
 	NoManifest        bool
 	SignatureOverride string
@@ -512,6 +514,9 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	} else {
 		extractOpts.SiteID = defaults.SiteID
 	}
+	extractOpts.ManifestParameters = defaults.Parameters
+	extractOpts.ParametersRequired = defaults.ParametersRequired
+	extractOpts.Parameters = opts.Parameters
 
 	if extractOpts.Files == "" && extractOpts.InputPath == "" {
 		return errors.New("no input source resolved: provide --files, --input-path, or define defaults.input in recipe.yaml")
@@ -564,6 +569,9 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 	appendFlag("--output-path", extractOpts.OutputPath)
 	appendFlag("--output-pattern", extractOpts.OutputPattern)
 	appendFlag("--run-id", opts.RunID)
+	for _, parameter := range opts.Parameters {
+		appendFlag("--parameter", parameter)
+	}
 	if opts.NoManifest {
 		args = append(args, "--no-manifest")
 	}

@@ -22,28 +22,31 @@ import (
 const runIDEnvVar = "SUMPTER_RUN_ID"
 
 type ExtractOptions struct {
-	Files           string
-	InputPath       string
-	IncludePattern  string
-	ExcludePattern  string
-	MaxDepth        int
-	FollowSymlinks  bool
-	Workers         int
-	DryRun          bool
-	Progress        bool
-	Format          string
-	OutputPath      string
-	OutputPattern   string
-	SignatureConfig string
-	ExtractConfig   string
-	ClientID        string
-	SiteID          string
-	RunID           string
-	NoManifest      bool
-	AllowLargeFiles bool
-	CommandName     string
-	Argv            []string
-	Recipe          *provenance.Recipe
+	Files              string
+	InputPath          string
+	IncludePattern     string
+	ExcludePattern     string
+	MaxDepth           int
+	FollowSymlinks     bool
+	Workers            int
+	DryRun             bool
+	Progress           bool
+	Format             string
+	OutputPath         string
+	OutputPattern      string
+	SignatureConfig    string
+	ExtractConfig      string
+	ClientID           string
+	SiteID             string
+	ManifestParameters map[string]string
+	Parameters         []string
+	ParametersRequired []string
+	RunID              string
+	NoManifest         bool
+	AllowLargeFiles    bool
+	CommandName        string
+	Argv               []string
+	Recipe             *provenance.Recipe
 	// Parallel extraction options
 	RecordIndex       string // Path to record index file
 	MaxRecordSizeMB   int    // Maximum record size in MB (0 = no limit)
@@ -110,6 +113,7 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().StringVar(&opts.ExtractConfig, "extract-config-path", "", "Path to extract configuration YAML file")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Client ID to blend into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Site ID to blend into extracted records")
+	cmd.Flags().StringSliceVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable)")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 
@@ -198,13 +202,9 @@ func runExtract(opts *ExtractOptions) error {
 		return err
 	}
 
-	// Prepare external fields
-	externalFields := make(map[string]interface{})
-	if opts.ClientID != "" {
-		externalFields["client_id"] = opts.ClientID
-	}
-	if opts.SiteID != "" {
-		externalFields["site_id"] = opts.SiteID
+	externalFields, err := buildExternalFields(opts, extCfg.FieldMappings)
+	if err != nil {
+		return err
 	}
 
 	// Route to parallel extraction if --record-index is provided
@@ -544,10 +544,82 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	appendFlag("--extract-config-path", opts.ExtractConfig)
 	appendFlag("--record-index", opts.RecordIndex)
 	appendFlag("--run-id", opts.RunID)
+	for _, parameter := range opts.Parameters {
+		appendFlag("--parameter", parameter)
+	}
 	if opts.NoManifest {
 		args = append(args, "--no-manifest")
 	}
 	return args
+}
+
+func buildExternalFields(opts *ExtractOptions, mappings []extract.FieldMapping) (map[string]interface{}, error) {
+	externalFields := make(map[string]interface{})
+	if opts == nil {
+		return externalFields, nil
+	}
+
+	if opts.ClientID != "" {
+		externalFields["client_id"] = opts.ClientID
+	}
+	if opts.SiteID != "" {
+		externalFields["site_id"] = opts.SiteID
+	}
+
+	for key, value := range opts.ManifestParameters {
+		if strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("manifest parameter key cannot be empty")
+		}
+		externalFields[key] = value
+	}
+
+	for _, raw := range opts.Parameters {
+		key, value, ok := strings.Cut(raw, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid --parameter %q: expected key=value", raw)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("invalid --parameter %q: key cannot be empty", raw)
+		}
+		externalFields[key] = value
+	}
+
+	for key := range externalFields {
+		if isFieldMappingOutput(key, mappings) {
+			return nil, fmt.Errorf(
+				"parameter key %q collides with field_mappings output_field; "+
+					"rename one of them to keep injection vs content-extraction fidelity explicit",
+				key,
+			)
+		}
+	}
+
+	for _, required := range opts.ParametersRequired {
+		required = strings.TrimSpace(required)
+		if required == "" {
+			return nil, fmt.Errorf("required parameter key cannot be empty")
+		}
+		value, ok := externalFields[required]
+		if !ok || strings.TrimSpace(fmt.Sprint(value)) == "" {
+			return nil, fmt.Errorf("required parameter %q not provided (neither defaults.parameters nor --parameter %s=...)", required, required)
+		}
+	}
+
+	return externalFields, nil
+}
+
+func isFieldMappingOutput(key string, mappings []extract.FieldMapping) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	for _, mapping := range mappings {
+		if strings.TrimSpace(mapping.OutputField) == key && (strings.TrimSpace(mapping.XPath) != "" || strings.TrimSpace(mapping.Expression) != "") {
+			return true
+		}
+	}
+	return false
 }
 
 func buildFieldProvenance(mappings []extract.FieldMapping) []provenance.FieldProvenance {
