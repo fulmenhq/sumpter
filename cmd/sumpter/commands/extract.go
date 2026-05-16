@@ -15,6 +15,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
+	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -22,31 +23,35 @@ import (
 const runIDEnvVar = "SUMPTER_RUN_ID"
 
 type ExtractOptions struct {
-	Files              string
-	InputPath          string
-	IncludePattern     string
-	ExcludePattern     string
-	MaxDepth           int
-	FollowSymlinks     bool
-	Workers            int
-	DryRun             bool
-	Progress           bool
-	Format             string
-	OutputPath         string
-	OutputPattern      string
-	SignatureConfig    string
-	ExtractConfig      string
-	ClientID           string
-	SiteID             string
-	ManifestParameters map[string]string
-	Parameters         []string
-	ParametersRequired []string
-	RunID              string
-	NoManifest         bool
-	AllowLargeFiles    bool
-	CommandName        string
-	Argv               []string
-	Recipe             *provenance.Recipe
+	Files                    string
+	InputPath                string
+	IncludePattern           string
+	ExcludePattern           string
+	MaxDepth                 int
+	FollowSymlinks           bool
+	Workers                  int
+	DryRun                   bool
+	Progress                 bool
+	Format                   string
+	OutputPath               string
+	OutputPattern            string
+	SignatureConfig          string
+	ExtractConfig            string
+	ClientID                 string
+	SiteID                   string
+	ManifestParameters       map[string]string
+	Parameters               []string
+	ParametersRequired       []string
+	SourceExtraction         []recipesmanifest.SourceExtractionPattern
+	SourceExtractionRequired []string
+	SourceExtractionInput    recipesmanifest.InputDefaults
+	SourceExtractionRecipeID string
+	RunID                    string
+	NoManifest               bool
+	AllowLargeFiles          bool
+	CommandName              string
+	Argv                     []string
+	Recipe                   *provenance.Recipe
 	// Parallel extraction options
 	RecordIndex       string // Path to record index file
 	MaxRecordSizeMB   int    // Maximum record size in MB (0 = no limit)
@@ -202,15 +207,19 @@ func runExtract(opts *ExtractOptions) error {
 		return err
 	}
 
-	externalFields, err := buildExternalFields(opts, extCfg.FieldMappings)
+	fieldPlan, err := buildExternalFieldPlan(opts, extCfg.FieldMappings)
 	if err != nil {
 		return err
 	}
+	if err := validateSourceExtractionDeclarations(opts, extCfg.FieldMappings); err != nil {
+		return err
+	}
+	warnLimiter := newSourceExtractionWarnLimiter(1000)
 
 	// Route to parallel extraction if --record-index is provided
 	if opts.RecordIndex != "" {
 		logger.Info("Parallel extraction mode enabled", zap.String("record_index", opts.RecordIndex))
-		return runParallelExtraction(opts, sigCfg, extCfg, externalFields, runtimeProvenance)
+		return runParallelExtraction(opts, sigCfg, extCfg, fieldPlan, warnLimiter, runtimeProvenance)
 	}
 
 	// Continue with sequential extraction
@@ -260,6 +269,10 @@ func runExtract(opts *ExtractOptions) error {
 
 	// For now, serial processing
 	for _, file := range files {
+		externalFields, err := buildExternalFieldsForFile(file, opts, fieldPlan, warnLimiter)
+		if err != nil {
+			return fmt.Errorf("failed to build external fields for file %s: %w", file, err)
+		}
 		result := extract.ProcessFileWithProvenance(file, sigCfg, extCfg, externalFields, opts.AllowLargeFiles, runtimeProvenance)
 		results <- result
 	}
@@ -360,7 +373,7 @@ func buildExtractRuntimeProvenance(opts *ExtractOptions) (provenance.RuntimeOpti
 	return runtimeProvenance, nil
 }
 
-func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions) error {
+func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions) error {
 	logger := logging.GetLogger()
 	startedAt := time.Now().UTC()
 	logger.Info("Starting parallel extraction",
@@ -378,6 +391,10 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	header, err := indexStore.Header()
 	if err != nil {
 		return fmt.Errorf("failed to read index header: %w", err)
+	}
+	externalFields, err := buildExternalFieldsForFile(header.Source.Path, opts, fieldPlan, warnLimiter)
+	if err != nil {
+		return fmt.Errorf("failed to build external fields for file %s: %w", header.Source.Path, err)
 	}
 
 	// Create parallel extraction options
@@ -553,24 +570,43 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	return args
 }
 
+type externalFieldPlan struct {
+	shimFields         map[string]string
+	manifestParameters map[string]string
+	cliParameters      map[string]string
+	parametersRequired []string
+}
+
 func buildExternalFields(opts *ExtractOptions, mappings []extract.FieldMapping) (map[string]interface{}, error) {
-	externalFields := make(map[string]interface{})
+	plan, err := buildExternalFieldPlan(opts, mappings)
+	if err != nil {
+		return nil, err
+	}
+	return plan.build(nil), nil
+}
+
+func buildExternalFieldPlan(opts *ExtractOptions, mappings []extract.FieldMapping) (*externalFieldPlan, error) {
+	plan := &externalFieldPlan{
+		shimFields:         make(map[string]string),
+		manifestParameters: make(map[string]string),
+		cliParameters:      make(map[string]string),
+	}
 	if opts == nil {
-		return externalFields, nil
+		return plan, nil
 	}
 
 	if opts.ClientID != "" {
-		externalFields["client_id"] = opts.ClientID
+		plan.shimFields["client_id"] = opts.ClientID
 	}
 	if opts.SiteID != "" {
-		externalFields["site_id"] = opts.SiteID
+		plan.shimFields["site_id"] = opts.SiteID
 	}
 
 	for key, value := range opts.ManifestParameters {
 		if strings.TrimSpace(key) == "" {
 			return nil, fmt.Errorf("manifest parameter key cannot be empty")
 		}
-		externalFields[key] = value
+		plan.manifestParameters[key] = value
 	}
 
 	for _, raw := range opts.Parameters {
@@ -582,9 +618,11 @@ func buildExternalFields(opts *ExtractOptions, mappings []extract.FieldMapping) 
 		if key == "" {
 			return nil, fmt.Errorf("invalid --parameter %q: key cannot be empty", raw)
 		}
-		externalFields[key] = value
+		plan.cliParameters[key] = value
 	}
+	plan.parametersRequired = append(plan.parametersRequired, opts.ParametersRequired...)
 
+	externalFields := plan.build(nil)
 	for key := range externalFields {
 		if isFieldMappingOutput(key, mappings) {
 			return nil, fmt.Errorf(
@@ -595,7 +633,7 @@ func buildExternalFields(opts *ExtractOptions, mappings []extract.FieldMapping) 
 		}
 	}
 
-	for _, required := range opts.ParametersRequired {
+	for _, required := range plan.parametersRequired {
 		required = strings.TrimSpace(required)
 		if required == "" {
 			return nil, fmt.Errorf("required parameter key cannot be empty")
@@ -606,7 +644,212 @@ func buildExternalFields(opts *ExtractOptions, mappings []extract.FieldMapping) 
 		}
 	}
 
-	return externalFields, nil
+	return plan, nil
+}
+
+func (p *externalFieldPlan) build(sourceFields map[string]string) map[string]interface{} {
+	externalFields := make(map[string]interface{})
+	if p == nil {
+		return externalFields
+	}
+	for key, value := range p.shimFields {
+		externalFields[key] = value
+	}
+	for key, value := range sourceFields {
+		externalFields[key] = value
+	}
+	for key, value := range p.manifestParameters {
+		externalFields[key] = value
+	}
+	for key, value := range p.cliParameters {
+		externalFields[key] = value
+	}
+	return externalFields
+}
+
+func validateSourceExtractionDeclarations(opts *ExtractOptions, mappings []extract.FieldMapping) error {
+	if opts == nil || len(opts.SourceExtraction) == 0 {
+		return nil
+	}
+
+	captureNames := make(map[string]struct{})
+	for index, pattern := range opts.SourceExtraction {
+		if pattern.CompiledPattern == nil {
+			return fmt.Errorf("source_extraction pattern at index %d is not compiled", index)
+		}
+		for _, name := range pattern.CompiledPattern.SubexpNames() {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			captureNames[name] = struct{}{}
+		}
+	}
+
+	for name := range captureNames {
+		if isFieldMappingOutput(name, mappings) {
+			return fmt.Errorf(
+				"source_extraction capture %q collides with field_mappings output_field; "+
+					"rename one of them to keep source-derived injection vs content extraction explicit",
+				name,
+			)
+		}
+		if _, ok := opts.ManifestParameters[name]; ok {
+			return fmt.Errorf(
+				"source_extraction capture %q collides with defaults.parameters; "+
+					"rename one of them or use CLI --parameter %s=... as the explicit run-time override",
+				name,
+				name,
+			)
+		}
+	}
+
+	return nil
+}
+
+func buildExternalFieldsForFile(filePath string, opts *ExtractOptions, plan *externalFieldPlan, limiter *sourceExtractionWarnLimiter) (map[string]interface{}, error) {
+	sourceFields, err := extractSourceFieldsForFile(filePath, opts, limiter)
+	if err != nil {
+		return nil, err
+	}
+	return plan.build(sourceFields), nil
+}
+
+func extractSourceFieldsForFile(filePath string, opts *ExtractOptions, limiter *sourceExtractionWarnLimiter) (map[string]string, error) {
+	sourceFields := make(map[string]string)
+	if opts == nil || len(opts.SourceExtraction) == 0 {
+		return sourceFields, nil
+	}
+
+	input := sourceExtractionInput(opts)
+	for index, pattern := range opts.SourceExtraction {
+		if pattern.CompiledPattern == nil {
+			return nil, fmt.Errorf("source_extraction pattern at index %d is not compiled", index)
+		}
+		target, err := sourceExtractionTarget(filePath, pattern.Source, input)
+		if err != nil {
+			return nil, err
+		}
+		matches := pattern.CompiledPattern.FindStringSubmatch(target)
+		if matches == nil {
+			limiter.warn(filePath, pattern, index, opts.SourceExtractionRecipeID)
+			continue
+		}
+		for groupIndex, name := range pattern.CompiledPattern.SubexpNames() {
+			if name == "" || groupIndex >= len(matches) {
+				continue
+			}
+			sourceFields[name] = matches[groupIndex]
+		}
+	}
+
+	for _, required := range opts.SourceExtractionRequired {
+		required = strings.TrimSpace(required)
+		if required == "" {
+			return nil, fmt.Errorf("required source_extraction key cannot be empty")
+		}
+		value, ok := sourceFields[required]
+		if !ok || strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("required source_extraction field %q not provided for file %s", required, filePath)
+		}
+	}
+
+	return sourceFields, nil
+}
+
+func sourceExtractionInput(opts *ExtractOptions) recipesmanifest.InputDefaults {
+	input := opts.SourceExtractionInput
+	if input.Path == "" && opts.InputPath != "" {
+		input.Path = opts.InputPath
+		input.FollowSymlinks = opts.FollowSymlinks
+	}
+	return input
+}
+
+func sourceExtractionTarget(filePath, sourceType string, input recipesmanifest.InputDefaults) (string, error) {
+	switch sourceType {
+	case recipesmanifest.SourceExtractionFilename:
+		return filepath.Base(filePath), nil
+	case recipesmanifest.SourceExtractionAbsolutePath:
+		absFile, err := filepath.Abs(filePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve absolute source path %s: %w", filePath, err)
+		}
+		return filepath.ToSlash(filepath.Clean(absFile)), nil
+	case recipesmanifest.SourceExtractionRelativePath:
+		return resolveRelativeSourcePath(input.Path, filePath, input.FollowSymlinks)
+	default:
+		return "", fmt.Errorf("unsupported source_extraction source %q", sourceType)
+	}
+}
+
+func resolveRelativeSourcePath(root, filePath string, followSymlinks bool) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", fmt.Errorf("relative_path requires --input-path; got single --files mode; use 'absolute_path' or 'filename' instead")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve source_extraction root %s: %w", root, err)
+	}
+	absFile, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve source_extraction file %s: %w", filePath, err)
+	}
+	absRoot = filepath.Clean(absRoot)
+	absFile = filepath.Clean(absFile)
+
+	if followSymlinks {
+		resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve source_extraction root symlinks %s: %w", absRoot, err)
+		}
+		resolvedFile, err := filepath.EvalSymlinks(absFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve source_extraction file symlinks %s: %w", absFile, err)
+		}
+		absRoot = filepath.Clean(resolvedRoot)
+		absFile = filepath.Clean(resolvedFile)
+	}
+
+	rel, err := filepath.Rel(absRoot, absFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve source_extraction relative path from %s to %s: %w", absRoot, absFile, err)
+	}
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("source_extraction relative_path file %s escapes input root %s", absFile, absRoot)
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+type sourceExtractionWarnLimiter struct {
+	limit      int
+	emitted    int
+	summarized bool
+}
+
+func newSourceExtractionWarnLimiter(limit int) *sourceExtractionWarnLimiter {
+	return &sourceExtractionWarnLimiter{limit: limit}
+}
+
+func (l *sourceExtractionWarnLimiter) warn(filePath string, pattern recipesmanifest.SourceExtractionPattern, index int, recipeID string) {
+	if l == nil {
+		return
+	}
+	if l.limit <= 0 || l.emitted < l.limit {
+		l.emitted++
+		logging.Warn("source_extraction pattern did not match",
+			zap.String("file", filePath),
+			zap.String("pattern_id", pattern.ID),
+			zap.Int("pattern_index", index),
+			zap.String("source_type", pattern.Source),
+			zap.String("recipe_id", recipeID))
+		return
+	}
+	if !l.summarized {
+		l.summarized = true
+		logging.Warn("source_extraction non-match warning cap reached",
+			zap.Int("limit", l.limit),
+			zap.String("recipe_id", recipeID))
+	}
 }
 
 func isFieldMappingOutput(key string, mappings []extract.FieldMapping) bool {

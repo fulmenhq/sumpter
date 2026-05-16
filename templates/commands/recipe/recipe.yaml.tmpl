@@ -45,6 +45,17 @@ defaults:
     # OR from CLI --parameter key=value). Recipe load fails if any required
     # key has no value.
     - tenant_id
+  source_extraction:
+    # Extract file-level fields once per source file. Named captures become
+    # record fields before defaults.parameters and CLI --parameter overrides.
+    - id: filename-date-token
+      source: filename
+      pattern: '^(?P<business_date>\d{4}-\d{2}-\d{2})-.*\.xml$'
+    - id: path-site-identifier
+      source: relative_path
+      pattern: '^sites/(?P<source_site_id>[a-z0-9-]+)/'
+  source_extraction_required:
+    - business_date
   workers: 1
   progress: false
 notes: ""
