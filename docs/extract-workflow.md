@@ -57,6 +57,29 @@ sumpter recipes run extract ./recipes/customer/retail-daily-sales \
 
 The runner resolves relative paths via `recipe.yaml`, applies defaults for include/exclude patterns, and delegates to the extract engine. Override any option at the command line when experimenting.
 
+### Recipe Parameters
+
+Recipes can declare literal parameters that are injected into every extracted record's `extract.data` block. Use them for operator-known identifiers or tags the source XML does not carry.
+
+```yaml
+defaults:
+  parameters:
+    region_id: "westcoast"
+    tenant_id: "1234"
+  parameters_required:
+    - tenant_id
+```
+
+At runtime, legacy `client_id` and `site_id` defaults or flags write through to the same external-field map, then `defaults.parameters` overlays those values, then repeatable CLI parameters have final precedence:
+
+```bash
+sumpter recipes run extract ./recipes/customer/retail-daily-sales \
+  --parameter tenant_id=5678 \
+  --parameter run_period=2024Q3
+```
+
+The lower-level `sumpter extract files` command accepts the same repeatable `--parameter key=value` flag. Missing `parameters_required` entries fail before extraction. After all parameter sources are merged, Sumpter rejects any parameter key that collides with a `field_mappings[].output_field`; injected values must not silently replace values extracted or derived from content.
+
 ### Field Mappings
 
 `field_mappings` can extract values from XML with `xpath` or derive scalar fields with `expression`.

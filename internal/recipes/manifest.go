@@ -83,12 +83,14 @@ type Assets struct {
 
 // Defaults captures runtime defaults for executing the recipe.
 type Defaults struct {
-	Input    InputDefaults  `yaml:"input"`
-	Output   OutputDefaults `yaml:"output"`
-	ClientID string         `yaml:"client_id"`
-	SiteID   string         `yaml:"site_id"`
-	Workers  int            `yaml:"workers"`
-	Progress bool           `yaml:"progress"`
+	Input              InputDefaults     `yaml:"input"`
+	Output             OutputDefaults    `yaml:"output"`
+	ClientID           string            `yaml:"client_id"`
+	SiteID             string            `yaml:"site_id"`
+	Parameters         map[string]string `yaml:"parameters,omitempty"`
+	ParametersRequired []string          `yaml:"parameters_required,omitempty"`
+	Workers            int               `yaml:"workers"`
+	Progress           bool              `yaml:"progress"`
 }
 
 // InputDefaults controls input discovery when executing extract recipes.

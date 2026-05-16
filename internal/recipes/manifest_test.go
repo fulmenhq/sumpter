@@ -38,6 +38,71 @@ assets:
 	}
 }
 
+func TestLoadManifestParameters(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  parameters:
+    region_id: west
+    tenant_id: "1234"
+  parameters_required:
+    - tenant_id
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("LoadManifest failed: %v", err)
+	}
+	if manifest.Defaults.Parameters["region_id"] != "west" {
+		t.Fatalf("region_id parameter = %q, want west", manifest.Defaults.Parameters["region_id"])
+	}
+	if manifest.Defaults.Parameters["tenant_id"] != "1234" {
+		t.Fatalf("tenant_id parameter = %q, want 1234", manifest.Defaults.Parameters["tenant_id"])
+	}
+	if len(manifest.Defaults.ParametersRequired) != 1 || manifest.Defaults.ParametersRequired[0] != "tenant_id" {
+		t.Fatalf("parameters_required = %#v, want [tenant_id]", manifest.Defaults.ParametersRequired)
+	}
+}
+
+func TestLoadManifestRejectsEmptyRequiredParameter(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  parameters_required:
+    - ""
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	_, err := LoadManifest(manifestPath)
+	if err == nil {
+		t.Fatal("expected empty parameters_required item to fail schema validation")
+	}
+	if !contains(err.Error(), "parameters_required") {
+		t.Fatalf("error %q does not mention parameters_required", err.Error())
+	}
+}
+
 // TestResolvePath tests path resolution relative to workspace
 func TestResolvePath(t *testing.T) {
 	tests := []struct {

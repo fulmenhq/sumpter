@@ -33,6 +33,18 @@ defaults:
     pattern: extract-{}.json
   client_id: ""
   site_id: ""
+  parameters:
+    # Inject operator-known fields into every extracted record.
+    # Use for identifiers the consumer needs but the source data lacks.
+    # NOTE: parameter keys must NOT collide with
+    # field_mappings[].output_field; recipe load fails on collision.
+    region_id: "westcoast"
+    tenant_id: "1234"
+  parameters_required:
+    # Listed parameters MUST resolve at recipe load (from defaults above
+    # OR from CLI --parameter key=value). Recipe load fails if any required
+    # key has no value.
+    - tenant_id
   workers: 1
   progress: false
 notes: ""
