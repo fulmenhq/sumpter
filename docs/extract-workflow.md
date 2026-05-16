@@ -80,6 +80,30 @@ sumpter recipes run extract ./recipes/customer/retail-daily-sales \
 
 The lower-level `sumpter extract files` command accepts the same repeatable `--parameter key=value` flag. Missing `parameters_required` entries fail before extraction. After all parameter sources are merged, Sumpter rejects any parameter key that collides with a `field_mappings[].output_field`; injected values must not silently replace values extracted or derived from content.
 
+### Source Extraction
+
+Recipes can derive file-level fields from the source `filename`, `relative_path`, or `absolute_path` using Go regular expressions with named captures. These fields are evaluated once per source file, before record extraction. If multiple source patterns produce the same capture name, later patterns overwrite earlier source values:
+
+```yaml
+defaults:
+  input:
+    mode: path
+    path: testdata
+  source_extraction:
+    - id: filename-date-token
+      source: filename
+      pattern: '^(?P<business_date>\d{4}-\d{2}-\d{2})-.*\.xml$'
+    - id: path-site-identifier
+      source: relative_path
+      pattern: '^sites/(?P<source_site_id>[a-z0-9-]+)/'
+  source_extraction_required:
+    - business_date
+```
+
+Merge precedence is legacy `client_id` / `site_id`, then source-extracted captures, then `defaults.parameters`, then CLI `--parameter` overrides. Required source captures are checked before `defaults.parameters` and CLI values are merged, so a missing filename/path capture cannot be masked by a literal parameter.
+
+`relative_path` always requires an explicit root from `--input-path` or `defaults.input.path`; single-file `--files` runs without that root must use `filename` or `absolute_path`. Recipe `files` mode may still set `defaults.input.path` as metadata so relative extraction has a stable root. Source capture names must not collide with `field_mappings[].output_field` or `defaults.parameters` keys.
+
 ### Field Mappings
 
 `field_mappings` can extract values from XML with `xpath` or derive scalar fields with `expression`.

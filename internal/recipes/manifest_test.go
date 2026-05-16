@@ -1,6 +1,7 @@
 package recipes
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -72,6 +73,103 @@ defaults:
 	}
 	if len(manifest.Defaults.ParametersRequired) != 1 || manifest.Defaults.ParametersRequired[0] != "tenant_id" {
 		t.Fatalf("parameters_required = %#v, want [tenant_id]", manifest.Defaults.ParametersRequired)
+	}
+}
+
+func TestLoadManifestSourceExtractionCompiles(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  source_extraction:
+    - id: filename-date-token
+      source: filename
+      pattern: '^(?P<business_date>\d{4}-\d{2}-\d{2})-.*\.xml$'
+    - id: path-site-identifier
+      source: relative_path
+      pattern: '^sites/(?P<source_site_id>[a-z0-9-]+)/'
+  source_extraction_required:
+    - business_date
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("LoadManifest failed: %v", err)
+	}
+	if len(manifest.Defaults.SourceExtraction) != 2 {
+		t.Fatalf("source_extraction length = %d, want 2", len(manifest.Defaults.SourceExtraction))
+	}
+	if manifest.Defaults.SourceExtraction[0].CompiledPattern == nil {
+		t.Fatalf("source_extraction pattern was not compiled")
+	}
+	if len(manifest.Defaults.SourceExtractionRequired) != 1 || manifest.Defaults.SourceExtractionRequired[0] != "business_date" {
+		t.Fatalf("source_extraction_required = %#v, want [business_date]", manifest.Defaults.SourceExtractionRequired)
+	}
+}
+
+func TestLoadManifestRejectsDuplicateSourceCapture(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  source_extraction:
+    - source: filename
+      pattern: '^(?P<site_id>[a-z]+)-(?P<site_id>\d+)\.xml$'
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	_, err := LoadManifest(manifestPath)
+	if err == nil || !contains(err.Error(), "duplicate named capture") {
+		t.Fatalf("expected duplicate named capture error, got %v", err)
+	}
+}
+
+func TestLoadManifestRejectsTooManySourceCaptures(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	var pattern string
+	for i := 0; i < SourceExtractionMaxCaptureNames+1; i++ {
+		pattern += fmt.Sprintf("(?P<field%d>[a-z]+)", i)
+	}
+	content := fmt.Sprintf(`version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  source_extraction:
+    - source: filename
+      pattern: '%s'
+`, pattern)
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	_, err := LoadManifest(manifestPath)
+	if err == nil || !contains(err.Error(), "named captures") {
+		t.Fatalf("expected named capture cap error, got %v", err)
 	}
 }
 

@@ -425,6 +425,10 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 
 	defaults := manifest.Defaults
+	sourceExtractionInput := defaults.Input
+	if sourceExtractionInput.Path != "" {
+		sourceExtractionInput.Path = recipesmanifest.ResolvePath(absWorkspace, sourceExtractionInput.Path)
+	}
 
 	// Input resolution
 	if opts.Files != "" {
@@ -439,7 +443,8 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 
 	if opts.InputPath != "" {
 		extractOpts.InputPath = resolveMaybeRelative(absWorkspace, opts.InputPath)
-	} else if defaults.Input.Path != "" {
+		sourceExtractionInput.Path = extractOpts.InputPath
+	} else if defaults.Input.Mode != "files" && defaults.Input.Path != "" {
 		extractOpts.InputPath = recipesmanifest.ResolvePath(absWorkspace, defaults.Input.Path)
 	}
 
@@ -467,6 +472,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	} else {
 		extractOpts.FollowSymlinks = defaults.Input.FollowSymlinks
 	}
+	sourceExtractionInput.FollowSymlinks = extractOpts.FollowSymlinks
 
 	// Output controls
 	if opts.Format != "" {
@@ -517,6 +523,10 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	extractOpts.ManifestParameters = defaults.Parameters
 	extractOpts.ParametersRequired = defaults.ParametersRequired
 	extractOpts.Parameters = opts.Parameters
+	extractOpts.SourceExtraction = defaults.SourceExtraction
+	extractOpts.SourceExtractionRequired = defaults.SourceExtractionRequired
+	extractOpts.SourceExtractionInput = sourceExtractionInput
+	extractOpts.SourceExtractionRecipeID = manifest.ID
 
 	if extractOpts.Files == "" && extractOpts.InputPath == "" {
 		return errors.New("no input source resolved: provide --files, --input-path, or define defaults.input in recipe.yaml")

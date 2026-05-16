@@ -45,7 +45,7 @@ sumpter recipes run extract <workspace> [flags]
 - `--parameter key=value`: Inject or override a recipe parameter; repeat the flag for multiple values
 - `--signature`, `--extract`: Override the manifest asset paths for debugging
 
-When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, progress settings, and any `defaults.parameters` values. Generic parameters are injected into every record after field extraction, and `--parameter` overrides the same key from the manifest. Parameter keys must not collide with `field_mappings[].output_field`; Sumpter fails the run instead of silently replacing content-derived fields. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
+When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, progress settings, source extraction patterns, and any `defaults.parameters` values. Generic parameters are injected into every record after file-level source captures, and `--parameter` overrides the same key from the manifest. Parameter and source capture keys must not collide with `field_mappings[].output_field`; Sumpter fails the run instead of silently replacing content-derived fields. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
 
 ### `retrieve`
 
@@ -102,6 +102,15 @@ defaults:
     tenant_id: "1234"
   parameters_required:
     - tenant_id
+  source_extraction:
+    - id: filename-date-token
+      source: filename
+      pattern: '^(?P<business_date>\d{4}-\d{2}-\d{2})-.*\.xml$'
+    - id: path-site-identifier
+      source: relative_path
+      pattern: '^sites/(?P<source_site_id>[a-z0-9-]+)/'
+  source_extraction_required:
+    - business_date
   workers: 1
   progress: false
 ```
@@ -111,6 +120,7 @@ defaults:
 - **`defaults.output`** controls output formatting and destination, allowing NDJSON/structured JSON switches later.
 - **`defaults.client_id` / `site_id`** pre-populate metadata for downstream consumers.
 - **`defaults.parameters`** injects arbitrary string parameters into every record; **`defaults.parameters_required`** fails the run if a required key does not resolve from the manifest or CLI.
+- **`defaults.source_extraction`** injects named regexp captures from the source `filename`, `relative_path`, or `absolute_path` once per file; **`defaults.source_extraction_required`** fails before parameter merging if a required capture is absent. `relative_path` requires a root from `--input-path` or `defaults.input.path`.
 - **`kind`** distinguishes extract vs. acquire recipes; additional kinds can be introduced without changing the runner syntax.
 
 The manifest is validated against `schemas/recipes/v0.1.0/recipe.schema.yaml`. Use `sumpter recipes init` to scaffold a workspace and then drop your signature/extract configs into the generated folders. For low-level debugging you can still call the extract command directly:

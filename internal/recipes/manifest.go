@@ -18,10 +18,25 @@ import (
 // semverPattern matches a strict semver string (MAJOR.MINOR.PATCH with
 // optional pre-release and build metadata per SemVer 2.0.0). Anchored.
 var semverPattern = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
+var sourceExtractionIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 const (
 	// ManifestVersion is the supported manifest schema identifier.
 	ManifestVersion = "recipe/v0.1.0"
+	// SourceExtractionFilename extracts fields from the source file base name.
+	SourceExtractionFilename = "filename"
+	// SourceExtractionRelativePath extracts fields from the source path relative to the explicit input root.
+	SourceExtractionRelativePath = "relative_path"
+	// SourceExtractionAbsolutePath extracts fields from the absolute source path.
+	SourceExtractionAbsolutePath = "absolute_path"
+	// SourceExtractionMaxIDLength caps optional pattern identifiers.
+	SourceExtractionMaxIDLength = 64
+	// SourceExtractionMaxPatterns caps per-recipe source extraction patterns.
+	SourceExtractionMaxPatterns = 32
+	// SourceExtractionMaxPatternLength caps each source extraction regexp.
+	SourceExtractionMaxPatternLength = 1024
+	// SourceExtractionMaxCaptureNames caps unique non-empty named captures per pattern.
+	SourceExtractionMaxCaptureNames = 32
 )
 
 // Kind represents the type of recipe described by the manifest.
@@ -83,14 +98,24 @@ type Assets struct {
 
 // Defaults captures runtime defaults for executing the recipe.
 type Defaults struct {
-	Input              InputDefaults     `yaml:"input"`
-	Output             OutputDefaults    `yaml:"output"`
-	ClientID           string            `yaml:"client_id"`
-	SiteID             string            `yaml:"site_id"`
-	Parameters         map[string]string `yaml:"parameters,omitempty"`
-	ParametersRequired []string          `yaml:"parameters_required,omitempty"`
-	Workers            int               `yaml:"workers"`
-	Progress           bool              `yaml:"progress"`
+	Input                    InputDefaults             `yaml:"input"`
+	Output                   OutputDefaults            `yaml:"output"`
+	ClientID                 string                    `yaml:"client_id"`
+	SiteID                   string                    `yaml:"site_id"`
+	Parameters               map[string]string         `yaml:"parameters,omitempty"`
+	ParametersRequired       []string                  `yaml:"parameters_required,omitempty"`
+	SourceExtraction         []SourceExtractionPattern `yaml:"source_extraction,omitempty"`
+	SourceExtractionRequired []string                  `yaml:"source_extraction_required,omitempty"`
+	Workers                  int                       `yaml:"workers"`
+	Progress                 bool                      `yaml:"progress"`
+}
+
+// SourceExtractionPattern extracts fields from a source file location.
+type SourceExtractionPattern struct {
+	ID              string         `yaml:"id,omitempty" json:"id,omitempty"`
+	Source          string         `yaml:"source" json:"source"`
+	Pattern         string         `yaml:"pattern" json:"pattern"`
+	CompiledPattern *regexp.Regexp `yaml:"-" json:"-"`
 }
 
 // InputDefaults controls input discovery when executing extract recipes.
@@ -210,7 +235,83 @@ func (m *Manifest) validate() error {
 		)
 	}
 
+	if err := m.validateSourceExtraction(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (m *Manifest) validateSourceExtraction() error {
+	patterns := m.Defaults.SourceExtraction
+	if len(patterns) > SourceExtractionMaxPatterns {
+		return fmt.Errorf("defaults.source_extraction has %d patterns, maximum is %d", len(patterns), SourceExtractionMaxPatterns)
+	}
+
+	for i := range patterns {
+		pattern := &m.Defaults.SourceExtraction[i]
+		label := sourceExtractionPatternLabel(i, pattern.ID)
+
+		if strings.TrimSpace(pattern.ID) != "" {
+			if len(pattern.ID) > SourceExtractionMaxIDLength {
+				return fmt.Errorf("defaults.source_extraction %s id length %d exceeds maximum %d", label, len(pattern.ID), SourceExtractionMaxIDLength)
+			}
+			if !sourceExtractionIDPattern.MatchString(pattern.ID) {
+				return fmt.Errorf("defaults.source_extraction %s id %q must be kebab-case", label, pattern.ID)
+			}
+		}
+
+		switch pattern.Source {
+		case SourceExtractionFilename, SourceExtractionRelativePath, SourceExtractionAbsolutePath:
+		default:
+			return fmt.Errorf("defaults.source_extraction %s source %q must be one of filename, relative_path, absolute_path", label, pattern.Source)
+		}
+
+		if len(pattern.Pattern) > SourceExtractionMaxPatternLength {
+			return fmt.Errorf("defaults.source_extraction %s pattern length %d exceeds maximum %d", label, len(pattern.Pattern), SourceExtractionMaxPatternLength)
+		}
+
+		compiled, err := regexp.Compile(pattern.Pattern)
+		if err != nil {
+			return fmt.Errorf("defaults.source_extraction %s pattern failed to compile: %w", label, err)
+		}
+		pattern.CompiledPattern = compiled
+
+		captureIndexes := make(map[string]int)
+		for idx, name := range compiled.SubexpNames() {
+			if name == "" {
+				continue
+			}
+			if firstIdx, ok := captureIndexes[name]; ok {
+				return fmt.Errorf("defaults.source_extraction %s pattern has duplicate named capture %q at indexes %d and %d", label, name, firstIdx, idx)
+			}
+			captureIndexes[name] = idx
+		}
+		if len(captureIndexes) > SourceExtractionMaxCaptureNames {
+			return fmt.Errorf("defaults.source_extraction %s pattern has %d named captures, maximum is %d", label, len(captureIndexes), SourceExtractionMaxCaptureNames)
+		}
+	}
+
+	seenRequired := make(map[string]struct{})
+	for _, required := range m.Defaults.SourceExtractionRequired {
+		required = strings.TrimSpace(required)
+		if required == "" {
+			return fmt.Errorf("defaults.source_extraction_required key cannot be empty")
+		}
+		if _, ok := seenRequired[required]; ok {
+			return fmt.Errorf("defaults.source_extraction_required key %q is duplicated", required)
+		}
+		seenRequired[required] = struct{}{}
+	}
+
+	return nil
+}
+
+func sourceExtractionPatternLabel(index int, id string) string {
+	if strings.TrimSpace(id) != "" {
+		return fmt.Sprintf("%q", id)
+	}
+	return fmt.Sprintf("at index %d", index)
 }
 
 func (m *Manifest) applyDefaults() {

@@ -107,6 +107,70 @@ func TestExecuteExtractRecipeInjectsManifestAndCLIParameters(t *testing.T) {
 	}
 }
 
+func TestExecuteExtractRecipeInjectsSourceExtractionPerFile(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeSourceExtractionWorkspace(t)
+	cmd := recipeRunExtractTestCommand()
+
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{
+		ManifestPath: "recipe.yaml",
+		Progress:     false,
+	})
+	if err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	tests := []struct {
+		output       string
+		wantName     string
+		wantDate     string
+		wantSourceID string
+	}{
+		{
+			output:       "extract-2026-05-15-register.xml.json",
+			wantName:     "Alpha",
+			wantDate:     "2026-05-15",
+			wantSourceID: "store-17",
+		},
+		{
+			output:       "extract-2026-05-16-register.xml.json",
+			wantName:     "Beta",
+			wantDate:     "2026-05-16",
+			wantSourceID: "store-22",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.output, func(t *testing.T) {
+			outputPath := filepath.Join(workspace, "outputs", tt.output)
+			file, err := os.Open(outputPath)
+			if err != nil {
+				t.Fatalf("Open output: %v", err)
+			}
+			defer func() { _ = file.Close() }()
+
+			var record map[string]interface{}
+			if err := json.NewDecoder(file).Decode(&record); err != nil {
+				t.Fatalf("Decode output: %v", err)
+			}
+			data := extractData(t, record)
+
+			want := map[string]string{
+				"name":           tt.wantName,
+				"business_date":  tt.wantDate,
+				"source_site_id": tt.wantSourceID,
+				"tenant_id":      "tenant-default",
+			}
+			for key, value := range want {
+				if data[key] != value {
+					t.Fatalf("extract.data[%s] = %#v, want %#v (data: %#v)", key, data[key], value, data)
+				}
+			}
+		})
+	}
+}
+
 func recipeRunExtractTestCommand() *cobra.Command {
 	root := &cobra.Command{Use: "sumpter"}
 	root.PersistentFlags().Bool("allow-large-files", false, "")
@@ -185,6 +249,86 @@ output_schema:
       type: string
 `)
 	mustWriteFile(t, filepath.Join(workspace, "testdata", "input.xml"), `<root><item><name>Alpha</name></item></root>`)
+	return workspace
+}
+
+func createRecipeSourceExtractionWorkspace(t *testing.T) string {
+	t.Helper()
+	workspace := createWorkingTempDir(t)
+	for _, dir := range []string{
+		"signature",
+		"extract",
+		"testdata/sites/store-17",
+		"testdata/sites/store-22",
+		"outputs",
+	} {
+		if err := os.MkdirAll(filepath.Join(workspace, dir), 0o750); err != nil {
+			t.Fatalf("MkdirAll %s: %v", dir, err)
+		}
+	}
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), `version: recipe/v0.1.0
+kind: extract
+id: source_extraction_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/signature.yaml
+  extract: extract/extract.yaml
+defaults:
+  input:
+    mode: files
+    path: testdata
+    files:
+      - testdata/sites/store-17/2026-05-15-register.xml
+      - testdata/sites/store-22/2026-05-16-register.xml
+  output:
+    format: json
+    path: outputs
+    pattern: extract-{}.json
+  parameters:
+    tenant_id: tenant-default
+  source_extraction:
+    - id: filename-date-token
+      source: filename
+      pattern: '^(?P<business_date>\d{4}-\d{2}-\d{2})-.*\.xml$'
+    - id: path-site-identifier
+      source: relative_path
+      pattern: '^sites/(?P<source_site_id>[a-z0-9-]+)/'
+  source_extraction_required:
+    - business_date
+    - source_site_id
+  workers: 1
+  progress: false
+`)
+	mustWriteFile(t, filepath.Join(workspace, "signature", "signature.yaml"), `signature_id: sample
+name: Sample
+match_patterns:
+  - pattern_id: root
+    name: Root
+    selector: /root
+    weight: 1
+confidence_threshold: 1
+`)
+	mustWriteFile(t, filepath.Join(workspace, "extract", "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+    business_date:
+      type: string
+    source_site_id:
+      type: string
+    tenant_id:
+      type: string
+`)
+	mustWriteFile(t, filepath.Join(workspace, "testdata", "sites", "store-17", "2026-05-15-register.xml"), `<root><item><name>Alpha</name></item></root>`)
+	mustWriteFile(t, filepath.Join(workspace, "testdata", "sites", "store-22", "2026-05-16-register.xml"), `<root><item><name>Beta</name></item></root>`)
 	return workspace
 }
 
