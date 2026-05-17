@@ -26,37 +26,37 @@ Sumpter is a high-performance, Go-based streaming XML engine that transforms mas
 make build
 
 # Build with seekable-zstd support (requires CGO)
-CGO_ENABLED=1 go build -tags seekablezstd -o bin/sumpter ./cmd/sumpter
+CGO_ENABLED=1 go build -tags seekablezstd -o dist/sumpter ./cmd/sumpter
 ```
 
 **Inspect XML Structure**
 
 ```bash
 # Analyze XML structure
-bin/sumpter inspect ./examples/data/sample-widget-order.xml --progress
+./dist/sumpter inspect ./examples/data/sample-widget-order.xml --progress
 
 # JSON report
-bin/sumpter inspect ./examples/data/sample-widget-order.xml --format json
+./dist/sumpter inspect ./examples/data/sample-widget-order.xml --format json
 ```
 
 **Build and Use Record Indexes**
 
 ```bash
 # Build index for parallel extraction
-bin/sumpter index build large-file.xml \
+./dist/sumpter index build large-file.xml \
   --selector "//Record" \
   --progress
 
 # Build compressed index (10-20x smaller, requires CGO build)
-bin/sumpter index build large-file.xml \
+./dist/sumpter index build large-file.xml \
   --selector "//Record" \
   --emit-szst
 
 # Verify index integrity
-bin/sumpter index verify large-file.xml --index large-file.recordindex.json
+./dist/sumpter index verify large-file.xml --index large-file.recordindex.json
 
 # Extract with parallel workers
-bin/sumpter extract files \
+./dist/sumpter extract files \
   --record-index large-file.recordindex.json \
   --workers 8 \
   --output-path outputs/
@@ -70,13 +70,13 @@ Quickly inspect resolved paths, system details, and XML capabilities. All subcom
 
 ```bash
 # Show application paths (home, workdir, cache, logs, configs, temp)
-bin/sumpter envinfo paths --json | jq .
+./dist/sumpter envinfo paths --json | jq .
 
 # Full environment info (system, vars subset, paths)
-bin/sumpter envinfo --json | jq .
+./dist/sumpter envinfo --json | jq .
 
 # System-only
-bin/sumpter envinfo system --json | jq .
+./dist/sumpter envinfo system --json | jq .
 ```
 
 See `schemas/envinfo/README.md` for details and validation examples.
