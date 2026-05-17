@@ -33,11 +33,10 @@ CGO_ENABLED=1 go build -tags seekablezstd -o bin/sumpter ./cmd/sumpter
 
 ```bash
 # Analyze XML structure
-bin/sumpter inspect --file ./data/retail_pos.xml --progress
+bin/sumpter inspect ./examples/data/sample-widget-order.xml --progress
 
-# JSON report with record analysis
-bin/sumpter inspect --file ./data/large-dataset.xml \
-  --format json --analyze-records --record-selector "//Transaction"
+# JSON report
+bin/sumpter inspect ./examples/data/sample-widget-order.xml --format json
 ```
 
 **Build and Use Record Indexes**
@@ -158,5 +157,3 @@ Apache 2.0 (to be finalized).
 Sumpter uses an enterprise-friendly home/workdir layout with user overrides. See the environment standard for full precedence rules and locations:
 
 See `docs/standards/application-environment.md`.
-
-

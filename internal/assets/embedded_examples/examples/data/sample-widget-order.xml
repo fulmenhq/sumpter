@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WidgetCoData version="1.0">
+  <Batch>
+    <BatchID>WIDGET-BATCH-001</BatchID>
+    <CreatedAt>2026-05-17T12:00:00Z</CreatedAt>
+    <SourceSystem>WidgetCoDemo</SourceSystem>
+  </Batch>
+  <Orders>
+    <Order id="ORDER-1001" type="standard">
+      <Customer>WidgetCo North</Customer>
+      <Status>fulfilled</Status>
+      <Lines>
+        <OrderLine sku="GEAR-A1">
+          <Description>Gear assembly</Description>
+          <Quantity>2</Quantity>
+          <UnitPrice>15.99</UnitPrice>
+        </OrderLine>
+        <OrderLine sku="GEAR-B2">
+          <Description>Alignment bracket</Description>
+          <Quantity>1</Quantity>
+          <UnitPrice>12.50</UnitPrice>
+        </OrderLine>
+      </Lines>
+      <Totals>
+        <Subtotal>44.48</Subtotal>
+        <Tax>3.56</Tax>
+        <Total>48.04</Total>
+      </Totals>
+    </Order>
+    <Order id="ORDER-1002" type="return">
+      <Customer>WidgetCo West</Customer>
+      <Status>review</Status>
+      <Lines>
+        <ReturnLine sku="GEAR-R9">
+          <Description>Return inspection kit</Description>
+          <Quantity>1</Quantity>
+          <Reason>quality-check</Reason>
+        </ReturnLine>
+      </Lines>
+      <Totals>
+        <Subtotal>9.99</Subtotal>
+        <Tax>0.80</Tax>
+        <Total>10.79</Total>
+      </Totals>
+    </Order>
+  </Orders>
+</WidgetCoData>
