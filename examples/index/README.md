@@ -41,6 +41,5 @@ See [schemas/index/v0.1.0/README.md](../../schemas/index/v0.1.0/README.md) for c
 
 ## Related Examples
 
-- [Inspect Reports](../inspect-report/) - XML structure analysis outputs
 - [Extract Configs](../config/extract/) - Extraction recipe configurations
 - [Sample Data](../data/) - Test XML files
