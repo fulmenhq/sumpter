@@ -1,0 +1,11 @@
+<WidgetCoData date="2026-05-16">
+  <Orders>
+    <Order id="ORDER-3001" status="mixed">
+      <Lines>
+        <OrderLine status="fulfilled"/>
+        <OrderLine status="returned"/>
+        <OrderLine status="pending"/>
+      </Lines>
+    </Order>
+  </Orders>
+</WidgetCoData>

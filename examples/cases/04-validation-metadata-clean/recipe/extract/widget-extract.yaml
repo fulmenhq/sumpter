@@ -1,0 +1,50 @@
+record_type: widget_validation_bundle
+match_selectors:
+  - xpath: /WidgetCoData
+field_mappings:
+  - output_field: orders
+    xpath: Orders/Order
+    type: array
+    item_mapping:
+      - output_field: order_id
+        xpath: "@id"
+        type: string
+      - output_field: status
+        xpath: "@status"
+        type: string
+      - output_field: line_count
+        xpath: count(Lines/OrderLine)
+        type: integer
+      - output_field: line_total
+        xpath: sum(Lines/OrderLine/LineAmount)
+        type: number
+validation_metadata:
+  enable: true
+  expression_language: sumpter-dsl
+  array_path: orders
+  failure_policy:
+    fail_on_fatal: true
+    halt_on_first_fatal: true
+  accumulations:
+    - name: order_count
+      operation: count
+    - name: total_line_count
+      operation: sum
+      field: line_count
+    - name: total_order_amount
+      operation: sum
+      field: line_total
+  aggregations:
+    - name: line_surplus
+      expression: total_line_count - order_count
+  validations:
+    - name: each_order_has_lines
+      rule: total_line_count >= order_count
+      severity: fatal
+      message: "total_line_count {total_line_count} must be >= order_count {order_count}"
+output_schema:
+  type: object
+  properties:
+    orders:
+      type: array
+  required: [orders]

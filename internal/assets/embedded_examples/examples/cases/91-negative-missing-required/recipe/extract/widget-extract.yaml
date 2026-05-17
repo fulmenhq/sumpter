@@ -1,0 +1,18 @@
+record_type: widget_negative_required
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: customer
+    xpath: Customer
+    type: string
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    customer:
+      type: string
+  required: [order_id, customer]

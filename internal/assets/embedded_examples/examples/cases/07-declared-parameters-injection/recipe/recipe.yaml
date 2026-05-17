@@ -1,0 +1,21 @@
+version: "recipe/v0.1.0"
+kind: "extract"
+id: widget_declared_parameters
+display_name: "WidgetCo Declared Parameters"
+created_at: "2026-05-16T00:00:00Z"
+content_version: "0.0.1"
+assets:
+  signature: signature/widget-signature.yaml
+  extract: extract/widget-extract.yaml
+defaults:
+  output:
+    format: json
+    pattern: records.jsonl
+  parameters:
+    tenant_id: widgetco-demo
+    region_id: north-yard
+  parameters_required:
+    - tenant_id
+    - region_id
+  workers: 1
+  progress: false

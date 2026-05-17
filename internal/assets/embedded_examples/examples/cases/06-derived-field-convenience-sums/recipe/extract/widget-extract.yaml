@@ -1,0 +1,38 @@
+record_type: widget_derived_order
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: quantity
+    xpath: Quantity
+    type: integer
+  - output_field: unit_price
+    xpath: UnitPrice
+    type: number
+  - output_field: discount_amount
+    xpath: DiscountAmount
+    type: number
+  - output_field: gross_amount
+    expression: quantity * unit_price
+    type: number
+  - output_field: net_amount
+    expression: gross_amount - discount_amount
+    type: number
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    quantity:
+      type: integer
+    unit_price:
+      type: number
+    discount_amount:
+      type: number
+    gross_amount:
+      type: number
+    net_amount:
+      type: number
+  required: [order_id, quantity, unit_price, discount_amount, gross_amount, net_amount]

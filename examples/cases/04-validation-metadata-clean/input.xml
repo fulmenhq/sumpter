@@ -1,0 +1,15 @@
+<WidgetCoData date="2026-05-16">
+  <Orders>
+    <Order id="ORDER-4001" status="fulfilled">
+      <Lines>
+        <OrderLine><LineAmount>18.00</LineAmount></OrderLine>
+        <OrderLine><LineAmount>12.50</LineAmount></OrderLine>
+      </Lines>
+    </Order>
+    <Order id="ORDER-4002" status="open">
+      <Lines>
+        <OrderLine><LineAmount>12.00</LineAmount></OrderLine>
+      </Lines>
+    </Order>
+  </Orders>
+</WidgetCoData>
