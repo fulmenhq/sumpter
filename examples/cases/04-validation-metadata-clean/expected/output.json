@@ -1,0 +1,55 @@
+{
+  "records": [
+    {
+      "_validation": {
+        "accumulations": {
+          "order_count": 2,
+          "total_line_count": 3,
+          "total_order_amount": 42.5
+        },
+        "aggregations": {
+          "line_surplus": 1
+        },
+        "array_path": "orders",
+        "expression_language": "sumpter-dsl",
+        "placement": "footer",
+        "quality_summary": {
+          "errors": 0,
+          "fatals": 0,
+          "passed": 1,
+          "total_checks": 1,
+          "warnings": 0
+        },
+        "reconciliations": [],
+        "record_count": 2,
+        "validations": [
+          {
+            "message": "",
+            "name": "each_order_has_lines",
+            "result": "pass",
+            "severity": "fatal",
+            "value": true
+          }
+        ]
+      },
+      "extract": {
+        "data": {
+          "orders": [
+            {
+              "line_count": 2,
+              "line_total": 30.5,
+              "order_id": "ORDER-4001",
+              "status": "fulfilled"
+            },
+            {
+              "line_count": 1,
+              "line_total": 12,
+              "order_id": "ORDER-4002",
+              "status": "open"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

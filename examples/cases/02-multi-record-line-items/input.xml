@@ -1,0 +1,17 @@
+<WidgetCoData date="2026-05-16">
+  <Orders>
+    <Order id="ORDER-2001" status="fulfilled">
+      <Customer>WidgetCo West</Customer>
+      <Lines>
+        <OrderLine sku="GEAR-A1">
+          <Quantity>3</Quantity>
+          <UnitPrice>4.50</UnitPrice>
+        </OrderLine>
+        <OrderLine sku="GEAR-B2">
+          <Quantity>2</Quantity>
+          <UnitPrice>7.25</UnitPrice>
+        </OrderLine>
+      </Lines>
+    </Order>
+  </Orders>
+</WidgetCoData>

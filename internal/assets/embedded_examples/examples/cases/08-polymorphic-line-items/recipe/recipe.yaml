@@ -1,0 +1,15 @@
+version: "recipe/v0.1.0"
+kind: "extract"
+id: widget_polymorphic_lines
+display_name: "WidgetCo Polymorphic Lines"
+created_at: "2026-05-16T00:00:00Z"
+content_version: "0.0.1"
+assets:
+  signature: signature/widget-signature.yaml
+  extract: extract/widget-extract.yaml
+defaults:
+  output:
+    format: json
+    pattern: records.jsonl
+  workers: 1
+  progress: false

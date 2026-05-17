@@ -1,0 +1,44 @@
+record_type: widget_order_summary
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: total_lines
+    xpath: count(Lines/OrderLine)
+    type: integer
+  - output_field: fulfilled_lines
+    xpath: count(Lines/OrderLine[@status='fulfilled'])
+    type: integer
+  - output_field: returned_lines
+    xpath: count(Lines/OrderLine[@status='returned'])
+    type: integer
+summaries:
+  - name: line_status_mix
+    label: Line Status Mix
+    format: count
+    total:
+      expression: total_lines
+    components:
+      - name: fulfilled
+        label: Fulfilled
+        expression: fulfilled_lines
+      - name: returned
+        label: Returned
+        expression: returned_lines
+      - name: other
+        label: Other
+        remainder: true
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    total_lines:
+      type: integer
+    fulfilled_lines:
+      type: integer
+    returned_lines:
+      type: integer
+  required: [order_id, total_lines, fulfilled_lines, returned_lines]

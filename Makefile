@@ -33,6 +33,8 @@ COVERAGE_DIR := coverage
 TEMP_DIR := tmp
 CMD_DIR := cmd/sumpter
 INSTALL_DIR ?= $(HOME)/.local/bin
+export GOCACHE ?= $(CURDIR)/.cache/go-build
+export GOMODCACHE ?= $(CURDIR)/.cache/go-mod
 
 # Go related variables
 GOCMD := go
@@ -315,6 +317,23 @@ verify-embeds: ## Verify embedded assets match SSOT
 	@./scripts/verify-embeds.sh
 	@echo "$(GREEN)✅ Embedded assets verified$(NC)"
 
+.PHONY: examples examples-positive examples-negative examples-validator
+examples: examples-positive examples-negative ## Run all worked example smoke tests
+
+examples-positive: build ## Run positive worked examples
+	@echo "$(BLUE)Running positive examples...$(NC)"
+	@./examples/scripts/run-positive.sh
+
+examples-negative: build ## Run negative worked examples
+	@echo "$(BLUE)Running negative examples...$(NC)"
+	@./examples/scripts/run-negative.sh
+
+examples-validator: build ## Run validator showcase examples
+	@echo "$(BLUE)Running validator showcase examples...$(NC)"
+	@for case_dir in examples/cases/04-* examples/cases/05-* examples/cases/92-*; do \
+		./examples/scripts/run-case.sh "$$case_dir" || exit 1; \
+	done
+
 # Building
 .PHONY: build
 build: embed-assets clean ## Build the binary
@@ -496,6 +515,10 @@ pre-push: prepush ## Deprecated: use 'prepush' instead
 .PHONY: ci
 ci: check-all test coverage-check build ## Run CI pipeline
 	@echo "$(GREEN)✅ CI pipeline completed successfully!$(NC)"
+
+.PHONY: pr-final
+pr-final: prepush examples ## Run final PR validation, including examples
+	@echo "$(GREEN)✅ PR final validation passed!$(NC)"
 
 # Safety checks
 .PHONY: safety-check

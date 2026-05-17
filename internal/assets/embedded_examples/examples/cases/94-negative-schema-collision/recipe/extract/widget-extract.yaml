@@ -1,0 +1,13 @@
+record_type: widget_negative_collision
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+  required: [order_id]

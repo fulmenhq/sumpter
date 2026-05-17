@@ -1,0 +1,43 @@
+record_type: widget_order_reconciliation
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: reported_total
+    xpath: ReportedTotal
+    type: number
+  - output_field: lines
+    xpath: Lines/OrderLine
+    type: array
+    item_mapping:
+      - output_field: line_amount
+        xpath: LineAmount
+        type: number
+validation_metadata:
+  enable: true
+  expression_language: sumpter-dsl
+  array_path: lines
+  accumulations:
+    - name: line_amount_total
+      operation: sum
+      field: line_amount
+  reconciliations:
+    - name: order_total
+      base_expression: reported_total
+      tolerance: 0.01
+      components:
+        - name: line_amounts
+          description: Sum of extracted line amounts
+          expression: line_amount_total
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    reported_total:
+      type: number
+    lines:
+      type: array
+  required: [order_id, reported_total, lines]

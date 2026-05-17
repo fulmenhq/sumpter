@@ -1,0 +1,17 @@
+version: "recipe/v0.1.0"
+kind: "extract"
+id: widget_negative_parameter
+display_name: "WidgetCo Negative Parameter"
+created_at: "2026-05-16T00:00:00Z"
+content_version: "0.0.1"
+assets:
+  signature: signature/widget-signature.yaml
+  extract: extract/widget-extract.yaml
+defaults:
+  output:
+    format: json
+    pattern: records.jsonl
+  parameters_required:
+    - tenant_id
+  workers: 1
+  progress: false

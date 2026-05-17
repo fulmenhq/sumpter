@@ -1,0 +1,9 @@
+<WidgetCoData date="2026-05-16">
+  <WidgetCo id="WIDGET-001">WidgetCo North</WidgetCo>
+  <Orders>
+    <Order id="ORDER-1001" status="open">
+      <Customer>WidgetCo North</Customer>
+      <TotalAmount>42.50</TotalAmount>
+    </Order>
+  </Orders>
+</WidgetCoData>

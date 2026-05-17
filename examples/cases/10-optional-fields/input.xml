@@ -1,0 +1,11 @@
+<WidgetCoData date="2026-05-17">
+  <Orders>
+    <Order id="ORDER-10001" suspended="false">
+      <Customer>Alpha Works</Customer>
+      <PriorityCode>A1</PriorityCode>
+    </Order>
+    <Order id="ORDER-10002" suspended="true">
+      <Customer>Beta Works</Customer>
+    </Order>
+  </Orders>
+</WidgetCoData>

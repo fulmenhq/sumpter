@@ -1420,14 +1420,11 @@ func coerceInteger(value interface{}) (interface{}, error) {
 	case int32:
 		return int64(v), nil
 	case uint:
-		return int64(v), nil
+		return uint64ToInt64(uint64(v))
 	case uint32:
 		return int64(v), nil
 	case uint64:
-		if v > math.MaxInt64 {
-			return nil, fmt.Errorf("uint64 value %d overflows int64", v)
-		}
-		return int64(v), nil
+		return uint64ToInt64(v)
 	case string:
 		s := strings.TrimSpace(v)
 		if s == "" {
@@ -1453,6 +1450,13 @@ func coerceInteger(value interface{}) (interface{}, error) {
 	default:
 		return nil, fmt.Errorf("unsupported integer value type %T", value)
 	}
+}
+
+func uint64ToInt64(value uint64) (int64, error) {
+	if value > math.MaxInt64 {
+		return 0, fmt.Errorf("uint64 value %d overflows int64", value)
+	}
+	return int64(value), nil // #nosec G115 -- guarded by the MaxInt64 bound check above.
 }
 
 func coerceBoolean(value interface{}) (interface{}, error) {

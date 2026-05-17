@@ -1,0 +1,40 @@
+record_type: widget_polymorphic_order
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: events
+    xpath: Events
+    type: array
+    polymorphic_mapping:
+      - item_type: order_line
+        element_type: OrderLine
+        field_mappings:
+          - output_field: sku
+            xpath: "@sku"
+            type: string
+          - output_field: quantity
+            xpath: Quantity
+            type: integer
+      - item_type: return_line
+        element_type: ReturnLine
+        field_mappings:
+          - output_field: sku
+            xpath: "@sku"
+            type: string
+          - output_field: quantity
+            xpath: Quantity
+            type: integer
+          - output_field: reason
+            xpath: Reason
+            type: string
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    events:
+      type: array
+  required: [order_id, events]

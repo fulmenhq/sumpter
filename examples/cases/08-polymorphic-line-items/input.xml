@@ -1,0 +1,10 @@
+<WidgetCoData date="2026-05-16">
+  <Orders>
+    <Order id="ORDER-8001">
+      <Events>
+        <OrderLine sku="GEAR-A1"><Quantity>2</Quantity></OrderLine>
+        <ReturnLine sku="GEAR-R9"><Quantity>1</Quantity><Reason>quality-check</Reason></ReturnLine>
+      </Events>
+    </Order>
+  </Orders>
+</WidgetCoData>

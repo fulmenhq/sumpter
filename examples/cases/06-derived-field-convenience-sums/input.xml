@@ -1,0 +1,9 @@
+<WidgetCoData date="2026-05-16">
+  <Orders>
+    <Order id="ORDER-6001">
+      <Quantity>4</Quantity>
+      <UnitPrice>8.00</UnitPrice>
+      <DiscountAmount>2.50</DiscountAmount>
+    </Order>
+  </Orders>
+</WidgetCoData>

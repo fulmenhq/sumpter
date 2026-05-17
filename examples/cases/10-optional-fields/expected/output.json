@@ -1,0 +1,23 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "customer": "Alpha Works",
+          "order_id": "ORDER-10001",
+          "priority_code": "A1",
+          "suspended": false
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "customer": "Beta Works",
+          "order_id": "ORDER-10002",
+          "suspended": true
+        }
+      }
+    }
+  ]
+}
