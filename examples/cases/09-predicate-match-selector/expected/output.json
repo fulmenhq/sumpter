@@ -1,0 +1,22 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "customer": "Beta Works",
+          "order_id": "ORDER-9002",
+          "status": "review"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "customer": "Gamma Works",
+          "order_id": "ORDER-9003",
+          "status": "approved"
+        }
+      }
+    }
+  ]
+}

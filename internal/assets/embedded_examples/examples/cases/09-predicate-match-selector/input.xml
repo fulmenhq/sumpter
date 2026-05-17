@@ -1,0 +1,16 @@
+<WidgetCoData date="2026-05-17">
+  <Orders>
+    <Order id="ORDER-9001" type="standard">
+      <Customer>Alpha Works</Customer>
+      <Status>fulfilled</Status>
+    </Order>
+    <Order id="ORDER-9002" type="return">
+      <Customer>Beta Works</Customer>
+      <Status>review</Status>
+    </Order>
+    <Order id="ORDER-9003" type="return">
+      <Customer>Gamma Works</Customer>
+      <Status>approved</Status>
+    </Order>
+  </Orders>
+</WidgetCoData>
