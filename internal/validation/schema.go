@@ -20,6 +20,8 @@ type SchemaValidator struct {
 	schemaFS  fs.FS
 }
 
+const schemaNameExtractRecordMatchPrefix = "extract-record-match-"
+
 // NewSchemaValidator creates a new schema validator backed by a filesystem path.
 func NewSchemaValidator(schemaDir string) *SchemaValidator {
 	return &SchemaValidator{
@@ -183,7 +185,7 @@ func (v *SchemaValidator) validateAgainstSchema(data []byte, schemaBytes []byte,
 }
 
 func enrichExtractValidationErrors(result *ValidationResult, data interface{}, dataFile, schemaName string) {
-	if result == nil || result.Valid || schemaName != "extract-record-match-v0.1.0" {
+	if result == nil || result.Valid || !strings.HasPrefix(schemaName, schemaNameExtractRecordMatchPrefix) {
 		return
 	}
 
