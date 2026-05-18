@@ -15,7 +15,9 @@ import (
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/assets"
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
+	"github.com/fulmenhq/sumpter/internal/inspect/configgen"
 	"github.com/fulmenhq/sumpter/internal/logging"
+	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/net/html/charset"
@@ -23,15 +25,18 @@ import (
 )
 
 type InspectOptions struct {
-	File           string
-	Output         string
-	Format         string
-	MaxPaths       int
-	SamplesPerPath int
-	ForceEncoding  string
-	Progress       bool
-	IncludeAttrs   bool
-	ValidateOutput bool
+	File              string
+	Output            string
+	Format            string
+	MaxPaths          int
+	SamplesPerPath    int
+	ForceEncoding     string
+	Progress          bool
+	IncludeAttrs      bool
+	ValidateOutput    bool
+	GenerateConfig    bool
+	MinOccurrence     int
+	OptionalThreshold float64
 	// NEW: Record analysis flags
 	AnalyzeRecords bool   `json:"analyze_records"`
 	RecordSelector string `json:"record_selector"`
@@ -376,10 +381,13 @@ and configurable sampling to balance speed and insight.`,
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress for large files")
 	cmd.Flags().BoolVar(&opts.IncludeAttrs, "include-attributes", true, "Include attribute analysis")
 	cmd.Flags().BoolVar(&opts.ValidateOutput, "validate-output", false, "Validate JSON output against schema")
+	cmd.Flags().BoolVar(&opts.GenerateConfig, "generate-config", false, "Emit a starter extract.yaml derived from the document structure")
+	cmd.Flags().IntVar(&opts.MinOccurrence, "min-occurrence", 2, "Minimum element frequency to include in generated field_mappings")
+	cmd.Flags().Float64Var(&opts.OptionalThreshold, "optional-threshold", 0.5, "Element occurrence ratio below which generated fields get optional-review TODO comments")
 
 	// NEW: Record analysis flags
 	cmd.Flags().BoolVar(&opts.AnalyzeRecords, "analyze-records", false, "Enable record boundary analysis for streaming assessment")
-	cmd.Flags().StringVar(&opts.RecordSelector, "record-selector", "", "XPath selector for record detection (auto-detect if empty)")
+	cmd.Flags().StringVar(&opts.RecordSelector, "record-selector", "", "XPath selector for record detection or generated config record matching (auto-detect if empty)")
 	cmd.Flags().IntVar(&opts.OOMThresholdMB, "oom-threshold-mb", 100, "OOM warning threshold in megabytes")
 	cmd.Flags().IntVar(&opts.MaxCandidates, "max-candidates", 5, "Maximum number of record candidates to analyze")
 	cmd.Flags().IntVar(&opts.MaxRecords, "max-records", 0, "Maximum number of records to analyze for statistics (0 = unlimited)")
@@ -601,8 +609,14 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 	}
 
 	// Generate output
-	if err := generateReport(cmd, report, opts); err != nil {
-		return err
+	if opts.GenerateConfig {
+		if err := generateExtractConfig(cmd, opts); err != nil {
+			return err
+		}
+	} else {
+		if err := generateReport(cmd, report, opts); err != nil {
+			return err
+		}
 	}
 
 	// Optional output validation
@@ -619,6 +633,73 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		}
 	}
 
+	return nil
+}
+
+func generateExtractConfig(cmd *cobra.Command, opts *InspectOptions) error {
+	if opts.File == "-" {
+		return fmt.Errorf("--generate-config requires a seekable file path; stdin is not supported")
+	}
+
+	readerFactory := func() (io.ReadCloser, error) {
+		file, err := os.Open(opts.File) // #nosec G304 - user-selected inspect input path
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file for config generation: %w", err)
+		}
+		_, encodedReader, err := detectEncoding(bufio.NewReader(file), opts.ForceEncoding)
+		if err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("encoding detection failed for config generation: %w", err)
+		}
+		return &readCloserReader{Reader: encodedReader, close: file.Close}, nil
+	}
+
+	result, err := configgen.Generate(readerFactory, configgen.Options{
+		SourcePath:        opts.File,
+		RecordSelector:    opts.RecordSelector,
+		MinOccurrence:     opts.MinOccurrence,
+		OptionalThreshold: opts.OptionalThreshold,
+		GeneratedAt:       time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to generate extract config: %w", err)
+	}
+
+	return writeInspectBytes(cmd, opts.Output, result.YAML)
+}
+
+type readCloserReader struct {
+	io.Reader
+	close func() error
+}
+
+func (r *readCloserReader) Close() error {
+	if r.close == nil {
+		return nil
+	}
+	return r.close()
+}
+
+func writeInspectBytes(cmd *cobra.Command, outputPath string, data []byte) error {
+	if outputPath == "" {
+		_, err := cmd.OutOrStdout().Write(data)
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to resolve current directory: %w", err)
+	}
+	if err := utils.ValidateUserPathForCreate(outputPath, utils.RootCwd, cwd); err != nil {
+		return fmt.Errorf("invalid output path: %w", err)
+	}
+	file, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304 - path validated by ValidateUserPathForCreate
+	if err != nil {
+		return fmt.Errorf("failed to open output file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("failed to write output file: %w", err)
+	}
 	return nil
 }
 

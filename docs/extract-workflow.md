@@ -44,6 +44,28 @@ sumpter recipes init \
 
 This command creates the standard folders (`signature/`, `extract/`, `validation/`, `testdata/`, `outputs/`) and drops templated `README.md` and `recipe.yaml` files filled with your recipe ID and timestamp. The manifest captures metadata, asset paths, and execution defaults. The `--git-init` flag initializes an empty repository, making it easy to track proprietary recipes in private Git remotes. Run the command in an empty path; it will refuse to overwrite existing content.
 
+### Generate a Starter Extract Config
+
+Use `inspect --generate-config` on a representative XML sample to produce a starter `extract.yaml`:
+
+```bash
+sumpter inspect --generate-config ./testdata/sample.xml \
+  --output ./recipes/customer/retail-daily-sales/extract/extract.yaml
+```
+
+The generated file is a first draft. Sumpter infers a record selector, field names, relative XPaths, scalar types, and simple array `item_mapping` blocks from the sample structure. Review the generated TODO comments before using the recipe for routine extraction.
+
+If the inferred record selector is too broad or ambiguous, provide the selector explicitly:
+
+```bash
+sumpter inspect --generate-config ./testdata/sample.xml \
+  --record-selector "//OrderEvent" \
+  --min-occurrence 1 \
+  --output ./recipes/customer/retail-daily-sales/extract/extract.yaml
+```
+
+`--min-occurrence` controls sparse-path filtering. `--optional-threshold` controls when generated fields receive optionality review comments. Identifier-shaped values with leading zeroes are inferred as strings; other digit-only values may still need human review when they are operational identifiers rather than quantities.
+
 ### Run from the Manifest
 
 Once the manifest points to real signature and extract configs, execute the recipe directly:
