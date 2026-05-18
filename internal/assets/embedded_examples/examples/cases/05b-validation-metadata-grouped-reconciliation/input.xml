@@ -1,0 +1,29 @@
+<WidgetCoData date="2026-05-16">
+  <Orders>
+    <Order id="ORDER-5002">
+      <ReportedTotal>80.00</ReportedTotal>
+      <Lines>
+        <OrderLine>
+          <CategoryCode>widgets</CategoryCode>
+          <CategoryLabel>Widgets</CategoryLabel>
+          <LineAmount>18.00</LineAmount>
+        </OrderLine>
+        <OrderLine>
+          <CategoryCode>gears</CategoryCode>
+          <CategoryLabel>Gears</CategoryLabel>
+          <LineAmount>24.50</LineAmount>
+        </OrderLine>
+        <OrderLine>
+          <CategoryCode>widgets</CategoryCode>
+          <CategoryLabel>Widgets</CategoryLabel>
+          <LineAmount>12.00</LineAmount>
+        </OrderLine>
+        <OrderLine>
+          <CategoryCode>tools</CategoryCode>
+          <CategoryLabel>Tools</CategoryLabel>
+          <LineAmount>25.50</LineAmount>
+        </OrderLine>
+      </Lines>
+    </Order>
+  </Orders>
+</WidgetCoData>

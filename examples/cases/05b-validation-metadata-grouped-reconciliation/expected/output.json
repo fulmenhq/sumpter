@@ -1,0 +1,79 @@
+{
+  "records": [
+    {
+      "_validation": {
+        "accumulations": {},
+        "aggregations": {},
+        "array_path": "lines",
+        "expression_language": "sumpter-dsl",
+        "placement": "footer",
+        "quality_summary": {
+          "errors": 0,
+          "fatals": 0,
+          "passed": 0,
+          "total_checks": 0,
+          "warnings": 0
+        },
+        "reconciliations": [
+          {
+            "allow_unexplained": false,
+            "base_value": 80,
+            "components": [
+              {
+                "description": "Amount for Gears",
+                "name": "category_gears",
+                "value": 24.5
+              },
+              {
+                "description": "Amount for Tools",
+                "name": "category_tools",
+                "value": 25.5
+              },
+              {
+                "description": "Amount for Widgets",
+                "name": "category_widgets",
+                "value": 30
+              }
+            ],
+            "components_total": 80,
+            "name": "order_total_by_category",
+            "residual": 0,
+            "severity": "warning",
+            "status": "balanced",
+            "tolerance": 0.01
+          }
+        ],
+        "record_count": 0,
+        "validations": []
+      },
+      "extract": {
+        "data": {
+          "lines": [
+            {
+              "category_code": "widgets",
+              "category_label": "Widgets",
+              "line_amount": 18
+            },
+            {
+              "category_code": "gears",
+              "category_label": "Gears",
+              "line_amount": 24.5
+            },
+            {
+              "category_code": "widgets",
+              "category_label": "Widgets",
+              "line_amount": 12
+            },
+            {
+              "category_code": "tools",
+              "category_label": "Tools",
+              "line_amount": 25.5
+            }
+          ],
+          "order_id": "ORDER-5002",
+          "reported_total": 80
+        }
+      }
+    }
+  ]
+}

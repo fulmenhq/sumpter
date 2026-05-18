@@ -185,6 +185,90 @@ func TestEvaluateReconciliationsGroupByCapsAtBase(t *testing.T) {
 
 }
 
+func TestEvaluateReconciliationsMixedModeMergesGroupedAndStaticComponents(t *testing.T) {
+	record := map[string]interface{}{
+		"reported_total": 100.0,
+		"lines": []interface{}{
+			map[string]interface{}{"category": "widgets", "label": "Widgets", "amount": 40.0},
+			map[string]interface{}{"category": "gears", "label": "Gears", "amount": 25.0},
+			map[string]interface{}{"category": "gears", "label": "Gears", "amount": 10.0},
+			map[string]interface{}{"category": "tools", "label": "Tools", "amount": 15.0},
+		},
+		"freight_adjustment":  7.0,
+		"rounding_adjustment": 3.0,
+	}
+
+	metadata := &ValidationMetadata{
+		Enable: true,
+		Reconciliations: []ReconciliationConfig{
+			{
+				Name:           "order_total",
+				BaseExpression: "reported_total",
+				Tolerance:      0.01,
+				GroupBy: &ReconciliationGroupByConfig{
+					Source:              "lines[]",
+					Field:               "category",
+					LabelField:          "label",
+					ValueExpression:     "amount",
+					NameTemplate:        "category_{{group}}",
+					DescriptionTemplate: "Amount for {{label}}",
+				},
+				Components: []ReconciliationComponentConfig{
+					{
+						Name:        "freight_adjustment",
+						Description: "Freight adjustment",
+						Expression:  "freight_adjustment",
+					},
+					{
+						Name:        "rounding_adjustment",
+						Description: "Rounding adjustment",
+						Expression:  "rounding_adjustment",
+					},
+				},
+			},
+		},
+	}
+
+	runtime, err := RunValidation(metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+	if runtime == nil || len(runtime.ReconciliationResults) != 1 {
+		t.Fatalf("expected 1 reconciliation result, got %#v", runtime)
+	}
+
+	result := runtime.ReconciliationResults[0]
+	if len(result.Components) != 5 {
+		t.Fatalf("expected 5 components (3 grouped + 2 static), got %d", len(result.Components))
+	}
+
+	wantOrder := []struct {
+		name  string
+		value float64
+	}{
+		{"category_gears", 35.0},
+		{"category_tools", 15.0},
+		{"category_widgets", 40.0},
+		{"freight_adjustment", 7.0},
+		{"rounding_adjustment", 3.0},
+	}
+	for idx, want := range wantOrder {
+		got := result.Components[idx]
+		if got.Name != want.name {
+			t.Fatalf("component[%d].Name = %q, want %q", idx, got.Name, want.name)
+		}
+		if !almostEqual(got.Value, want.value) {
+			t.Fatalf("component[%d].Value = %f, want %f", idx, got.Value, want.value)
+		}
+	}
+	if !almostEqual(result.ComponentsTotal, 100.0) {
+		t.Fatalf("components_total = %f, want 100", result.ComponentsTotal)
+	}
+	if result.Status != "balanced" {
+		t.Fatalf("status = %q, want balanced", result.Status)
+	}
+}
+
 // TestEvaluateReconciliationsGroupByFinancialFacts exercises the same
 // group_by reconciliation surface as the retail-tender test above but
 // against an XBRL-shaped record (per-period filing facts grouped by

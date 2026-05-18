@@ -412,6 +412,134 @@ func TestValidateMainConfig(t *testing.T) {
 	}
 }
 
+func TestValidateExtractReconciliationGroupByAnyOf(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "sumpter-reconciliation-schema-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	schemaDir := filepath.Join(tempDir, "schemas", "extract", "v0.1.0")
+	if err := os.MkdirAll(schemaDir, 0755); err != nil {
+		t.Fatalf("Failed to create schema dir: %v", err)
+	}
+
+	sourceSchema := "../../schemas/extract/v0.1.0/extract-record-match-schema.yaml"
+	destSchema := filepath.Join(schemaDir, "extract-record-match-schema.yaml")
+	if err := copyFile(sourceSchema, destSchema); err != nil {
+		t.Fatalf("Failed to copy schema: %v", err)
+	}
+
+	validator := NewSchemaValidator(tempDir)
+	cases := []struct {
+		name           string
+		reconciliation string
+		valid          bool
+		wantMessage    []string
+	}{
+		{
+			name: "group_by only accepts",
+			reconciliation: `{
+				"name": "total_by_category",
+				"base_expression": "reported_total",
+				"group_by": {
+					"source": "lines[]",
+					"field": "category_code",
+					"value_expression": "line_amount"
+				}
+			}`,
+			valid: true,
+		},
+		{
+			name: "components only accepts",
+			reconciliation: `{
+				"name": "total_by_category",
+				"base_expression": "reported_total",
+				"components": [
+					{"name": "line_amounts", "expression": "line_amount_total"}
+				]
+			}`,
+			valid: true,
+		},
+		{
+			name: "components and group_by accepts",
+			reconciliation: `{
+				"name": "total_by_category",
+				"base_expression": "reported_total",
+				"group_by": {
+					"source": "lines[]",
+					"field": "category_code",
+					"value_expression": "line_amount"
+				},
+				"components": [
+					{"name": "manual_adjustments", "expression": "manual_adjustment_total"}
+				]
+			}`,
+			valid: true,
+		},
+		{
+			name: "neither components nor group_by rejects clearly",
+			reconciliation: `{
+				"name": "total_by_category",
+				"base_expression": "reported_total"
+			}`,
+			valid:       false,
+			wantMessage: []string{"components", "group_by"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			config := fmt.Sprintf(`{
+				"record_type": "test_record",
+				"match_selectors": [{"xpath": "//Record"}],
+				"field_mappings": [
+					{"output_field": "reported_total", "xpath": "ReportedTotal", "type": "number"},
+					{"output_field": "line_amount_total", "expression": "reported_total", "type": "number"},
+					{"output_field": "manual_adjustment_total", "expression": "0", "type": "number"},
+					{
+						"output_field": "lines",
+						"xpath": "Lines/Line",
+						"type": "array",
+						"item_mapping": [
+							{"output_field": "category_code", "xpath": "Category", "type": "string"},
+							{"output_field": "line_amount", "xpath": "Amount", "type": "number"}
+						]
+					}
+				],
+				"output_schema": {"type": "object"},
+				"validation_metadata": {
+					"enable": true,
+					"array_path": "lines",
+					"reconciliations": [%s]
+				}
+			}`, tt.reconciliation)
+
+			result, err := validator.ValidateExtractConfig([]byte(config), "test-extract.yaml")
+			if err != nil {
+				t.Fatalf("ValidateExtractConfig() error = %v", err)
+			}
+			if result.IsValid() != tt.valid {
+				t.Fatalf("IsValid() = %v, want %v; errors: %v", result.IsValid(), tt.valid, result.Errors)
+			}
+			for _, term := range tt.wantMessage {
+				if !validationErrorsContain(result.Errors, term) {
+					t.Fatalf("expected validation errors to mention %q, got %+v", term, result.Errors)
+				}
+			}
+		})
+	}
+}
+
+func validationErrorsContain(errors []ValidationError, term string) bool {
+	for _, err := range errors {
+		if strings.Contains(err.Message, term) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateFile(t *testing.T) {
 	// Create a temporary directory for schemas and test files
 	tempDir, err := os.MkdirTemp("", "sumpter-validation-test")

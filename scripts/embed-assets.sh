@@ -33,7 +33,7 @@ fi
 # Sync examples
 echo "📝 Syncing examples..."
 if command -v rsync &>/dev/null; then
-	rsync -av --delete examples/ internal/assets/embedded_examples/examples/
+	rsync -av --delete --delete-excluded --exclude '.scratchpad/' --exclude '*/.scratchpad/' examples/ internal/assets/embedded_examples/examples/
 else
 	echo "📝 Syncing examples using Go script..."
 	go run scripts/sync-assets.go examples internal/assets/embedded_examples/examples

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"gopkg.in/yaml.v3"
@@ -176,8 +177,69 @@ func (v *SchemaValidator) validateAgainstSchema(data []byte, schemaBytes []byte,
 			Line:    err.Context.LineNumber,
 		})
 	}
+	enrichExtractValidationErrors(validationResult, dataInterface, dataFile, schemaName)
 
 	return validationResult, nil
+}
+
+func enrichExtractValidationErrors(result *ValidationResult, data interface{}, dataFile, schemaName string) {
+	if result == nil || result.Valid || schemaName != "extract-record-match-v0.1.0" {
+		return
+	}
+
+	root, ok := data.(map[string]interface{})
+	if !ok {
+		return
+	}
+	metadata, ok := root["validation_metadata"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	rawReconciliations, ok := metadata["reconciliations"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for idx, raw := range rawReconciliations {
+		reconciliation, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, hasComponents := reconciliation["components"]; hasComponents {
+			continue
+		}
+		if _, hasGroupBy := reconciliation["group_by"]; hasGroupBy {
+			continue
+		}
+		path := fmt.Sprintf("validation_metadata.reconciliations[%d]", idx)
+		if hasValidationError(result.Errors, path, "components", "group_by") {
+			continue
+		}
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    path,
+			Message: "at least one of `components` or `group_by` is required",
+			File:    dataFile,
+		})
+	}
+}
+
+func hasValidationError(errors []ValidationError, path string, terms ...string) bool {
+	for _, err := range errors {
+		if err.Path != path {
+			continue
+		}
+		matches := true
+		for _, term := range terms {
+			if !strings.Contains(err.Message, term) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateFile validates a config file against its appropriate schema
