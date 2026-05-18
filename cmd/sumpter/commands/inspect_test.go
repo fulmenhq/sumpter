@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -76,6 +77,74 @@ func TestInspectReportV0_JSON_Schema(t *testing.T) {
 
 	if parsed.Paths[0].Path != "root.element" {
 		t.Errorf("Expected path 'root.element', got %s", parsed.Paths[0].Path)
+	}
+}
+
+func TestInspectCommandGenerateConfig(t *testing.T) {
+	xmlContent := `<Orders><OrderEvent><ID>1</ID><Total>14.50</Total></OrderEvent><OrderEvent><ID>2</ID><Total>15.75</Total></OrderEvent></Orders>`
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "orders.xml")
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("write xml: %v", err)
+	}
+
+	cmd := NewInspectCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--generate-config", "--min-occurrence", "1", xmlPath})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("inspect --generate-config failed: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "record_type: \"order_event\"") {
+		t.Fatalf("generated config missing record type:\n%s", output)
+	}
+	if !strings.Contains(output, "xpath: \"//OrderEvent\"") {
+		t.Fatalf("generated config missing selector:\n%s", output)
+	}
+	if strings.Contains(output, `"version": "inspect-report`) {
+		t.Fatalf("generate-config should not emit inspect JSON report:\n%s", output)
+	}
+}
+
+func TestInspectCommandGenerateConfigOutputNestedRelativePath(t *testing.T) {
+	xmlContent := `<Orders><OrderEvent><ID>1</ID><Total>14.50</Total></OrderEvent></Orders>`
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "orders.xml")
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("write xml: %v", err)
+	}
+
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(tmpDir, ".scratchpad"), 0o750); err != nil {
+		t.Fatalf("mkdir scratchpad: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+
+	outputPath := filepath.Join(".scratchpad", "sum007-pr-review", "extract.yaml")
+	cmd := NewInspectCommand()
+	cmd.SetArgs([]string{"--generate-config", "--min-occurrence", "1", "--output", outputPath, xmlPath})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("inspect --generate-config --output failed: %v", err)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read generated output: %v", err)
+	}
+	if !strings.Contains(string(data), `record_type: "order_event"`) {
+		t.Fatalf("generated config missing record type:\n%s", string(data))
 	}
 }
 
