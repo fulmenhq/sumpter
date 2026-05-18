@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,6 +37,102 @@ assets:
 	}
 	if manifest.Defaults.Workers != 1 {
 		t.Fatalf("expected default workers = 1, got %d", manifest.Defaults.Workers)
+	}
+}
+
+func TestLoadManifestOutputFormatsAndParquetDefaults(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  output:
+    formats: [json, parquet]
+    path: outputs
+    patterns:
+      json: extract-{}.jsonl
+      parquet: extract-{}.parquet
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("LoadManifest failed: %v", err)
+	}
+	formats, err := manifest.Defaults.Output.FormatsOrDefault()
+	if err != nil {
+		t.Fatalf("FormatsOrDefault: %v", err)
+	}
+	if got := strings.Join(formats, ","); got != "json,parquet" {
+		t.Fatalf("formats = %q, want json,parquet", got)
+	}
+	compression, err := manifest.Defaults.Output.ParquetCompression()
+	if err != nil {
+		t.Fatalf("ParquetCompression: %v", err)
+	}
+	if compression != ParquetCompressionZSTD {
+		t.Fatalf("compression = %q, want %q", compression, ParquetCompressionZSTD)
+	}
+}
+
+func TestLoadManifestRejectsConflictingOutputFormatForms(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  output:
+    format: json
+    formats: [json, parquet]
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	_, err := LoadManifest(manifestPath)
+	if err == nil || !strings.Contains(err.Error(), "defaults.output.format and defaults.output.formats") {
+		t.Fatalf("LoadManifest error = %v, want format/forms conflict", err)
+	}
+}
+
+func TestLoadManifestRejectsConflictingOutputPatternForms(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  output:
+    patterns:
+      json: extract-{}.jsonl
+    pattern: extract-{}.json
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	_, err := LoadManifest(manifestPath)
+	if err == nil || !strings.Contains(err.Error(), "defaults.output.pattern and defaults.output.patterns") {
+		t.Fatalf("LoadManifest error = %v, want pattern/forms conflict", err)
 	}
 }
 

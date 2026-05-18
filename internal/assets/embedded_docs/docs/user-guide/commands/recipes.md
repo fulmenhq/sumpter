@@ -94,7 +94,7 @@ defaults:
   output:
     format: json
     path: outputs
-    pattern: extract-{}.json
+    pattern: extract-{}.jsonl
   client_id: ""
   site_id: ""
   parameters:

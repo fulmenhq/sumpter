@@ -37,6 +37,20 @@ const (
 	SourceExtractionMaxPatternLength = 1024
 	// SourceExtractionMaxCaptureNames caps unique non-empty named captures per pattern.
 	SourceExtractionMaxCaptureNames = 32
+	// OutputFormatJSON writes newline-delimited JSON records.
+	OutputFormatJSON = "json"
+	// OutputFormatNDJSON is an alias for JSONL/NDJSON record output.
+	OutputFormatNDJSON = "ndjson"
+	// OutputFormatParquet writes extract.data records as Parquet.
+	OutputFormatParquet = "parquet"
+	// ParquetCompressionZSTD is the default Parquet compression codec.
+	ParquetCompressionZSTD = "zstd"
+	// ParquetCompressionSnappy uses Snappy compression for Parquet output.
+	ParquetCompressionSnappy = "snappy"
+	// ParquetCompressionGzip uses Gzip compression for Parquet output.
+	ParquetCompressionGzip = "gzip"
+	// ParquetCompressionNone disables Parquet compression.
+	ParquetCompressionNone = "none"
 )
 
 // Kind represents the type of recipe described by the manifest.
@@ -131,9 +145,17 @@ type InputDefaults struct {
 
 // OutputDefaults controls output formatting when executing extract recipes.
 type OutputDefaults struct {
-	Format  string `yaml:"format"`
-	Path    string `yaml:"path"`
-	Pattern string `yaml:"pattern"`
+	Format   string            `yaml:"format,omitempty"`
+	Formats  []string          `yaml:"formats,omitempty"`
+	Path     string            `yaml:"path"`
+	Pattern  string            `yaml:"pattern,omitempty"`
+	Patterns map[string]string `yaml:"patterns,omitempty"`
+	Parquet  *ParquetDefaults  `yaml:"parquet,omitempty"`
+}
+
+// ParquetDefaults controls recipe-level Parquet output behavior.
+type ParquetDefaults struct {
+	Compression string `yaml:"compression,omitempty"`
 }
 
 // LoadManifest reads and validates a manifest from disk.
@@ -238,8 +260,135 @@ func (m *Manifest) validate() error {
 	if err := m.validateSourceExtraction(); err != nil {
 		return err
 	}
+	if err := m.validateOutputDefaults(); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func (m *Manifest) validateOutputDefaults() error {
+	output := m.Defaults.Output
+	if strings.TrimSpace(output.Format) != "" && len(output.Formats) > 0 {
+		return errors.New("defaults.output.format and defaults.output.formats are mutually exclusive")
+	}
+	if strings.TrimSpace(output.Pattern) != "" && len(output.Patterns) > 0 {
+		return errors.New("defaults.output.pattern and defaults.output.patterns are mutually exclusive")
+	}
+
+	formats, err := output.FormatsOrDefault()
+	if err != nil {
+		return err
+	}
+	seenFormats := make(map[string]struct{}, len(formats))
+	for _, format := range formats {
+		effective := EffectiveOutputFormat(format)
+		if _, ok := seenFormats[effective]; ok {
+			return fmt.Errorf("defaults.output.formats contains duplicate effective format %q", effective)
+		}
+		seenFormats[effective] = struct{}{}
+	}
+
+	for format := range output.Patterns {
+		if _, err := NormalizeOutputFormat(format); err != nil {
+			return fmt.Errorf("defaults.output.patterns key %q: %w", format, err)
+		}
+	}
+
+	if _, err := output.ParquetCompression(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// NormalizeOutputFormat validates and canonicalizes configured output format
+// names. JSON and NDJSON are both accepted because the extract writer emits
+// newline-delimited JSON records for both names.
+func NormalizeOutputFormat(format string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(format))
+	switch normalized {
+	case OutputFormatJSON, OutputFormatNDJSON, OutputFormatParquet:
+		return normalized, nil
+	default:
+		if normalized == "" {
+			return "", errors.New("output format cannot be empty")
+		}
+		return "", fmt.Errorf("unsupported output format %q", format)
+	}
+}
+
+// EffectiveOutputFormat returns the writer family used by a normalized format.
+func EffectiveOutputFormat(format string) string {
+	if format == OutputFormatNDJSON {
+		return OutputFormatJSON
+	}
+	return format
+}
+
+// FormatsOrDefault returns the configured formats or the legacy single format,
+// defaulting to JSON when no output format is specified.
+func (o OutputDefaults) FormatsOrDefault() ([]string, error) {
+	if len(o.Formats) > 0 {
+		formats := make([]string, 0, len(o.Formats))
+		for _, format := range o.Formats {
+			normalized, err := NormalizeOutputFormat(format)
+			if err != nil {
+				return nil, err
+			}
+			formats = append(formats, normalized)
+		}
+		return formats, nil
+	}
+	format := o.Format
+	if strings.TrimSpace(format) == "" {
+		format = OutputFormatJSON
+	}
+	normalized, err := NormalizeOutputFormat(format)
+	if err != nil {
+		return nil, err
+	}
+	return []string{normalized}, nil
+}
+
+// PatternForFormat resolves a format-specific output pattern. Pattern map keys
+// may use either JSON or NDJSON for the newline-delimited JSON output family.
+func (o OutputDefaults) PatternForFormat(format string) string {
+	if len(o.Patterns) > 0 {
+		if pattern := o.Patterns[format]; pattern != "" {
+			return pattern
+		}
+		if EffectiveOutputFormat(format) == OutputFormatJSON {
+			if pattern := o.Patterns[OutputFormatJSON]; pattern != "" {
+				return pattern
+			}
+			if pattern := o.Patterns[OutputFormatNDJSON]; pattern != "" {
+				return pattern
+			}
+		}
+	}
+	if o.Pattern != "" {
+		return o.Pattern
+	}
+	return "extract-{}.json"
+}
+
+// ParquetCompression validates and returns the configured Parquet compression
+// codec, defaulting to zstd.
+func (o OutputDefaults) ParquetCompression() (string, error) {
+	if o.Parquet == nil {
+		return ParquetCompressionZSTD, nil
+	}
+	compression := strings.ToLower(strings.TrimSpace(o.Parquet.Compression))
+	if compression == "" {
+		return ParquetCompressionZSTD, nil
+	}
+	switch compression {
+	case ParquetCompressionZSTD, ParquetCompressionSnappy, ParquetCompressionGzip, ParquetCompressionNone:
+		return compression, nil
+	default:
+		return "", fmt.Errorf("defaults.output.parquet.compression %q must be one of zstd, snappy, gzip, none", o.Parquet.Compression)
+	}
 }
 
 func (m *Manifest) validateSourceExtraction() error {
@@ -321,10 +470,10 @@ func (m *Manifest) applyDefaults() {
 	if m.Defaults.Input.IncludePattern == "" {
 		m.Defaults.Input.IncludePattern = "*.xml"
 	}
-	if m.Defaults.Output.Format == "" {
-		m.Defaults.Output.Format = "json"
+	if m.Defaults.Output.Format == "" && len(m.Defaults.Output.Formats) == 0 {
+		m.Defaults.Output.Format = OutputFormatJSON
 	}
-	if m.Defaults.Output.Pattern == "" {
+	if m.Defaults.Output.Pattern == "" && len(m.Defaults.Output.Patterns) == 0 {
 		m.Defaults.Output.Pattern = "extract-{}.json"
 	}
 	if m.Defaults.Workers <= 0 {

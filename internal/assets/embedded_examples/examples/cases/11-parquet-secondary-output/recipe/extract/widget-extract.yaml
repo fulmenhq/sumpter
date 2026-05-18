@@ -1,0 +1,30 @@
+record_type: widget_order_lines
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+    description: Stable order identifier from the Order id attribute.
+  - output_field: lines
+    xpath: Lines/OrderLine
+    type: array
+    description: Order line rows projected as a Parquet list of structs.
+    item_mapping:
+      - output_field: sku
+        xpath: "@sku"
+        type: string
+      - output_field: quantity
+        xpath: Quantity
+        type: integer
+      - output_field: unit_price
+        xpath: UnitPrice
+        type: number
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    lines:
+      type: array
+  required: [order_id, lines]

@@ -11,6 +11,7 @@ import (
 	"github.com/fulmenhq/goneat/pkg/pathfinder"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/extract/parallel"
+	"github.com/fulmenhq/sumpter/internal/extract/parquetwriter"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
 	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
@@ -33,8 +34,11 @@ type ExtractOptions struct {
 	DryRun                   bool
 	Progress                 bool
 	Format                   string
+	Formats                  []string
 	OutputPath               string
 	OutputPattern            string
+	OutputPatterns           map[string]string
+	ParquetCompression       string
 	SignatureConfig          string
 	ExtractConfig            string
 	ClientID                 string
@@ -95,6 +99,12 @@ according to the extract configuration, producing structured output.`,
 			if err != nil {
 				return fmt.Errorf("failed to get allow-large-files flag: %w", err)
 			}
+			if cmd.Flags().Changed("format") && cmd.Flags().Changed("formats") {
+				return fmt.Errorf("--format and --formats are mutually exclusive")
+			}
+			if cmd.Flags().Changed("formats") {
+				opts.Format = ""
+			}
 			opts.AllowLargeFiles = allowLargeFiles
 			opts.CommandName = "sumpter extract files"
 			opts.Argv = buildExtractArgv(opts)
@@ -112,6 +122,7 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview operation without execution")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "json", "Output format")
+	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Output formats (comma-separated or repeatable; json/ndjson/parquet)")
 	cmd.Flags().StringVarP(&opts.OutputPath, "output-path", "o", "", "Output destination path")
 	cmd.Flags().StringVar(&opts.OutputPattern, "output-pattern", "extract-{}.json", "Output filename pattern for files mode (use {} for input filename)")
 	cmd.Flags().StringVar(&opts.SignatureConfig, "signature-config-path", "", "Path to signature configuration YAML file")
@@ -181,6 +192,13 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	if opts.Files != "" && opts.InputPath != "" {
 		return fmt.Errorf("cannot specify both --files and --input-path")
+	}
+	outputFormats, err := effectiveOutputFormats(opts)
+	if err != nil {
+		return err
+	}
+	if hasOutputFormat(outputFormats, recipesmanifest.OutputFormatParquet) && opts.OutputPath == "" {
+		return fmt.Errorf("parquet output requires --output-path")
 	}
 	logger.Debug("Options validated")
 
@@ -266,6 +284,10 @@ func runExtract(opts *ExtractOptions) error {
 	manifestOutputs := make([]provenance.Output, 0, len(files))
 	countsByRecordType := make(map[string]int)
 	sanitizeRoots := manifestSanitizeRoots(opts)
+	manifestPath := ""
+	if manifestEnabled {
+		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+	}
 
 	// For now, serial processing
 	for _, file := range files {
@@ -310,44 +332,37 @@ func runExtract(opts *ExtractOptions) error {
 				zap.Int("record_count", len(result.Records)))
 		}
 
+		countsByRecordType[extCfg.RecordType] += len(result.Records)
+
 		// Output records
 		if opts.OutputPath == "" {
 			// Output to stdout
 			for _, record := range result.Records {
-				if opts.Format == "json" {
-					if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
-						logger.Error("Failed to encode record", zap.Error(err))
-					}
-				} else {
-					// For now, only JSON supported
-					logger.Warn("Only JSON format supported, outputting JSON")
-					if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
-						logger.Error("Failed to encode record", zap.Error(err))
-					}
+				if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
+					logger.Error("Failed to encode record", zap.Error(err))
 				}
 			}
 		} else {
-			// Write to file
-			outputFile := filepath.Join(opts.OutputPath, strings.ReplaceAll(opts.OutputPattern, "{}", filepath.Base(result.File)))
-			if err := writeRecordsToFile(outputFile, result.Records); err != nil {
-				logger.Error("Failed to write output file",
-					zap.String("file", outputFile),
-					zap.Error(err))
-				return fmt.Errorf("failed to write output %s: %w", outputFile, err)
-			}
-			if manifestEnabled {
-				manifestOutputs = append(manifestOutputs, provenance.Output{
-					Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
-					Format:      effectiveOutputFormat(opts.Format),
-					RecordCount: len(result.Records),
-				})
-				countsByRecordType[extCfg.RecordType] += len(result.Records)
+			for _, format := range outputFormats {
+				outputFile := outputFileForFormat(opts, format, result.File)
+				if err := writeRecordsForFormat(outputFile, format, result.Records, extCfg, sigCfg, opts, runtimeProvenance, result.File, manifestPath); err != nil {
+					logger.Error("Failed to write output file",
+						zap.String("file", outputFile),
+						zap.Error(err))
+					return fmt.Errorf("failed to write output %s: %w", outputFile, err)
+				}
+				if manifestEnabled {
+					manifestOutputs = append(manifestOutputs, provenance.Output{
+						Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
+						Format:      format,
+						RecordCount: len(result.Records),
+					})
+				}
 			}
 		}
 	}
 
 	if manifestEnabled {
-		manifestPath := filepath.Join(opts.OutputPath, provenance.ManifestFileName)
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
 		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
 			return err
@@ -428,6 +443,14 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	// Output records (same as sequential path)
 	manifestEnabled := shouldWriteManifest(opts)
 	sanitizeRoots := manifestSanitizeRoots(opts)
+	outputFormats, err := effectiveOutputFormats(opts)
+	if err != nil {
+		return err
+	}
+	manifestPath := ""
+	if manifestEnabled {
+		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+	}
 	var manifestInputs []provenance.Input
 	var manifestOutputs []provenance.Output
 	countsByRecordType := make(map[string]int)
@@ -435,28 +458,12 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	if opts.OutputPath == "" {
 		// Output to stdout
 		for _, record := range records {
-			if opts.Format == "json" {
-				if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
-					logger.Error("Failed to encode record", zap.Error(err))
-				}
-			} else {
-				// For now, only JSON supported
-				logger.Warn("Only JSON format supported, outputting JSON")
-				if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
-					logger.Error("Failed to encode record", zap.Error(err))
-				}
+			if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
+				logger.Error("Failed to encode record", zap.Error(err))
 			}
 		}
 	} else {
-		// Write to file
-		outputFile := filepath.Join(opts.OutputPath, "extract-parallel.json")
-		if err := writeRecordsToFile(outputFile, records); err != nil {
-			logger.Error("Failed to write output file",
-				zap.String("file", outputFile),
-				zap.Error(err))
-			return fmt.Errorf("failed to write output: %w", err)
-		}
-		logger.Info("Output written", zap.String("file", outputFile), zap.Int("records", len(records)))
+		countsByRecordType[extCfg.RecordType] = len(records)
 		if manifestEnabled {
 			input, err := provenance.BuildInputLedger(header.Source.Path, sanitizeRoots...)
 			if err != nil {
@@ -464,17 +471,27 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 			}
 			input.RecordType = extCfg.RecordType
 			manifestInputs = append(manifestInputs, input)
-			manifestOutputs = append(manifestOutputs, provenance.Output{
-				Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
-				Format:      effectiveOutputFormat(opts.Format),
-				RecordCount: len(records),
-			})
-			countsByRecordType[extCfg.RecordType] = len(records)
+		}
+		for _, format := range outputFormats {
+			outputFile := outputFileForFormat(opts, format, "parallel")
+			if err := writeRecordsForFormat(outputFile, format, records, extCfg, sigCfg, opts, runtimeProvenance, header.Source.Path, manifestPath); err != nil {
+				logger.Error("Failed to write output file",
+					zap.String("file", outputFile),
+					zap.Error(err))
+				return fmt.Errorf("failed to write output: %w", err)
+			}
+			logger.Info("Output written", zap.String("file", outputFile), zap.Int("records", len(records)))
+			if manifestEnabled {
+				manifestOutputs = append(manifestOutputs, provenance.Output{
+					Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
+					Format:      format,
+					RecordCount: len(records),
+				})
+			}
 		}
 	}
 
 	if manifestEnabled {
-		manifestPath := filepath.Join(opts.OutputPath, provenance.ManifestFileName)
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
 		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
 			return err
@@ -491,8 +508,113 @@ func shouldWriteManifest(opts *ExtractOptions) bool {
 	return opts != nil && !opts.NoManifest && opts.OutputPath != "" && !opts.DryRun
 }
 
-func effectiveOutputFormat(_ string) string {
-	return "json"
+func effectiveOutputFormats(opts *ExtractOptions) ([]string, error) {
+	if opts == nil {
+		return []string{recipesmanifest.OutputFormatJSON}, nil
+	}
+	rawFormats := opts.Formats
+	if len(rawFormats) == 0 {
+		rawFormats = []string{opts.Format}
+	}
+	if len(rawFormats) == 0 || strings.TrimSpace(rawFormats[0]) == "" {
+		rawFormats = []string{recipesmanifest.OutputFormatJSON}
+	}
+
+	formats := make([]string, 0, len(rawFormats))
+	seen := make(map[string]struct{}, len(rawFormats))
+	for _, raw := range rawFormats {
+		normalized, err := recipesmanifest.NormalizeOutputFormat(raw)
+		if err != nil {
+			return nil, err
+		}
+		effective := recipesmanifest.EffectiveOutputFormat(normalized)
+		if _, ok := seen[effective]; ok {
+			return nil, fmt.Errorf("duplicate effective output format %q", effective)
+		}
+		seen[effective] = struct{}{}
+		formats = append(formats, effective)
+	}
+	return formats, nil
+}
+
+func hasOutputFormat(formats []string, target string) bool {
+	for _, format := range formats {
+		if format == target {
+			return true
+		}
+	}
+	return false
+}
+
+func outputFileForFormat(opts *ExtractOptions, format, inputFile string) string {
+	base := filepath.Base(inputFile)
+	pattern := opts.OutputPattern
+	if len(opts.OutputPatterns) > 0 {
+		if exact := opts.OutputPatterns[format]; exact != "" {
+			pattern = exact
+		} else if format == recipesmanifest.OutputFormatJSON {
+			if alias := opts.OutputPatterns[recipesmanifest.OutputFormatJSON]; alias != "" {
+				pattern = alias
+			} else if alias := opts.OutputPatterns[recipesmanifest.OutputFormatNDJSON]; alias != "" {
+				pattern = alias
+			}
+		}
+	}
+	if pattern == "" {
+		pattern = "extract-{}.json"
+	}
+
+	filename := strings.ReplaceAll(pattern, "{}", base)
+	if format == recipesmanifest.OutputFormatParquet {
+		filename = replaceOutputExtension(filename, ".parquet")
+	}
+	return filepath.Join(opts.OutputPath, filename)
+}
+
+func replaceOutputExtension(filename, ext string) string {
+	current := filepath.Ext(filename)
+	if current == "" {
+		return filename + ext
+	}
+	return strings.TrimSuffix(filename, current) + ext
+}
+
+func writeRecordsForFormat(outputFile, format string, records []map[string]interface{}, extCfg *extract.ExtractRecordMatch, sigCfg *extract.FileSignature, opts *ExtractOptions, runtime provenance.RuntimeOptions, sourceFile, manifestPath string) error {
+	switch format {
+	case recipesmanifest.OutputFormatJSON:
+		return writeRecordsToFile(outputFile, records)
+	case recipesmanifest.OutputFormatParquet:
+		if opts == nil || opts.Recipe == nil {
+			logging.GetLogger().Warn("Parquet output without recipe.yaml; recipe provenance metadata will be omitted",
+				zap.String("file", outputFile))
+		}
+		metadata := parquetFileMetadata(sigCfg, opts, runtime, sourceFile, manifestPath)
+		return parquetwriter.WriteFile(outputFile, extCfg, records, parquetwriter.Options{
+			Compression: opts.ParquetCompression,
+			Metadata:    metadata,
+		})
+	default:
+		return fmt.Errorf("unsupported output format %q", format)
+	}
+}
+
+func parquetFileMetadata(sigCfg *extract.FileSignature, opts *ExtractOptions, runtime provenance.RuntimeOptions, sourceFile, manifestPath string) map[string]string {
+	metadata := map[string]string{
+		"sumpter.run_id":              runtime.RunID,
+		"sumpter.sumpter_version":     runtime.SumpterVersion,
+		"sumpter.generated_at":        time.Now().UTC().Format(time.RFC3339),
+		"sumpter.source_file":         sourceFile,
+		"sumpter.recipe_version":      runtime.RecipeVersion,
+		"sumpter.recipe_content_hash": runtime.RecipeContentHash,
+		"sumpter.manifest_uri":        manifestPath,
+	}
+	if opts != nil && opts.Recipe != nil {
+		metadata["sumpter.recipe_id"] = opts.Recipe.ID
+	}
+	if sigCfg != nil {
+		metadata["sumpter.signature_id"] = sigCfg.SignatureID
+	}
+	return metadata
 }
 
 func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.RuntimeOptions, startedAt, completedAt time.Time, inputs []provenance.Input, outputs []provenance.Output, counts map[string]int, roots []string) provenance.Manifest {
@@ -554,7 +676,11 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	appendFlag("--input-path", opts.InputPath)
 	appendFlag("--include-pattern", opts.IncludePattern)
 	appendFlag("--exclude-pattern", opts.ExcludePattern)
-	appendFlag("--format", opts.Format)
+	if len(opts.Formats) > 1 {
+		appendFlag("--formats", strings.Join(opts.Formats, ","))
+	} else {
+		appendFlag("--format", opts.Format)
+	}
 	appendFlag("--output-path", opts.OutputPath)
 	appendFlag("--output-pattern", opts.OutputPattern)
 	appendFlag("--signature-config-path", opts.SignatureConfig)
@@ -929,6 +1055,9 @@ func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
 }
 
 func writeRecordsToFile(filename string, records []map[string]interface{}) error {
+	if err := os.MkdirAll(filepath.Dir(filename), 0o750); err != nil {
+		return err
+	}
 	file, err := os.Create(filename) // #nosec G304 - filename is constructed from user-provided output path and pattern
 	if err != nil {
 		return err

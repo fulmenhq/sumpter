@@ -67,6 +67,13 @@ func TestRunExtractWritesDirectProvenanceManifest(t *testing.T) {
 	}
 }
 
+func TestExtractFilesCommandRegistersFormatsFlag(t *testing.T) {
+	cmd := newExtractFilesCommand()
+	if flag := cmd.Flags().Lookup("formats"); flag == nil {
+		t.Fatalf("extract files command missing --formats flag")
+	}
+}
+
 func TestRunExtractManifestRecordsEffectiveSequentialFormat(t *testing.T) {
 	dir := createExtractManifestFixture(t)
 	outputDir := filepath.Join(dir, "outputs")
@@ -76,7 +83,7 @@ func TestRunExtractManifestRecordsEffectiveSequentialFormat(t *testing.T) {
 
 	opts := &ExtractOptions{
 		Files:           filepath.Join(dir, "input.xml"),
-		Format:          "csv",
+		Format:          "ndjson",
 		OutputPath:      outputDir,
 		OutputPattern:   "extract-{}.json",
 		SignatureConfig: filepath.Join(dir, "signature.yaml"),
@@ -90,6 +97,35 @@ func TestRunExtractManifestRecordsEffectiveSequentialFormat(t *testing.T) {
 	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
 	if got := manifest.Outputs[0].Format; got != "json" {
 		t.Fatalf("output format = %q, want json", got)
+	}
+}
+
+func TestOutputFileForFormatSwapsParquetExtension(t *testing.T) {
+	opts := &ExtractOptions{
+		OutputPath:    "/tmp/out",
+		OutputPattern: "extract-{}.jsonl",
+	}
+
+	got := outputFileForFormat(opts, "parquet", "/tmp/input/source.xml")
+	want := filepath.Join("/tmp/out", "extract-source.xml.parquet")
+	if got != want {
+		t.Fatalf("outputFileForFormat parquet = %q, want %q", got, want)
+	}
+}
+
+func TestOutputFileForFormatUsesPatternMapAliases(t *testing.T) {
+	opts := &ExtractOptions{
+		OutputPath: "/tmp/out",
+		OutputPatterns: map[string]string{
+			"ndjson":  "records-{}.jsonl",
+			"parquet": "records-{}.parquet",
+		},
+	}
+
+	got := outputFileForFormat(opts, "json", "/tmp/input/source.xml")
+	want := filepath.Join("/tmp/out", "records-source.xml.jsonl")
+	if got != want {
+		t.Fatalf("outputFileForFormat json alias = %q, want %q", got, want)
 	}
 }
 
@@ -278,8 +314,8 @@ func TestRunExtractManifestRecordsEffectiveParallelFormat(t *testing.T) {
 	}
 
 	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
-	if got := manifest.Outputs[0].Format; got != "json" {
-		t.Fatalf("output format = %q, want json", got)
+	if got := manifest.Outputs[0].Format; got != "parquet" {
+		t.Fatalf("output format = %q, want parquet", got)
 	}
 }
 

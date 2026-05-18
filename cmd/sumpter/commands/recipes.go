@@ -293,6 +293,9 @@ func newRecipeRunExtractCommand() *cobra.Command {
 		Short: "Execute an extract recipe defined in recipe.yaml",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("format") && cmd.Flags().Changed("formats") {
+				return fmt.Errorf("--format and --formats are mutually exclusive")
+			}
 			workspace := args[0]
 			return executeExtractRecipe(cmd, workspace, opts)
 		},
@@ -309,6 +312,7 @@ func newRecipeRunExtractCommand() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 0, "Number of parallel workers (overrides manifest)")
 	cmd.Flags().StringVar(&opts.Format, "format", "", "Override output format")
+	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Override output formats (comma-separated or repeatable; json/ndjson/parquet)")
 	cmd.Flags().StringVar(&opts.OutputPath, "output-path", "", "Override output path")
 	cmd.Flags().StringVar(&opts.OutputPattern, "output-pattern", "", "Override output filename pattern")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Blend client identifier into extracted records")
@@ -334,6 +338,7 @@ type recipeRunExtractOptions struct {
 	Progress          bool
 	Workers           int
 	Format            string
+	Formats           []string
 	OutputPath        string
 	OutputPattern     string
 	ClientID          string
@@ -475,10 +480,20 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	sourceExtractionInput.FollowSymlinks = extractOpts.FollowSymlinks
 
 	// Output controls
-	if opts.Format != "" {
+	if len(opts.Formats) > 0 {
+		extractOpts.Formats = opts.Formats
+		extractOpts.Format = ""
+	} else if opts.Format != "" {
 		extractOpts.Format = opts.Format
 	} else {
-		extractOpts.Format = defaults.Output.Format
+		formats, err := defaults.Output.FormatsOrDefault()
+		if err != nil {
+			return err
+		}
+		extractOpts.Formats = formats
+		if len(formats) > 0 {
+			extractOpts.Format = formats[0]
+		}
 	}
 
 	if opts.OutputPath != "" {
@@ -491,7 +506,13 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		extractOpts.OutputPattern = opts.OutputPattern
 	} else {
 		extractOpts.OutputPattern = defaults.Output.Pattern
+		extractOpts.OutputPatterns = defaults.Output.Patterns
 	}
+	parquetCompression, err := defaults.Output.ParquetCompression()
+	if err != nil {
+		return err
+	}
+	extractOpts.ParquetCompression = parquetCompression
 
 	if cmd.Flags().Changed("workers") {
 		extractOpts.Workers = opts.Workers
@@ -575,7 +596,11 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 	appendFlag("--input-path", extractOpts.InputPath)
 	appendFlag("--include-pattern", extractOpts.IncludePattern)
 	appendFlag("--exclude-pattern", extractOpts.ExcludePattern)
-	appendFlag("--format", extractOpts.Format)
+	if len(extractOpts.Formats) > 1 {
+		appendFlag("--formats", strings.Join(extractOpts.Formats, ","))
+	} else {
+		appendFlag("--format", extractOpts.Format)
+	}
 	appendFlag("--output-path", extractOpts.OutputPath)
 	appendFlag("--output-pattern", extractOpts.OutputPattern)
 	appendFlag("--run-id", opts.RunID)
