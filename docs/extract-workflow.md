@@ -254,6 +254,90 @@ validation_metadata:
 * Validation runs before output is assembled. If failure policies trip, the extractor stops with an error and writes nothing to the payload.
 * When validation passes, `_validation` is included only if `output_options.show_validation_metadata` is true.
 
+### Declarative Reconciliation Grouping
+
+Reconciliations can auto-generate components from a source array with
+`group_by`. The recipe declares the grouping once, and the runtime partitions
+the records, evaluates a per-record contribution, and emits one reconciliation
+component per observed group.
+
+```yaml
+validation_metadata:
+  enable: true
+  array_path: "order_lines"
+  reconciliations:
+    - name: amount_by_category
+      base_expression: "total_order_amount"
+      tolerance: 0.01
+      group_by:
+        source: "order_lines[]"
+        field: "category_code"
+        label_field: "category_label"
+        missing_label: "uncategorized"
+        filter: "line_amount != 0"
+        value_expression: "line_amount"
+        aggregation: "sum"
+        name_template: "category_{{group}}"
+        description_template: "Amount for {{label}}"
+        overflow_strategy: "none"
+```
+
+`group_by` fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source` | Yes | Dot-delimited path to the array used for grouping. Array segments use `[]`, such as `order_lines[]` or `sale_events[].tender_details[]`. |
+| `field` | Yes | Field within each grouped object used as the grouping key. |
+| `label_field` | No | Field used for human-friendly labels in templates. Falls back to the group key. |
+| `missing_label` | No | Label used when the grouping field is missing or blank. Default is `unknown`. |
+| `filter` | No | Boolean DSL expression deciding whether a record participates in grouping. |
+| `value_expression` | Yes | Numeric DSL expression evaluated for each grouped record. |
+| `aggregation` | No | Aggregation across values in each group. Current supported value is `sum`. |
+| `name_template` | No | Component name template. Supports `{{group}}` and `{{label}}`. |
+| `description_template` | No | Component description template. Supports `{{group}}` and `{{label}}`. |
+| `overflow_strategy` | No | Strategy for grouped totals that exceed the base value. Supported values are `none` and `cap_to_base`. |
+
+For the example above, `_validation.reconciliations[]` keeps the existing
+output contract:
+
+```json
+{
+  "name": "amount_by_category",
+  "base_value": 1000,
+  "components": [
+    {"name": "category_A", "description": "Amount for Category A", "value": 400},
+    {"name": "category_B", "description": "Amount for Category B", "value": 350},
+    {"name": "category_C", "description": "Amount for Category C", "value": 250}
+  ],
+  "components_total": 1000,
+  "residual": 0,
+  "tolerance": 0.01,
+  "status": "balanced",
+  "allow_unexplained": false,
+  "severity": "warning"
+}
+```
+
+Residuals within `tolerance` produce `status: "balanced"`. Residuals outside
+tolerance produce `status: "unbalanced"` unless `allow_unexplained: true`, in
+which case the status is `unexplained`. The default tolerance remains `0.01`.
+
+Use `group_by` when the source data can introduce new categories over time and
+the recipe should not need a new explicit component for each category. Use
+hand-written `components` when each contribution is a fixed business rule or a
+derived scalar that does not come from grouped source records.
+
+Mixed mode is supported: a reconciliation may declare both `group_by` and
+`components`. The runtime emits grouped components first in lexicographic group
+key order, then appends hand-written components. This is useful when an audit
+block needs an automatic per-category breakdown plus fixed adjustments such as
+freight, rounding, or manual corrections.
+
+SUM-008 Parquet output intentionally contains only `extract.data`. Validation
+metadata, including grouped reconciliations, remains in the JSONL envelope. Use
+`defaults.output.formats: [json, parquet]` when analytics consumers need
+Parquet columns and auditors need the `_validation` block from the same run.
+
 ## Streaming / NDJSON (Future Work)
 
 The upcoming NDJSON mode will emit:

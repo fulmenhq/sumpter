@@ -402,7 +402,9 @@ properties:
           required:
             - name
             - base_expression
-            - components
+          anyOf:
+            - required: [components]
+            - required: [group_by]
       validations:
         type: array
         description: Validation rules to check data quality

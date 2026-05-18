@@ -1,0 +1,50 @@
+record_type: widget_order_grouped_reconciliation
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: reported_total
+    xpath: ReportedTotal
+    type: number
+  - output_field: lines
+    xpath: Lines/OrderLine
+    type: array
+    item_mapping:
+      - output_field: category_code
+        xpath: CategoryCode
+        type: string
+      - output_field: category_label
+        xpath: CategoryLabel
+        type: string
+      - output_field: line_amount
+        xpath: LineAmount
+        type: number
+validation_metadata:
+  enable: true
+  expression_language: sumpter-dsl
+  array_path: lines
+  reconciliations:
+    - name: order_total_by_category
+      base_expression: reported_total
+      tolerance: 0.01
+      group_by:
+        source: lines[]
+        field: category_code
+        label_field: category_label
+        missing_label: uncategorized
+        value_expression: line_amount
+        aggregation: sum
+        name_template: category_{{group}}
+        description_template: Amount for {{label}}
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    reported_total:
+      type: number
+    lines:
+      type: array
+  required: [order_id, reported_total, lines]

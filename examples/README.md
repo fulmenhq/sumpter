@@ -25,6 +25,7 @@ Positive cases live in `01`-`89`; negative cases live in `90`-`99`.
 | `03-summaries-with-remainder` | Summary components and remainder |
 | `04-validation-metadata-clean` | Validation metadata accumulations and validations |
 | `05-validation-metadata-reconciliation` | Validation metadata reconciliation |
+| `05b-validation-metadata-grouped-reconciliation` | Declarative reconciliation grouping |
 | `06-derived-field-convenience-sums` | SUM-002 expression fields |
 | `07-declared-parameters-injection` | SUM-003 declared parameters |
 | `08-polymorphic-line-items` | Polymorphic array mapping |
