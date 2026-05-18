@@ -122,10 +122,30 @@ properties:
         properties:
           format:
             type: string
+            enum: ["json", "ndjson", "parquet"]
+          formats:
+            type: array
+            items:
+              type: string
+              enum: ["json", "ndjson", "parquet"]
+            uniqueItems: true
           path:
             type: string
           pattern:
             type: string
+          patterns:
+            type: object
+            propertyNames:
+              enum: ["json", "ndjson", "parquet"]
+            additionalProperties:
+              type: string
+          parquet:
+            type: object
+            additionalProperties: false
+            properties:
+              compression:
+                type: string
+                enum: ["zstd", "snappy", "gzip", "none"]
       client_id:
         type: string
       site_id:

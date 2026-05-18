@@ -153,8 +153,64 @@ Each scalar mapping must declare exactly one of `xpath` or `expression`. Express
 output_options:
   show_summaries: true        # default; set false to omit extract.summary
   show_validation_metadata: true   # default; set false to suppress _validation
-  format: "object"           # structured output (current default/only option)
 ```
+
+Recipe manifests control file serialization under `defaults.output`.
+
+```yaml
+defaults:
+  output:
+    format: json              # legacy single-format form
+    path: outputs
+    pattern: extract-{}.jsonl
+```
+
+`json` and `ndjson` are aliases for the same newline-delimited JSON records:
+one JSON object per line. JSONL remains the canonical extract output because it
+contains the full record envelope, including `_runtime`, `_validation`, and
+`extract.summary`.
+
+### Parquet Secondary Output
+
+Parquet can be enabled as an additional analytics projection. It does not
+replace JSONL and does not carry the full extract envelope. Parquet files
+contain `extract.data` columns only; runtime, validation, summaries, and audit
+context stay in JSONL plus the provenance manifest.
+
+```yaml
+defaults:
+  output:
+    formats: [json, parquet]
+    path: outputs
+    patterns:
+      json: extract-{}.jsonl
+      parquet: extract-{}.parquet
+    parquet:
+      compression: zstd       # zstd, snappy, gzip, or none
+```
+
+Use either `format` or `formats`, not both. Use either `pattern` or
+`patterns`, not both. If a singular `pattern` is used with Parquet, Sumpter
+swaps the generated extension to `.parquet`.
+
+Operator note: Parquet outputs are only useful to Glue crawlers, Trino,
+Athena, DuckDB, Spark, and similar analytics consumers when identifying
+dimensions are present as columns. Source-data identifiers extracted by XPath
+are system-internal. Operational identifiers that downstream teams join on are
+often external to the source XML and must be injected into every record.
+
+Recipe-author checklist for analytics handoff:
+
+- Add stable operational dimensions such as `site_id`, `program_id`,
+  `tenant_id`, `business_date`, or other join keys to `extract.data`.
+- Use declared parameters for run-level dimensions supplied by the operator or
+  orchestrator.
+- Use source extraction for dimensions derivable from filename, relative path,
+  or absolute path.
+- Keep source-native identifiers as separate fields when they are useful for
+  quality checks; do not treat them as replacements for operational dimensions.
+- Verify the generated Parquet columns include the dimensions consumers need
+  before handing files to Glue, Athena, Trino, DuckDB, Spark, or Iceberg flows.
 
 ### Summaries
 

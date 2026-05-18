@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/fulmenhq/sumpter/internal/provenance"
+	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
 )
 
@@ -63,6 +65,13 @@ func TestRecipesSubcommands(t *testing.T) {
 	}
 }
 
+func TestRecipeRunExtractCommandRegistersFormatsFlag(t *testing.T) {
+	cmd := newRecipeRunExtractCommand()
+	if flag := cmd.Flags().Lookup("formats"); flag == nil {
+		t.Fatalf("recipes run extract command missing --formats flag")
+	}
+}
+
 func TestExecuteExtractRecipeInjectsManifestAndCLIParameters(t *testing.T) {
 	initExtractManifestTestLogger(t)
 
@@ -104,6 +113,107 @@ func TestExecuteExtractRecipeInjectsManifestAndCLIParameters(t *testing.T) {
 		if data[key] != value {
 			t.Fatalf("extract.data[%s] = %#v, want %#v (data: %#v)", key, data[key], value, data)
 		}
+	}
+}
+
+func TestExecuteExtractRecipeWritesJSONLAndParquetOutputs(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeParameterWorkspace(t)
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), `version: recipe/v0.1.0
+kind: extract
+id: parameter_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/signature.yaml
+  extract: extract/extract.yaml
+defaults:
+  input:
+    mode: files
+    files:
+      - testdata/input.xml
+    include_pattern: "*.xml"
+  output:
+    formats: [json, parquet]
+    path: outputs
+    patterns:
+      json: extract-{}.jsonl
+      parquet: extract-{}.parquet
+    parquet:
+      compression: none
+  parameters:
+    region_id: west
+    tenant_id: tenant-default
+  workers: 1
+  progress: false
+`)
+	mustWriteFile(t, filepath.Join(workspace, "extract", "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+
+	cmd := recipeRunExtractTestCommand()
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{
+		ManifestPath: "recipe.yaml",
+		ClientID:     "client-cli",
+		SiteID:       "site-cli",
+		Progress:     false,
+	})
+	if err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	jsonPath := filepath.Join(workspace, "outputs", "extract-input.xml.jsonl")
+	file, err := os.Open(jsonPath)
+	if err != nil {
+		t.Fatalf("Open JSONL output: %v", err)
+	}
+	defer func() { _ = file.Close() }()
+	var record map[string]interface{}
+	if err := json.NewDecoder(file).Decode(&record); err != nil {
+		t.Fatalf("Decode JSONL output: %v", err)
+	}
+	if _, ok := record["_runtime"]; !ok {
+		t.Fatalf("JSONL record missing _runtime envelope: %#v", record)
+	}
+	data := extractData(t, record)
+	if data["client_id"] != "client-cli" || data["site_id"] != "site-cli" {
+		t.Fatalf("JSONL injected fields = client_id:%#v site_id:%#v, want client-cli/site-cli", data["client_id"], data["site_id"])
+	}
+
+	type Row struct {
+		Name     string `parquet:"name,optional"`
+		ClientID string `parquet:"client_id,optional"`
+		SiteID   string `parquet:"site_id,optional"`
+	}
+	parquetPath := filepath.Join(workspace, "outputs", "extract-input.xml.parquet")
+	rows, err := parquet.ReadFile[Row](parquetPath)
+	if err != nil {
+		t.Fatalf("ReadFile parquet output: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Name != "Alpha" || rows[0].ClientID != "client-cli" || rows[0].SiteID != "site-cli" {
+		t.Fatalf("parquet rows = %#v, want Alpha/client-cli/site-cli", rows)
+	}
+
+	manifest := readManifest(t, filepath.Join(workspace, "outputs", provenance.ManifestFileName))
+	if len(manifest.Outputs) != 2 {
+		t.Fatalf("manifest outputs = %#v, want 2 outputs", manifest.Outputs)
+	}
+	formats := map[string]bool{}
+	for _, output := range manifest.Outputs {
+		formats[output.Format] = true
+	}
+	if !formats["json"] || !formats["parquet"] {
+		t.Fatalf("manifest output formats = %#v, want json and parquet", formats)
 	}
 }
 
