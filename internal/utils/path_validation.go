@@ -12,7 +12,11 @@ func resolvePathWithSymlinks(path string) (string, error) {
 	// Try to evaluate the full path first
 	resolved, err := filepath.EvalSymlinks(path)
 	if err == nil {
-		return resolved, nil
+		abs, err := filepath.Abs(resolved)
+		if err != nil {
+			return resolved, err
+		}
+		return abs, nil
 	}
 
 	// If path doesn't exist, find the closest existing parent and resolve that
@@ -43,9 +47,18 @@ func resolvePathWithSymlinks(path string) (string, error) {
 				}
 				return abs, nil
 			}
+			if !filepath.IsAbs(resolvedParent) {
+				abs, err := filepath.Abs(resolvedParent)
+				if err != nil {
+					return resolvedParent, err
+				}
+				resolvedParent = abs
+			}
 
-			// Rebuild path with resolved parent
+			// Rebuild path with resolved parent, including the first
+			// non-existent child whose parent exists.
 			result := resolvedParent
+			result = filepath.Join(result, filepath.Base(current))
 			for i := len(nonExistentParts) - 1; i >= 0; i-- {
 				result = filepath.Join(result, nonExistentParts[i])
 			}

@@ -302,6 +302,12 @@ func TestValidateUserPathForCreate(t *testing.T) {
 			wantErr:  false,
 		},
 		{
+			name:     "valid relative create path with existing relative parent",
+			userPath: filepath.Join("existing", "nested", "file.txt"),
+			rootDir:  tmpRoot,
+			wantErr:  false,
+		},
+		{
 			name:      "path outside root",
 			userPath:  "/etc/new.txt",
 			rootDir:   tmpRoot,
@@ -312,6 +318,24 @@ func TestValidateUserPathForCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "valid relative create path with existing relative parent" {
+				originalWd, err := os.Getwd()
+				if err != nil {
+					t.Fatalf("getwd: %v", err)
+				}
+				if err := os.Mkdir(filepath.Join(tmpRoot, "existing"), 0o750); err != nil {
+					t.Fatalf("mkdir existing parent: %v", err)
+				}
+				if err := os.Chdir(tmpRoot); err != nil {
+					t.Fatalf("chdir tmp root: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.Chdir(originalWd); err != nil {
+						t.Fatalf("restore working directory: %v", err)
+					}
+				})
+			}
+
 			err := ValidateUserPathForCreate(tt.userPath, RootHome, tt.rootDir)
 
 			if tt.wantErr {

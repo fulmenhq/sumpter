@@ -108,6 +108,46 @@ func TestInspectCommandGenerateConfig(t *testing.T) {
 	}
 }
 
+func TestInspectCommandGenerateConfigOutputNestedRelativePath(t *testing.T) {
+	xmlContent := `<Orders><OrderEvent><ID>1</ID><Total>14.50</Total></OrderEvent></Orders>`
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "orders.xml")
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("write xml: %v", err)
+	}
+
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(tmpDir, ".scratchpad"), 0o750); err != nil {
+		t.Fatalf("mkdir scratchpad: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+
+	outputPath := filepath.Join(".scratchpad", "sum007-pr-review", "extract.yaml")
+	cmd := NewInspectCommand()
+	cmd.SetArgs([]string{"--generate-config", "--min-occurrence", "1", "--output", outputPath, xmlPath})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("inspect --generate-config --output failed: %v", err)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read generated output: %v", err)
+	}
+	if !strings.Contains(string(data), `record_type: "order_event"`) {
+		t.Fatalf("generated config missing record type:\n%s", string(data))
+	}
+}
+
 func TestInspectXML_Basic(t *testing.T) {
 	xmlContent := `<root><element id="1">text</element><element id="2">more text</element></root>`
 	reader := strings.NewReader(xmlContent)
