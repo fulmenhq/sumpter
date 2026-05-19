@@ -6,6 +6,18 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+### Changed
+
+- `match_selectors[].min_occurrences` now defaults to `0`; non-zero floors are
+  explicit opt-in enforcement.
+- Successful zero-record extract runs now write empty output artifacts and
+  manifest entries instead of omitting payload files.
+
+### Fixed
+
+- Enforced per-selector `min_occurrences` floors in extract runs so aggregate
+  record counts cannot mask a selector-specific violation.
+
 ## [0.1.2] - TBD
 
 ### Added

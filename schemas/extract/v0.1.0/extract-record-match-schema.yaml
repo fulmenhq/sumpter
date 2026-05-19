@@ -76,9 +76,9 @@ properties:
           description: Optional key-value pairs of attributes that must match on the selected element.
         min_occurrences:
           type: integer
-          description: Minimum number of occurrences required for a match.
+          description: Minimum number of occurrences required for this selector. Defaults to 0 so floor enforcement is opt-in.
           minimum: 0
-          default: 1
+          default: 0
       required:
         - xpath
   fields_to_extract:

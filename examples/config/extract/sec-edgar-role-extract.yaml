@@ -4,6 +4,7 @@
 record_type: "financial_statement_role"
 match_selectors:
   - xpath: "//link:roleType"
+    # Enforcement-opt-in demo; see docs/extract-workflow.md.
     min_occurrences: 1
 field_mappings:
   - output_field: "role_id"
