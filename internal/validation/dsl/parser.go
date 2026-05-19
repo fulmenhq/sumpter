@@ -9,6 +9,18 @@ import (
 	"strings"
 )
 
+type stringRange struct {
+	start int
+	end   int
+}
+
+type scanDirection int
+
+const (
+	leftmostFirst scanDirection = iota
+	rightmostFirst
+)
+
 // ParseFilter parses a filter expression like "is_suspended == true" or "amount > 100".
 func ParseFilter(filterStr string) (*FilterExpression, error) {
 	if filterStr == "" {
@@ -17,16 +29,20 @@ func ParseFilter(filterStr string) (*FilterExpression, error) {
 
 	// Trim whitespace
 	filterStr = strings.TrimSpace(filterStr)
+	if _, err := quotedStringRanges(filterStr); err != nil {
+		return nil, err
+	}
 
 	// Try to parse operators in order of length (longest first to handle >= before >)
 	operators := []string{"==", "!=", ">=", "<=", ">", "<"}
 
 	for _, op := range operators {
-		if strings.Contains(filterStr, op) {
-			parts := strings.SplitN(filterStr, op, 2)
-			if len(parts) != 2 {
-				return nil, fmt.Errorf("invalid filter expression: %s", filterStr)
-			}
+		idx, err := idxValidSplitPoint(filterStr, op, leftmostFirst)
+		if err != nil {
+			return nil, err
+		}
+		if idx != -1 {
+			parts := []string{filterStr[:idx], filterStr[idx+len(op):]}
 
 			field := strings.TrimSpace(parts[0])
 			valueStr := strings.TrimSpace(parts[1])
@@ -75,6 +91,12 @@ func ParseExpression(exprStr string) (*Expression, error) {
 
 	exprStr = strings.TrimSpace(exprStr)
 
+	// Parse whole-expression function calls before operator scans so argument
+	// splitting can report argument-local errors.
+	if isFunctionCall(exprStr) {
+		return parseFunction(exprStr)
+	}
+
 	// Try to parse ternary conditional first. This is the lowest-precedence
 	// operator and is right-associative.
 	if expr, ok, err := tryParseTernary(exprStr); ok || err != nil {
@@ -85,23 +107,35 @@ func ParseExpression(exprStr string) (*Expression, error) {
 	}
 
 	// Try to parse logical operators first (||, &&)
-	if expr, ok := tryParseBinaryOp(exprStr, []string{"||", "&&"}); ok {
+	if expr, ok, err := tryParseBinaryOp(exprStr, []string{"||", "&&"}); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
 		return expr, nil
 	}
 
 	// Try to parse comparison operators (==, !=, >=, <=, >, <)
-	if expr, ok := tryParseBinaryOp(exprStr, []string{"==", "!=", ">=", "<=", ">", "<"}); ok {
+	if expr, ok, err := tryParseBinaryOp(exprStr, []string{"==", "!=", ">=", "<=", ">", "<"}); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
 		return expr, nil
 	}
 
 	// Try to parse arithmetic operators (+, -, *, /)
 	// Lower precedence: +, -
-	if expr, ok := tryParseBinaryOp(exprStr, []string{"+", "-"}); ok {
+	if expr, ok, err := tryParseBinaryOp(exprStr, []string{"+", "-"}); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
 		return expr, nil
 	}
 
 	// Higher precedence: *, /
-	if expr, ok := tryParseBinaryOp(exprStr, []string{"*", "/"}); ok {
+	if expr, ok, err := tryParseBinaryOp(exprStr, []string{"*", "/"}); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
 		return expr, nil
 	}
 
@@ -131,11 +165,6 @@ func ParseExpression(exprStr string) (*Expression, error) {
 		return ParseExpression(inner)
 	}
 
-	// Try to parse function call
-	if strings.Contains(exprStr, "(") && strings.HasSuffix(exprStr, ")") {
-		return parseFunction(exprStr)
-	}
-
 	// Try to parse constant (number, boolean, or quoted string)
 	// But don't treat unquoted identifiers as constants - those are variables
 	if value, isConstant := tryParseConstant(exprStr); isConstant {
@@ -143,6 +172,10 @@ func ParseExpression(exprStr string) (*Expression, error) {
 			Type:  ExprConstant,
 			Value: value,
 		}, nil
+	}
+
+	if _, err := quotedStringRanges(exprStr); err != nil {
+		return nil, err
 	}
 
 	// Must be a variable
@@ -154,12 +187,18 @@ func ParseExpression(exprStr string) (*Expression, error) {
 
 // tryParseTernary tries to parse a conditional expression (cond ? then : else).
 func tryParseTernary(exprStr string) (*Expression, bool, error) {
-	qIdx := findOutermostQuestion(exprStr)
+	qIdx, err := idxValidSplitPoint(exprStr, "?", leftmostFirst)
+	if err != nil {
+		return nil, false, err
+	}
 	if qIdx == -1 {
 		return nil, false, nil
 	}
 
-	cIdx := findMatchingColon(exprStr, qIdx+1)
+	cIdx, err := findTernaryColon(exprStr, qIdx)
+	if err != nil {
+		return nil, true, err
+	}
 	if cIdx == -1 {
 		return nil, true, fmt.Errorf("malformed ternary expression %q: missing ':'", exprStr)
 	}
@@ -200,27 +239,18 @@ func tryParseTernary(exprStr string) (*Expression, bool, error) {
 	}, true, nil
 }
 
-func findOutermostQuestion(exprStr string) int {
-	depth := 0
-	for i := 0; i < len(exprStr); i++ {
-		switch exprStr[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-		case '?':
-			if depth == 0 {
-				return i
-			}
-		}
+func findTernaryColon(exprStr string, questionIdx int) (int, error) {
+	ranges, err := quotedStringRanges(exprStr)
+	if err != nil {
+		return -1, err
 	}
-	return -1
-}
 
-func findMatchingColon(exprStr string, start int) int {
 	parenDepth := 0
 	ternaryDepth := 0
-	for i := start; i < len(exprStr); i++ {
+	for i := questionIdx + 1; i < len(exprStr); i++ {
+		if inStringRange(i, ranges) {
+			continue
+		}
 		switch exprStr[i] {
 		case '(':
 			parenDepth++
@@ -235,25 +265,23 @@ func findMatchingColon(exprStr string, start int) int {
 				continue
 			}
 			if ternaryDepth == 0 {
-				return i
+				return i, nil
 			}
 			ternaryDepth--
 		}
 	}
-	return -1
+	return -1, nil
 }
 
 // tryParseBinaryOp tries to parse a binary operation with one of the given operators.
-func tryParseBinaryOp(exprStr string, operators []string) (*Expression, bool) {
+func tryParseBinaryOp(exprStr string, operators []string) (*Expression, bool, error) {
 	for _, op := range operators {
-		// Find rightmost occurrence to respect precedence
-		idx := strings.LastIndex(exprStr, op)
-		if idx == -1 {
-			continue
+		// Find rightmost split point to preserve left associativity.
+		idx, err := idxValidSplitPoint(exprStr, op, rightmostFirst)
+		if err != nil {
+			return nil, false, err
 		}
-
-		// Make sure it's not inside parentheses
-		if !isValidSplitPoint(exprStr, idx) {
+		if idx == -1 {
 			continue
 		}
 
@@ -281,24 +309,108 @@ func tryParseBinaryOp(exprStr string, operators []string) (*Expression, bool) {
 				Operator: op,
 				Right:    right,
 			},
-		}, true
+		}, true, nil
 	}
 
-	return nil, false
+	return nil, false, nil
 }
 
-// isValidSplitPoint checks if an operator at idx is at a valid split point (not inside parens).
-func isValidSplitPoint(exprStr string, idx int) bool {
-	depth := 0
-	for i := 0; i < idx; i++ {
-		switch exprStr[i] {
+func quotedStringRanges(s string) ([]stringRange, error) {
+	var ranges []stringRange
+	for i := 0; i < len(s); i++ {
+		quote := s[i]
+		if quote != '"' && quote != '\'' {
+			continue
+		}
+
+		start := i
+		escaped := false
+		for i++; i < len(s); i++ {
+			switch {
+			case escaped:
+				escaped = false
+			case s[i] == '\\':
+				escaped = true
+			case s[i] == quote:
+				ranges = append(ranges, stringRange{start: start, end: i + 1})
+				goto closed
+			}
+		}
+
+		return nil, fmt.Errorf("unterminated string literal in expression at byte %d: %s", start, s[start:])
+	closed:
+	}
+
+	return ranges, nil
+}
+
+func idxValidSplitPoint(s, op string, direction scanDirection) (int, error) {
+	if op == "" {
+		return -1, nil
+	}
+
+	ranges, err := quotedStringRanges(s)
+	if err != nil {
+		return -1, err
+	}
+
+	parenDepth := 0
+	match := -1
+	for i := 0; i <= len(s)-len(op); i++ {
+		if inStringRange(i, ranges) {
+			continue
+		}
+
+		switch s[i] {
 		case '(':
-			depth++
+			parenDepth++
+			continue
 		case ')':
-			depth--
+			parenDepth--
+			continue
+		}
+
+		if parenDepth == 0 && strings.HasPrefix(s[i:], op) {
+			if direction == leftmostFirst {
+				return i, nil
+			}
+			match = i
+			i += len(op) - 1
 		}
 	}
-	return depth == 0
+
+	return match, nil
+}
+
+func containsOutsideStrings(s, substr string) (bool, error) {
+	if substr == "" {
+		return true, nil
+	}
+
+	ranges, err := quotedStringRanges(s)
+	if err != nil {
+		return false, err
+	}
+
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if inStringRange(i, ranges) {
+			continue
+		}
+		if strings.HasPrefix(s[i:], substr) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func inStringRange(idx int, ranges []stringRange) bool {
+	for _, r := range ranges {
+		if idx >= r.start && idx < r.end {
+			return true
+		}
+	}
+	return false
 }
 
 func hasEnclosingParens(exprStr string) bool {
@@ -325,6 +437,56 @@ func hasEnclosingParens(exprStr string) bool {
 	return depth == 0
 }
 
+func isFunctionCall(exprStr string) bool {
+	openParen := strings.Index(exprStr, "(")
+	if openParen <= 0 || !strings.HasSuffix(exprStr, ")") {
+		return false
+	}
+	funcName := strings.TrimSpace(exprStr[:openParen])
+	if funcName == "" {
+		return false
+	}
+	for _, ch := range funcName {
+		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '_' {
+			return false
+		}
+	}
+
+	depth := 0
+	var quote byte
+	escaped := false
+	for i := openParen; i < len(exprStr); i++ {
+		if quote != 0 {
+			switch {
+			case escaped:
+				escaped = false
+			case exprStr[i] == '\\':
+				escaped = true
+			case exprStr[i] == quote:
+				quote = 0
+			}
+			continue
+		}
+
+		switch exprStr[i] {
+		case '"', '\'':
+			quote = exprStr[i]
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i == len(exprStr)-1
+			}
+			if depth < 0 {
+				return false
+			}
+		}
+	}
+
+	return depth > 0
+}
+
 // parseFunction parses a function call like "count(field)" or "sum(amount)".
 func parseFunction(exprStr string) (*Expression, error) {
 	openParen := strings.Index(exprStr, "(")
@@ -338,11 +500,14 @@ func parseFunction(exprStr string) (*Expression, error) {
 	// Parse arguments (for now, simple comma-separated)
 	var args []*Expression
 	if argsStr != "" {
-		argStrs := strings.Split(argsStr, ",")
-		for _, argStr := range argStrs {
+		argStrs, err := splitArgsOutsideStrings(argsStr)
+		if err != nil {
+			return nil, err
+		}
+		for i, argStr := range argStrs {
 			arg, err := ParseExpression(strings.TrimSpace(argStr))
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse function argument: %w", err)
+				return nil, fmt.Errorf("failed to parse function argument %d: %w", i+1, err)
 			}
 			args = append(args, arg)
 		}
@@ -355,6 +520,59 @@ func parseFunction(exprStr string) (*Expression, error) {
 			Args: args,
 		},
 	}, nil
+}
+
+func splitArgsOutsideStrings(argsStr string) ([]string, error) {
+	var args []string
+	parenDepth := 0
+	start := 0
+	var quote byte
+	quoteStart := -1
+	quoteArg := 0
+	escaped := false
+	for i := 0; i < len(argsStr); i++ {
+		if quote != 0 {
+			switch {
+			case escaped:
+				escaped = false
+			case argsStr[i] == '\\':
+				escaped = true
+			case argsStr[i] == quote:
+				quote = 0
+				quoteStart = -1
+				quoteArg = 0
+			}
+			continue
+		}
+
+		switch argsStr[i] {
+		case '"', '\'':
+			quote = argsStr[i]
+			quoteStart = i
+			quoteArg = len(args) + 1
+		case '(':
+			parenDepth++
+		case ')':
+			parenDepth--
+			if parenDepth < 0 {
+				return nil, fmt.Errorf("mismatched ')' in function arguments: %s", argsStr)
+			}
+		case ',':
+			if parenDepth == 0 {
+				args = append(args, strings.TrimSpace(argsStr[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated string literal in function argument %d at byte %d: %s", quoteArg, quoteStart, argsStr[quoteStart:])
+	}
+	if parenDepth != 0 {
+		return nil, fmt.Errorf("mismatched '(' in function arguments: %s", argsStr)
+	}
+
+	args = append(args, strings.TrimSpace(argsStr[start:]))
+	return args, nil
 }
 
 // tryParseConstant tries to parse a constant value (number, boolean, or quoted string).

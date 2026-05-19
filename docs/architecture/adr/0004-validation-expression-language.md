@@ -115,13 +115,29 @@ field_mappings:
     type: string
 ```
 
-Parser limitation: operator characters inside string literals are not handled
-specially by the current string-scanning parser. Ternary inherits that
-pre-existing limitation for `?` and `:`, just as binary operators already do
-for strings containing `==`, `!=`, and related operator text. SUM-012 is scoped
-to harden operator scanning uniformly across the expression parser. A richer
-`case when` form remains a future candidate if recipe authors begin nesting
-ternaries deeply.
+#### Quoted String Literals
+
+String literals can use either double quotes (`"..."`) or single quotes
+(`'...'`). Operator characters inside quoted string literals are treated as
+literal content, not split points, across expression parsing, filter parsing,
+function argument splitting, and accumulation filter routing. For example,
+`label == "a && b"`, `description >= "this == that"`, and
+`status == "what?" ? "yes: ready" : "no"` parse using the operators outside
+the quoted literals.
+
+Backslash escapes are honored for delimiter detection only: `\"` inside a
+double-quoted literal and `\'` inside a single-quoted literal do not end the
+literal. The string value itself keeps the existing raw interior bytes; the DSL
+does not currently unescape sequences such as `\n` or `\"` into different
+runtime values.
+
+Unterminated string literals fail loudly with an `unterminated string literal`
+parse error before the parser falls back to variable handling. Bare unquoted
+values containing quote characters should be quoted explicitly, for example
+`name == "Bob's"`.
+
+A richer `case when` form remains a future candidate if recipe authors begin
+nesting ternaries deeply.
 
 #### Example
 
