@@ -66,6 +66,65 @@ func TestNewAccumulator(t *testing.T) {
 	}
 }
 
+func TestNewAccumulatorRoutesQuotedMarkersAsSimpleFilter(t *testing.T) {
+	acc, err := NewAccumulator(AccumulationConfig{
+		Name:      "category_count",
+		Operation: "count",
+		Filter:    `category == "a && b"`,
+	})
+	if err != nil {
+		t.Fatalf("NewAccumulator() error = %v", err)
+	}
+	if acc.Filter == nil {
+		t.Fatal("NewAccumulator() Filter = nil, want simple filter")
+	}
+	if acc.FilterExpr != nil {
+		t.Fatalf("NewAccumulator() FilterExpr = %#v, want nil", acc.FilterExpr)
+	}
+
+	if err := acc.Update(map[string]interface{}{"category": "a && b"}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if err := acc.Update(map[string]interface{}{"category": "other"}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	got, err := acc.GetResult()
+	if err != nil {
+		t.Fatalf("GetResult() error = %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("GetResult() = %v, want 1", got)
+	}
+}
+
+func TestNewAccumulatorRoutesOutsideMarkersAsAdvancedExpression(t *testing.T) {
+	acc, err := NewAccumulator(AccumulationConfig{
+		Name:      "category_count",
+		Operation: "count",
+		Filter:    `category == "a" && amount > 0`,
+	})
+	if err != nil {
+		t.Fatalf("NewAccumulator() error = %v", err)
+	}
+	if acc.FilterExpr == nil {
+		t.Fatal("NewAccumulator() FilterExpr = nil, want advanced expression")
+	}
+	if acc.Filter != nil {
+		t.Fatalf("NewAccumulator() Filter = %#v, want nil", acc.Filter)
+	}
+}
+
+func TestNewAccumulatorUnterminatedQuotedFilterFailsLoud(t *testing.T) {
+	_, err := NewAccumulator(AccumulationConfig{
+		Name:      "bad_count",
+		Operation: "count",
+		Filter:    `category == "unterminated`,
+	})
+	if err == nil {
+		t.Fatal("NewAccumulator() error = nil, want unterminated string literal")
+	}
+}
+
 func TestAccumulatorCount(t *testing.T) {
 	config := AccumulationConfig{
 		Name:      "total_count",

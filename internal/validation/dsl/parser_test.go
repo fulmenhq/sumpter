@@ -4,6 +4,7 @@
 package dsl
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -126,6 +127,33 @@ func TestParseFilter(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			name:       "operator inside quoted string value ignored",
+			filterStr:  `description >= "this == that"`,
+			wantField:  "description",
+			wantOp:     ">=",
+			wantValue:  "this == that",
+			wantIsNull: false,
+			wantErr:    false,
+		},
+		{
+			name:       "operator list order preserved",
+			filterStr:  "left > mid >= right",
+			wantField:  "left > mid",
+			wantOp:     ">=",
+			wantValue:  "right",
+			wantIsNull: false,
+			wantErr:    false,
+		},
+		{
+			name:       "quoted apostrophe accepted",
+			filterStr:  `name == "Bob's"`,
+			wantField:  "name",
+			wantOp:     "==",
+			wantValue:  "Bob's",
+			wantIsNull: false,
+			wantErr:    false,
+		},
+		{
 			name:      "empty filter",
 			filterStr: "",
 			wantErr:   false, // Empty is valid, returns nil
@@ -138,6 +166,16 @@ func TestParseFilter(t *testing.T) {
 		{
 			name:      "incomplete expression",
 			filterStr: "field ==",
+			wantErr:   true,
+		},
+		{
+			name:      "unquoted apostrophe fails loud",
+			filterStr: "name == Bob's",
+			wantErr:   true,
+		},
+		{
+			name:      "unterminated quoted value fails loud",
+			filterStr: `name == "Bob`,
 			wantErr:   true,
 		},
 	}
@@ -219,14 +257,18 @@ func TestParseExpression(t *testing.T) {
 		{name: "abs function", exprStr: "abs(difference)", wantErr: false},
 		{name: "count function", exprStr: "count()", wantErr: false},
 		{name: "sum function", exprStr: "sum()", wantErr: false},
+		{name: "logical expression with function calls", exprStr: "count(amount) && sum(quantity)", wantErr: false},
 
 		// Complex expressions
 		{name: "complex expression", exprStr: "active_count == completion_count && total_amount > 0", wantErr: false},
 		{name: "nested arithmetic", exprStr: "(a + b) * (c - d)", wantErr: false},
 		{name: "ternary expression", exprStr: `status == "online" ? "active" : "inactive"`, wantErr: false},
+		{name: "operators inside string literal", exprStr: `x == "==" ? 1 : 0`, wantErr: false},
+		{name: "logical marker inside string literal", exprStr: `label == "a && b"`, wantErr: false},
 
 		// Error cases
 		{name: "empty expression", exprStr: "", wantErr: true},
+		{name: "unterminated literal", exprStr: `x == "unterminated`, wantErr: true},
 		{name: "ternary missing else", exprStr: "x ? y :", wantErr: true},
 		{name: "ternary missing condition", exprStr: "? y : z", wantErr: true},
 		{name: "ternary missing then", exprStr: "x ? : z", wantErr: true},
@@ -308,6 +350,37 @@ func TestParseTernaryExpressionShape(t *testing.T) {
 			},
 		},
 		{
+			name: "nested ternary in then branch",
+			expr: "a ? b ? c : d : e",
+			assert: func(t *testing.T, expr *Expression) {
+				t.Helper()
+				outer := mustTernary(t, expr)
+				mustVariable(t, outer.Cond, "a")
+				inner := mustTernary(t, outer.Then)
+				mustVariable(t, inner.Cond, "b")
+				mustVariable(t, inner.Then, "c")
+				mustVariable(t, inner.Else, "d")
+				mustVariable(t, outer.Else, "e")
+			},
+		},
+		{
+			name: "mixed ternary branch nesting",
+			expr: "a ? b ? c : d : e ? f : g",
+			assert: func(t *testing.T, expr *Expression) {
+				t.Helper()
+				outer := mustTernary(t, expr)
+				mustVariable(t, outer.Cond, "a")
+				thenExpr := mustTernary(t, outer.Then)
+				mustVariable(t, thenExpr.Cond, "b")
+				mustVariable(t, thenExpr.Then, "c")
+				mustVariable(t, thenExpr.Else, "d")
+				elseExpr := mustTernary(t, outer.Else)
+				mustVariable(t, elseExpr.Cond, "e")
+				mustVariable(t, elseExpr.Then, "f")
+				mustVariable(t, elseExpr.Else, "g")
+			},
+		},
+		{
 			name: "parentheses override associativity",
 			expr: "(a ? b : c) ? d : e",
 			assert: func(t *testing.T, expr *Expression) {
@@ -367,20 +440,80 @@ func TestParseTernaryExpressionShape(t *testing.T) {
 	}
 }
 
-func TestParseTernaryQuotedOperatorLimitationMatchesExistingParser(t *testing.T) {
-	// This test locks the current pre-existing parser limitation that affects
-	// all operators uniformly. It does NOT establish silent misparse as desirable
-	// behavior; SUM-012 replaces it with a clear error across the operator chain.
-	// Update or remove this test when SUM-012 lands.
+func TestParseExpressionQuotedOperatorsUseOuterSplitPoints(t *testing.T) {
+	// Test 10 retired by SUM-012: the temporary SUM-011 limitation lock is
+	// replaced by the long-term quoted-string-aware parser contract here.
 	expr, err := ParseExpression(`x == "==" ? 1 : 0`)
 	if err != nil {
 		t.Fatalf("ParseExpression() error = %v", err)
 	}
 	ternary := mustTernary(t, expr)
 	cond := mustBinaryOperator(t, ternary.Cond, "==")
-	if cond.Left.Type != ExprBinary {
-		t.Fatalf("condition left type = %v, want nested binary misparse from quoted operator", cond.Left.Type)
+	mustVariable(t, cond.Left, "x")
+	mustConstant(t, cond.Right, "==")
+	mustConstant(t, ternary.Then, int64(1))
+	mustConstant(t, ternary.Else, int64(0))
+}
+
+func TestParseExpressionQuotedTernaryMarkersUseOuterSplitPoints(t *testing.T) {
+	expr, err := ParseExpression(`label == "what?" ? "has:colon" : "fallback"`)
+	if err != nil {
+		t.Fatalf("ParseExpression() error = %v", err)
 	}
+
+	ternary := mustTernary(t, expr)
+	cond := mustBinaryOperator(t, ternary.Cond, "==")
+	mustVariable(t, cond.Left, "label")
+	mustConstant(t, cond.Right, "what?")
+	mustConstant(t, ternary.Then, "has:colon")
+	mustConstant(t, ternary.Else, "fallback")
+}
+
+func TestParseFunctionSplitsArgsOutsideStringLiterals(t *testing.T) {
+	expr, err := ParseExpression(`count("hello, world", amount)`)
+	if err != nil {
+		t.Fatalf("ParseExpression() error = %v", err)
+	}
+
+	if expr.Type != ExprFunction {
+		t.Fatalf("expression type = %v, want ExprFunction", expr.Type)
+	}
+	call, ok := expr.Value.(*FunctionCall)
+	if !ok {
+		t.Fatalf("expression value type = %T, want *FunctionCall", expr.Value)
+	}
+	if call.Name != "count" {
+		t.Fatalf("function name = %q, want count", call.Name)
+	}
+	if len(call.Args) != 2 {
+		t.Fatalf("arg count = %d, want 2", len(call.Args))
+	}
+	mustConstant(t, call.Args[0], "hello, world")
+	mustVariable(t, call.Args[1], "amount")
+}
+
+func TestParseFunctionReportsArgumentPosition(t *testing.T) {
+	_, err := ParseExpression(`count(valid, "unterminated)`)
+	if err == nil {
+		t.Fatal("ParseExpression() error = nil, want unterminated literal error")
+	}
+	if !strings.Contains(err.Error(), "unterminated string literal") {
+		t.Fatalf("ParseExpression() error = %q, want unterminated string literal", err)
+	}
+	if !strings.Contains(err.Error(), "function argument 2") {
+		t.Fatalf("ParseExpression() error = %q, want function argument position", err)
+	}
+}
+
+func TestParseExpressionScannerOnlyEscapeSemantics(t *testing.T) {
+	expr, err := ParseExpression(`label == "with \" == inside"`)
+	if err != nil {
+		t.Fatalf("ParseExpression() error = %v", err)
+	}
+
+	binary := mustBinaryOperator(t, expr, "==")
+	mustVariable(t, binary.Left, "label")
+	mustConstant(t, binary.Right, `with \" == inside`)
 }
 
 func mustTernary(t *testing.T, expr *Expression) *TernaryExpression {

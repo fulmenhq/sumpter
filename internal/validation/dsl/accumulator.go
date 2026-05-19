@@ -14,12 +14,14 @@ func NewAccumulator(config AccumulationConfig) (*Accumulator, error) {
 	var (
 		filter     *FilterExpression
 		filterExpr *Expression
-		err        error
 	)
 
 	if config.Filter != "" {
 		filterStr := strings.TrimSpace(config.Filter)
-		advanced := strings.Contains(filterStr, "&&") || strings.Contains(filterStr, "||") || strings.Contains(filterStr, "(") || strings.Contains(filterStr, ")")
+		advanced, err := isAdvancedFilter(filterStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse filter for accumulation %s: %w", config.Name, err)
+		}
 
 		if advanced {
 			filterExpr, err = ParseExpression(filterStr)
@@ -48,6 +50,19 @@ func NewAccumulator(config AccumulationConfig) (*Accumulator, error) {
 	}
 
 	return acc, nil
+}
+
+func isAdvancedFilter(filterStr string) (bool, error) {
+	for _, marker := range []string{"&&", "||", "(", ")"} {
+		found, err := containsOutsideStrings(filterStr, marker)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Update updates the accumulator with a new record.

@@ -174,10 +174,14 @@ declared field type and can fail at write time if a branch returns an
 incompatible value. Authors who need branch heterogeneity should coerce both
 branches into a compatible type, usually `string`.
 
-Current parser limitation: operator characters inside string literals are not
-handled specially. Ternary inherits that pre-existing limitation for `?` and
-`:`, and SUM-012 is scoped to harden quoted-string-aware operator scanning
-uniformly across the DSL parser.
+Operator characters inside quoted string literals are handled as literal
+content across DSL expressions, filters, function arguments, and accumulation
+filter routing. For example, `label == "a && b"` remains a simple comparison,
+and `description >= "this == that"` splits on the outer `>=`, not the `==`
+inside the string. Backslash escapes only affect quote delimiter detection; the
+runtime string value keeps the existing raw interior bytes. Unterminated string
+literals fail loudly before variable fallback. Bare values containing quote
+characters should be quoted, for example `name == "Bob's"`.
 
 ### Output Options
 

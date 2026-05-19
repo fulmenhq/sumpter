@@ -122,7 +122,7 @@ fmt-docs: ## Format all documentation files (YAML, JSON, Markdown)
 fmt-yaml: ## Format YAML files using yamlfmt
 	@echo "  📄 Formatting YAML files..."
 	@if command -v yamlfmt >/dev/null 2>&1; then \
-		find . -name "*.yml" -o -name "*.yaml" | grep -v vendor/ | grep -v node_modules/ | while read file; do \
+		find . \( -name "*.yml" -o -name "*.yaml" \) | grep -v vendor/ | grep -v node_modules/ | grep -v .cache/ | while read file; do \
 			echo "    Formatting: $$file"; \
 			yamlfmt "$$file"; \
 		done; \
@@ -134,7 +134,7 @@ fmt-yaml: ## Format YAML files using yamlfmt
 fmt-json: ## Format JSON files using yq
 	@echo "  📄 Formatting JSON files..."
 	@if command -v yq >/dev/null 2>&1; then \
-		find . -name "*.json" | grep -v vendor/ | grep -v node_modules/ | while read file; do \
+		find . -name "*.json" | grep -v vendor/ | grep -v node_modules/ | grep -v .cache/ | while read file; do \
 			echo "    Formatting: $$file"; \
 			yq eval '.' "$$file" --output-format=json --indent=2 > "$$file.tmp" && mv "$$file.tmp" "$$file" || rm -f "$$file.tmp"; \
 		done; \
