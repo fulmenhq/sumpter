@@ -105,6 +105,34 @@ func TestEvaluateReconciliationsGroupByGeneratesComponents(t *testing.T) {
 	}
 }
 
+func TestRunValidationRuleUsesTernaryExpression(t *testing.T) {
+	record := map[string]interface{}{
+		"widget_status": "online",
+	}
+	metadata := &ValidationMetadata{
+		Enable: true,
+		Validations: []ValidationConfig{
+			{
+				Name:     "friendly_status",
+				Rule:     `widget_status == "online" ? true : false`,
+				Severity: "error",
+				Message:  "widget status should be online",
+			},
+		},
+	}
+
+	runtime, err := RunValidation(metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+	if len(runtime.ValidationResults) != 1 {
+		t.Fatalf("validation results len = %d, want 1", len(runtime.ValidationResults))
+	}
+	if runtime.ValidationResults[0].Result != "pass" {
+		t.Fatalf("validation result = %q, want pass", runtime.ValidationResults[0].Result)
+	}
+}
+
 func TestEvaluateReconciliationsGroupByCapsAtBase(t *testing.T) {
 	record := map[string]interface{}{
 		"delta_small": 10.0,
@@ -183,6 +211,48 @@ func TestEvaluateReconciliationsGroupByCapsAtBase(t *testing.T) {
 		t.Fatalf("expected capped grouped total scalar 10.0, got %#v", runtime.ReconciliationScalars["change_group_components_total"])
 	}
 
+}
+
+func TestEvaluateReconciliationsGroupByValueExpressionUsesTernary(t *testing.T) {
+	record := map[string]interface{}{
+		"reported_total": 15.0,
+		"lines": []interface{}{
+			map[string]interface{}{"category": "widgets", "amount": 10.0, "include": true},
+			map[string]interface{}{"category": "widgets", "amount": 99.0, "include": false},
+			map[string]interface{}{"category": "gears", "amount": 5.0, "include": true},
+		},
+	}
+	metadata := &ValidationMetadata{
+		Enable: true,
+		Reconciliations: []ReconciliationConfig{
+			{
+				Name:           "included_total",
+				BaseExpression: "reported_total",
+				Tolerance:      0.01,
+				GroupBy: &ReconciliationGroupByConfig{
+					Source:          "lines[]",
+					Field:           "category",
+					ValueExpression: "include == true ? amount : 0",
+					NameTemplate:    "category_{{group}}",
+				},
+			},
+		},
+	}
+
+	runtime, err := RunValidation(metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+	result := runtime.ReconciliationResults[0]
+	if len(result.Components) != 2 {
+		t.Fatalf("components len = %d, want 2", len(result.Components))
+	}
+	if !almostEqual(result.ComponentsTotal, 15.0) {
+		t.Fatalf("components_total = %f, want 15", result.ComponentsTotal)
+	}
+	if result.Status != "balanced" {
+		t.Fatalf("status = %q, want balanced", result.Status)
+	}
 }
 
 func TestEvaluateReconciliationsMixedModeMergesGroupedAndStaticComponents(t *testing.T) {

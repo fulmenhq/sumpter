@@ -147,6 +147,38 @@ Expression mappings use the same Sumpter DSL as validation metadata and summarie
 
 Each scalar mapping must declare exactly one of `xpath` or `expression`. Expression mappings are only supported for top-level scalar `field_mappings`; nested `item_mapping` and `polymorphic_mapping` fields remain XPath-only.
 
+### Conditional Expressions
+
+Expression mappings can use the DSL ternary conditional:
+
+```yaml
+field_mappings:
+  - output_field: widget_status
+    xpath: Status
+    type: string
+  - output_field: widget_status_friendly
+    expression: 'widget_status == "online" ? "ready" : widget_status'
+    type: string
+```
+
+The condition must evaluate to a boolean. Only the selected branch is
+evaluated, so untaken-branch undefined variables or type errors do not fire.
+Ternary has the lowest DSL precedence and is right-associative; use
+parentheses when nested conditionals need a different grouping. ADR-0004
+contains the full operator table.
+
+When a ternary is used in `field_mappings[*].expression`, both branches should
+produce values compatible with the declared `type:`. JSONL can represent
+variant per-record values, but Parquet derives a fixed column schema from the
+declared field type and can fail at write time if a branch returns an
+incompatible value. Authors who need branch heterogeneity should coerce both
+branches into a compatible type, usually `string`.
+
+Current parser limitation: operator characters inside string literals are not
+handled specially. Ternary inherits that pre-existing limitation for `?` and
+`:`, and SUM-012 is scoped to harden quoted-string-aware operator scanning
+uniformly across the DSL parser.
+
 ### Output Options
 
 ```

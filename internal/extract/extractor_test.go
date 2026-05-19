@@ -515,6 +515,40 @@ func TestExtractRecordsExpressionFieldMappings(t *testing.T) {
 	}
 }
 
+func TestExtractRecordsExpressionFieldMappingTernary(t *testing.T) {
+	docContent := `<?xml version="1.0"?><Envelope><Record><Status>online</Status></Record><Record><Status>training</Status></Record></Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	if err != nil {
+		t.Fatalf("failed to parse xml: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "widget_status", XPath: "Status", Type: "string"},
+			{OutputField: "widget_status_friendly", Expression: `widget_status == "online" ? "ready" : widget_status`, Type: "string"},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	records, err := extractRecords(doc, cfg, nil)
+	if err != nil {
+		t.Fatalf("extractRecords: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records len = %d, want 2", len(records))
+	}
+	if got := records[0]["widget_status_friendly"]; got != "ready" {
+		t.Fatalf("record 0 widget_status_friendly = %#v, want ready", got)
+	}
+	if got := records[1]["widget_status_friendly"]; got != "training" {
+		t.Fatalf("record 1 widget_status_friendly = %#v, want training", got)
+	}
+}
+
 func TestExtractRecordsExpressionFieldMappingUndefinedVariable(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><A>2</A></Record></Envelope>`
 	doc, err := xmlquery.Parse(strings.NewReader(docContent))

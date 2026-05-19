@@ -4,6 +4,7 @@
 package dsl
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -236,6 +237,66 @@ func TestEvaluateExpression(t *testing.T) {
 			variables:  map[string]interface{}{"suspended": 48, "completion": 48, "errors": 0},
 			wantResult: true,
 		},
+
+		// Ternary conditionals
+		{
+			name:       "ternary true branch",
+			exprStr:    "x > 0 ? 1 : -1",
+			variables:  map[string]interface{}{"x": 5},
+			wantResult: int64(1),
+		},
+		{
+			name:       "ternary false branch",
+			exprStr:    "x > 0 ? 1 : -1",
+			variables:  map[string]interface{}{"x": -3},
+			wantResult: int64(-1),
+		},
+		{
+			name:       "ternary equality uses false branch",
+			exprStr:    "x > 0 ? 1 : -1",
+			variables:  map[string]interface{}{"x": 0},
+			wantResult: int64(-1),
+		},
+		{
+			name:       "ternary short-circuits false branch",
+			exprStr:    "true ? 42 : undefined_var",
+			wantResult: int64(42),
+		},
+		{
+			name:       "ternary short-circuits true branch",
+			exprStr:    "false ? undefined_var : 42",
+			wantResult: int64(42),
+		},
+		{
+			name:       "nested ternary",
+			exprStr:    "a ? b : c ? d : e",
+			variables:  map[string]interface{}{"a": false, "b": "skip", "c": true, "d": "match", "e": "no"},
+			wantResult: "match",
+		},
+		{
+			name:       "dogfood friendly relabel sale",
+			exprStr:    `event_kind == "SaleEvent" ? "NoSaleEvent" : event_kind`,
+			variables:  map[string]interface{}{"event_kind": "SaleEvent"},
+			wantResult: "NoSaleEvent",
+		},
+		{
+			name:       "dogfood friendly relabel passthrough",
+			exprStr:    `event_kind == "SaleEvent" ? "NoSaleEvent" : event_kind`,
+			variables:  map[string]interface{}{"event_kind": "OpenEvent"},
+			wantResult: "OpenEvent",
+		},
+		{
+			name:       "ternary heterogeneous true branch",
+			exprStr:    `cond ? "str" : 42`,
+			variables:  map[string]interface{}{"cond": true},
+			wantResult: "str",
+		},
+		{
+			name:       "ternary heterogeneous false branch",
+			exprStr:    `cond ? "str" : 42`,
+			variables:  map[string]interface{}{"cond": false},
+			wantResult: int64(42),
+		},
 	}
 
 	for _, tt := range tests {
@@ -271,6 +332,23 @@ func TestEvaluateExpression(t *testing.T) {
 					result, result, tt.wantResult, tt.wantResult)
 			}
 		})
+	}
+}
+
+func TestEvaluateTernaryNonBooleanCondition(t *testing.T) {
+	expr, err := ParseExpression("5 ? 1 : 2")
+	if err != nil {
+		t.Fatalf("ParseExpression() error = %v", err)
+	}
+
+	_, err = NewEvaluator(nil).EvaluateExpression(expr)
+	if err == nil {
+		t.Fatal("expected non-boolean ternary condition error")
+	}
+	for _, want := range []string{"ternary condition must be boolean", "int64", "5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err.Error(), want)
+		}
 	}
 }
 

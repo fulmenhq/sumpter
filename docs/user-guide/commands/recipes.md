@@ -54,6 +54,21 @@ declare `min_occurrences: N` with `N > 0` opt into fail-loud enforcement; if a
 source yields fewer matches than the selector's floor, the command exits
 non-zero before writing payload output or `manifest.json`.
 
+Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
+For conditional relabeling, use ternary syntax:
+
+```yaml
+field_mappings:
+  - output_field: widget_status_friendly
+    expression: 'widget_status == "online" ? "ready" : widget_status'
+    type: string
+```
+
+The ternary condition must evaluate to a boolean, only the selected branch is
+evaluated, and the result type is the selected branch's value. Branch values
+should be compatible with the declared `type:` for fixed-schema outputs such as
+Parquet.
+
 ### `retrieve`
 
 Execute a recipe to acquire upstream data (currently SEC EDGAR filings).

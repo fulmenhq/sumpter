@@ -1,0 +1,23 @@
+record_type: widget_ternary_order
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: widget_status
+    xpath: Status
+    type: string
+  - output_field: widget_status_friendly
+    expression: 'widget_status == "online" ? "ready" : widget_status'
+    type: string
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    widget_status:
+      type: string
+    widget_status_friendly:
+      type: string
+  required: [order_id, widget_status, widget_status_friendly]

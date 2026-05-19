@@ -175,6 +175,7 @@ const (
 	ExprBinary                         // Binary operation (left op right)
 	ExprUnary                          // Unary operation (!expr)
 	ExprFunction                       // Function call
+	ExprTernary                        // Conditional operation (cond ? then : else)
 )
 
 // BinaryExpression represents a binary operation.
@@ -188,6 +189,13 @@ type BinaryExpression struct {
 type UnaryExpression struct {
 	Operator string // !
 	Operand  *Expression
+}
+
+// TernaryExpression represents a conditional expression.
+type TernaryExpression struct {
+	Cond *Expression
+	Then *Expression
+	Else *Expression
 }
 
 // FunctionCall represents a function invocation.
