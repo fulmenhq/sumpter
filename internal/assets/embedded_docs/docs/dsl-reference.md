@@ -1,0 +1,308 @@
+# Sumpter DSL Reference
+
+**Reference version:** Sumpter DSL reference v1.1 (as of post-SUM-012 release)
+**Runtime language value:** `sumpter-dsl`
+**Status:** Current recipe-author reference for v0.1.4
+
+This document is the canonical reference for the Sumpter expression language
+used by extract recipes. It describes the grammar and runtime behavior that
+recipe authors can rely on today. The reference version above is documentation
+metadata only; Sumpter does not currently accept a runtime declaration such as
+`expression_language: sumpter-dsl@v1.1`.
+
+## Where the DSL Is Used
+
+Sumpter DSL expressions appear in these recipe surfaces:
+
+| Surface | Field | Expected result |
+|---|---|---|
+| Scalar field mappings | `field_mappings[].expression` | Value compatible with the declared output field type |
+| Validation aggregations | `validation_metadata.aggregations[].expression` | Scalar value |
+| Reconciliation totals | `validation_metadata.reconciliations[].base_expression` | Numeric value |
+| Reconciliation components | `validation_metadata.reconciliations[].components[].expression` | Numeric value |
+| Reconciliation grouping | `validation_metadata.reconciliations[].group_by.filter` | Boolean value |
+| Reconciliation grouping | `validation_metadata.reconciliations[].group_by.value_expression` | Numeric value |
+| Validation rules | `validation_metadata.validations[].rule` | Boolean value |
+| Summaries | `summaries[].total.expression` and `summaries[].components[].expression` | Scalar value |
+| Accumulation filters | `validation_metadata.accumulations[].filter` | Boolean match decision |
+
+Expression mappings run after top-level XPath mappings are populated.
+Expression mappings are evaluated in declaration order, so an expression can
+reference XPath fields and earlier expression fields in the same record, but
+not later expression fields.
+
+## Grammar
+
+### Values
+
+The parser recognizes:
+
+| Form | Example | Runtime value |
+|---|---|---|
+| Integer | `42` | `int64` |
+| Float | `3.14` | `float64` |
+| Boolean | `true`, `false` | `bool` |
+| Null literal | `null` | `nil` in filter null comparisons and evaluator context |
+| Double-quoted string | `"ready"` | Raw string interior |
+| Single-quoted string | `'ready'` | Raw string interior |
+| Variable | `total_amount` | Value from the current evaluation context |
+
+Unquoted strings are accepted as filter values in simple filters, for example
+`status == active`. In full expressions, unquoted identifiers are variables.
+
+### Operators
+
+From lowest to highest precedence:
+
+| Precedence | Operators | Associativity | Notes |
+|---|---|---|---|
+| 1 | `?:` | Right | Conditional expression; only the selected branch evaluates |
+| 2 | `||`, `&&` | Left | Logical operators; both operands currently evaluate before the operator is applied |
+| 3 | `==`, `!=`, `>=`, `<=`, `>`, `<` | Left | Comparisons |
+| 4 | `+`, `-` | Left | Numeric addition and subtraction |
+| 5 | `*`, `/` | Left | Numeric multiplication and division |
+| 6 | `!` | Right | Boolean negation |
+| 7 | `(...)`, functions, constants, variables | N/A | Grouping, function calls, atoms |
+
+Parentheses can override grouping:
+
+```text
+(a + b) * c
+```
+
+### Conditional Expressions
+
+Conditional expressions use C-family ternary syntax:
+
+```text
+condition ? then_expression : else_expression
+```
+
+The condition must evaluate to a boolean. The result is the selected branch's
+value. There is no implicit branch type unification, so fixed-schema outputs
+such as Parquet should use branches compatible with the declared field type.
+
+Ternary expressions are right-associative:
+
+```text
+a ? b : c ? d : e
+```
+
+parses as:
+
+```text
+a ? b : (c ? d : e)
+```
+
+Only the selected ternary branch is evaluated. This is different from `&&` and
+`||`, which currently evaluate both operands before applying the logical
+operator.
+
+### Functions
+
+Function names are case-insensitive at evaluation time.
+
+| Function | Signature | Behavior |
+|---|---|---|
+| `abs` | `abs(number)` | Absolute value |
+| `round` | `round(number)` | Round to the nearest integer |
+| `round` | `round(number, places)` | Round to the requested non-negative decimal precision; negative precision is clamped to zero |
+| `min` | `min(number, ...)` | Minimum numeric argument; requires at least one argument |
+| `max` | `max(number, ...)` | Maximum numeric argument; requires at least one argument |
+| `count` | `count()` | Returns the `count` variable when present, otherwise `0` |
+| `sum` | `sum()` | Returns the `sum` variable when present, otherwise `0.0` |
+
+`count(expr)` and `sum(expr)` are not supported in expression context today.
+Use accumulation configuration for data-wide counts and sums.
+
+Function arguments are comma-separated expressions. Commas inside quoted string
+literals or nested parentheses do not split arguments.
+
+### Type Rules
+
+Arithmetic operators require numeric operands and return `float64` results.
+Division by zero fails.
+
+Comparison behavior is:
+
+- Numeric operands compare numerically.
+- `==` and `!=` on non-numeric values use deep equality.
+- Ordering comparisons (`>`, `>=`, `<`, `<=`) are only supported for numeric
+  operands.
+- Logical operators and unary `!` require boolean operands.
+
+Undefined variables fail evaluation with the variable name.
+
+## Filter Expressions
+
+Sumpter has two filter parsing paths:
+
+- Simple filters use `ParseFilter`, a field/operator/value parser for
+  accumulation filters such as `status == active`.
+- Advanced filters use the full expression parser when an accumulation filter
+  contains `&&`, `||`, `(`, or `)` outside quoted string literals.
+
+### Simple Filter Syntax
+
+```text
+field_name == value
+field_name != value
+field_name > value
+field_name >= value
+field_name < value
+field_name <= value
+field_name == null
+field_name != null
+```
+
+Simple filter values can be booleans, integers, floats, quoted strings,
+unquoted strings, or `null`.
+
+Simple filters use this fixed operator order:
+
+```text
+==, !=, >=, <=, >, <
+```
+
+This order is intentional and load-bearing. Longer or more specific operators
+must be considered before their shorter forms so a filter such as
+`description >= "value"` splits on `>=`, not `>`. Future filter operators must
+preserve explicit list-order semantics.
+
+When a simple filter contains multiple top-level comparison operators, the
+first operator in the fixed list wins. For example:
+
+```text
+left > mid >= right
+```
+
+parses as:
+
+```text
+Field: "left > mid"
+Operator: ">="
+Value: "right"
+```
+
+Recipe authors should avoid that shape; it is documented because it is the
+current compatibility contract.
+
+## Parser Behavior Contracts
+
+### Quoted String Literals
+
+String literals can use either double quotes (`"..."`) or single quotes
+(`'...'`). Operator characters inside quoted string literals are literal
+content, not split points, across:
+
+- Binary expression scanning
+- Ternary `?` and matching `:` scanning
+- Simple filter parsing
+- Function argument splitting
+- Accumulation filter advanced/simple routing
+
+Examples:
+
+```text
+label == "a && b"
+description >= "this == that"
+status == "what?" ? "yes: ready" : "no"
+```
+
+Backslash escapes are honored for quote delimiter detection only. `\"` inside
+a double-quoted literal and `\'` inside a single-quoted literal do not end the
+literal. Runtime string values keep their raw interior bytes; sequences such
+as `\n` or `\"` are not unescaped into different values.
+
+### Unterminated Literals and Bare Quote Characters
+
+Unterminated string literals fail loudly before parser fallback:
+
+```text
+name == "Bob
+```
+
+Bare unquoted values that contain quote characters also fail because the quote
+starts an unterminated string literal:
+
+```text
+name == Bob's
+```
+
+Quote values containing quote characters explicitly:
+
+```text
+name == "Bob's"
+```
+
+### Ternary Colon Matching
+
+Ternary parsing uses dedicated matching-`:` logic. The scanner tracks quoted
+strings, parenthesis depth, and nested ternary depth so nested branches retain
+the documented right-associative behavior.
+
+```text
+a ? b ? c : d : e
+```
+
+parses as:
+
+```text
+a ? (b ? c : d) : e
+```
+
+Do not model ternary colon matching as a generic "first colon outside strings"
+scan; nested ternaries require pairing depth.
+
+## Forward Compatibility
+
+### Tracked Candidate: Case-When
+
+A richer `case when` form is a tracked v1 candidate if operational use shows
+deeply nested ternaries are hard to read. It is not accepted syntax today.
+
+### Demand-Driven Candidate: More Aggregations
+
+`group_by.aggregation` currently supports `sum`. Additional aggregations such
+as `avg`, `count`, `min`, or `max` are future demand-driven surface.
+
+### Future Runtime DSL Semantic Versioning
+
+The schema currently accepts `expression_language: sumpter-dsl`. Runtime DSL
+semantic version enforcement, including syntax such as
+`expression_language: sumpter-dsl@v1.1`, is future work and is not accepted
+today.
+
+### Future Lexer or Tokenizer
+
+This reference's grammar and semantic sections are parser-implementation
+agnostic. A future tokenizer-based parser must preserve the documented grammar
+and semantics. Parser behavior contracts may be updated if tokenizer-level
+literal recognition replaces the current scanner edge cases.
+
+## Migration Notes for v0.1.4
+
+### Ternary Expressions
+
+SUM-011 added ternary expressions. Existing expressions continue to work.
+Authors can use ternaries for concise conditional relabeling:
+
+```yaml
+field_mappings:
+  - output_field: widget_status_friendly
+    expression: 'widget_status == "online" ? "ready" : widget_status'
+    type: string
+```
+
+### Quoted String Hardening
+
+SUM-012 hardened quoted string scanning across parser surfaces. Expressions
+that previously relied on bare unquoted values containing quote characters
+must quote those values explicitly:
+
+```text
+name == "Bob's"
+```
+
+Non-DSL v0.1.4 release-note content, such as `min_occurrences`, remains in
+`docs/releases/v0.1.4.md` rather than this DSL reference.
