@@ -143,7 +143,16 @@ field_mappings:
     type: integer
 ```
 
-Expression mappings use the same Sumpter DSL as validation metadata and summaries. Extraction runs in two passes: every top-level XPath mapping is populated first, then top-level expression mappings are evaluated in declaration order against the populated record. That means expression fields can reference any XPath field in the same record, and can reference earlier expression fields, but cannot reference expression fields declared later. Undefined names fail the extraction with the output field and expression in the error message.
+Expression mappings use the same Sumpter DSL as validation metadata,
+reconciliations, and summaries. See the
+[Sumpter DSL Reference](dsl-reference.md) for operator precedence, functions,
+type rules, filter behavior, and parser contracts. Extraction runs in two
+passes: every top-level XPath mapping is populated first, then top-level
+expression mappings are evaluated in declaration order against the populated
+record. That means expression fields can reference any XPath field in the same
+record, and can reference earlier expression fields, but cannot reference
+expression fields declared later. Undefined names fail the extraction with the
+output field and expression in the error message.
 
 Each scalar mapping must declare exactly one of `xpath` or `expression`. Expression mappings are only supported for top-level scalar `field_mappings`; nested `item_mapping` and `polymorphic_mapping` fields remain XPath-only.
 
@@ -163,25 +172,12 @@ field_mappings:
 
 The condition must evaluate to a boolean. Only the selected branch is
 evaluated, so untaken-branch undefined variables or type errors do not fire.
-Ternary has the lowest DSL precedence and is right-associative; use
-parentheses when nested conditionals need a different grouping. ADR-0004
-contains the full operator table.
-
 When a ternary is used in `field_mappings[*].expression`, both branches should
 produce values compatible with the declared `type:`. JSONL can represent
 variant per-record values, but Parquet derives a fixed column schema from the
 declared field type and can fail at write time if a branch returns an
 incompatible value. Authors who need branch heterogeneity should coerce both
 branches into a compatible type, usually `string`.
-
-Operator characters inside quoted string literals are handled as literal
-content across DSL expressions, filters, function arguments, and accumulation
-filter routing. For example, `label == "a && b"` remains a simple comparison,
-and `description >= "this == that"` splits on the outer `>=`, not the `==`
-inside the string. Backslash escapes only affect quote delimiter detection; the
-runtime string value keeps the existing raw interior bytes. Unterminated string
-literals fail loudly before variable fallback. Bare values containing quote
-characters should be quoted, for example `name == "Bob's"`.
 
 ### Output Options
 
@@ -312,7 +308,7 @@ summaries:
         remainder: true
 ```
 
-* `total.expression` and each `component.expression` use the validation DSL variable space (fields, accumulations, aggregations, etc.).
+* `total.expression` and each `component.expression` use the Sumpter DSL variable space (fields, accumulations, aggregations, etc.). See the [Sumpter DSL Reference](dsl-reference.md) for expression behavior.
 * A component with `remainder: true` absorbs the remaining share of the total once other components are subtracted.
 
 ### Validation Metadata
@@ -366,8 +362,8 @@ validation_metadata:
 | `field` | Yes | Field within each grouped object used as the grouping key. |
 | `label_field` | No | Field used for human-friendly labels in templates. Falls back to the group key. |
 | `missing_label` | No | Label used when the grouping field is missing or blank. Default is `unknown`. |
-| `filter` | No | Boolean DSL expression deciding whether a record participates in grouping. |
-| `value_expression` | Yes | Numeric DSL expression evaluated for each grouped record. |
+| `filter` | No | Boolean Sumpter DSL expression deciding whether a record participates in grouping. |
+| `value_expression` | Yes | Numeric Sumpter DSL expression evaluated for each grouped record. |
 | `aggregation` | No | Aggregation across values in each group. Current supported value is `sum`. |
 | `name_template` | No | Component name template. Supports `{{group}}` and `{{label}}`. |
 | `description_template` | No | Component description template. Supports `{{group}}` and `{{label}}`. |

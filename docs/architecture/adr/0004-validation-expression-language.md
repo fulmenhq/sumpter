@@ -22,129 +22,21 @@ Example use case — ClinVar variant-archive extraction:
 
 ## Decision
 
-We will implement a **custom mini-DSL** called `sumpter-dsl` for validation expressions, with provisions to add full-featured query languages later.
+We will implement a **custom mini-DSL** called `sumpter-dsl` for validation
+expressions, with provisions to add full-featured query languages later.
 
-### Sumpter-DSL Specification v1.0
+The current grammar, function set, operator precedence, filter semantics, type
+rules, and parser behavior contracts are maintained in the canonical
+[Sumpter DSL Reference](../../dsl-reference.md). This ADR records why Sumpter
+uses a custom mini-DSL and when that decision should be revisited; the
+reference document records what the DSL does today.
 
-#### Supported Operations
-
-**Accumulations** (incremental, during extraction):
-
-```yaml
-operation: "count" | "sum" | "avg" | "min" | "max"
-field: "field_path"  # dot notation for nested fields
-filter: "field_name op value"  # Simple comparison
-```
-
-**Filter Syntax**:
-
-```
-field_name == value          # Equality
-field_name != value          # Inequality
-field_name > value           # Greater than
-field_name >= value          # Greater than or equal
-field_name < value           # Less than
-field_name <= value          # Less than or equal
-field_name == null           # Null check
-field_name != null           # Not null check
-```
-
-**Aggregation Expressions**:
-
-```
-variable_name                # Reference accumulation/aggregation
-constant                     # Numeric or string literal
-expression op expression     # Binary operations: +, -, *, /, ==, !=, <, >, <=, >=
-condition ? then : else      # Conditional expression
-func(expression)            # Functions: abs, count, sum
-```
-
-**Validation Rules**:
-
-```
-expression && expression     # Logical AND
-expression || expression     # Logical OR
-!expression                  # Logical NOT
-```
-
-#### Operator Precedence
-
-From lowest to highest precedence:
-
-| Precedence | Operators | Associativity | Notes |
-|---|---|---|---|
-| 1 | `?:` | Right | Conditional expression; only the selected branch evaluates |
-| 2 | `||`, `&&` | Left | Logical operators; evaluated eagerly in the current runtime |
-| 3 | `==`, `!=`, `>=`, `<=`, `>`, `<` | Left | Comparisons |
-| 4 | `+`, `-` | Left | Addition and subtraction |
-| 5 | `*`, `/` | Left | Multiplication and division |
-| 6 | `!` | Right | Unary boolean negation |
-| 7 | `(...)`, functions, constants, variables | N/A | Grouping, calls, atoms |
-
-#### Conditional Expressions
-
-The DSL supports C-family ternary conditionals:
-
-```text
-condition ? then_expression : else_expression
-```
-
-The condition must evaluate to a boolean. If it evaluates to any other type,
-evaluation fails with the actual type and condition expression. The `then` and
-`else` branches can produce any value type; the ternary result is the value of
-the branch that was taken. There is no implicit branch type unification.
-
-Ternary is right-associative and has the lowest precedence, so
-`a ? b : c ? d : e` parses as `a ? b : (c ? d : e)`. Use parentheses to
-override that grouping.
-
-Ternary is short-circuiting: only the selected branch evaluates. This differs
-from the current `&&` and `||` runtime behavior, which evaluates both operands
-before applying the logical operator. Changing `&&` / `||` to short-circuit is
-a separate compatibility decision.
-
-Example:
-
-```yaml
-field_mappings:
-  - output_field: widget_status
-    xpath: Status
-    type: string
-  - output_field: widget_status_friendly
-    expression: 'widget_status == "online" ? "ready" : widget_status'
-    type: string
-```
-
-#### Quoted String Literals
-
-String literals can use either double quotes (`"..."`) or single quotes
-(`'...'`). Operator characters inside quoted string literals are treated as
-literal content, not split points, across expression parsing, filter parsing,
-function argument splitting, and accumulation filter routing. For example,
-`label == "a && b"`, `description >= "this == that"`, and
-`status == "what?" ? "yes: ready" : "no"` parse using the operators outside
-the quoted literals.
-
-Backslash escapes are honored for delimiter detection only: `\"` inside a
-double-quoted literal and `\'` inside a single-quoted literal do not end the
-literal. The string value itself keeps the existing raw interior bytes; the DSL
-does not currently unescape sequences such as `\n` or `\"` into different
-runtime values.
-
-Unterminated string literals fail loudly with an `unterminated string literal`
-parse error before the parser falls back to variable handling. Bare unquoted
-values containing quote characters should be quoted explicitly, for example
-`name == "Bob's"`.
-
-A richer `case when` form remains a future candidate if recipe authors begin
-nesting ternaries deeply.
-
-#### Example
+### Example
 
 ```yaml
 validation_metadata:
   enable: true
-  expression_language: "sumpter-dsl" # Explicit version
+  expression_language: "sumpter-dsl"
 
   accumulations:
     - name: "active_count"
@@ -175,7 +67,7 @@ The schema includes `expression_language` enum to support future additions:
 expression_language: "sumpter-dsl" | "jmespath" | "jsonata" | "cel"
 ```
 
-When users need more complex queries (grouping, nested transforms, joins), we can add:
+When users need more complex queries beyond the current DSL surface, we can add:
 
 - **JMESPath** (Apache 2.0) - Good balance of power/simplicity
 - **JSONata** - XPath-like power for JSON
@@ -187,7 +79,7 @@ When users need more complex queries (grouping, nested transforms, joins), we ca
 
 1. **YAGNI Principle**: Our validation needs are simple (counts, sums, comparisons)
    - 95% of use cases: `count(field where condition)` and `sum(field where condition)`
-   - No grouping, pivoting, or complex transforms needed yet
+   - No pivoting or complex transforms needed yet
 
 2. **Implementation Speed**:
    - Mini-DSL: ~200 lines, 2-4 hours implementation
@@ -226,7 +118,7 @@ When users need more complex queries (grouping, nested transforms, joins), we ca
 
 Add JMESPath/JSONata when we need:
 
-- Grouping operations (`group_by`)
+- Grouping operations beyond the current reconciliation `group_by` surface
 - Complex nested queries
 - Data transformations/pivoting
 - External tool compatibility
@@ -238,10 +130,10 @@ Add JMESPath/JSONata when we need:
 
 1. ✅ Add `validation_metadata` section to extract schema
 2. ✅ Add `expression_language` enum field
-3. ⏭️ Implement parser in `internal/validation/dsl/`
-4. ⏭️ Add evaluator with accumulations/aggregations/validations
-5. ⏭️ Integrate into extraction pipeline
-6. ⏭️ Add comprehensive unit tests
+3. ✅ Implement parser in `internal/validation/dsl/`
+4. ✅ Add evaluator with accumulations/aggregations/validations
+5. ✅ Integrate into extraction pipeline
+6. ✅ Add comprehensive unit tests
 
 ### Phase 2: Enhancement (Beta/Production)
 
@@ -281,14 +173,15 @@ internal/validation/
 
 ### Neutral
 
-- 🔄 Team needs to document DSL syntax
-- 🔄 Unit tests required for parser/evaluator
+- DSL syntax is documented in the [Sumpter DSL Reference](../../dsl-reference.md)
+- Unit tests remain required for parser/evaluator changes
 
 ## References
 
 - [JMESPath Specification](https://jmespath.org/)
 - [JSONata](https://jsonata.org/)
 - [CEL Specification](https://github.com/google/cel-spec)
+- [Sumpter DSL Reference](../../dsl-reference.md)
 - Example recipes and fixtures live outside this repo (private workspaces)
 
 ## Notes

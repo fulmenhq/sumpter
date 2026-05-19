@@ -55,7 +55,9 @@ source yields fewer matches than the selector's floor, the command exits
 non-zero before writing payload output or `manifest.json`.
 
 Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
-For conditional relabeling, use ternary syntax:
+For the full expression grammar, function set, and parser behavior contracts,
+see [Sumpter DSL Reference](../../dsl-reference.md). For conditional
+relabeling, use ternary syntax:
 
 ```yaml
 field_mappings:

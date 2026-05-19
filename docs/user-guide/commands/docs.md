@@ -45,6 +45,7 @@ Sumpter Embedded Documentation
 ==============================
 
 📚 root:
+  ├── dsl-reference.md
   ├── sumpter_overview.md
   ├── output_rendering.md
 
@@ -97,6 +98,7 @@ sumpter docs show sop/repository-operations-sop
 
 - **sumpter_overview.md**: High-level overview of Sumpter's capabilities
 - **output_rendering.md**: Information about output formats and rendering
+- **dsl-reference.md**: Canonical reference for the Sumpter DSL used by recipes
 
 ### Architecture (architecture/)
 
@@ -215,6 +217,9 @@ sumpter inspect --help
 
 # Detailed documentation
 sumpter docs show user-guide/commands/inspect
+
+# DSL reference
+sumpter docs show dsl-reference.md
 ```
 
 ## Notes
