@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
@@ -97,6 +98,160 @@ func TestRunExtractManifestRecordsEffectiveSequentialFormat(t *testing.T) {
 	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
 	if got := manifest.Outputs[0].Format; got != "json" {
 		t.Fatalf("output format = %q, want json", got)
+	}
+}
+
+func TestRunExtractWritesZeroRecordOutputsAndManifestCounts(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(dir, "input.xml"), `<root></root>`)
+
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "extract-{}.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+	}
+
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+
+	outputFile := filepath.Join(outputDir, "extract-input.xml.json")
+	info, err := os.Stat(outputFile)
+	if err != nil {
+		t.Fatalf("expected zero-record output file: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("zero-record JSONL size = %d, want 0", info.Size())
+	}
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.Outputs) != 1 {
+		t.Fatalf("outputs len = %d, want 1", len(manifest.Outputs))
+	}
+	if manifest.Outputs[0].RecordCount != 0 {
+		t.Fatalf("record_count = %d, want 0", manifest.Outputs[0].RecordCount)
+	}
+	if got, ok := manifest.CountsByRecordType["sample_record"]; !ok || got != 0 {
+		t.Fatalf("counts_by_record_type = %#v, want sample_record=0", manifest.CountsByRecordType)
+	}
+}
+
+func TestRunExtractMinOccurrencesViolationFailsBeforeOutputAndManifest(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(dir, "input.xml"), `<root></root>`)
+	mustWriteFile(t, filepath.Join(dir, "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+    min_occurrences: 5
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "extract-{}.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		Recipe:          &provenance.Recipe{ID: "sample-recipe"},
+	}
+
+	err := runExtract(opts)
+	if err == nil {
+		t.Fatal("expected min_occurrences violation")
+	}
+	errText := err.Error()
+	for _, want := range []string{`recipe "sample-recipe"`, "selector 0", `xpath="//item"`, "min_occurrences=5", "yielded 0", "input.xml"} {
+		if !strings.Contains(errText, want) {
+			t.Fatalf("error %q missing %q", errText, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "extract-input.xml.json")); !os.IsNotExist(err) {
+		t.Fatalf("output stat error = %v, want not exists", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, provenance.ManifestFileName)); !os.IsNotExist(err) {
+		t.Fatalf("manifest stat error = %v, want not exists", err)
+	}
+}
+
+func TestRunExtractMinOccurrencesIsPerSelectorNotAggregate(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(dir, "input.xml"), `<root><item><name>A</name></item><item><name>B</name></item><item><name>C</name></item><item><name>D</name></item><item><name>E</name></item></root>`)
+	mustWriteFile(t, filepath.Join(dir, "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+    min_occurrences: 3
+  - xpath: //missing
+    min_occurrences: 3
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "extract-{}.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		Recipe:          &provenance.Recipe{ID: "sample-recipe"},
+	}
+
+	err := runExtract(opts)
+	if err == nil {
+		t.Fatal("expected selector-specific min_occurrences violation")
+	}
+	errText := err.Error()
+	for _, want := range []string{"selector 1", `xpath="//missing"`, "min_occurrences=3", "yielded 0"} {
+		if !strings.Contains(errText, want) {
+			t.Fatalf("error %q missing %q", errText, want)
+		}
+	}
+}
+
+func TestPerSelectorCountsForIndexedExtractionRejectsAmbiguousFloors(t *testing.T) {
+	extCfg := &extract.ExtractRecordMatch{
+		MatchSelectors: []extract.MatchSelector{
+			{XPath: "//item", MinOccurrences: 1},
+			{XPath: "//missing", MinOccurrences: 1},
+		},
+	}
+
+	_, err := perSelectorCountsForIndexedExtraction("//item", extCfg, 5)
+	if err == nil {
+		t.Fatal("expected ambiguity error")
+	}
+	if !strings.Contains(err.Error(), "only accounts for extract selector 0") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -274,6 +429,69 @@ func TestRunExtractWritesParallelProvenanceManifest(t *testing.T) {
 	}
 	if manifest.CountsByRecordType["sample_record"] != 2 {
 		t.Fatalf("counts_by_record_type = %#v, want sample_record=2", manifest.CountsByRecordType)
+	}
+}
+
+func TestRunExtractParallelMinOccurrencesUsesIndexedMatchCount(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+
+	xmlPath := filepath.Join(dir, "input.xml")
+	mustWriteFile(t, xmlPath, `<root><item><name>A</name></item><item><name>B</name><blob>`+strings.Repeat("x", 2*1024*1024)+`</blob></item></root>`)
+	mustWriteFile(t, filepath.Join(dir, "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+    min_occurrences: 2
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+
+	indexPath := filepath.Join(dir, "input.recordindex.json")
+	builder := index.NewBuilder(index.BuildOptions{
+		InputPath:  xmlPath,
+		OutputPath: indexPath,
+		Selector:   "//item",
+	})
+	recordIndex, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build index: %v", err)
+	}
+	if recordIndex.Summary.TotalRecords != 2 {
+		t.Fatalf("index total_records = %d, want 2", recordIndex.Summary.TotalRecords)
+	}
+	if err := builder.WriteToFile(recordIndex, indexPath); err != nil {
+		t.Fatalf("WriteToFile index: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:            xmlPath,
+		Format:           "json",
+		OutputPath:       outputDir,
+		SignatureConfig:  filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:    filepath.Join(dir, "extract.yaml"),
+		RecordIndex:      indexPath,
+		Workers:          2,
+		MaxRecordSizeMB:  1,
+		SkipLargeRecords: true,
+	}
+
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if manifest.Outputs[0].RecordCount != 1 {
+		t.Fatalf("record_count = %d, want 1 emitted record", manifest.Outputs[0].RecordCount)
 	}
 }
 

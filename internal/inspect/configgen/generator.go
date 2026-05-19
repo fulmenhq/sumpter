@@ -761,7 +761,6 @@ func writeConfig(out *strings.Builder, selector string, records []recordPath, ma
 	fmt.Fprintf(out, "record_type: %s\n", quote(recordType))
 	out.WriteString("match_selectors:\n")
 	fmt.Fprintf(out, "  - xpath: %s\n", quote(selector))
-	out.WriteString("    min_occurrences: 1\n")
 	out.WriteString("output_schema:\n")
 	out.WriteString("  type: object\n")
 	if len(mappings) == 0 {

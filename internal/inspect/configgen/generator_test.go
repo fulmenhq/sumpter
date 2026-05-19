@@ -49,6 +49,9 @@ func TestGenerateDominantRecordConfig(t *testing.T) {
 	if cfg.MatchSelectors[0].XPath != "//OrderEvent" {
 		t.Fatalf("match selector = %q", cfg.MatchSelectors[0].XPath)
 	}
+	if strings.Contains(string(result.YAML), "min_occurrences: 1") {
+		t.Fatalf("generated config should not emit default min_occurrences: 1:\n%s", result.YAML)
+	}
 
 	fieldTypes := map[string]string{}
 	for _, field := range cfg.FieldMappings {

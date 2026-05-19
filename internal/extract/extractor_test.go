@@ -216,6 +216,49 @@ func TestProcessFileWithProvenanceAddsRuntimeFields(t *testing.T) {
 	}
 }
 
+func TestProcessFileWithProvenanceTracksPerSelectorCounts(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := filepath.Join(tmpDir, "sample.xml")
+	xmlContent := `<Envelope><A><Name>one</Name></A><A><Name>two</Name></A><B><Name>three</Name></B></Envelope>`
+	if err := os.WriteFile(inputPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write xml fixture: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test-signature",
+		ConfidenceThreshold: 1.0,
+		MatchPatterns: []MatchPattern{
+			{PatternID: "root", Selector: "/Envelope", Weight: 1.0},
+		},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "generic_record",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//A"},
+			{XPath: "//Missing"},
+			{XPath: "//B"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "name", XPath: "Name", Type: "string"},
+		},
+	}
+
+	result := ProcessFileWithProvenance(inputPath, signature, extractCfg, nil, false, provenance.RuntimeOptions{})
+	if result.Error != nil {
+		t.Fatalf("unexpected extraction error: %v", result.Error)
+	}
+	if !result.PerSelectorCountsComplete {
+		t.Fatal("per-selector counts should be complete for regular extraction")
+	}
+	wantCounts := map[int]int{0: 2, 1: 0, 2: 1}
+	if !reflect.DeepEqual(result.PerSelectorCounts, wantCounts) {
+		t.Fatalf("per selector counts = %#v, want %#v", result.PerSelectorCounts, wantCounts)
+	}
+	if len(result.Records) != 3 {
+		t.Fatalf("records len = %d, want 3", len(result.Records))
+	}
+}
+
 func TestLoadExtractConfig_ValidatesSchema(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "extract.yaml")

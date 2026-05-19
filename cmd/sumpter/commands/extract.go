@@ -309,6 +309,10 @@ func runExtract(opts *ExtractOptions) error {
 			return fmt.Errorf("failed to process file %s: %w", result.File, result.Error)
 		}
 
+		if err := enforceMinOccurrences(opts, extCfg, result.File, result.PerSelectorCounts, result.PerSelectorCountsComplete); err != nil {
+			return err
+		}
+
 		if manifestEnabled {
 			input, err := provenance.BuildInputLedger(result.File, sanitizeRoots...)
 			if err != nil {
@@ -320,13 +324,10 @@ func runExtract(opts *ExtractOptions) error {
 
 		if len(result.Records) == 0 {
 			if opts.Progress {
-				logger.Info("No matching records found",
+				logger.Info("No matching records found; emitting empty output",
 					zap.String("file", result.File))
 			}
-			continue
-		}
-
-		if opts.Progress {
+		} else if opts.Progress {
 			logger.Info("Extracted records",
 				zap.String("file", result.File),
 				zap.Int("record_count", len(result.Records)))
@@ -437,6 +438,13 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	if err != nil {
 		return fmt.Errorf("parallel extraction failed: %w", err)
 	}
+	perSelectorCounts, err := perSelectorCountsForIndexedExtraction(header.Selector.XPath, extCfg, header.Summary.TotalRecords)
+	if err != nil {
+		return err
+	}
+	if err := enforceMinOccurrences(opts, extCfg, header.Source.Path, perSelectorCounts, true); err != nil {
+		return err
+	}
 
 	logger.Info("Parallel extraction complete", zap.Int("record_count", len(records)))
 
@@ -502,6 +510,77 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	}
 
 	return nil
+}
+
+func enforceMinOccurrences(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, sourceFile string, perSelectorCounts map[int]int, countsComplete bool) error {
+	if extCfg == nil {
+		return nil
+	}
+	recipeID := recipeIdentifier(opts)
+	for i, selector := range extCfg.MatchSelectors {
+		if selector.MinOccurrences <= 0 {
+			continue
+		}
+		actual, ok := perSelectorCounts[i]
+		if !ok {
+			if !countsComplete {
+				continue
+			}
+			actual = 0
+		}
+		if actual < selector.MinOccurrences {
+			return fmt.Errorf("min_occurrences violation: recipe %q selector %d (xpath=%q) declared min_occurrences=%d but extraction yielded %d matches against source %q",
+				recipeID, i, selector.XPath, selector.MinOccurrences, actual, sourceFile)
+		}
+	}
+	return nil
+}
+
+func recipeIdentifier(opts *ExtractOptions) string {
+	if opts == nil {
+		return "direct extract"
+	}
+	if opts.Recipe != nil && strings.TrimSpace(opts.Recipe.ID) != "" {
+		return opts.Recipe.ID
+	}
+	if strings.TrimSpace(opts.ExtractConfig) != "" {
+		return opts.ExtractConfig
+	}
+	return "direct extract"
+}
+
+func perSelectorCountsForIndexedExtraction(indexSelector string, extCfg *extract.ExtractRecordMatch, recordCount int) (map[int]int, error) {
+	counts := make(map[int]int)
+	if extCfg == nil {
+		return counts, nil
+	}
+	matchedIndex := -1
+	for i, selector := range extCfg.MatchSelectors {
+		if strings.TrimSpace(selector.XPath) != strings.TrimSpace(indexSelector) {
+			continue
+		}
+		if matchedIndex != -1 {
+			return nil, fmt.Errorf("min_occurrences ambiguity: record index selector %q matches multiple extract selectors; run without --record-index or build an unambiguous index", indexSelector)
+		}
+		matchedIndex = i
+	}
+	if matchedIndex == -1 {
+		for _, selector := range extCfg.MatchSelectors {
+			if selector.MinOccurrences > 0 {
+				return nil, fmt.Errorf("min_occurrences ambiguity: record index selector %q does not match any extract selector with declared floors; run without --record-index or rebuild the index with a matching selector", indexSelector)
+			}
+		}
+		return counts, nil
+	}
+	counts[matchedIndex] = recordCount
+	for i, selector := range extCfg.MatchSelectors {
+		if i == matchedIndex || selector.MinOccurrences <= 0 {
+			continue
+		}
+		return nil, fmt.Errorf("min_occurrences ambiguity: record index selector %q only accounts for extract selector %d; selector %d (xpath=%q) also declares min_occurrences=%d",
+			indexSelector, matchedIndex, i, selector.XPath, selector.MinOccurrences)
+	}
+	return counts, nil
 }
 
 func shouldWriteManifest(opts *ExtractOptions) bool {

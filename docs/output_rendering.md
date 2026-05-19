@@ -41,3 +41,11 @@ Mapping inspect JSON SSOT to human-friendly outputs.
 
 - Rendering is derived; the JSON report remains the SSOT.
 - Add anchors/ids to enable deep links from dashboards.
+
+## Extract Empty Outputs
+
+- JSONL extract output with zero records is a zero-byte file.
+- Parquet extract output with zero records is a schema-only file with zero rows.
+- Successful extract manifests still list these outputs with `RecordCount: 0`;
+  absence of an expected payload file or manifest indicates failure, not a
+  legitimate zero-record result.

@@ -353,6 +353,7 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 	}()
 
 	var allRecords []map[string]interface{}
+	perSelectorCounts := make(map[int]int)
 
 	// Note: In streaming mode, signature checking is skipped because we don't have access
 	// to the full document structure. Signature checking should be done before calling
@@ -415,6 +416,7 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 
 		allRecords = append(allRecords, records...)
 	}
+	perSelectorCounts[0] = scanner.RecordCount()
 
 	logger.Info("Streaming extraction complete",
 		zap.String("file", filePath),
@@ -429,6 +431,8 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 	}
 
 	result.Records = allRecords
+	result.PerSelectorCounts = perSelectorCounts
+	result.PerSelectorCountsComplete = len(originalSelectors) == 1
 	return result
 }
 
@@ -510,6 +514,8 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	if !matches {
 		// File doesn't match signature, return empty result
 		logger.Debug("File does not match signature", zap.String("file", filePath))
+		result.PerSelectorCounts = zeroSelectorCounts(extCfg)
+		result.PerSelectorCountsComplete = true
 		return result
 	}
 
@@ -521,7 +527,7 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 
 	// Extract records
 	logger.Debug("Starting record extraction", zap.String("file", filePath), zap.String("record_type", extCfg.RecordType))
-	records, err := extractRecords(doc, extCfg, externalFields)
+	records, perSelectorCounts, err := extractRecordsWithCounts(doc, extCfg, externalFields)
 	if err != nil {
 		logger.Error("Failed to extract records", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to extract records: %w", err)
@@ -536,6 +542,8 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	}
 
 	result.Records = records
+	result.PerSelectorCounts = perSelectorCounts
+	result.PerSelectorCountsComplete = true
 	return result
 }
 
@@ -613,14 +621,21 @@ func matchesPattern(doc *xmlquery.Node, pattern MatchPattern) bool {
 
 // extractRecords extracts records from document using the extract config
 func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]map[string]interface{}, error) {
+	records, _, err := extractRecordsWithCounts(doc, cfg, externalFields)
+	return records, err
+}
+
+func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]map[string]interface{}, map[int]int, error) {
 	var records []map[string]interface{}
+	perSelectorCounts := make(map[int]int, len(cfg.MatchSelectors))
 
 	for i := range cfg.MatchSelectors {
 		selector := &cfg.MatchSelectors[i]
 		nodes, err := evaluateNodeSet(doc, selector.CompiledXPath, selector.XPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to evaluate XPath %s: %w", selector.XPath, err)
+			return nil, nil, fmt.Errorf("failed to evaluate XPath %s: %w", selector.XPath, err)
 		}
+		perSelectorCounts[i] = len(nodes)
 		if len(nodes) == 0 {
 			continue
 		}
@@ -636,7 +651,7 @@ func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields 
 				}
 				value, err := extractValue(node, mapping)
 				if err != nil {
-					return nil, fmt.Errorf("failed to extract value for field %s: %w", mapping.OutputField, err)
+					return nil, nil, fmt.Errorf("failed to extract value for field %s: %w", mapping.OutputField, err)
 				}
 				if value != nil {
 					record[mapping.OutputField] = value
@@ -650,7 +665,7 @@ func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields 
 				}
 				value, err := extractExpressionValue(mapping, record)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				if value != nil {
 					record[mapping.OutputField] = value
@@ -667,10 +682,10 @@ func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields 
 				if cfg.OutputValidator != nil {
 					res, err := cfg.OutputValidator.Validate(record)
 					if err != nil {
-						return nil, fmt.Errorf("output schema validation failed: %w", err)
+						return nil, nil, fmt.Errorf("output schema validation failed: %w", err)
 					}
 					if !res.Valid {
-						return nil, fmt.Errorf("output schema validation failed:\n%s", formatValidationErrors(res.Errors))
+						return nil, nil, fmt.Errorf("output schema validation failed:\n%s", formatValidationErrors(res.Errors))
 					}
 				}
 				records = append(records, record)
@@ -678,7 +693,18 @@ func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields 
 		}
 	}
 
-	return records, nil
+	return records, perSelectorCounts, nil
+}
+
+func zeroSelectorCounts(cfg *ExtractRecordMatch) map[int]int {
+	if cfg == nil {
+		return nil
+	}
+	counts := make(map[int]int, len(cfg.MatchSelectors))
+	for i := range cfg.MatchSelectors {
+		counts[i] = 0
+	}
+	return counts
 }
 
 func enrichRecords(records []map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtimeProvenance provenance.RuntimeOptions) error {

@@ -47,6 +47,13 @@ sumpter recipes run extract <workspace> [flags]
 
 When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, progress settings, source extraction patterns, and any `defaults.parameters` values. Generic parameters are injected into every record after file-level source captures, and `--parameter` overrides the same key from the manifest. Parameter and source capture keys must not collide with `field_mappings[].output_field`; Sumpter fails the run instead of silently replacing content-derived fields. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
 
+Successful extract runs always write the requested output artifact, including
+the legitimate zero-record case. Empty JSONL outputs are zero-byte files, and
+empty Parquet outputs are schema-only files with zero rows. Selectors that
+declare `min_occurrences: N` with `N > 0` opt into fail-loud enforcement; if a
+source yields fewer matches than the selector's floor, the command exits
+non-zero before writing payload output or `manifest.json`.
+
 ### `retrieve`
 
 Execute a recipe to acquire upstream data (currently SEC EDGAR filings).

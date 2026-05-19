@@ -170,6 +170,46 @@ one JSON object per line. JSONL remains the canonical extract output because it
 contains the full record envelope, including `_runtime`, `_validation`, and
 `extract.summary`.
 
+### Empty-output contract and `min_occurrences`
+
+A successful extract run writes the requested output artifact even when a
+source file yields zero records. JSONL output is a zero-byte file. Parquet
+output is a schema-only file with zero rows, using the fields declared by the
+recipe. This is intentional: absence of an output file means the run failed or
+was not asked to write that format.
+
+Each `match_selectors[]` entry may declare `min_occurrences`. The default is
+`0`, so omitted selectors accept zero matches. A selector with
+`min_occurrences: 0` also accepts zero matches and writes empty outputs when no
+records are extracted. A selector with `min_occurrences: N` where `N > 0`
+opts into fail-loud enforcement: if that selector yields fewer than `N`
+matches for a source file, the command exits non-zero and names the recipe,
+selector index, selector XPath, declared floor, actual count, and source file.
+No payload output or `manifest.json` is written for that failing source.
+
+The check is per selector, not aggregate across a polymorphic recipe. If a
+recipe has multiple selectors violating their floors in the same file, Sumpter
+reports the first violation and stops. Fix that selector or recipe input, then
+rerun to surface any later violations.
+
+For multi-file runs, files completed before the first violation may already
+have payload outputs on disk. The run still exits non-zero and no manifest is
+written, so downstream drivers should treat manifest absence as failure. On
+successful zero-record runs, `manifest.json` includes an `outputs[]` entry with
+`RecordCount: 0`, and `counts_by_record_type` includes the processed record
+type with value `0`.
+
+`--allow-large-files` streaming mode currently tracks selector counts for the
+streaming record selector. Multi-selector streaming recipes may return sparse
+per-selector counts, so per-selector floor enforcement can be relaxed for
+selectors the streaming scanner did not count. Run without streaming when
+strict multi-selector `min_occurrences` enforcement is required.
+
+The CLI applies this enforcement at the command layer. Library consumers that
+call `extract.ProcessFileWithProvenance` directly should iterate
+`cfg.MatchSelectors` against `result.PerSelectorCounts` to get the same
+fail-loud semantics.
+
 ### Parquet Secondary Output
 
 Parquet can be enabled as an additional analytics projection. It does not
