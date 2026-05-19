@@ -1,0 +1,22 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "order_id": "ORDER-6101",
+          "widget_status": "online",
+          "widget_status_friendly": "ready"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "order_id": "ORDER-6102",
+          "widget_status": "training",
+          "widget_status_friendly": "training"
+        }
+      }
+    }
+  ]
+}

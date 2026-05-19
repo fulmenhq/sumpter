@@ -223,9 +223,14 @@ func TestParseExpression(t *testing.T) {
 		// Complex expressions
 		{name: "complex expression", exprStr: "active_count == completion_count && total_amount > 0", wantErr: false},
 		{name: "nested arithmetic", exprStr: "(a + b) * (c - d)", wantErr: false},
+		{name: "ternary expression", exprStr: `status == "online" ? "active" : "inactive"`, wantErr: false},
 
 		// Error cases
 		{name: "empty expression", exprStr: "", wantErr: true},
+		{name: "ternary missing else", exprStr: "x ? y :", wantErr: true},
+		{name: "ternary missing condition", exprStr: "? y : z", wantErr: true},
+		{name: "ternary missing then", exprStr: "x ? : z", wantErr: true},
+		{name: "ternary missing colon", exprStr: "x ? y", wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -254,6 +259,7 @@ func TestParseExpressionTypes(t *testing.T) {
 		{name: "binary", exprStr: "a + b", wantType: ExprBinary},
 		{name: "unary", exprStr: "!flag", wantType: ExprUnary},
 		{name: "function", exprStr: "abs(x)", wantType: ExprFunction},
+		{name: "ternary", exprStr: "flag ? yes : no", wantType: ExprTernary},
 	}
 
 	for _, tt := range tests {
@@ -267,6 +273,160 @@ func TestParseExpressionTypes(t *testing.T) {
 				t.Errorf("ParseExpression() type = %v, want %v", got.Type, tt.wantType)
 			}
 		})
+	}
+}
+
+func TestParseTernaryExpressionShape(t *testing.T) {
+	tests := []struct {
+		name   string
+		expr   string
+		assert func(*testing.T, *Expression)
+	}{
+		{
+			name: "comparison condition",
+			expr: "x > 0 ? 1 : -1",
+			assert: func(t *testing.T, expr *Expression) {
+				t.Helper()
+				ternary := mustTernary(t, expr)
+				mustBinaryOperator(t, ternary.Cond, ">")
+				mustConstant(t, ternary.Then, int64(1))
+				mustConstant(t, ternary.Else, int64(-1))
+			},
+		},
+		{
+			name: "right associative",
+			expr: "a ? b : c ? d : e",
+			assert: func(t *testing.T, expr *Expression) {
+				t.Helper()
+				outer := mustTernary(t, expr)
+				mustVariable(t, outer.Cond, "a")
+				mustVariable(t, outer.Then, "b")
+				inner := mustTernary(t, outer.Else)
+				mustVariable(t, inner.Cond, "c")
+				mustVariable(t, inner.Then, "d")
+				mustVariable(t, inner.Else, "e")
+			},
+		},
+		{
+			name: "parentheses override associativity",
+			expr: "(a ? b : c) ? d : e",
+			assert: func(t *testing.T, expr *Expression) {
+				t.Helper()
+				outer := mustTernary(t, expr)
+				inner := mustTernary(t, outer.Cond)
+				mustVariable(t, inner.Cond, "a")
+				mustVariable(t, inner.Then, "b")
+				mustVariable(t, inner.Else, "c")
+				mustVariable(t, outer.Then, "d")
+				mustVariable(t, outer.Else, "e")
+			},
+		},
+		{
+			name: "string literal branches",
+			expr: `a > b ? "high" : "low"`,
+			assert: func(t *testing.T, expr *Expression) {
+				t.Helper()
+				ternary := mustTernary(t, expr)
+				mustBinaryOperator(t, ternary.Cond, ">")
+				mustConstant(t, ternary.Then, "high")
+				mustConstant(t, ternary.Else, "low")
+			},
+		},
+		{
+			name: "arithmetic else branch",
+			expr: "x ? y : z + 1",
+			assert: func(t *testing.T, expr *Expression) {
+				t.Helper()
+				ternary := mustTernary(t, expr)
+				mustVariable(t, ternary.Cond, "x")
+				mustVariable(t, ternary.Then, "y")
+				mustBinaryOperator(t, ternary.Else, "+")
+			},
+		},
+		{
+			name: "arithmetic condition",
+			expr: "x + 1 ? y : z",
+			assert: func(t *testing.T, expr *Expression) {
+				t.Helper()
+				ternary := mustTernary(t, expr)
+				mustBinaryOperator(t, ternary.Cond, "+")
+				mustVariable(t, ternary.Then, "y")
+				mustVariable(t, ternary.Else, "z")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := ParseExpression(tt.expr)
+			if err != nil {
+				t.Fatalf("ParseExpression() error = %v", err)
+			}
+			tt.assert(t, expr)
+		})
+	}
+}
+
+func TestParseTernaryQuotedOperatorLimitationMatchesExistingParser(t *testing.T) {
+	// This test locks the current pre-existing parser limitation that affects
+	// all operators uniformly. It does NOT establish silent misparse as desirable
+	// behavior; SUM-012 replaces it with a clear error across the operator chain.
+	// Update or remove this test when SUM-012 lands.
+	expr, err := ParseExpression(`x == "==" ? 1 : 0`)
+	if err != nil {
+		t.Fatalf("ParseExpression() error = %v", err)
+	}
+	ternary := mustTernary(t, expr)
+	cond := mustBinaryOperator(t, ternary.Cond, "==")
+	if cond.Left.Type != ExprBinary {
+		t.Fatalf("condition left type = %v, want nested binary misparse from quoted operator", cond.Left.Type)
+	}
+}
+
+func mustTernary(t *testing.T, expr *Expression) *TernaryExpression {
+	t.Helper()
+	if expr.Type != ExprTernary {
+		t.Fatalf("expression type = %v, want ExprTernary", expr.Type)
+	}
+	ternary, ok := expr.Value.(*TernaryExpression)
+	if !ok {
+		t.Fatalf("expression value type = %T, want *TernaryExpression", expr.Value)
+	}
+	return ternary
+}
+
+func mustBinaryOperator(t *testing.T, expr *Expression, operator string) *BinaryExpression {
+	t.Helper()
+	if expr.Type != ExprBinary {
+		t.Fatalf("expression type = %v, want ExprBinary", expr.Type)
+	}
+	binary, ok := expr.Value.(*BinaryExpression)
+	if !ok {
+		t.Fatalf("expression value type = %T, want *BinaryExpression", expr.Value)
+	}
+	if binary.Operator != operator {
+		t.Fatalf("binary operator = %q, want %q", binary.Operator, operator)
+	}
+	return binary
+}
+
+func mustVariable(t *testing.T, expr *Expression, name string) {
+	t.Helper()
+	if expr.Type != ExprVariable {
+		t.Fatalf("expression type = %v, want ExprVariable", expr.Type)
+	}
+	if expr.Value != name {
+		t.Fatalf("variable = %#v, want %q", expr.Value, name)
+	}
+}
+
+func mustConstant(t *testing.T, expr *Expression, value interface{}) {
+	t.Helper()
+	if expr.Type != ExprConstant {
+		t.Fatalf("expression type = %v, want ExprConstant", expr.Type)
+	}
+	if expr.Value != value {
+		t.Fatalf("constant = %#v, want %#v", expr.Value, value)
 	}
 }
 

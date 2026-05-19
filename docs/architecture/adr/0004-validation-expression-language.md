@@ -55,6 +55,7 @@ field_name != null           # Not null check
 variable_name                # Reference accumulation/aggregation
 constant                     # Numeric or string literal
 expression op expression     # Binary operations: +, -, *, /, ==, !=, <, >, <=, >=
+condition ? then : else      # Conditional expression
 func(expression)            # Functions: abs, count, sum
 ```
 
@@ -65,6 +66,62 @@ expression && expression     # Logical AND
 expression || expression     # Logical OR
 !expression                  # Logical NOT
 ```
+
+#### Operator Precedence
+
+From lowest to highest precedence:
+
+| Precedence | Operators | Associativity | Notes |
+|---|---|---|---|
+| 1 | `?:` | Right | Conditional expression; only the selected branch evaluates |
+| 2 | `||`, `&&` | Left | Logical operators; evaluated eagerly in the current runtime |
+| 3 | `==`, `!=`, `>=`, `<=`, `>`, `<` | Left | Comparisons |
+| 4 | `+`, `-` | Left | Addition and subtraction |
+| 5 | `*`, `/` | Left | Multiplication and division |
+| 6 | `!` | Right | Unary boolean negation |
+| 7 | `(...)`, functions, constants, variables | N/A | Grouping, calls, atoms |
+
+#### Conditional Expressions
+
+The DSL supports C-family ternary conditionals:
+
+```text
+condition ? then_expression : else_expression
+```
+
+The condition must evaluate to a boolean. If it evaluates to any other type,
+evaluation fails with the actual type and condition expression. The `then` and
+`else` branches can produce any value type; the ternary result is the value of
+the branch that was taken. There is no implicit branch type unification.
+
+Ternary is right-associative and has the lowest precedence, so
+`a ? b : c ? d : e` parses as `a ? b : (c ? d : e)`. Use parentheses to
+override that grouping.
+
+Ternary is short-circuiting: only the selected branch evaluates. This differs
+from the current `&&` and `||` runtime behavior, which evaluates both operands
+before applying the logical operator. Changing `&&` / `||` to short-circuit is
+a separate compatibility decision.
+
+Example:
+
+```yaml
+field_mappings:
+  - output_field: widget_status
+    xpath: Status
+    type: string
+  - output_field: widget_status_friendly
+    expression: 'widget_status == "online" ? "ready" : widget_status'
+    type: string
+```
+
+Parser limitation: operator characters inside string literals are not handled
+specially by the current string-scanning parser. Ternary inherits that
+pre-existing limitation for `?` and `:`, just as binary operators already do
+for strings containing `==`, `!=`, and related operator text. SUM-012 is scoped
+to harden operator scanning uniformly across the expression parser. A richer
+`case when` form remains a future candidate if recipe authors begin nesting
+ternaries deeply.
 
 #### Example
 

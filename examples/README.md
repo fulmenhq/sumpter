@@ -27,6 +27,7 @@ Positive cases live in `01`-`89`; negative cases live in `90`-`99`.
 | `05-validation-metadata-reconciliation` | Validation metadata reconciliation |
 | `05b-validation-metadata-grouped-reconciliation` | Declarative reconciliation grouping |
 | `06-derived-field-convenience-sums` | SUM-002 expression fields |
+| `06b-derived-field-ternary` | SUM-011 conditional expression fields |
 | `07-declared-parameters-injection` | SUM-003 declared parameters |
 | `08-polymorphic-line-items` | Polymorphic array mapping |
 | `09-predicate-match-selector` | Predicate match selectors |

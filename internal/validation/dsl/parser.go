@@ -75,6 +75,15 @@ func ParseExpression(exprStr string) (*Expression, error) {
 
 	exprStr = strings.TrimSpace(exprStr)
 
+	// Try to parse ternary conditional first. This is the lowest-precedence
+	// operator and is right-associative.
+	if expr, ok, err := tryParseTernary(exprStr); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return expr, nil
+	}
+
 	// Try to parse logical operators first (||, &&)
 	if expr, ok := tryParseBinaryOp(exprStr, []string{"||", "&&"}); ok {
 		return expr, nil
@@ -141,6 +150,97 @@ func ParseExpression(exprStr string) (*Expression, error) {
 		Type:  ExprVariable,
 		Value: exprStr,
 	}, nil
+}
+
+// tryParseTernary tries to parse a conditional expression (cond ? then : else).
+func tryParseTernary(exprStr string) (*Expression, bool, error) {
+	qIdx := findOutermostQuestion(exprStr)
+	if qIdx == -1 {
+		return nil, false, nil
+	}
+
+	cIdx := findMatchingColon(exprStr, qIdx+1)
+	if cIdx == -1 {
+		return nil, true, fmt.Errorf("malformed ternary expression %q: missing ':'", exprStr)
+	}
+
+	condStr := strings.TrimSpace(exprStr[:qIdx])
+	thenStr := strings.TrimSpace(exprStr[qIdx+1 : cIdx])
+	elseStr := strings.TrimSpace(exprStr[cIdx+1:])
+	if condStr == "" {
+		return nil, true, fmt.Errorf("malformed ternary expression %q: missing condition before '?'", exprStr)
+	}
+	if thenStr == "" {
+		return nil, true, fmt.Errorf("malformed ternary expression %q: missing then expression between '?' and ':'", exprStr)
+	}
+	if elseStr == "" {
+		return nil, true, fmt.Errorf("malformed ternary expression %q: missing else expression after ':'", exprStr)
+	}
+
+	cond, err := ParseExpression(condStr)
+	if err != nil {
+		return nil, true, fmt.Errorf("failed to parse ternary condition: %w", err)
+	}
+	thenExpr, err := ParseExpression(thenStr)
+	if err != nil {
+		return nil, true, fmt.Errorf("failed to parse ternary then expression: %w", err)
+	}
+	elseExpr, err := ParseExpression(elseStr)
+	if err != nil {
+		return nil, true, fmt.Errorf("failed to parse ternary else expression: %w", err)
+	}
+
+	return &Expression{
+		Type: ExprTernary,
+		Value: &TernaryExpression{
+			Cond: cond,
+			Then: thenExpr,
+			Else: elseExpr,
+		},
+	}, true, nil
+}
+
+func findOutermostQuestion(exprStr string) int {
+	depth := 0
+	for i := 0; i < len(exprStr); i++ {
+		switch exprStr[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case '?':
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func findMatchingColon(exprStr string, start int) int {
+	parenDepth := 0
+	ternaryDepth := 0
+	for i := start; i < len(exprStr); i++ {
+		switch exprStr[i] {
+		case '(':
+			parenDepth++
+		case ')':
+			parenDepth--
+		case '?':
+			if parenDepth == 0 {
+				ternaryDepth++
+			}
+		case ':':
+			if parenDepth != 0 {
+				continue
+			}
+			if ternaryDepth == 0 {
+				return i
+			}
+			ternaryDepth--
+		}
+	}
+	return -1
 }
 
 // tryParseBinaryOp tries to parse a binary operation with one of the given operators.
@@ -281,8 +381,9 @@ func tryParseConstant(valueStr string) (interface{}, bool) {
 	}
 
 	// Try quoted string
-	if (strings.HasPrefix(valueStr, `"`) && strings.HasSuffix(valueStr, `"`)) ||
-		(strings.HasPrefix(valueStr, `'`) && strings.HasSuffix(valueStr, `'`)) {
+	if len(valueStr) >= 2 &&
+		((strings.HasPrefix(valueStr, `"`) && strings.HasSuffix(valueStr, `"`)) ||
+			(strings.HasPrefix(valueStr, `'`) && strings.HasSuffix(valueStr, `'`))) {
 		return valueStr[1 : len(valueStr)-1], true
 	}
 
@@ -313,8 +414,9 @@ func parseValue(valueStr string) (interface{}, error) {
 	}
 
 	// Try quoted string
-	if (strings.HasPrefix(valueStr, `"`) && strings.HasSuffix(valueStr, `"`)) ||
-		(strings.HasPrefix(valueStr, `'`) && strings.HasSuffix(valueStr, `'`)) {
+	if len(valueStr) >= 2 &&
+		((strings.HasPrefix(valueStr, `"`) && strings.HasSuffix(valueStr, `"`)) ||
+			(strings.HasPrefix(valueStr, `'`) && strings.HasSuffix(valueStr, `'`))) {
 		return valueStr[1 : len(valueStr)-1], nil
 	}
 

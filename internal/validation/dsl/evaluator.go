@@ -92,6 +92,10 @@ func (e *Evaluator) EvaluateExpression(expr *Expression) (interface{}, error) {
 		funcCall := expr.Value.(*FunctionCall)
 		return e.evaluateFunctionCall(funcCall)
 
+	case ExprTernary:
+		ternaryExpr := expr.Value.(*TernaryExpression)
+		return e.evaluateTernaryExpression(ternaryExpr)
+
 	default:
 		return nil, fmt.Errorf("unknown expression type: %d", expr.Type)
 	}
@@ -142,6 +146,69 @@ func (e *Evaluator) evaluateBinaryExpression(binExpr *BinaryExpression) (interfa
 		return leftBool || rightBool, nil
 	default:
 		return nil, fmt.Errorf("unknown binary operator: %s", binExpr.Operator)
+	}
+}
+
+// evaluateTernaryExpression evaluates a conditional expression.
+func (e *Evaluator) evaluateTernaryExpression(ternaryExpr *TernaryExpression) (interface{}, error) {
+	cond, err := e.EvaluateExpression(ternaryExpr.Cond)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate ternary condition: %w", err)
+	}
+	condBool, ok := toBool(cond)
+	if !ok {
+		return nil, fmt.Errorf("ternary condition must be boolean, got %T (expression: %s)", cond, expressionString(ternaryExpr.Cond))
+	}
+	if condBool {
+		return e.EvaluateExpression(ternaryExpr.Then)
+	}
+	return e.EvaluateExpression(ternaryExpr.Else)
+}
+
+func expressionString(expr *Expression) string {
+	if expr == nil {
+		return "<nil>"
+	}
+	switch expr.Type {
+	case ExprVariable:
+		return fmt.Sprintf("%v", expr.Value)
+	case ExprConstant:
+		switch v := expr.Value.(type) {
+		case string:
+			return fmt.Sprintf("%q", v)
+		default:
+			return fmt.Sprintf("%v", v)
+		}
+	case ExprBinary:
+		binExpr, ok := expr.Value.(*BinaryExpression)
+		if !ok {
+			return "<invalid binary>"
+		}
+		return fmt.Sprintf("%s %s %s", expressionString(binExpr.Left), binExpr.Operator, expressionString(binExpr.Right))
+	case ExprUnary:
+		unaryExpr, ok := expr.Value.(*UnaryExpression)
+		if !ok {
+			return "<invalid unary>"
+		}
+		return unaryExpr.Operator + expressionString(unaryExpr.Operand)
+	case ExprFunction:
+		funcCall, ok := expr.Value.(*FunctionCall)
+		if !ok {
+			return "<invalid function>"
+		}
+		args := make([]string, 0, len(funcCall.Args))
+		for _, arg := range funcCall.Args {
+			args = append(args, expressionString(arg))
+		}
+		return fmt.Sprintf("%s(%s)", funcCall.Name, strings.Join(args, ", "))
+	case ExprTernary:
+		ternaryExpr, ok := expr.Value.(*TernaryExpression)
+		if !ok {
+			return "<invalid ternary>"
+		}
+		return fmt.Sprintf("%s ? %s : %s", expressionString(ternaryExpr.Cond), expressionString(ternaryExpr.Then), expressionString(ternaryExpr.Else))
+	default:
+		return fmt.Sprintf("<unknown expression type %d>", expr.Type)
 	}
 }
 
