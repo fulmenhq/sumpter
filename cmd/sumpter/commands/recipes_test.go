@@ -114,6 +114,14 @@ func TestExecuteExtractRecipeInjectsManifestAndCLIParameters(t *testing.T) {
 			t.Fatalf("extract.data[%s] = %#v, want %#v (data: %#v)", key, data[key], value, data)
 		}
 	}
+
+	manifest := readManifest(t, filepath.Join(workspace, "outputs", provenance.ManifestFileName))
+	if manifest.Recipe == nil {
+		t.Fatal("manifest recipe provenance is nil")
+	}
+	if manifest.Recipe.Cadence != "" {
+		t.Fatalf("manifest recipe cadence = %q, want empty", manifest.Recipe.Cadence)
+	}
 }
 
 func TestExecuteExtractRecipeWritesJSONLAndParquetOutputs(t *testing.T) {
@@ -128,6 +136,7 @@ assets:
   signature: signature/signature.yaml
   extract: extract/extract.yaml
 defaults:
+  cadence: daily-rolling
   input:
     mode: files
     files:
@@ -205,6 +214,12 @@ output_schema:
 	}
 
 	manifest := readManifest(t, filepath.Join(workspace, "outputs", provenance.ManifestFileName))
+	if manifest.Recipe == nil {
+		t.Fatal("manifest recipe provenance is nil")
+	}
+	if manifest.Recipe.Cadence != "daily-rolling" {
+		t.Fatalf("manifest recipe cadence = %q, want daily-rolling", manifest.Recipe.Cadence)
+	}
 	if len(manifest.Outputs) != 2 {
 		t.Fatalf("manifest outputs = %#v, want 2 outputs", manifest.Outputs)
 	}

@@ -94,6 +94,16 @@ properties:
     type: object
     additionalProperties: false
     properties:
+      cadence:
+        type: string
+        description: |
+          Operator-readable run cadence intent. Sumpter records this value in
+          provenance but does not schedule, enforce, or interpret it at runtime.
+          Recommended values include daily-rolling, weekly, weekly-2x,
+          on-demand, hourly, monthly, and quarterly; recipe authors and
+          orchestrators own the vocabulary.
+        pattern: "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+        maxLength: 64
       input:
         type: object
         additionalProperties: false

@@ -125,6 +125,11 @@
             "$ref": "#/$defs/owner"
           }
         },
+        "cadence": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "maxLength": 64
+        },
         "manifest_yaml": {
           "type": "string"
         },
