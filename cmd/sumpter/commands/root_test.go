@@ -1,7 +1,10 @@
 package commands
 
 import (
+	"bytes"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -73,6 +76,82 @@ func TestRootCommandStructure(t *testing.T) {
 	if rootCmd.PersistentPreRun == nil {
 		t.Error("Expected PersistentPreRun to be set")
 	}
+
+	if !rootCmd.SilenceUsage {
+		t.Error("Expected root command to silence usage on errors")
+	}
+}
+
+func TestRootSilenceUsageSuppressesRuntimeErrorUsage(t *testing.T) {
+	sentinel := errors.New("sentinel runtime failure")
+	cmd, stdout, stderr := newSilenceUsageTestCommand()
+	cmd.AddCommand(&cobra.Command{
+		Use: "fail",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return sentinel
+		},
+	})
+	cmd.SetArgs([]string{"fail"})
+
+	err := cmd.Execute()
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Execute() error = %v, want %v", err, sentinel)
+	}
+
+	if !strings.Contains(stderr.String(), "Error: sentinel runtime failure") {
+		t.Fatalf("stderr = %q, want runtime error message", stderr.String())
+	}
+	if output := stdout.String() + stderr.String(); strings.Contains(output, "Usage:") {
+		t.Fatalf("output contains usage block despite SilenceUsage=true:\n%s", output)
+	}
+}
+
+func TestRootSilenceUsageSuppressesFlagErrorUsage(t *testing.T) {
+	cmd, stdout, stderr := newSilenceUsageTestCommand()
+	cmd.AddCommand(&cobra.Command{
+		Use:  "inspect",
+		RunE: func(cmd *cobra.Command, args []string) error { return nil },
+	})
+	cmd.SetArgs([]string{"inspect", "--unknown-flag"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want unknown flag error")
+	}
+
+	if !strings.Contains(stderr.String(), "unknown flag: --unknown-flag") {
+		t.Fatalf("stderr = %q, want unknown flag error", stderr.String())
+	}
+	if output := stdout.String() + stderr.String(); strings.Contains(output, "Usage:") {
+		t.Fatalf("output contains usage block despite SilenceUsage=true:\n%s", output)
+	}
+}
+
+func TestRootUnknownCommandStillPrintsHelpHint(t *testing.T) {
+	cmd, _, stderr := newSilenceUsageTestCommand()
+	cmd.AddCommand(&cobra.Command{Use: "inspect"})
+	cmd.SetArgs([]string{"ineperct"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want unknown command error")
+	}
+
+	const want = "Run 'sumpter --help' for usage."
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
+func newSilenceUsageTestCommand() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
+	var stdout, stderr bytes.Buffer
+	cmd := &cobra.Command{
+		Use:          rootCmd.Use,
+		SilenceUsage: rootCmd.SilenceUsage,
+	}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	return cmd, &stdout, &stderr
 }
 
 func TestRootCommandFlags(t *testing.T) {

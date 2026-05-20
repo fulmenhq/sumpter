@@ -31,6 +31,7 @@ Built for: Enterprise XML processing, data transformation, and analytics pipelin
 Inspired by the Fulmen ecosystem and the American West's "sumpter" horses.`,
 	Version:          getVersion(),
 	PersistentPreRun: initializeEnvironment,
+	SilenceUsage:     true,
 }
 
 // Execute runs the root command
