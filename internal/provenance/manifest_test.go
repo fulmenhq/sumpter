@@ -63,6 +63,40 @@ func TestManifestSchemaRejectsExtraFields(t *testing.T) {
 	}
 }
 
+func TestManifestSchemaAllowsParquetWithholdColumns(t *testing.T) {
+	manifest := testManifest(t)
+	manifest.Outputs = []Output{{
+		Path:            "records.parquet",
+		Format:          "parquet",
+		RecordCount:     2,
+		WithholdColumns: []string{"year", "month", "site"},
+	}}
+	assertValidManifest(t, manifest)
+}
+
+func TestManifestSchemaRejectsInvalidWithholdColumn(t *testing.T) {
+	manifest := testManifest(t)
+	manifest.Outputs = []Output{{
+		Path:            "records.parquet",
+		Format:          "parquet",
+		RecordCount:     2,
+		WithholdColumns: []string{"bad-name"},
+	}}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "schemas"))
+	result, err := validator.ValidateProvenanceManifest(data, "manifest.json")
+	if err != nil {
+		t.Fatalf("ValidateProvenanceManifest: %v", err)
+	}
+	if result.IsValid() {
+		t.Fatal("manifest with invalid withhold column unexpectedly validated")
+	}
+}
+
 func TestWriteManifestPreservesRawYAML(t *testing.T) {
 	dir := t.TempDir()
 	manifest := testManifest(t)

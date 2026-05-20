@@ -513,6 +513,9 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		return err
 	}
 	extractOpts.ParquetCompression = parquetCompression
+	if defaults.Output.Parquet != nil && len(defaults.Output.Parquet.WithholdColumns) > 0 {
+		extractOpts.ParquetWithholdColumns = append([]string(nil), defaults.Output.Parquet.WithholdColumns...)
+	}
 
 	if cmd.Flags().Changed("workers") {
 		extractOpts.Workers = opts.Workers

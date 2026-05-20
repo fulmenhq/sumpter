@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ type ExtractOptions struct {
 	OutputPattern            string
 	OutputPatterns           map[string]string
 	ParquetCompression       string
+	ParquetWithholdColumns   []string
 	SignatureConfig          string
 	ExtractConfig            string
 	ClientID                 string
@@ -216,6 +218,9 @@ func runExtract(opts *ExtractOptions) error {
 		return fmt.Errorf("failed to load extract config: %w", err)
 	}
 	logger.Debug("Extract config loaded", zap.String("record_type", extCfg.RecordType))
+	if err := validateParquetWithholdColumns(opts.ParquetWithholdColumns, extCfg.OutputSchema); err != nil {
+		return err
+	}
 	if opts.Recipe != nil && len(opts.Recipe.FieldProvenance) == 0 {
 		opts.Recipe.FieldProvenance = buildFieldProvenance(extCfg.FieldMappings)
 	}
@@ -353,11 +358,7 @@ func runExtract(opts *ExtractOptions) error {
 					return fmt.Errorf("failed to write output %s: %w", outputFile, err)
 				}
 				if manifestEnabled {
-					manifestOutputs = append(manifestOutputs, provenance.Output{
-						Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
-						Format:      format,
-						RecordCount: len(result.Records),
-					})
+					manifestOutputs = append(manifestOutputs, provenanceOutput(outputFile, format, len(result.Records), opts, sanitizeRoots...))
 				}
 			}
 		}
@@ -490,11 +491,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 			}
 			logger.Info("Output written", zap.String("file", outputFile), zap.Int("records", len(records)))
 			if manifestEnabled {
-				manifestOutputs = append(manifestOutputs, provenance.Output{
-					Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
-					Format:      format,
-					RecordCount: len(records),
-				})
+				manifestOutputs = append(manifestOutputs, provenanceOutput(outputFile, format, len(records), opts, sanitizeRoots...))
 			}
 		}
 	}
@@ -625,6 +622,42 @@ func hasOutputFormat(formats []string, target string) bool {
 	return false
 }
 
+func validateParquetWithholdColumns(withholdColumns []string, outputSchema map[string]interface{}) error {
+	if len(withholdColumns) == 0 {
+		return nil
+	}
+	properties, _ := outputSchema["properties"].(map[string]interface{})
+	missing := make([]string, 0)
+	seen := make(map[string]struct{}, len(withholdColumns))
+	for _, column := range withholdColumns {
+		column = strings.TrimSpace(column)
+		if _, ok := seen[column]; ok {
+			continue
+		}
+		seen[column] = struct{}{}
+		if _, ok := properties[column]; !ok {
+			missing = append(missing, column)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("defaults.output.parquet.withhold_columns must be a subset of output_schema.properties; missing: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func provenanceOutput(outputFile, format string, recordCount int, opts *ExtractOptions, sanitizeRoots ...string) provenance.Output {
+	output := provenance.Output{
+		Path:        provenance.SanitizePath(outputFile, sanitizeRoots...),
+		Format:      format,
+		RecordCount: recordCount,
+	}
+	if format == recipesmanifest.OutputFormatParquet && opts != nil && len(opts.ParquetWithholdColumns) > 0 {
+		output.WithholdColumns = append([]string(nil), opts.ParquetWithholdColumns...)
+	}
+	return output
+}
+
 func outputFileForFormat(opts *ExtractOptions, format, inputFile string) string {
 	base := filepath.Base(inputFile)
 	pattern := opts.OutputPattern
@@ -669,8 +702,9 @@ func writeRecordsForFormat(outputFile, format string, records []map[string]inter
 		}
 		metadata := parquetFileMetadata(sigCfg, opts, runtime, sourceFile, manifestPath)
 		return parquetwriter.WriteFile(outputFile, extCfg, records, parquetwriter.Options{
-			Compression: opts.ParquetCompression,
-			Metadata:    metadata,
+			Compression:     opts.ParquetCompression,
+			Metadata:        metadata,
+			WithholdColumns: opts.ParquetWithholdColumns,
 		})
 	default:
 		return fmt.Errorf("unsupported output format %q", format)

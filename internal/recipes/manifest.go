@@ -155,7 +155,8 @@ type OutputDefaults struct {
 
 // ParquetDefaults controls recipe-level Parquet output behavior.
 type ParquetDefaults struct {
-	Compression string `yaml:"compression,omitempty"`
+	Compression     string   `yaml:"compression,omitempty"`
+	WithholdColumns []string `yaml:"withhold_columns,omitempty"`
 }
 
 // LoadManifest reads and validates a manifest from disk.

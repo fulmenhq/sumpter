@@ -20,8 +20,9 @@ import (
 
 // Options controls Parquet output for one source file.
 type Options struct {
-	Compression string
-	Metadata    map[string]string
+	Compression     string
+	Metadata        map[string]string
+	WithholdColumns []string
 }
 
 type fieldSpec struct {
@@ -50,7 +51,8 @@ func WriteFile(path string, cfg *extract.ExtractRecordMatch, records []map[strin
 		return fmt.Errorf("failed to create parquet output directory: %w", err)
 	}
 
-	specs, err := buildFieldSpecs(cfg, records)
+	withholdColumns := normalizeWithholdColumns(opts.WithholdColumns)
+	specs, err := buildFieldSpecs(cfg, records, withholdColumns)
 	if err != nil {
 		return err
 	}
@@ -71,6 +73,9 @@ func WriteFile(path string, cfg *extract.ExtractRecordMatch, records []map[strin
 		if strings.TrimSpace(key) != "" && value != "" {
 			writer.SetKeyValueMetadata(key, value)
 		}
+	}
+	if len(withholdColumns) > 0 {
+		writer.SetKeyValueMetadata("sumpter.parquet.withhold_columns", strings.Join(withholdColumns, ","))
 	}
 	for key, value := range columnMetadata(specs) {
 		writer.SetKeyValueMetadata(key, value)
@@ -97,13 +102,17 @@ func WriteFile(path string, cfg *extract.ExtractRecordMatch, records []map[strin
 	return nil
 }
 
-func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]interface{}) ([]fieldSpec, error) {
+func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]interface{}, withholdColumns []string) ([]fieldSpec, error) {
 	schemaProperties := outputSchemaProperties(cfg.OutputSchema)
 	required := outputSchemaRequired(cfg.OutputSchema)
+	withhold := withholdColumnSet(withholdColumns)
 	byName := make(map[string]fieldSpec)
 	var ordered []fieldSpec
 
 	for _, mapping := range cfg.FieldMappings {
+		if _, skip := withhold[mapping.OutputField]; skip {
+			continue
+		}
 		property := schemaProperties[mapping.OutputField]
 		spec := specFromMapping(mapping, property, required[mapping.OutputField])
 		if spec.name == "" {
@@ -115,6 +124,9 @@ func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]inter
 
 	var extra []string
 	for name := range schemaProperties {
+		if _, skip := withhold[name]; skip {
+			continue
+		}
 		if _, ok := byName[name]; !ok {
 			extra = append(extra, name)
 		}
@@ -137,6 +149,9 @@ func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]inter
 	}
 	var injectedNames []string
 	for name := range injected {
+		if _, skip := withhold[name]; skip {
+			continue
+		}
 		if _, ok := byName[name]; !ok {
 			injectedNames = append(injectedNames, name)
 		}
@@ -151,6 +166,34 @@ func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]inter
 	}
 
 	return ordered, nil
+}
+
+func normalizeWithholdColumns(columns []string) []string {
+	if len(columns) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(columns))
+	seen := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		column = strings.TrimSpace(column)
+		if column == "" {
+			continue
+		}
+		if _, ok := seen[column]; ok {
+			continue
+		}
+		seen[column] = struct{}{}
+		normalized = append(normalized, column)
+	}
+	return normalized
+}
+
+func withholdColumnSet(columns []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		set[column] = struct{}{}
+	}
+	return set
 }
 
 func specFromMapping(mapping extract.FieldMapping, property schemaProperty, required bool) fieldSpec {

@@ -128,6 +128,112 @@ func TestWriteFileIncludesUndeclaredInjectedFields(t *testing.T) {
 	}
 }
 
+func TestWriteFileWithholdColumnsOmitsAllFieldSourcesAndWritesMetadata(t *testing.T) {
+	cfg := &extract.ExtractRecordMatch{
+		RecordType: "order",
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "order_id", XPath: "@id", Type: "string"},
+			{OutputField: "program", XPath: "Program", Type: "string"},
+		},
+		OutputSchema: map[string]interface{}{
+			"properties": map[string]interface{}{
+				"order_id": map[string]interface{}{"type": "string"},
+				"program":  map[string]interface{}{"type": "string"},
+				"site":     map[string]interface{}{"type": "string"},
+				"year":     map[string]interface{}{"type": "string"},
+			},
+			"required": []interface{}{"order_id"},
+		},
+	}
+	records := []map[string]interface{}{
+		{
+			"extract": map[string]interface{}{
+				"data": map[string]interface{}{
+					"order_id": "A-1",
+					"program":  "retail",
+					"site":     "store_17",
+					"year":     "2026",
+				},
+			},
+		},
+	}
+
+	path := filepath.Join(t.TempDir(), "orders.parquet")
+	if err := WriteFile(path, cfg, records, Options{
+		Compression:     "none",
+		WithholdColumns: []string{"program", "site", "year"},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	type Row struct {
+		OrderID string `parquet:"order_id"`
+	}
+	rows, err := parquet.ReadFile[Row](path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if len(rows) != 1 || rows[0].OrderID != "A-1" {
+		t.Fatalf("rows = %#v, want one row with order_id only", rows)
+	}
+
+	file := openParquetFile(t, path)
+	if got, ok := file.Lookup("sumpter.parquet.withhold_columns"); !ok || got != "program,site,year" {
+		t.Fatalf("withhold metadata = %q/%t, want program,site,year/true", got, ok)
+	}
+	fields := parquetFieldNames(file)
+	for _, omitted := range []string{"program", "site", "year"} {
+		if fields[omitted] {
+			t.Fatalf("field %q was written to parquet schema: %#v", omitted, fields)
+		}
+		if _, ok := file.Lookup("sumpter.column." + omitted + ".recipe_field"); ok {
+			t.Fatalf("metadata for withheld field %q was emitted", omitted)
+		}
+	}
+	if !fields["order_id"] {
+		t.Fatalf("order_id missing from parquet schema: %#v", fields)
+	}
+}
+
+func TestWriteFileWithholdColumnsSkipsObservedOnlyFields(t *testing.T) {
+	cfg := &extract.ExtractRecordMatch{
+		RecordType: "order",
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "order_id", XPath: "@id", Type: "string"},
+		},
+		OutputSchema: map[string]interface{}{
+			"properties": map[string]interface{}{
+				"order_id": map[string]interface{}{"type": "string"},
+			},
+		},
+	}
+	records := []map[string]interface{}{
+		{
+			"extract": map[string]interface{}{
+				"data": map[string]interface{}{
+					"order_id": "A-1",
+					"site":     "store_17",
+				},
+			},
+		},
+	}
+
+	path := filepath.Join(t.TempDir(), "orders.parquet")
+	if err := WriteFile(path, cfg, records, Options{
+		Compression:     "none",
+		WithholdColumns: []string{"site"},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	fields := parquetFieldNames(openParquetFile(t, path))
+	if fields["site"] {
+		t.Fatalf("observed-only field site was written to parquet schema: %#v", fields)
+	}
+	if !fields["order_id"] {
+		t.Fatalf("order_id missing from parquet schema: %#v", fields)
+	}
+}
+
 func TestWriteFileUsesOutputSchemaDescriptionMetadata(t *testing.T) {
 	cfg := &extract.ExtractRecordMatch{
 		RecordType: "order",
@@ -237,4 +343,12 @@ func openParquetFile(t *testing.T, path string) *parquet.File {
 		t.Fatalf("OpenFile: %v", err)
 	}
 	return pqFile
+}
+
+func parquetFieldNames(file *parquet.File) map[string]bool {
+	fields := make(map[string]bool)
+	for _, field := range file.Schema().Fields() {
+		fields[field.Name()] = true
+	}
+	return fields
 }

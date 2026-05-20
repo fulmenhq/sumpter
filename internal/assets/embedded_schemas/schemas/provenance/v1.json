@@ -249,6 +249,14 @@
         "record_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "withhold_columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+          },
+          "uniqueItems": true
         }
       }
     }
