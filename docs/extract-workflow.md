@@ -265,6 +265,27 @@ Use either `format` or `formats`, not both. Use either `pattern` or
 `patterns`, not both. If a singular `pattern` is used with Parquet, Sumpter
 swaps the generated extension to `.parquet`.
 
+### Parquet withhold for hive-partitioned targets
+
+When output files are written under hive-style partition paths such as
+`year=2026/month=05/site=store_17/records.parquet`, analytics engines often
+project those path segments as virtual columns. To avoid duplicate physical
+and virtual columns, recipe authors can withhold declared partition columns
+from the Parquet body while keeping them in JSONL.
+
+Every declared withhold name must exist in `output_schema.properties`. The
+withhold list only applies to Parquet output; JSON and NDJSON still include
+the full `extract.data` payload.
+
+```yaml
+defaults:
+  output:
+    formats: [json, parquet]
+    parquet:
+      compression: zstd
+      withhold_columns: [year, month, day, site, org, program, datasubject]
+```
+
 Operator note: Parquet outputs are only useful to Glue crawlers, Trino,
 Athena, DuckDB, Spark, and similar analytics consumers when identifying
 dimensions are present as columns. Source-data identifiers extracted by XPath

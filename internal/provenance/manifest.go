@@ -82,9 +82,10 @@ type Input struct {
 
 // Output describes an output artifact written by the extract run.
 type Output struct {
-	Path        string `json:"path"`
-	Format      string `json:"format"`
-	RecordCount int    `json:"record_count"`
+	Path            string   `json:"path"`
+	Format          string   `json:"format"`
+	RecordCount     int      `json:"record_count"`
+	WithholdColumns []string `json:"withhold_columns,omitempty"`
 }
 
 // WriteManifest writes a deterministic, indented JSON sidecar.

@@ -57,6 +57,9 @@ defaults:
     patterns:
       json: extract-{}.jsonl
       parquet: extract-{}.parquet
+    parquet:
+      compression: none
+      withhold_columns: [year, site]
 `
 
 	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
@@ -78,8 +81,11 @@ defaults:
 	if err != nil {
 		t.Fatalf("ParquetCompression: %v", err)
 	}
-	if compression != ParquetCompressionZSTD {
-		t.Fatalf("compression = %q, want %q", compression, ParquetCompressionZSTD)
+	if compression != ParquetCompressionNone {
+		t.Fatalf("compression = %q, want %q", compression, ParquetCompressionNone)
+	}
+	if got := strings.Join(manifest.Defaults.Output.Parquet.WithholdColumns, ","); got != "year,site" {
+		t.Fatalf("withhold_columns = %q, want year,site", got)
 	}
 }
 

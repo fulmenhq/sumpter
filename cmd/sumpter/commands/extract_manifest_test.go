@@ -101,6 +101,33 @@ func TestRunExtractManifestRecordsEffectiveSequentialFormat(t *testing.T) {
 	}
 }
 
+func TestRunExtractRejectsUnknownParquetWithholdColumn(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:                  filepath.Join(dir, "input.xml"),
+		Format:                 "parquet",
+		OutputPath:             outputDir,
+		OutputPattern:          "extract-{}.parquet",
+		ParquetCompression:     "none",
+		ParquetWithholdColumns: []string{"missing_partition"},
+		SignatureConfig:        filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:          filepath.Join(dir, "extract.yaml"),
+	}
+
+	err := runExtract(opts)
+	if err == nil {
+		t.Fatal("runExtract unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "output_schema.properties") || !strings.Contains(err.Error(), "missing_partition") {
+		t.Fatalf("error = %v, want output_schema.properties missing_partition", err)
+	}
+}
+
 func TestRunExtractWritesZeroRecordOutputsAndManifestCounts(t *testing.T) {
 	dir := createExtractManifestFixture(t)
 	outputDir := filepath.Join(dir, "outputs")

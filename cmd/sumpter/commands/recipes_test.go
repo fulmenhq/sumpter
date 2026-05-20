@@ -217,6 +217,90 @@ output_schema:
 	}
 }
 
+func TestExecuteExtractRecipeWithholdsParquetPartitionColumns(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeParameterWorkspace(t)
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), `version: recipe/v0.1.0
+kind: extract
+id: parameter_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/signature.yaml
+  extract: extract/extract.yaml
+defaults:
+  input:
+    mode: files
+    files:
+      - testdata/input.xml
+    include_pattern: "*.xml"
+  output:
+    formats: [json, parquet]
+    path: outputs
+    patterns:
+      json: extract-{}.jsonl
+      parquet: extract-{}.parquet
+    parquet:
+      compression: none
+      withhold_columns: [client_id, site_id]
+  workers: 1
+  progress: false
+`)
+
+	cmd := recipeRunExtractTestCommand()
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{
+		ManifestPath: "recipe.yaml",
+		ClientID:     "client-cli",
+		SiteID:       "site-cli",
+		Progress:     false,
+	})
+	if err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	jsonPath := filepath.Join(workspace, "outputs", "extract-input.xml.jsonl")
+	file, err := os.Open(jsonPath)
+	if err != nil {
+		t.Fatalf("Open JSONL output: %v", err)
+	}
+	defer func() { _ = file.Close() }()
+	var record map[string]interface{}
+	if err := json.NewDecoder(file).Decode(&record); err != nil {
+		t.Fatalf("Decode JSONL output: %v", err)
+	}
+	data := extractData(t, record)
+	if data["client_id"] != "client-cli" || data["site_id"] != "site-cli" {
+		t.Fatalf("JSONL injected fields = client_id:%#v site_id:%#v, want client-cli/site-cli", data["client_id"], data["site_id"])
+	}
+
+	parquetPath := filepath.Join(workspace, "outputs", "extract-input.xml.parquet")
+	pqFile := openCommandParquetFile(t, parquetPath)
+	if got, ok := pqFile.Lookup("sumpter.parquet.withhold_columns"); !ok || got != "client_id,site_id" {
+		t.Fatalf("withhold metadata = %q/%t, want client_id,site_id/true", got, ok)
+	}
+	fields := commandParquetFieldNames(pqFile)
+	for _, omitted := range []string{"client_id", "site_id"} {
+		if fields[omitted] {
+			t.Fatalf("field %q was written to parquet schema: %#v", omitted, fields)
+		}
+	}
+	if !fields["name"] {
+		t.Fatalf("name missing from parquet schema: %#v", fields)
+	}
+
+	manifest := readManifest(t, filepath.Join(workspace, "outputs", provenance.ManifestFileName))
+	for _, output := range manifest.Outputs {
+		if output.Format == "json" && len(output.WithholdColumns) != 0 {
+			t.Fatalf("JSON output withhold_columns = %#v, want empty", output.WithholdColumns)
+		}
+		if output.Format == "parquet" {
+			if len(output.WithholdColumns) != 2 || output.WithholdColumns[0] != "client_id" || output.WithholdColumns[1] != "site_id" {
+				t.Fatalf("Parquet output withhold_columns = %#v, want client_id/site_id", output.WithholdColumns)
+			}
+		}
+	}
+}
+
 func TestExecuteExtractRecipeInjectsSourceExtractionPerFile(t *testing.T) {
 	initExtractManifestTestLogger(t)
 
@@ -453,4 +537,30 @@ func extractData(t *testing.T, record map[string]interface{}) map[string]interfa
 		t.Fatalf("record missing extract.data block: %#v", record)
 	}
 	return data
+}
+
+func openCommandParquetFile(t *testing.T, path string) *parquet.File {
+	t.Helper()
+	f, err := os.Open(path) // #nosec G304 - test-owned temp path.
+	if err != nil {
+		t.Fatalf("Open parquet: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	stat, err := f.Stat()
+	if err != nil {
+		t.Fatalf("Stat parquet: %v", err)
+	}
+	pqFile, err := parquet.OpenFile(f, stat.Size())
+	if err != nil {
+		t.Fatalf("OpenFile parquet: %v", err)
+	}
+	return pqFile
+}
+
+func commandParquetFieldNames(file *parquet.File) map[string]bool {
+	fields := make(map[string]bool)
+	for _, field := range file.Schema().Fields() {
+		fields[field.Name()] = true
+	}
+	return fields
 }
