@@ -89,6 +89,69 @@ defaults:
 	}
 }
 
+func TestLoadManifestCadenceMetadata(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  cadence: daily-rolling
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("LoadManifest failed: %v", err)
+	}
+	if manifest.Defaults.Cadence != "daily-rolling" {
+		t.Fatalf("cadence = %q, want daily-rolling", manifest.Defaults.Cadence)
+	}
+}
+
+func TestLoadManifestRejectsMalformedCadence(t *testing.T) {
+	tests := []string{
+		"Daily-Rolling",
+		"daily rolling",
+		"daily!",
+		"daily-",
+		"daily--rolling",
+	}
+
+	for _, cadence := range tests {
+		t.Run(cadence, func(t *testing.T) {
+			dir := t.TempDir()
+			manifestPath := filepath.Join(dir, "recipe.yaml")
+			content := fmt.Sprintf(`version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  cadence: %q
+`, cadence)
+
+			if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("failed to write manifest: %v", err)
+			}
+
+			_, err := LoadManifest(manifestPath)
+			if err == nil || !strings.Contains(err.Error(), "cadence") {
+				t.Fatalf("LoadManifest error = %v, want cadence validation error", err)
+			}
+		})
+	}
+}
+
 func TestLoadManifestRejectsConflictingOutputFormatForms(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "recipe.yaml")

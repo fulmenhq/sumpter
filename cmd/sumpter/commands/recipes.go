@@ -578,6 +578,7 @@ func buildRecipeProvenance(manifest *recipesmanifest.Manifest, manifestBytes, si
 		ContentVersion:        manifest.ContentVersion,
 		ContentHash:           contentHash,
 		Owners:                owners,
+		Cadence:               manifest.Defaults.Cadence,
 		ManifestYAML:          string(manifestBytes),
 		SignatureYAML:         string(signatureBytes),
 		ExtractYAML:           string(extractBytes),

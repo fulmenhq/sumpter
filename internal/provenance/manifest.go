@@ -49,6 +49,7 @@ type Recipe struct {
 	ContentVersion        string            `json:"content_version"`
 	ContentHash           string            `json:"content_hash"`
 	Owners                []Owner           `json:"owners,omitempty"`
+	Cadence               string            `json:"cadence,omitempty"`
 	ManifestYAML          string            `json:"manifest_yaml,omitempty"`
 	SignatureYAML         string            `json:"signature_yaml"`
 	ExtractYAML           string            `json:"extract_yaml"`

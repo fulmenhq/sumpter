@@ -108,6 +108,7 @@ assets:
   extract: extract/retail-journal-extract.yaml
   validation: ""
 defaults:
+  cadence: daily-rolling
   input:
     mode: path
     path: testdata
@@ -142,10 +143,27 @@ defaults:
 - **`assets`** points at the core configuration files required to run the recipe.
 - **`defaults.input`** defines how the runner discovers XML (directory scanning or explicit file list).
 - **`defaults.output`** controls output formatting and destination, allowing NDJSON/structured JSON switches later.
+- **`defaults.cadence`** records operator-readable run cadence intent such as `daily-rolling`, `weekly`, `weekly-2x`, `on-demand`, `hourly`, `monthly`, or `quarterly`.
 - **`defaults.client_id` / `site_id`** pre-populate metadata for downstream consumers.
 - **`defaults.parameters`** injects arbitrary string parameters into every record; **`defaults.parameters_required`** fails the run if a required key does not resolve from the manifest or CLI.
 - **`defaults.source_extraction`** injects named regexp captures from the source `filename`, `relative_path`, or `absolute_path` once per file; **`defaults.source_extraction_required`** fails before parameter merging if a required capture is absent. `relative_path` requires a root from `--input-path` or `defaults.input.path`.
 - **`kind`** distinguishes extract vs. acquire recipes; additional kinds can be introduced without changing the runner syntax.
+
+### Cadence (operator-readable metadata)
+
+`defaults.cadence` is optional recipe metadata for operators and
+orchestrators that select recipes for scheduled triggers. Sumpter validates the
+value as a lowercase kebab-case label, copies it into recipe-backed
+`manifest.json` provenance when present, and otherwise does not consume it at
+runtime. It does not schedule work, enforce timing windows, or supply a default
+for unannotated recipes.
+
+Use values that match your orchestration vocabulary. Common labels include
+`daily-rolling`, `weekly`, `weekly-2x`, `on-demand`, `hourly`, `monthly`, and
+`quarterly`, but Sumpter treats them as guidance rather than an enum. A future
+operator metadata extension slot may absorb this field through a compatibility
+and deprecation cycle; current recipes can adopt `defaults.cadence` without
+depending on that future shape.
 
 The manifest is validated against `schemas/recipes/v0.1.0/recipe.schema.yaml`. Use `sumpter recipes init` to scaffold a workspace and then drop your signature/extract configs into the generated folders. For low-level debugging you can still call the extract command directly:
 

@@ -112,6 +112,7 @@ type Assets struct {
 
 // Defaults captures runtime defaults for executing the recipe.
 type Defaults struct {
+	Cadence                  string                    `yaml:"cadence,omitempty"`
 	Input                    InputDefaults             `yaml:"input"`
 	Output                   OutputDefaults            `yaml:"output"`
 	ClientID                 string                    `yaml:"client_id"`

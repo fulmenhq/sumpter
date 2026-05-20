@@ -63,6 +63,71 @@ func TestManifestSchemaRejectsExtraFields(t *testing.T) {
 	}
 }
 
+func TestManifestSchemaAllowsRecipeCadence(t *testing.T) {
+	manifest := testManifest(t)
+	manifest.Recipe = &Recipe{
+		ID:                    "sample_extract",
+		ManifestSchemaVersion: "recipe/v0.1.0",
+		ContentVersion:        "1.0.0",
+		ContentHash:           "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Cadence:               "daily-rolling",
+		SignatureYAML:         "signature_id: sample\n",
+		ExtractYAML:           "record_type: sample\n",
+	}
+	assertValidManifest(t, manifest)
+}
+
+func TestManifestSchemaAllowsRecipeWithoutCadence(t *testing.T) {
+	manifest := testManifest(t)
+	manifest.Recipe = &Recipe{
+		ID:                    "sample_extract",
+		ManifestSchemaVersion: "recipe/v0.1.0",
+		ContentVersion:        "1.0.0",
+		ContentHash:           "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		SignatureYAML:         "signature_id: sample\n",
+		ExtractYAML:           "record_type: sample\n",
+	}
+	assertValidManifest(t, manifest)
+}
+
+func TestManifestSchemaRejectsInvalidRecipeCadence(t *testing.T) {
+	tests := []string{
+		"Daily-Rolling",
+		"daily rolling",
+		"daily!",
+		"daily-",
+		"daily--rolling",
+	}
+
+	for _, cadence := range tests {
+		t.Run(cadence, func(t *testing.T) {
+			manifest := testManifest(t)
+			manifest.Recipe = &Recipe{
+				ID:                    "sample_extract",
+				ManifestSchemaVersion: "recipe/v0.1.0",
+				ContentVersion:        "1.0.0",
+				ContentHash:           "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+				Cadence:               cadence,
+				SignatureYAML:         "signature_id: sample\n",
+				ExtractYAML:           "record_type: sample\n",
+			}
+			data, err := json.Marshal(manifest)
+			if err != nil {
+				t.Fatalf("marshal manifest: %v", err)
+			}
+
+			validator := validation.NewSchemaValidator(filepath.Join("..", "..", "schemas"))
+			result, err := validator.ValidateProvenanceManifest(data, "manifest.json")
+			if err != nil {
+				t.Fatalf("ValidateProvenanceManifest: %v", err)
+			}
+			if result.IsValid() {
+				t.Fatal("manifest with invalid cadence unexpectedly validated")
+			}
+		})
+	}
+}
+
 func TestManifestSchemaAllowsParquetWithholdColumns(t *testing.T) {
 	manifest := testManifest(t)
 	manifest.Outputs = []Output{{
