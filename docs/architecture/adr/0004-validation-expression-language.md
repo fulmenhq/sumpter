@@ -31,6 +31,10 @@ rules, and parser behavior contracts are maintained in the canonical
 uses a custom mini-DSL and when that decision should be revisited; the
 reference document records what the DSL does today.
 
+Specification note: SUM-017 extends `sumpter-dsl` with string functions
+(`lower`, `upper`, `normalize_space`, `mask_tail`, `mask_middle`) and records
+the string-function nil-propagation contract in the DSL reference.
+
 ### Example
 
 ```yaml
