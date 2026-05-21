@@ -4,6 +4,7 @@
 package dsl
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -569,6 +570,270 @@ func TestFunctionCalls(t *testing.T) {
 			if result != tt.wantResult {
 				t.Errorf("result = %v (type %T), want %v (type %T)",
 					result, result, tt.wantResult, tt.wantResult)
+			}
+		})
+	}
+}
+
+func TestStringFunctionCalls(t *testing.T) {
+	tests := []struct {
+		name        string
+		exprStr     string
+		variables   map[string]interface{}
+		wantResult  interface{}
+		wantErrText []string
+	}{
+		{
+			name:       "lower ascii",
+			exprStr:    `lower("MIXED Case")`,
+			wantResult: "mixed case",
+		},
+		{
+			name:       "lower unicode",
+			exprStr:    `lower("CAFÉ")`,
+			wantResult: "café",
+		},
+		{
+			name:       "lower null literal",
+			exprStr:    `lower(null)`,
+			wantResult: nil,
+		},
+		{
+			name:       "lower ternary null branch",
+			exprStr:    `lower(use_value ? "VALUE" : null)`,
+			variables:  map[string]interface{}{"use_value": false},
+			wantResult: nil,
+		},
+		{
+			name:       "lower nil variable defensive",
+			exprStr:    `lower(optional_value)`,
+			variables:  map[string]interface{}{"optional_value": nil},
+			wantResult: nil,
+		},
+		{
+			name:        "lower undefined variable still fails",
+			exprStr:     `lower(missing_field)`,
+			wantErrText: []string{"undefined variable: missing_field"},
+		},
+		{
+			name:       "lower empty string",
+			exprStr:    `lower("")`,
+			wantResult: "",
+		},
+		{
+			name:        "lower wrong type",
+			exprStr:     `lower(12)`,
+			wantErrText: []string{"lower() argument must be a string", "int64"},
+		},
+		{
+			name:        "lower wrong arity",
+			exprStr:     `lower("a", "b")`,
+			wantErrText: []string{"lower() requires exactly 1 argument, got 2"},
+		},
+		{
+			name:       "upper ascii",
+			exprStr:    `upper("HelloWorld")`,
+			wantResult: "HELLOWORLD",
+		},
+		{
+			name:       "upper unicode",
+			exprStr:    `upper("café")`,
+			wantResult: "CAFÉ",
+		},
+		{
+			name:       "function name case insensitive",
+			exprStr:    `LOWER("ALPHA")`,
+			wantResult: "alpha",
+		},
+		{
+			name:       "normalize space trims and collapses ascii whitespace",
+			exprStr:    "normalize_space(\"  hello   world\tfrom\nrecords\r \")",
+			wantResult: "hello world from records",
+		},
+		{
+			name:       "normalize space collapses unicode whitespace",
+			exprStr:    "normalize_space(\"alpha\u00a0\u2003beta\")",
+			wantResult: "alpha beta",
+		},
+		{
+			name:       "normalize all whitespace to empty",
+			exprStr:    `normalize_space("   ")`,
+			wantResult: "",
+		},
+		{
+			name:       "normalize no whitespace unchanged",
+			exprStr:    `normalize_space("alpha")`,
+			wantResult: "alpha",
+		},
+		{
+			name:       "normalize null literal",
+			exprStr:    `normalize_space(null)`,
+			wantResult: nil,
+		},
+		{
+			name:       "mask tail default",
+			exprStr:    `mask_tail("abcdefgh", 4)`,
+			wantResult: "XXXXefgh",
+		},
+		{
+			name:       "mask tail custom",
+			exprStr:    `mask_tail("abcdefgh", 4, "*")`,
+			wantResult: "****efgh",
+		},
+		{
+			name:       "mask tail keep exceeds length",
+			exprStr:    `mask_tail("abcdefgh", 100)`,
+			wantResult: "abcdefgh",
+		},
+		{
+			name:       "mask tail keep zero",
+			exprStr:    `mask_tail("abcdefgh", 0)`,
+			wantResult: "XXXXXXXX",
+		},
+		{
+			name:       "mask tail empty string",
+			exprStr:    `mask_tail("", 4)`,
+			wantResult: "",
+		},
+		{
+			name:       "mask tail null",
+			exprStr:    `mask_tail(null, 4)`,
+			wantResult: nil,
+		},
+		{
+			name:       "mask tail idempotent",
+			exprStr:    `mask_tail("XXXXefgh", 4)`,
+			wantResult: "XXXXefgh",
+		},
+		{
+			name:       "mask tail unicode counts runes",
+			exprStr:    `mask_tail("café-name", 4)`,
+			wantResult: "XXXXXname",
+		},
+		{
+			name:       "mask middle default",
+			exprStr:    `mask_middle("abcdefgh", 2, 2)`,
+			wantResult: "abXXXXgh",
+		},
+		{
+			name:       "mask middle custom",
+			exprStr:    `mask_middle("abcdefgh", 2, 2, "*")`,
+			wantResult: "ab****gh",
+		},
+		{
+			name:       "mask middle head tail cover length",
+			exprStr:    `mask_middle("abcdefgh", 4, 4)`,
+			wantResult: "abcdefgh",
+		},
+		{
+			name:       "mask middle zero head tail",
+			exprStr:    `mask_middle("abcdefgh", 0, 0)`,
+			wantResult: "XXXXXXXX",
+		},
+		{
+			name:       "mask middle empty string",
+			exprStr:    `mask_middle("", 1, 1)`,
+			wantResult: "",
+		},
+		{
+			name:       "mask middle null",
+			exprStr:    `mask_middle(null, 1, 1)`,
+			wantResult: nil,
+		},
+		{
+			name:        "mask tail fractional count rejected",
+			exprStr:     `mask_tail("abcdefgh", 1.9)`,
+			wantErrText: []string{"mask_tail() keep_n must be an integer-valued number"},
+		},
+		{
+			name:        "mask tail negative count rejected",
+			exprStr:     `mask_tail("abcdefgh", -1)`,
+			wantErrText: []string{"mask_tail() keep_n must be non-negative"},
+		},
+		{
+			name:        "mask tail nan rejected",
+			exprStr:     `mask_tail("abcdefgh", keep_n)`,
+			variables:   map[string]interface{}{"keep_n": math.NaN()},
+			wantErrText: []string{"mask_tail() keep_n must be a finite number"},
+		},
+		{
+			name:        "mask tail positive infinity rejected",
+			exprStr:     `mask_tail("abcdefgh", keep_n)`,
+			variables:   map[string]interface{}{"keep_n": math.Inf(1)},
+			wantErrText: []string{"mask_tail() keep_n must be a finite number"},
+		},
+		{
+			name:        "mask tail negative infinity rejected",
+			exprStr:     `mask_tail("abcdefgh", keep_n)`,
+			variables:   map[string]interface{}{"keep_n": math.Inf(-1)},
+			wantErrText: []string{"mask_tail() keep_n must be a finite number"},
+		},
+		{
+			name:        "mask tail oversized count rejected",
+			exprStr:     `mask_tail("abcdefgh", 1e100)`,
+			wantErrText: []string{"mask_tail() keep_n value", "exceeds maximum representable int"},
+		},
+		{
+			name:        "mask tail int boundary rejected",
+			exprStr:     `mask_tail("abcdefgh", 9223372036854775808)`,
+			wantErrText: []string{"mask_tail() keep_n value", "exceeds maximum representable int"},
+		},
+		{
+			name:        "mask tail multi rune mask rejected",
+			exprStr:     `mask_tail("abcdefgh", 4, "**")`,
+			wantErrText: []string{"mask_tail() mask_char must be a single-rune string"},
+		},
+		{
+			name:        "mask tail nil mask rejected",
+			exprStr:     `mask_tail("abcdefgh", 4, null)`,
+			wantErrText: []string{"mask_tail() mask_char must not be nil"},
+		},
+		{
+			name:        "mask tail non string mask rejected",
+			exprStr:     `mask_tail("abcdefgh", 4, 7)`,
+			wantErrText: []string{"mask_tail() mask_char must be a single-rune string", "int64"},
+		},
+		{
+			name:        "mask middle fractional head rejected",
+			exprStr:     `mask_middle("abcdefgh", 1.5, 2)`,
+			wantErrText: []string{"mask_middle() head_n must be an integer-valued number"},
+		},
+		{
+			name:        "mask middle wrong arity",
+			exprStr:     `mask_middle("abcdefgh", 1)`,
+			wantErrText: []string{"mask_middle() requires 3 or 4 arguments, got 2"},
+		},
+		{
+			name:        "mask tail wrong arity",
+			exprStr:     `mask_tail("abcdefgh")`,
+			wantErrText: []string{"mask_tail() requires 2 or 3 arguments, got 1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := ParseExpression(tt.exprStr)
+			if err != nil {
+				t.Fatalf("ParseExpression() error = %v", err)
+			}
+
+			result, err := NewEvaluator(tt.variables).EvaluateExpression(expr)
+			if len(tt.wantErrText) > 0 {
+				if err == nil {
+					t.Fatalf("EvaluateExpression() error = nil, want text %#v", tt.wantErrText)
+				}
+				for _, want := range tt.wantErrText {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("EvaluateExpression() error = %q, missing %q", err.Error(), want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("EvaluateExpression() error = %v", err)
+			}
+			if result != tt.wantResult {
+				t.Fatalf("EvaluateExpression() result = %#v (type %T), want %#v (type %T)", result, result, tt.wantResult, tt.wantResult)
 			}
 		})
 	}

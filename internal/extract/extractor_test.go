@@ -549,6 +549,47 @@ func TestExtractRecordsExpressionFieldMappingTernary(t *testing.T) {
 	}
 }
 
+func TestExtractRecordsExpressionFieldMappingStringFunctions(t *testing.T) {
+	docContent := `<?xml version="1.0"?><Envelope><Record><Status>  ACTIVE	</Status><Identifier>abcdef1234</Identifier></Record></Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	if err != nil {
+		t.Fatalf("failed to parse xml: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "status_label", XPath: "Status", Type: "string"},
+			{OutputField: "identifier", XPath: "Identifier", Type: "string"},
+			{OutputField: "status_bucket", Expression: `normalize_space(lower(status_label)) == "active" ? "match" : "other"`, Type: "string"},
+			{OutputField: "identifier_tail_masked", Expression: `mask_tail(identifier, 4)`, Type: "string"},
+			{OutputField: "identifier_middle_masked", Expression: `mask_middle(identifier, 2, 4)`, Type: "string"},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	records, err := extractRecords(doc, cfg, nil)
+	if err != nil {
+		t.Fatalf("extractRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+	record := records[0]
+	if got := record["status_bucket"]; got != "match" {
+		t.Fatalf("status_bucket = %#v, want match", got)
+	}
+	if got := record["identifier_tail_masked"]; got != "XXXXXX1234" {
+		t.Fatalf("identifier_tail_masked = %#v, want XXXXXX1234", got)
+	}
+	if got := record["identifier_middle_masked"]; got != "abXXXX1234" {
+		t.Fatalf("identifier_middle_masked = %#v, want abXXXX1234", got)
+	}
+}
+
 func TestExtractRecordsExpressionFieldMappingUndefinedVariable(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><A>2</A></Record></Envelope>`
 	doc, err := xmlquery.Parse(strings.NewReader(docContent))

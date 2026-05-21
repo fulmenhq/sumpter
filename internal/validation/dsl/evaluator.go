@@ -9,6 +9,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 )
 
 // Evaluator evaluates expressions and filters against data.
@@ -323,9 +324,176 @@ func (e *Evaluator) evaluateFunctionCall(funcCall *FunctionCall) (interface{}, e
 		}
 		return nil, fmt.Errorf("sum() with arguments not supported in expression context")
 
+	case "lower":
+		arg, err := e.evaluateStringFunctionArg(funcCall, 1)
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		return strings.ToLower(*arg), nil
+
+	case "upper":
+		arg, err := e.evaluateStringFunctionArg(funcCall, 1)
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		return strings.ToUpper(*arg), nil
+
+	case "normalize_space":
+		arg, err := e.evaluateStringFunctionArg(funcCall, 1)
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		return strings.Join(strings.Fields(*arg), " "), nil
+
+	case "mask_tail":
+		if len(funcCall.Args) < 2 || len(funcCall.Args) > 3 {
+			return nil, fmt.Errorf("mask_tail() requires 2 or 3 arguments, got %d", len(funcCall.Args))
+		}
+		arg, err := e.evaluateStringFunctionArg(funcCall, 0)
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		keepN, err := evaluateNonNegativeIntArg(e, funcCall.Args[1], "mask_tail", "keep_n")
+		if err != nil {
+			return nil, err
+		}
+		maskChar, err := evaluateOptionalSingleRuneArg(e, funcCall.Args, 2, "mask_tail", "X")
+		if err != nil {
+			return nil, err
+		}
+		return maskTailString(*arg, keepN, maskChar), nil
+
+	case "mask_middle":
+		if len(funcCall.Args) < 3 || len(funcCall.Args) > 4 {
+			return nil, fmt.Errorf("mask_middle() requires 3 or 4 arguments, got %d", len(funcCall.Args))
+		}
+		arg, err := e.evaluateStringFunctionArg(funcCall, 0)
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		headN, err := evaluateNonNegativeIntArg(e, funcCall.Args[1], "mask_middle", "head_n")
+		if err != nil {
+			return nil, err
+		}
+		tailN, err := evaluateNonNegativeIntArg(e, funcCall.Args[2], "mask_middle", "tail_n")
+		if err != nil {
+			return nil, err
+		}
+		maskChar, err := evaluateOptionalSingleRuneArg(e, funcCall.Args, 3, "mask_middle", "X")
+		if err != nil {
+			return nil, err
+		}
+		return maskMiddleString(*arg, headN, tailN, maskChar), nil
+
 	default:
 		return nil, fmt.Errorf("unknown function: %s", funcCall.Name)
 	}
+}
+
+func (e *Evaluator) evaluateStringFunctionArg(funcCall *FunctionCall, wantArgs int) (*string, error) {
+	funcName := strings.ToLower(funcCall.Name)
+	if wantArgs > 0 && len(funcCall.Args) != wantArgs {
+		return nil, fmt.Errorf("%s() requires exactly %d argument, got %d", funcName, wantArgs, len(funcCall.Args))
+	}
+
+	arg, err := e.EvaluateExpression(funcCall.Args[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate %s() argument: %w", funcName, err)
+	}
+	if arg == nil {
+		return nil, nil
+	}
+	s, ok := arg.(string)
+	if !ok {
+		return nil, fmt.Errorf("%s() argument must be a string, got %T", funcName, arg)
+	}
+	return &s, nil
+}
+
+func evaluateNonNegativeIntArg(e *Evaluator, argExpr *Expression, funcName, argName string) (int, error) {
+	arg, err := e.EvaluateExpression(argExpr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to evaluate %s() %s argument: %w", funcName, argName, err)
+	}
+	n, err := toFloat64(arg)
+	if err != nil {
+		return 0, fmt.Errorf("%s() %s must be numeric: %w", funcName, argName, err)
+	}
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return 0, fmt.Errorf("%s() %s must be a finite number, got %v", funcName, argName, n)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s() %s must be non-negative, got %v", funcName, argName, n)
+	}
+	if math.Trunc(n) != n {
+		return 0, fmt.Errorf("%s() %s must be an integer-valued number, got %v", funcName, argName, n)
+	}
+	// Use >= rather than >. On 64-bit platforms math.MaxInt rounds up to
+	// 2^63 when converted to float64, so the exact 2^63 boundary must be
+	// rejected before the implementation-dependent int conversion.
+	maxInt := float64(int(^uint(0) >> 1))
+	if n >= maxInt {
+		return 0, fmt.Errorf("%s() %s value %v exceeds maximum representable int", funcName, argName, n)
+	}
+	return int(n), nil
+}
+
+func evaluateOptionalSingleRuneArg(e *Evaluator, args []*Expression, index int, funcName, defaultChar string) (string, error) {
+	if index >= len(args) {
+		return defaultChar, nil
+	}
+	arg, err := e.EvaluateExpression(args[index])
+	if err != nil {
+		return "", fmt.Errorf("failed to evaluate %s() mask_char: %w", funcName, err)
+	}
+	if arg == nil {
+		return "", fmt.Errorf("%s() mask_char must not be nil", funcName)
+	}
+	maskChar, ok := arg.(string)
+	if !ok {
+		return "", fmt.Errorf("%s() mask_char must be a single-rune string, got %T", funcName, arg)
+	}
+	if utf8.RuneCountInString(maskChar) != 1 {
+		return "", fmt.Errorf("%s() mask_char must be a single-rune string, got %q", funcName, maskChar)
+	}
+	return maskChar, nil
+}
+
+func maskTailString(s string, keepN int, maskChar string) string {
+	if s == "" {
+		return ""
+	}
+	runes := []rune(s)
+	if keepN >= len(runes) {
+		return s
+	}
+	return strings.Repeat(maskChar, len(runes)-keepN) + string(runes[len(runes)-keepN:])
+}
+
+func maskMiddleString(s string, headN, tailN int, maskChar string) string {
+	if s == "" {
+		return ""
+	}
+	runes := []rune(s)
+	if headN >= len(runes) || tailN >= len(runes) || headN >= len(runes)-tailN {
+		return s
+	}
+	return string(runes[:headN]) + strings.Repeat(maskChar, len(runes)-headN-tailN) + string(runes[len(runes)-tailN:])
 }
 
 // getNestedField retrieves a nested field from a record using dot notation.

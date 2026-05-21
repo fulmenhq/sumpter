@@ -1,6 +1,6 @@
 # Sumpter DSL Reference
 
-**Reference version:** Sumpter DSL reference v1.1 (as of post-SUM-012 release)
+**Reference version:** Sumpter DSL reference v1.2 (as of post-SUM-017 release)
 **Runtime language value:** `sumpter-dsl`
 **Status:** Current recipe-author reference for v0.1.4
 
@@ -8,7 +8,7 @@ This document is the canonical reference for the Sumpter expression language
 used by extract recipes. It describes the grammar and runtime behavior that
 recipe authors can rely on today. The reference version above is documentation
 metadata only; Sumpter does not currently accept a runtime declaration such as
-`expression_language: sumpter-dsl@v1.1`.
+`expression_language: sumpter-dsl@v1.2`.
 
 ## Where the DSL Is Used
 
@@ -118,6 +118,46 @@ Use accumulation configuration for data-wide counts and sums.
 Function arguments are comma-separated expressions. Commas inside quoted string
 literals or nested parentheses do not split arguments.
 
+### String Functions
+
+String function names are case-insensitive, like numeric function names.
+
+| Function | Signature | Behavior |
+|---|---|---|
+| `lower` | `lower(string)` | Unicode-aware lower-casing per Go `strings.ToLower`. Nil-valued argument returns nil. |
+| `upper` | `upper(string)` | Unicode-aware upper-casing per Go `strings.ToUpper`. Nil-valued argument returns nil. |
+| `normalize_space` | `normalize_space(string)` | Trims leading/trailing Unicode whitespace and collapses internal Unicode whitespace runs to single ASCII spaces. Nil-valued argument returns nil. |
+| `mask_tail` | `mask_tail(string, keep_n)` | Replaces all but the last `keep_n` runes with `X`. Nil-valued argument returns nil. Empty string returns empty string. `keep_n >= rune_count(input)` returns the input unchanged. |
+| `mask_tail` | `mask_tail(string, keep_n, mask_char)` | Same as above, with a custom single-rune mask character. |
+| `mask_middle` | `mask_middle(string, head_n, tail_n)` | Replaces runes between the first `head_n` and last `tail_n` runes with `X`. Nil-valued argument returns nil. `head_n + tail_n >= rune_count(input)` returns the input unchanged. |
+| `mask_middle` | `mask_middle(string, head_n, tail_n, mask_char)` | Same as above, with a custom single-rune mask character. |
+
+`normalize_space` uses Go `strings.Fields` / `unicode.IsSpace` semantics, so
+it treats the full Unicode whitespace class as whitespace. This is broader than
+strict XPath 1.0 `normalize-space()`, which recognizes only XML whitespace
+(space, tab, carriage return, line feed).
+
+String functions propagate evaluated-as-nil arguments. On current Sumpter this
+means the DSL `null` literal or expression results that resolve to nil.
+Undefined variables still fail before function dispatch, so `lower(missing)`
+returns the existing `undefined variable: missing` error rather than nil.
+Numeric functions keep their existing strict numeric contract and error on nil
+or non-numeric input.
+
+`mask_tail` and `mask_middle` are rune-aware, not byte-indexed. Masking is
+idempotent under the function contract: `mask_tail("XXXXefgh", 4)` returns
+`"XXXXefgh"` because all but the last four runes are already `X`.
+
+`mask_tail` and `mask_middle` are visual redaction primitives. They are not
+cryptographic, not tokenization, and not hashing. Treat masked output as reduced
+fidelity display data, not as a security boundary.
+
+Mask counts (`keep_n`, `head_n`, `tail_n`) must be finite, non-negative,
+integer-valued numeric arguments and within the platform `int` conversion
+range. Fractional values, NaN, infinities, negative values, and values too large
+to convert to `int` are rejected with errors naming the function and argument.
+Custom `mask_char` values must be single-rune strings.
+
 ### Type Rules
 
 Arithmetic operators require numeric operands and return `float64` results.
@@ -132,6 +172,8 @@ Comparison behavior is:
 - Logical operators and unary `!` require boolean operands.
 
 Undefined variables fail evaluation with the variable name.
+See [String Functions](#string-functions) for the string-function
+nil-propagation contract; it does not change undefined-variable behavior.
 
 ## Filter Expressions
 
