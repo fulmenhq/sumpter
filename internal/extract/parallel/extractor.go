@@ -73,13 +73,6 @@ func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 		return result
 	}
 
-	// Blend in external fields
-	if se.externalFields != nil {
-		for k, v := range se.externalFields {
-			recordData[k] = v
-		}
-	}
-
 	if err := extract.EnrichRecord(recordData, se.filePath, se.sigCfg, se.extCfg, se.provenance); err != nil {
 		result.Error = fmt.Errorf("failed to enrich record %d: %w", item.RecordNum, err)
 		return result
@@ -121,7 +114,7 @@ func (se *SeekableExtractor) readByteRange(start, end int64) ([]byte, error) {
 // extractFields extracts field mappings from an XML document
 func (se *SeekableExtractor) extractFields(doc *xmlquery.Node) (map[string]interface{}, error) {
 	// Use existing extract package logic
-	return extract.ExtractFields(doc, se.extCfg)
+	return extract.ExtractFieldsWithExternal(doc, se.extCfg, se.externalFields)
 }
 
 // Worker is a goroutine that processes work items from the work channel
