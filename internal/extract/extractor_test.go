@@ -549,6 +549,124 @@ func TestExtractRecordsExpressionFieldMappingTernary(t *testing.T) {
 	}
 }
 
+func TestExtractRecordsExpressionFieldMappingExternalParameters(t *testing.T) {
+	docContent := `<?xml version="1.0"?><Envelope><Record><Tenant>Tenant-A</Tenant></Record></Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	if err != nil {
+		t.Fatalf("failed to parse xml: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "extracted_tenant", XPath: "Tenant", Type: "string"},
+			{OutputField: "tenant_bucket", Expression: `lower(extracted_tenant) == tenant_label ? "in_scope" : "out_of_scope"`, Type: "string"},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	records, err := extractRecords(doc, cfg, map[string]interface{}{"tenant_label": "tenant-a"})
+	if err != nil {
+		t.Fatalf("extractRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+	record := records[0]
+	if got := record["tenant_bucket"]; got != "in_scope" {
+		t.Fatalf("tenant_bucket = %#v, want in_scope", got)
+	}
+	if got := record["tenant_label"]; got != "tenant-a" {
+		t.Fatalf("tenant_label = %#v, want tenant-a", got)
+	}
+}
+
+func TestExtractRecordsExternalFieldCollidesWithXPathField(t *testing.T) {
+	docContent := `<?xml version="1.0"?><Envelope><Record><Tenant>Tenant-A</Tenant></Record></Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	if err != nil {
+		t.Fatalf("failed to parse xml: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "tenant_label", XPath: "Tenant", Type: "string"},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	_, err = extractRecords(doc, cfg, map[string]interface{}{"tenant_label": "tenant-a"})
+	if err == nil {
+		t.Fatal("expected external field collision error")
+	}
+	if !strings.Contains(err.Error(), "tenant_label") || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExtractRecordsExpressionFieldMappingUndefinedExternalParameter(t *testing.T) {
+	docContent := `<?xml version="1.0"?><Envelope><Record><Tenant>Tenant-A</Tenant></Record></Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	if err != nil {
+		t.Fatalf("failed to parse xml: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "extracted_tenant", XPath: "Tenant", Type: "string"},
+			{OutputField: "tenant_bucket", Expression: `lower(extracted_tenant) == tenant_label ? "in_scope" : "out_of_scope"`, Type: "string"},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	_, err = extractRecords(doc, cfg, nil)
+	if err == nil {
+		t.Fatal("expected undefined variable error")
+	}
+	if !strings.Contains(err.Error(), "tenant_bucket") || !strings.Contains(err.Error(), "undefined variable: tenant_label") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExtractRecordsExternalFieldCollidesWithExpressionField(t *testing.T) {
+	docContent := `<?xml version="1.0"?><Envelope><Record><Tenant>Tenant-A</Tenant></Record></Envelope>`
+	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	if err != nil {
+		t.Fatalf("failed to parse xml: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{
+		RecordType:     "test",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "extracted_tenant", XPath: "Tenant", Type: "string"},
+			{OutputField: "tenant_label", Expression: `lower(extracted_tenant)`, Type: "string"},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	_, err = extractRecords(doc, cfg, map[string]interface{}{"tenant_label": "tenant-a"})
+	if err == nil {
+		t.Fatal("expected external field collision error")
+	}
+	if !strings.Contains(err.Error(), "tenant_label") || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestExtractRecordsExpressionFieldMappingStringFunctions(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><Status>  ACTIVE	</Status><Identifier>abcdef1234</Identifier></Record></Envelope>`
 	doc, err := xmlquery.Parse(strings.NewReader(docContent))

@@ -170,7 +170,9 @@ properties:
         type: object
         description: |
           Free-form key/value pairs injected as fields into every
-          extracted record's extract.data block. Keys are output field
+          extracted record's extract.data block and into scalar
+          field_mappings[].expression evaluation scope. Keys must not
+          collide with XPath-extracted or expression-derived output field
           names; values are literal string scalars.
         additionalProperties:
           type: string

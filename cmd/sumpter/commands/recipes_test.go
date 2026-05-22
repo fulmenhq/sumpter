@@ -82,7 +82,7 @@ func TestExecuteExtractRecipeInjectsManifestAndCLIParameters(t *testing.T) {
 		ManifestPath: "recipe.yaml",
 		ClientID:     "client-flag",
 		SiteID:       "site-flag",
-		Parameters:   []string{"region_id=east", "tenant_id=tenant-cli", "site_id=site-param"},
+		Parameters:   []string{"region_id=east", "tenant_id=tenant-cli", "tenant_label=tenant-a", "site_id=site-param"},
 		Progress:     false,
 	})
 	if err != nil {
@@ -103,11 +103,13 @@ func TestExecuteExtractRecipeInjectsManifestAndCLIParameters(t *testing.T) {
 	data := extractData(t, record)
 
 	want := map[string]string{
-		"name":      "Alpha",
-		"region_id": "east",
-		"tenant_id": "tenant-cli",
-		"client_id": "client-param-default",
-		"site_id":   "site-param",
+		"name":          "Alpha",
+		"region_id":     "east",
+		"tenant_id":     "tenant-cli",
+		"tenant_label":  "tenant-a",
+		"tenant_bucket": "in_scope",
+		"client_id":     "client-param-default",
+		"site_id":       "site-param",
 	}
 	for key, value := range want {
 		if data[key] != value {
@@ -258,6 +260,8 @@ defaults:
     parquet:
       compression: none
       withhold_columns: [client_id, site_id]
+  parameters:
+    tenant_label: tenant-a
   workers: 1
   progress: false
 `)
@@ -419,11 +423,13 @@ defaults:
     client_id: client-param-default
     region_id: west
     tenant_id: tenant-default
+    tenant_label: tenant-default
   parameters_required:
     - client_id
     - site_id
     - region_id
     - tenant_id
+    - tenant_label
   workers: 1
   progress: false
 `)
@@ -443,10 +449,20 @@ field_mappings:
   - output_field: name
     xpath: name
     type: string
+  - output_field: extracted_tenant
+    xpath: tenant
+    type: string
+  - output_field: tenant_bucket
+    expression: 'lower(extracted_tenant) == tenant_label ? "in_scope" : "out_of_scope"'
+    type: string
 output_schema:
   type: object
   properties:
     name:
+      type: string
+    extracted_tenant:
+      type: string
+    tenant_bucket:
       type: string
     client_id:
       type: string
@@ -456,8 +472,10 @@ output_schema:
       type: string
     tenant_id:
       type: string
+    tenant_label:
+      type: string
 `)
-	mustWriteFile(t, filepath.Join(workspace, "testdata", "input.xml"), `<root><item><name>Alpha</name></item></root>`)
+	mustWriteFile(t, filepath.Join(workspace, "testdata", "input.xml"), `<root><item><name>Alpha</name><tenant>Tenant-A</tenant></item></root>`)
 	return workspace
 }
 

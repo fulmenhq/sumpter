@@ -663,7 +663,7 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 				if strings.TrimSpace(mapping.Expression) == "" {
 					continue
 				}
-				value, err := extractExpressionValue(mapping, record)
+				value, err := extractExpressionValue(mapping, record, externalFields)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -674,6 +674,9 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 
 			// Add external fields
 			for key, value := range externalFields {
+				if _, exists := record[key]; exists {
+					return nil, nil, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
+				}
 				record[key] = value
 			}
 
@@ -1091,7 +1094,7 @@ func extractValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, erro
 	}
 }
 
-func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}) (interface{}, error) {
+func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}, externalFields map[string]interface{}) (interface{}, error) {
 	if mapping == nil {
 		return nil, nil
 	}
@@ -1112,7 +1115,11 @@ func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}
 		return nil, fmt.Errorf("failed to parse expression for field %s (%q): %w", mapping.OutputField, expression, err)
 	}
 
-	evaluator := dsl.NewEvaluator(record)
+	scope, err := buildExpressionScope(record, externalFields)
+	if err != nil {
+		return nil, err
+	}
+	evaluator := dsl.NewEvaluator(scope)
 	value, err := evaluator.EvaluateExpression(expr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate expression for field %s (%q): %w", mapping.OutputField, expression, err)
@@ -1130,6 +1137,20 @@ func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}
 	default:
 		return value, nil
 	}
+}
+
+func buildExpressionScope(record map[string]interface{}, externalFields map[string]interface{}) (map[string]interface{}, error) {
+	scope := make(map[string]interface{}, len(record)+len(externalFields))
+	for key, value := range record {
+		scope[key] = value
+	}
+	for key, value := range externalFields {
+		if _, exists := scope[key]; exists {
+			return nil, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
+		}
+		scope[key] = value
+	}
+	return scope, nil
 }
 
 func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, error) {

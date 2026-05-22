@@ -1,6 +1,6 @@
 # Sumpter DSL Reference
 
-**Reference version:** Sumpter DSL reference v1.2 (as of post-SUM-017 release)
+**Reference version:** Sumpter DSL reference v1.3 (as of post-SUM-020 release)
 **Runtime language value:** `sumpter-dsl`
 **Status:** Current recipe-author reference for v0.1.4
 
@@ -8,7 +8,7 @@ This document is the canonical reference for the Sumpter expression language
 used by extract recipes. It describes the grammar and runtime behavior that
 recipe authors can rely on today. The reference version above is documentation
 metadata only; Sumpter does not currently accept a runtime declaration such as
-`expression_language: sumpter-dsl@v1.2`.
+`expression_language: sumpter-dsl@v1.3`.
 
 ## Where the DSL Is Used
 
@@ -49,6 +49,50 @@ The parser recognizes:
 
 Unquoted strings are accepted as filter values in simple filters, for example
 `status == active`. In full expressions, unquoted identifiers are variables.
+
+### Recipe Parameters
+
+For scalar `field_mappings[].expression` expressions, Sumpter evaluates the DSL
+against a single scope containing extracted record fields, earlier expression
+fields, and recipe parameters injected for the run.
+
+Recipe parameters come from `defaults.parameters` plus CLI
+`--parameter key=value` overrides. Parameters are string values in the current
+runtime. CLI values override manifest defaults before evaluation, and the same
+resolved values are emitted as fields in each record unless withheld by the
+selected output format configuration.
+
+Expression mappings continue to evaluate in declaration order. An expression
+can reference:
+
+- XPath fields already extracted for the current record.
+- Expression fields declared earlier in `field_mappings`.
+- Resolved recipe parameters.
+
+Name collisions are strict failures. If a parameter key matches an XPath
+`output_field` or an earlier expression `output_field`, extraction fails rather
+than silently preferring either value. Rename the parameter or output field to
+make data provenance explicit.
+
+Example:
+
+```yaml
+field_mappings:
+  - output_field: extracted_tenant
+    xpath: tenant
+    type: string
+  - output_field: tenant_bucket
+    expression: 'lower(extracted_tenant) == tenant_label ? "in_scope" : "out_of_scope"'
+    type: string
+```
+
+Here `tenant_label` can be supplied by `defaults.parameters.tenant_label` or
+overridden with `--parameter tenant_label=...`.
+
+This parameter scope applies to scalar field-mapping expressions. It does not
+change simple extract filters or the undefined-variable contract: referencing an
+undeclared parameter still fails with the existing `undefined variable: <name>`
+error.
 
 ### Operators
 
