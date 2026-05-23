@@ -94,8 +94,8 @@ func TestWriteFileIncludesUndeclaredInjectedFields(t *testing.T) {
 			"extract": map[string]interface{}{
 				"data": map[string]interface{}{
 					"order_id":  "A-1",
-					"client_id": "osg",
-					"site_id":   "70857",
+					"client_id": "acme",
+					"site_id":   "site-1",
 				},
 			},
 		},
@@ -115,7 +115,7 @@ func TestWriteFileIncludesUndeclaredInjectedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	if len(rows) != 1 || rows[0].ClientID != "osg" || rows[0].SiteID != "70857" {
+	if len(rows) != 1 || rows[0].ClientID != "acme" || rows[0].SiteID != "site-1" {
 		t.Fatalf("rows = %#v, want injected client/site fields", rows)
 	}
 

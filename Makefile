@@ -670,6 +670,147 @@ version-set: ## Set explicit version (usage: make version-set VERSION_NEW=1.2.3)
 	@echo "$(VERSION_NEW)" > VERSION
 	@echo "$(GREEN)Version set to $(VERSION_NEW)$(NC)"
 
+# =====================================================================
+# Release Pipeline (v0.1.4+)
+# =====================================================================
+# Hand-rolled release ceremony pattern; see RELEASE_CHECKLIST.md for the
+# operator runbook. Mirrors the gonimbus pattern, adapted for sumpter.
+#
+# Signing keys (set on operator machine, NOT in CI):
+#   SUMPTER_MINISIGN_KEY   - path to minisign secret key (required for signing)
+#   SUMPTER_MINISIGN_PUB   - path to minisign public key (optional; auto-derived)
+#   SUMPTER_PGP_KEY_ID     - gpg key id/email for PGP signing (optional)
+#   SUMPTER_GPG_HOMEDIR    - isolated gpg homedir (required if PGP_KEY_ID set)
+#
+# Tag-driven workflow:
+#   1. agent runs: version bump, PR, merge, tag + push tag
+#   2. CI workflow (.github/workflows/release.yml) builds + publishes binaries
+#   3. operator (@3leapsdave) runs signing ceremony:
+#        make release-clean
+#        make release-download RELEASE_TAG=v<version>
+#        make release-checksums
+#        make release-verify-checksums
+#        make release-sign RELEASE_TAG=v<version>
+#        make release-export-keys
+#        make release-verify-keys
+#        make release-verify-signatures
+#        make release-notes RELEASE_TAG=v<version>
+#        make release-upload RELEASE_TAG=v<version>
+#   4. agent runs post-release housekeeping (homebrew/scoop in public repos;
+#      sumpter is still private — skip until publicization)
+
+RELEASE_TAG ?= v$(VERSION)
+DIST_RELEASE ?= dist/release
+
+.PHONY: release-clean
+release-clean: ## Reset dist/release staging to avoid stale artifacts
+	@echo "$(BLUE)🧹 Cleaning $(DIST_RELEASE)...$(NC)"
+	@rm -rf "$(DIST_RELEASE)"
+	@mkdir -p "$(DIST_RELEASE)"
+	@echo "$(GREEN)✅ Cleaned$(NC)"
+
+.PHONY: release-guard-tag-version
+release-guard-tag-version: ## Guard: ensure RELEASE_TAG matches VERSION
+	@if [ -z "$(RELEASE_TAG)" ]; then \
+		echo "$(RED)❌ RELEASE_TAG required (example: v$(VERSION))$(NC)" >&2; \
+		exit 1; \
+	fi
+	@EXPECTED="v$(VERSION)"; \
+	if [ "$(RELEASE_TAG)" != "$$EXPECTED" ]; then \
+		echo "$(RED)❌ RELEASE_TAG mismatch: $(RELEASE_TAG) != $$EXPECTED (from VERSION)$(NC)" >&2; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ RELEASE_TAG matches VERSION ($(RELEASE_TAG))$(NC)"
+
+.PHONY: release-build
+release-build: embed-assets release-clean ## Build release artifacts (multi-platform) into dist/release
+	@echo "$(BLUE)→ Building release artifacts for $(BINARY_NAME) v$(VERSION)...$(NC)"
+	@mkdir -p "$(DIST_RELEASE)"
+	@GOOS=linux  GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-linux-amd64"   ./$(CMD_DIR)
+	@GOOS=linux  GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-linux-arm64"   ./$(CMD_DIR)
+	@GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-darwin-amd64"  ./$(CMD_DIR)
+	@GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-darwin-arm64"  ./$(CMD_DIR)
+	@GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-windows-amd64.exe" ./$(CMD_DIR)
+	@$(MAKE) release-checksums
+	@echo "$(GREEN)✅ Release build complete$(NC)"
+
+.PHONY: release-checksums
+release-checksums: ## Generate SHA256SUMS and SHA512SUMS in dist/release
+	@echo "$(BLUE)→ Generating checksum manifests in $(DIST_RELEASE)...$(NC)"
+	@./scripts/generate-checksums.sh "$(DIST_RELEASE)" "$(BINARY_NAME)"
+
+.PHONY: release-verify-checksums
+release-verify-checksums: ## Verify SHA256SUMS / SHA512SUMS match actual artifacts
+	@./scripts/verify-checksums.sh "$(DIST_RELEASE)"
+
+.PHONY: release-download
+release-download: release-guard-tag-version ## Download CI-built release assets (RELEASE_TAG=vX.Y.Z)
+	@./scripts/release-download.sh "$(RELEASE_TAG)" "$(DIST_RELEASE)"
+
+.PHONY: release-sign
+release-sign: ## Sign checksum manifests (minisign required; PGP optional)
+	@./scripts/sign-release-manifests.sh "$(RELEASE_TAG)" "$(DIST_RELEASE)"
+
+.PHONY: release-export-keys
+release-export-keys: ## Export public signing keys into dist/release
+	@./scripts/export-release-keys.sh "$(DIST_RELEASE)"
+
+.PHONY: release-verify-keys
+release-verify-keys: ## Verify exported public keys are public-only (no secrets)
+	@if [ -f "$(DIST_RELEASE)/$(BINARY_NAME)-minisign.pub" ]; then ./scripts/verify-minisign-public-key.sh "$(DIST_RELEASE)/$(BINARY_NAME)-minisign.pub"; else echo "ℹ️  No minisign public key found (skipping)"; fi
+	@if [ -f "$(DIST_RELEASE)/$(BINARY_NAME)-release-signing-key.asc" ]; then ./scripts/verify-public-key.sh "$(DIST_RELEASE)/$(BINARY_NAME)-release-signing-key.asc"; else echo "ℹ️  No PGP public key found (skipping)"; fi
+
+.PHONY: release-verify-signatures
+release-verify-signatures: ## Verify signatures on checksum manifests
+	@echo "$(BLUE)🔍 Verifying signatures in $(DIST_RELEASE)...$(NC)"
+	@has_any=false; \
+	if [ -f "$(DIST_RELEASE)/SHA256SUMS.minisig" ]; then \
+		if [ ! -f "$(DIST_RELEASE)/$(BINARY_NAME)-minisign.pub" ]; then \
+			echo "$(RED)❌ minisign public key not found; run 'make release-export-keys' first$(NC)"; exit 1; \
+		fi; \
+		echo "$(BLUE)🔐 Verifying minisign signatures...$(NC)"; \
+		cd "$(DIST_RELEASE)" && minisign -V -p $(BINARY_NAME)-minisign.pub -m SHA256SUMS; \
+		if [ -f SHA512SUMS.minisig ]; then minisign -V -p $(BINARY_NAME)-minisign.pub -m SHA512SUMS; fi; \
+		echo "$(GREEN)✅ Minisign signatures verified$(NC)"; \
+		has_any=true; \
+	fi; \
+	if [ -f "$(DIST_RELEASE)/SHA256SUMS.asc" ]; then \
+		echo "$(BLUE)🔐 Verifying PGP signatures...$(NC)"; \
+		GPG_HOME="$${SUMPTER_GPG_HOMEDIR:-}"; \
+		if [ -n "$$GPG_HOME" ]; then \
+			cd "$(DIST_RELEASE)" && gpg --homedir "$$GPG_HOME" --verify SHA256SUMS.asc SHA256SUMS; \
+			if [ -f SHA512SUMS.asc ]; then gpg --homedir "$$GPG_HOME" --verify SHA512SUMS.asc SHA512SUMS; fi; \
+		else \
+			cd "$(DIST_RELEASE)" && gpg --verify SHA256SUMS.asc SHA256SUMS; \
+			if [ -f SHA512SUMS.asc ]; then gpg --verify SHA512SUMS.asc SHA512SUMS; fi; \
+		fi; \
+		echo "$(GREEN)✅ PGP signatures verified$(NC)"; \
+		has_any=true; \
+	fi; \
+	if [ "$$has_any" = false ]; then \
+		echo "$(RED)❌ No signatures found to verify$(NC)"; exit 1; \
+	fi
+
+.PHONY: release-notes
+release-notes: ## Copy docs/releases/vX.Y.Z.md into dist/release/release-notes-vX.Y.Z.md
+	@notes_src="docs/releases/$(RELEASE_TAG).md"; \
+	notes_dst="$(DIST_RELEASE)/release-notes-$(RELEASE_TAG).md"; \
+	if [ ! -f "$$notes_src" ]; then echo "$(RED)❌ Missing $$notes_src$(NC)"; exit 1; fi; \
+	cp "$$notes_src" "$$notes_dst"; \
+	echo "$(GREEN)✅ Copied $$notes_src → $$notes_dst$(NC)"
+
+.PHONY: release-upload-provenance
+release-upload-provenance: release-verify-checksums release-verify-keys ## Upload manifests, signatures, keys, notes (no binaries)
+	@./scripts/release-upload-provenance.sh "$(RELEASE_TAG)" "$(DIST_RELEASE)"
+
+.PHONY: release-upload
+release-upload: release-upload-provenance ## Upload provenance assets to GitHub (manifests + sigs + keys + notes)
+	@:
+
+.PHONY: release-upload-all
+release-upload-all: release-verify-checksums release-verify-keys ## Upload binaries + provenance (manual override; CI already uploads binaries)
+	@./scripts/release-upload.sh "$(RELEASE_TAG)" "$(DIST_RELEASE)"
+
 .PHONY: all
 all: build ## Build default target
 
