@@ -41,7 +41,12 @@ fi
 
 # Sync templates
 echo "🧩 Syncing templates..."
-rsync -av --delete templates/ internal/assets/embedded_templates/templates/
+if command -v rsync &>/dev/null; then
+	rsync -av --delete templates/ internal/assets/embedded_templates/templates/
+else
+	echo "🧩 Syncing templates using Go script..."
+	go run scripts/sync-assets.go templates internal/assets/embedded_templates/templates
+fi
 
 echo "✅ Asset embedding complete!"
 echo "📦 Embedded content:"
