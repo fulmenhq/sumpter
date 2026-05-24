@@ -81,9 +81,14 @@ jobs:
         run: |
           set -euo pipefail
           make release-build
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release (DRAFT)
+        # Publishes as a draft so the signing ceremony has a chance to complete
+        # before consumers see an unsigned release window. Operator promotes via
+        # `make release-publish RELEASE_TAG=v<version>` (or `SUMPTER_RELEASE_TAG=`)
+        # as the final step of the ceremony in RELEASE_CHECKLIST.md.
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          draft: true
           files: |
             dist/release/*
