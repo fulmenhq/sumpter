@@ -685,21 +685,38 @@ version-set: ## Set explicit version (usage: make version-set VERSION_NEW=1.2.3)
 # Tag-driven workflow:
 #   1. agent runs: version bump, PR, merge, tag + push tag
 #   2. CI workflow (.github/workflows/release.yml) builds + publishes binaries
-#   3. operator (@3leapsdave) runs signing ceremony:
+#   3. operator (@3leapsdave) runs signing ceremony (release publishes as DRAFT
+#      from CI; the ceremony promotes it to published as the final step. Set
+#      SUMPTER_RELEASE_TAG once — sourced from ~/devsecops/vars/fulmenhq-sumpter-
+#      cicd.sh OR passed as RELEASE_TAG= on each invocation):
+#        source ~/devsecops/vars/fulmenhq-sumpter-cicd.sh   # signing keys
+#        export SUMPTER_RELEASE_TAG=v<version>
 #        make release-clean
-#        make release-download RELEASE_TAG=v<version>
+#        make release-download
 #        make release-checksums
 #        make release-verify-checksums
-#        make release-sign RELEASE_TAG=v<version>
+#        make release-sign
 #        make release-export-keys
 #        make release-verify-keys
 #        make release-verify-signatures
-#        make release-notes RELEASE_TAG=v<version>
-#        make release-upload RELEASE_TAG=v<version>
+#        make release-notes
+#        make release-upload
+#        make release-publish   # final: promote draft → public
 #   4. agent runs post-release housekeeping (homebrew/scoop in public repos;
 #      sumpter is still private — skip until publicization)
+#
+# Tag-resolution policy:
+#   - Prefer the product-namespaced env var SUMPTER_RELEASE_TAG (safer when
+#     multiple repo releases are in flight in the same operator shell — each
+#     repo's cicd.sh exports its own <REPO>_RELEASE_TAG so a `source <other>.sh`
+#     can't accidentally clobber sumpter's release context).
+#   - Generic `make release-* RELEASE_TAG=vX.Y.Z` argument still works for
+#     one-off invocations.
+#   - NEVER auto-default RELEASE_TAG to v$(VERSION); release targets that
+#     require RELEASE_TAG must fail loud via release-guard-tag-version rather
+#     than silently using a value the operator didn't intend.
 
-RELEASE_TAG ?= v$(VERSION)
+RELEASE_TAG ?= $(SUMPTER_RELEASE_TAG)
 DIST_RELEASE ?= dist/release
 
 .PHONY: release-clean
@@ -710,14 +727,20 @@ release-clean: ## Reset dist/release staging to avoid stale artifacts
 	@echo "$(GREEN)✅ Cleaned$(NC)"
 
 .PHONY: release-guard-tag-version
-release-guard-tag-version: ## Guard: ensure RELEASE_TAG matches VERSION
+release-guard-tag-version: ## Guard: ensure RELEASE_TAG is set (via SUMPTER_RELEASE_TAG or make arg) AND matches VERSION
 	@if [ -z "$(RELEASE_TAG)" ]; then \
-		echo "$(RED)❌ RELEASE_TAG required (example: v$(VERSION))$(NC)" >&2; \
+		echo "$(RED)❌ RELEASE_TAG not set.$(NC)" >&2; \
+		echo "$(RED)   Set SUMPTER_RELEASE_TAG in your shell environment (preferred):$(NC)" >&2; \
+		echo "$(RED)     source ~/devsecops/vars/fulmenhq-sumpter-cicd.sh$(NC)" >&2; \
+		echo "$(RED)     export SUMPTER_RELEASE_TAG=v$(VERSION)$(NC)" >&2; \
+		echo "$(RED)   OR pass RELEASE_TAG= on the make invocation (one-off):$(NC)" >&2; \
+		echo "$(RED)     make $(MAKECMDGOALS) RELEASE_TAG=v$(VERSION)$(NC)" >&2; \
 		exit 1; \
 	fi
 	@EXPECTED="v$(VERSION)"; \
 	if [ "$(RELEASE_TAG)" != "$$EXPECTED" ]; then \
-		echo "$(RED)❌ RELEASE_TAG mismatch: $(RELEASE_TAG) != $$EXPECTED (from VERSION)$(NC)" >&2; \
+		echo "$(RED)❌ RELEASE_TAG mismatch: $(RELEASE_TAG) != $$EXPECTED (from VERSION file)$(NC)" >&2; \
+		echo "$(RED)   Either bump VERSION to match RELEASE_TAG, or set SUMPTER_RELEASE_TAG/RELEASE_TAG to v$(VERSION).$(NC)" >&2; \
 		exit 1; \
 	fi
 	@echo "$(GREEN)✅ RELEASE_TAG matches VERSION ($(RELEASE_TAG))$(NC)"
@@ -748,7 +771,7 @@ release-download: release-guard-tag-version ## Download CI-built release assets 
 	@./scripts/release-download.sh "$(RELEASE_TAG)" "$(DIST_RELEASE)"
 
 .PHONY: release-sign
-release-sign: ## Sign checksum manifests (minisign required; PGP optional)
+release-sign: release-guard-tag-version ## Sign checksum manifests (minisign required; PGP optional)
 	@./scripts/sign-release-manifests.sh "$(RELEASE_TAG)" "$(DIST_RELEASE)"
 
 .PHONY: release-export-keys
@@ -769,8 +792,8 @@ release-verify-signatures: ## Verify signatures on checksum manifests
 			echo "$(RED)❌ minisign public key not found; run 'make release-export-keys' first$(NC)"; exit 1; \
 		fi; \
 		echo "$(BLUE)🔐 Verifying minisign signatures...$(NC)"; \
-		cd "$(DIST_RELEASE)" && minisign -V -p $(BINARY_NAME)-minisign.pub -m SHA256SUMS; \
-		if [ -f SHA512SUMS.minisig ]; then minisign -V -p $(BINARY_NAME)-minisign.pub -m SHA512SUMS; fi; \
+		(cd "$(DIST_RELEASE)" && minisign -V -p $(BINARY_NAME)-minisign.pub -m SHA256SUMS); \
+		if [ -f "$(DIST_RELEASE)/SHA512SUMS.minisig" ]; then (cd "$(DIST_RELEASE)" && minisign -V -p $(BINARY_NAME)-minisign.pub -m SHA512SUMS); fi; \
 		echo "$(GREEN)✅ Minisign signatures verified$(NC)"; \
 		has_any=true; \
 	fi; \
@@ -778,11 +801,11 @@ release-verify-signatures: ## Verify signatures on checksum manifests
 		echo "$(BLUE)🔐 Verifying PGP signatures...$(NC)"; \
 		GPG_HOME="$${SUMPTER_GPG_HOMEDIR:-}"; \
 		if [ -n "$$GPG_HOME" ]; then \
-			cd "$(DIST_RELEASE)" && gpg --homedir "$$GPG_HOME" --verify SHA256SUMS.asc SHA256SUMS; \
-			if [ -f SHA512SUMS.asc ]; then gpg --homedir "$$GPG_HOME" --verify SHA512SUMS.asc SHA512SUMS; fi; \
+			(cd "$(DIST_RELEASE)" && gpg --homedir "$$GPG_HOME" --verify SHA256SUMS.asc SHA256SUMS); \
+			if [ -f "$(DIST_RELEASE)/SHA512SUMS.asc" ]; then (cd "$(DIST_RELEASE)" && gpg --homedir "$$GPG_HOME" --verify SHA512SUMS.asc SHA512SUMS); fi; \
 		else \
-			cd "$(DIST_RELEASE)" && gpg --verify SHA256SUMS.asc SHA256SUMS; \
-			if [ -f SHA512SUMS.asc ]; then gpg --verify SHA512SUMS.asc SHA512SUMS; fi; \
+			(cd "$(DIST_RELEASE)" && gpg --verify SHA256SUMS.asc SHA256SUMS); \
+			if [ -f "$(DIST_RELEASE)/SHA512SUMS.asc" ]; then (cd "$(DIST_RELEASE)" && gpg --verify SHA512SUMS.asc SHA512SUMS); fi; \
 		fi; \
 		echo "$(GREEN)✅ PGP signatures verified$(NC)"; \
 		has_any=true; \
@@ -792,7 +815,7 @@ release-verify-signatures: ## Verify signatures on checksum manifests
 	fi
 
 .PHONY: release-notes
-release-notes: ## Copy docs/releases/vX.Y.Z.md into dist/release/release-notes-vX.Y.Z.md
+release-notes: release-guard-tag-version ## Copy docs/releases/vX.Y.Z.md into dist/release/release-notes-vX.Y.Z.md
 	@notes_src="docs/releases/$(RELEASE_TAG).md"; \
 	notes_dst="$(DIST_RELEASE)/release-notes-$(RELEASE_TAG).md"; \
 	if [ ! -f "$$notes_src" ]; then echo "$(RED)❌ Missing $$notes_src$(NC)"; exit 1; fi; \
@@ -800,7 +823,7 @@ release-notes: ## Copy docs/releases/vX.Y.Z.md into dist/release/release-notes-v
 	echo "$(GREEN)✅ Copied $$notes_src → $$notes_dst$(NC)"
 
 .PHONY: release-upload-provenance
-release-upload-provenance: release-verify-checksums release-verify-keys ## Upload manifests, signatures, keys, notes (no binaries)
+release-upload-provenance: release-guard-tag-version release-verify-checksums release-verify-keys ## Upload manifests, signatures, keys, notes (no binaries)
 	@./scripts/release-upload-provenance.sh "$(RELEASE_TAG)" "$(DIST_RELEASE)"
 
 .PHONY: release-upload
@@ -808,8 +831,20 @@ release-upload: release-upload-provenance ## Upload provenance assets to GitHub 
 	@:
 
 .PHONY: release-upload-all
-release-upload-all: release-verify-checksums release-verify-keys ## Upload binaries + provenance (manual override; CI already uploads binaries)
+release-upload-all: release-guard-tag-version release-verify-checksums release-verify-keys ## Upload binaries + provenance (manual override; CI already uploads binaries)
 	@./scripts/release-upload.sh "$(RELEASE_TAG)" "$(DIST_RELEASE)"
+
+.PHONY: release-publish
+release-publish: release-guard-tag-version ## Flip draft release → published (final step after signing ceremony completes)
+	@if ! command -v gh > /dev/null 2>&1; then \
+		echo "$(RED)❌ gh (GitHub CLI) not found in PATH$(NC)" >&2; \
+		echo "$(RED)   Install: https://cli.github.com/$(NC)" >&2; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)→ Promoting $(RELEASE_TAG) from draft → published...$(NC)"
+	@gh release edit "$(RELEASE_TAG)" --draft=false
+	@echo "$(GREEN)✅ $(RELEASE_TAG) is now publicly visible$(NC)"
+	@echo "   View: https://github.com/fulmenhq/$(BINARY_NAME)/releases/tag/$(RELEASE_TAG)"
 
 .PHONY: all
 all: build ## Build default target

@@ -46,7 +46,7 @@ Standard checklist for sumpter releases to ensure consistency and quality.
 ### Version Updates
 
 - [ ] Update `VERSION` file (sumpter injects version via LDFLAGS — no `.fulmen/app.yaml` or `internal/buildinfo/VERSION` mirror to keep in sync)
-- [ ] Version sanity check: `make release-guard-tag-version RELEASE_TAG=v<version>`
+- [ ] Version sanity check: `make release-guard-tag-version SUMPTER_RELEASE_TAG=v<version>` (or `RELEASE_TAG=v<version>` for one-off invocations; SUMPTER_RELEASE_TAG is preferred when sourced from `~/devsecops/vars/fulmenhq-sumpter-cicd.sh`)
 - [ ] Search for hardcoded version references (`grep -rE "0\\.1\\.3" --include=\"*.go\" --include=\"*.md\" --include=\"*.yaml\"`)
 
 ### Git Hygiene
@@ -73,11 +73,23 @@ Follow the Fulmen "manifest-only" provenance pattern:
 - Sign manifests with minisign (primary) and optionally PGP
 - Ship trust anchors (public keys) with the release
 
+- [ ] Source the operator-private env file once (sets SUMPTER_MINISIGN_KEY, SUMPTER_MINISIGN_PUB, SUMPTER_PGP_KEY_ID, SUMPTER_GPG_HOMEDIR — keys are fulmenhq-org-scoped, identical across fulmenhq Go repos):
+
+  ```bash
+  source ~/devsecops/vars/fulmenhq-sumpter-cicd.sh
+  ```
+
+- [ ] Set the release tag once for the whole ceremony (the Makefile resolves SUMPTER_RELEASE_TAG → RELEASE_TAG; never auto-defaults to v<VERSION>, so a forgotten export fails loud rather than silently picking the wrong tag):
+
+  ```bash
+  export SUMPTER_RELEASE_TAG=v<version>
+  ```
+
 - [ ] Download CI-built artifacts and generate manifests:
 
   ```bash
   make release-clean
-  make release-download RELEASE_TAG=v<version>
+  make release-download
   make release-checksums
   make release-verify-checksums
   ```
@@ -85,20 +97,17 @@ Follow the Fulmen "manifest-only" provenance pattern:
 - [ ] Sign manifests (minisign required; PGP optional):
 
   ```bash
-  export RELEASE_TAG=v<version>
-  export SUMPTER_MINISIGN_KEY=/path/to/sumpter.key
-  export SUMPTER_MINISIGN_PUB=/path/to/sumpter.pub
-  export SUMPTER_PGP_KEY_ID="security@fulmenhq.dev"   # optional
-  export SUMPTER_GPG_HOMEDIR=/path/to/gnupg-fulmenhq # required if PGP_KEY_ID set
-
-  make release-sign RELEASE_TAG=$RELEASE_TAG
+  make release-sign
   ```
 
 - [ ] Export public keys: `make release-export-keys`
 - [ ] Verify exported keys are public-only: `make release-verify-keys`
-- [ ] Verify signatures: `make release-verify-signatures`
-- [ ] Copy release notes: `make release-notes RELEASE_TAG=v<version>`
+- [ ] Verify signatures: `make release-verify-signatures` (confirms BOTH minisign AND PGP signature output if both were created — silent on either side means the verify step skipped that signature, dig into why before promoting)
+- [ ] Copy release notes: `make release-notes`
 - [ ] Upload provenance assets: `make release-upload`
+- [ ] **Promote draft → public** (final step — CI publishes as draft so consumers don't see an unsigned release window): `make release-publish`
+
+For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<version>` on each make command. Both forms are equivalent — the guard target `release-guard-tag-version` (wired as a dep of release-sign / release-notes / release-upload-* / release-download / release-publish) fails loud if neither is set.
 
 ### Tagging
 
