@@ -48,6 +48,40 @@ func TestRecipeContentHash_FormatAndStability(t *testing.T) {
 	}
 }
 
+func TestRecipeContentHash_ApplicabilityChangesHash(t *testing.T) {
+	signature := []byte("signature_id: sig\nname: Test\n")
+	extract := []byte("record_type: sample\nfield_mappings: []\n")
+	applicabilityA := []byte("applicability:\n  type: xpath\n  expression: count(//A) > 0\n")
+	applicabilityB := []byte("applicability:\n  expression: count(//B) > 0\n  type: xpath\n")
+
+	baseHash, err := RecipeContentHash(signature, extract)
+	if err != nil {
+		t.Fatalf("RecipeContentHash base: %v", err)
+	}
+	nilOptionalHash, err := RecipeContentHash(signature, extract, nil)
+	if err != nil {
+		t.Fatalf("RecipeContentHash nil optional: %v", err)
+	}
+	if baseHash != nilOptionalHash {
+		t.Fatalf("nil optional applicability changed hash: base=%s nil=%s", baseHash, nilOptionalHash)
+	}
+
+	appHashA, err := RecipeContentHash(signature, extract, applicabilityA)
+	if err != nil {
+		t.Fatalf("RecipeContentHash applicability A: %v", err)
+	}
+	appHashB, err := RecipeContentHash(signature, extract, applicabilityB)
+	if err != nil {
+		t.Fatalf("RecipeContentHash applicability B: %v", err)
+	}
+	if appHashA == baseHash {
+		t.Fatalf("applicability hash matched base hash: %s", appHashA)
+	}
+	if appHashA == appHashB {
+		t.Fatalf("different applicability predicates produced same hash: %s", appHashA)
+	}
+}
+
 func TestCanonicalizeYAML_NumberBehavior(t *testing.T) {
 	intJSON, err := CanonicalizeYAML([]byte("value: 1\n"))
 	if err != nil {

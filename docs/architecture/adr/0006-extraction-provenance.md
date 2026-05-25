@@ -110,7 +110,8 @@ Field notes:
   (`recipe.yaml`). v0.1.3 emits a deprecation warning if missing; v0.1.4
   treats missing as a hard error.
 - `recipe_content_hash` — `sha256:` over the JCS canonicalization of the
-  loaded signature and extract YAML (see "Recipe content hash" below).
+  loaded signature, extract, and any declared applicability YAML (see
+  "Recipe content hash" below).
 - `source_file` — relative path under the extract input root, not absolute.
   Reduces accidental hostname/path leakage on shipped output.
 - `source_file_sha256` — computed lazily on first record from each file.
@@ -188,8 +189,9 @@ Notes:
   sidecar contract so downstream tooling can parse confidently.
 - `argv_sanitized` strips secrets and absolute paths; the sanitization
   rules live next to the env-var redaction helpers.
-- `signature_yaml` / `extract_yaml` are the *verbatim* loaded recipe
-  bytes (not the canonicalized hash input). Audit-friendly.
+- `signature_yaml` / `extract_yaml` / optional `applicability_yaml` are the
+  *verbatim* loaded recipe bytes (not the canonicalized hash input).
+  Audit-friendly.
 - Derived fields use `expression` instead of `xpath` in
   `field_provenance` so consumers can distinguish recipe-computed values
   from XML-sourced fields.
@@ -312,23 +314,25 @@ version bump in v0.1.3; v0.1.4 will introduce `v0.2.0`.
 Goal: hash is stable across whitespace, comment, and key-order churn, but
 changes when any **extraction-defining** content changes.
 
-**Scope**: the hash covers `signature.yaml` and `extract.yaml` only (the
-files pointed to by `manifest.assets.signature` and `manifest.assets.extract`).
-The recipe manifest itself — display name, description, owners,
-documentation, defaults — is **not** part of the hash. Rationale: manifest
-fields describe the recipe workspace; they don't change the extracted
-output bytes. Conflating them would churn the hash on cosmetic edits
-(updating an owner's contact, fixing a typo in the description) without
-any change to extraction behavior.
+**Scope**: the hash covers `signature.yaml`, `extract.yaml`, and any declared
+`applicability.yaml` asset (the files pointed to by `manifest.assets.signature`,
+`manifest.assets.extract`, and optional `manifest.assets.applicability`). The
+recipe manifest itself — display name, description, owners, documentation,
+defaults — is **not** part of the hash. Rationale: manifest fields describe
+the recipe workspace; they don't change the extracted output bytes. Conflating
+them would churn the hash on cosmetic edits (updating an owner's contact,
+fixing a typo in the description) without any change to extraction behavior.
 
 Algorithm:
 
-1. Load signature YAML and extract YAML (the asset files).
+1. Load signature YAML, extract YAML, and any declared applicability YAML (the
+   behavior-bearing asset files).
 2. Parse each to an in-memory Go object (comments and whitespace dropped).
 3. Serialize each to JSON using **JCS (RFC 8785)** — JSON Canonicalization
    Scheme: sorted keys, no insignificant whitespace, UTF-8, RFC 8785 number
    normalization.
-4. Concatenate: `signature_jcs + "\n---\n" + extract_jcs`.
+4. Concatenate declared assets in order with `"\n---\n"` separators:
+   `signature_jcs`, `extract_jcs`, then `applicability_jcs` when present.
 5. SHA-256 the result. Emit as `sha256:<lowercase-hex>`.
 
 Using JCS (not a homegrown canonicalizer) means future verifiers in any
@@ -560,8 +564,8 @@ Standing constraints regardless of sequencing:
   version becomes `content_version` on the manifest (not a new field on
   extract.yaml); (b) recipe authorship extends the existing `owners`
   block with optional `role` (no new `authors` block); (c)
-  `recipe_content_hash` scope narrows to signature.yaml + extract.yaml
-  only (manifest changes don't churn the hash); (d) manifest schema stays
+  `recipe_content_hash` scope narrows to behavior-bearing recipe assets
+  (manifest changes don't churn the hash); (d) manifest schema stays
   at `recipe/v0.1.0` in v0.1.3 with `content_version` as
   optional-with-warning; v0.1.4 bumps to `recipe/v0.2.0` with it required.
 - **2026-05-11** — ADR-0006 v3 accepted (this document). Branch

@@ -56,9 +56,9 @@ func CanonicalizeYAML(data []byte) ([]byte, error) {
 }
 
 // RecipeContentHash returns the ADR-0006 recipe content hash over raw
-// signature.yaml and extract.yaml bytes. The manifest is intentionally out of
+// behavior-bearing recipe asset bytes. The manifest is intentionally out of
 // scope; callers pass recipe version and ownership metadata separately.
-func RecipeContentHash(signatureYAML, extractYAML []byte) (string, error) {
+func RecipeContentHash(signatureYAML, extractYAML []byte, applicabilityYAML ...[]byte) (string, error) {
 	signatureCanonical, err := CanonicalizeYAML(signatureYAML)
 	if err != nil {
 		return "", fmt.Errorf("canonicalize signature YAML: %w", err)
@@ -72,6 +72,17 @@ func RecipeContentHash(signatureYAML, extractYAML []byte) (string, error) {
 	_, _ = h.Write(signatureCanonical)
 	_, _ = h.Write([]byte(recipeHashGlue))
 	_, _ = h.Write(extractCanonical)
+	for _, asset := range applicabilityYAML {
+		if len(asset) == 0 {
+			continue
+		}
+		assetCanonical, err := CanonicalizeYAML(asset)
+		if err != nil {
+			return "", fmt.Errorf("canonicalize applicability YAML: %w", err)
+		}
+		_, _ = h.Write([]byte(recipeHashGlue))
+		_, _ = h.Write(assetCanonical)
+	}
 
 	return hashPrefix + hex.EncodeToString(h.Sum(nil)), nil
 }

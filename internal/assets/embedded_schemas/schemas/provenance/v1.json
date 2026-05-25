@@ -139,6 +139,9 @@
         "extract_yaml": {
           "type": "string"
         },
+        "applicability_yaml": {
+          "type": "string"
+        },
         "field_provenance": {
           "type": "array",
           "items": {

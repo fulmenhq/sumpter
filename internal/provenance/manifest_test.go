@@ -25,6 +25,7 @@ func TestManifestSchemaValidatesDirectAndRecipeBacked(t *testing.T) {
 		ManifestYAML:          "version: recipe/v0.1.0\n",
 		SignatureYAML:         "signature_id: sample\n",
 		ExtractYAML:           "record_type: sample\n",
+		ApplicabilityYAML:     "applicability:\n  type: xpath\n  expression: count(//item) > 0\n",
 		FieldProvenance: []FieldProvenance{{
 			OutputField: "business_date",
 			XPath:       "BusinessDate",
@@ -172,6 +173,7 @@ func TestWriteManifestPreservesRawYAML(t *testing.T) {
 		ContentHash:           "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		SignatureYAML:         "signature_id: sample\n# keep this comment\n",
 		ExtractYAML:           "record_type: sample\nxpath: ./A\n",
+		ApplicabilityYAML:     "applicability:\n  type: xpath\n  expression: count(//A) > 0\n",
 	}
 
 	path := filepath.Join(dir, ManifestFileName)
@@ -195,6 +197,9 @@ func TestWriteManifestPreservesRawYAML(t *testing.T) {
 	}
 	if got.Recipe.ExtractYAML != manifest.Recipe.ExtractYAML {
 		t.Fatalf("extract yaml = %q, want %q", got.Recipe.ExtractYAML, manifest.Recipe.ExtractYAML)
+	}
+	if got.Recipe.ApplicabilityYAML != manifest.Recipe.ApplicabilityYAML {
+		t.Fatalf("applicability yaml = %q, want %q", got.Recipe.ApplicabilityYAML, manifest.Recipe.ApplicabilityYAML)
 	}
 }
 

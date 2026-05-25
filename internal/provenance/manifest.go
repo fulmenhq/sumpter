@@ -53,6 +53,7 @@ type Recipe struct {
 	ManifestYAML          string            `json:"manifest_yaml,omitempty"`
 	SignatureYAML         string            `json:"signature_yaml"`
 	ExtractYAML           string            `json:"extract_yaml"`
+	ApplicabilityYAML     string            `json:"applicability_yaml,omitempty"`
 	FieldProvenance       []FieldProvenance `json:"field_provenance,omitempty"`
 }
 

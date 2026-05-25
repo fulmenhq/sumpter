@@ -396,6 +396,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 
 	var applicabilityCfg *extract.ApplicabilityConfig
+	var applicabilityBytes []byte
 	if strings.TrimSpace(applicabilityPath) != "" {
 		asset, err := recipesmanifest.OpenRelativeFile(absWorkspace, applicabilityPath)
 		if err != nil {
@@ -405,6 +406,10 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 			return fmt.Errorf("failed to close applicability asset: %w", err)
 		}
 		applicabilityPath = recipesmanifest.ResolvePath(absWorkspace, applicabilityPath)
+		applicabilityBytes, err = os.ReadFile(applicabilityPath) // #nosec G304 - path resolved from validated recipe asset path
+		if err != nil {
+			return fmt.Errorf("failed to read applicability asset for provenance: %w", err)
+		}
 		applicabilityCfg, err = extract.LoadApplicabilityConfig(applicabilityPath)
 		if err != nil {
 			return err
@@ -422,7 +427,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	if err != nil {
 		return fmt.Errorf("failed to read extract asset for provenance: %w", err)
 	}
-	recipeContentHash, err := provenance.RecipeContentHash(signatureBytes, extractBytes)
+	recipeContentHash, err := provenance.RecipeContentHash(signatureBytes, extractBytes, applicabilityBytes)
 	if err != nil {
 		return fmt.Errorf("failed to compute recipe content hash: %w", err)
 	}
@@ -445,7 +450,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,
 		},
-		Recipe: buildRecipeProvenance(manifest, manifestBytes, signatureBytes, extractBytes, recipeContentHash),
+		Recipe: buildRecipeProvenance(manifest, manifestBytes, signatureBytes, extractBytes, applicabilityBytes, recipeContentHash),
 	}
 
 	defaults := manifest.Defaults
@@ -579,7 +584,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	return runExtract(extractOpts)
 }
 
-func buildRecipeProvenance(manifest *recipesmanifest.Manifest, manifestBytes, signatureBytes, extractBytes []byte, contentHash string) *provenance.Recipe {
+func buildRecipeProvenance(manifest *recipesmanifest.Manifest, manifestBytes, signatureBytes, extractBytes, applicabilityBytes []byte, contentHash string) *provenance.Recipe {
 	if manifest == nil {
 		return nil
 	}
@@ -601,6 +606,7 @@ func buildRecipeProvenance(manifest *recipesmanifest.Manifest, manifestBytes, si
 		ManifestYAML:          string(manifestBytes),
 		SignatureYAML:         string(signatureBytes),
 		ExtractYAML:           string(extractBytes),
+		ApplicabilityYAML:     string(applicabilityBytes),
 	}
 }
 
