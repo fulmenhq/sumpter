@@ -106,6 +106,15 @@ func (v *SchemaValidator) ValidateProvenanceManifest(data []byte, manifestFile s
 	return v.validateAgainstSchema(data, schemaBytes, manifestFile, "provenance-v1")
 }
 
+// ValidateDispositionSummary validates an extract applicability disposition summary.
+func (v *SchemaValidator) ValidateDispositionSummary(data []byte, summaryFile string) (*ValidationResult, error) {
+	schemaBytes, err := v.loadSchema("extract", "v0.1.0", "dispositions.schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("extract", "v0.1.0", "dispositions.schema.json"), err)
+	}
+	return v.validateAgainstSchema(data, schemaBytes, summaryFile, "extract-dispositions-v0.1.0")
+}
+
 func (v *SchemaValidator) loadSchema(parts ...string) ([]byte, error) {
 	rel := path.Join(parts...)
 

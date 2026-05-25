@@ -270,6 +270,9 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	logger.Debug("File discovery complete", zap.Int("file_count", len(files)))
 	if opts.ApplicabilityConfig != nil {
+		if strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
+			return fmt.Errorf("applicability declared but requires --output-path for dispositions output")
+		}
 		if err := validateApplicabilityMode(opts, files); err != nil {
 			return err
 		}
@@ -451,6 +454,7 @@ func runExtract(opts *ExtractOptions) error {
 }
 
 type dispositionSummaryFile struct {
+	SchemaVersion string                  `json:"schema_version"`
 	CohortSize    int                     `json:"cohort_size"`
 	Applied       int                     `json:"applied"`
 	NotApplicable int                     `json:"not_applicable"`
@@ -466,7 +470,10 @@ type dispositionSummaryRow struct {
 }
 
 func newDispositionSummary(cohortSize int) *dispositionSummaryFile {
-	return &dispositionSummaryFile{CohortSize: cohortSize}
+	return &dispositionSummaryFile{
+		SchemaVersion: "extract-dispositions/v0.1.0",
+		CohortSize:    cohortSize,
+	}
 }
 
 func (s *dispositionSummaryFile) add(result extract.ExtractResult, roots []string) {

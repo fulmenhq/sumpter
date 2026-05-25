@@ -61,7 +61,8 @@ are extracted, and the condition does not count as a failure. When the predicate
 evaluates true, the recipe proceeds through signature matching and extraction as
 usual. Recipe runs that declare applicability add disposition fields to the
 provenance input entries and write a lightweight `dispositions.json` summary at
-the output root.
+the output root. The summary includes `schema_version: extract-dispositions/v0.1.0`
+and is schema-backed by `schemas/extract/v0.1.0/dispositions.schema.json`.
 
 Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
 For the full expression grammar, function set, and parser behavior contracts,

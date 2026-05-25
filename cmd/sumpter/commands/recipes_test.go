@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/provenance"
+	"github.com/fulmenhq/sumpter/internal/validation"
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
 )
@@ -283,6 +284,23 @@ func TestExecuteExtractRecipeWithoutApplicabilityPreservesMinOccurrencesFailure(
 	}
 	if _, statErr := os.Stat(filepath.Join(workspace, "outputs", "dispositions.json")); !os.IsNotExist(statErr) {
 		t.Fatalf("dispositions.json stat error = %v, want not exist", statErr)
+	}
+}
+
+func TestExecuteExtractRecipeApplicabilityRequiresOutputPath(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeApplicabilityWorkspace(t, `<root><Other>skip</Other></root>`)
+	manifestText := strings.ReplaceAll(readFileString(t, filepath.Join(workspace, "recipe.yaml")), "    path: outputs\n", "    path: \"\"\n")
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), manifestText)
+	cmd := recipeRunExtractTestCommand()
+
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", Progress: false})
+	if err == nil {
+		t.Fatal("expected applicability output-path requirement error")
+	}
+	if !strings.Contains(err.Error(), "requires --output-path") {
+		t.Fatalf("error = %v, want output-path requirement", err)
 	}
 }
 
@@ -616,13 +634,20 @@ func TestExecuteExtractRecipeInjectsSourceExtractionPerFile(t *testing.T) {
 
 func readDispositionSummary(t *testing.T, path string) map[string]interface{} {
 	t.Helper()
-	file, err := os.Open(path)
+	data, err := os.ReadFile(path) // #nosec G304 - test-owned temp path.
 	if err != nil {
-		t.Fatalf("Open dispositions summary: %v", err)
+		t.Fatalf("ReadFile dispositions summary: %v", err)
 	}
-	defer func() { _ = file.Close() }()
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "..", "schemas"))
+	result, err := validator.ValidateDispositionSummary(data, filepath.Base(path))
+	if err != nil {
+		t.Fatalf("ValidateDispositionSummary: %v", err)
+	}
+	if !result.IsValid() {
+		t.Fatalf("dispositions summary failed schema validation: %+v", result.Errors)
+	}
 	var summary map[string]interface{}
-	if err := json.NewDecoder(file).Decode(&summary); err != nil {
+	if err := json.Unmarshal(data, &summary); err != nil {
 		t.Fatalf("Decode dispositions summary: %v", err)
 	}
 	return summary
