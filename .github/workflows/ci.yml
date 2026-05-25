@@ -1,0 +1,140 @@
+# yamllint disable rule:document-start
+# yamllint disable rule:truthy
+name: CI
+# PR-time + post-merge-to-main quality gate. Runs lint, test, and a full
+# multi-platform release-build dry-run inside the same goneat-tools-runner-glibc
+# container that release.yml uses on tag push — so container-compatibility
+# issues (missing tools, build-flag drift, etc.) surface at PR time instead
+# of at tag-push time when a partial release is harder to recover from.
+"on":
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  # Job 1: Quality gates + Test + Build
+  #
+  # Runs everything `make precommit` would run locally, against the same
+  # container that release.yml uses. Catches the class of bugs where local
+  # tooling (rsync, golangci-lint, etc.) diverges from CI tooling.
+  quality:
+    name: Quality + Test + Build
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.4.2
+      # Match release.yml: non-root UID so workspace permissions align with
+      # GitHub-hosted runner ownership.
+      options: --user 1001
+    # The -glibc image doesn't expose bash as GHA's default container shell,
+    # so GHA falls back to sh which lacks `set -o pipefail`. Force bash for
+    # all run: steps via job-level default.
+    defaults:
+      run:
+        shell: bash
+    env:
+      FULMEN_WORKSPACE_ROOT: ${{ github.workspace }}
+      # Workspace-relative GOPATH: goneat-tools-runner runs as non-root and
+      # /opt/gopath/bin is not writable by that user. actions/setup-go@v5
+      # expects $GOPATH/bin to be writable.
+      GOPATH: ${{ github.workspace }}/../_go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Prepare Go directories
+        # Pre-create the writable workspace-relative GOPATH so actions/setup-go
+        # does not fail with EACCES under the non-root runner user.
+        run: mkdir -p "$GOPATH/bin" "$GOPATH/pkg"
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.10"
+      - name: Verify toolchain
+        run: |
+          set -euo pipefail
+          goneat --version
+          go version
+          go mod download
+      - name: Install golangci-lint
+        # goneat-tools-runner does not ship golangci-lint; install via the
+        # canonical action so sumpter's `make lint` finds it in PATH.
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.4.0
+          args: --help
+      - name: Verify golangci-lint
+        run: |
+          set -euo pipefail
+          golangci-lint --version
+      - name: Quality gates (fmt-strict + vet + lint + safety + schema)
+        run: |
+          set -euo pipefail
+          make check-all
+      - name: Test
+        run: |
+          set -euo pipefail
+          make test
+      - name: Build
+        run: |
+          set -euo pipefail
+          make build
+  # Job 2: Release-build dry-run
+  #
+  # Runs `make release-build` (multi-platform cross-compile + checksums) in
+  # the same container, with the same env vars, that release.yml uses on tag
+  # push. This catches container-compatibility issues at PR time instead of
+  # at tag time. Concrete bug class this guards against: the rsync gap that
+  # bit v0.1.4 (release container didn't have rsync; embed-assets.sh's
+  # templates-sync step had no Go-script fallback). Without this dry-run
+  # job, that gap stayed invisible until the v0.1.4 tag fired release.yml.
+  release-build-dry-run:
+    name: Release Build Dry-Run (multi-platform; CGO-free; no publish)
+    needs: [quality]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.4.2
+      options: --user 1001
+    defaults:
+      run:
+        shell: bash
+    env:
+      FULMEN_WORKSPACE_ROOT: ${{ github.workspace }}
+      GOPATH: ${{ github.workspace }}/../_go
+      # Match release.yml: CGO-free release artifacts. The image sets
+      # CGO_ENABLED=1 globally which would cascade into the GOOS=darwin
+      # cross-compile and try to invoke clang (not installed in the
+      # non-root user image). Pin CGO_ENABLED=0 at the job level so all
+      # release cross-compiles default to the pure-Go path. Sumpter's
+      # seekable-zstd compressed-index path lives under //go:build cgo &&
+      # seekablezstd and is omitted from released binaries; consumers who
+      # want it build from source with CGO_ENABLED=1 -tags seekablezstd.
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Prepare Go directories
+        run: mkdir -p "$GOPATH/bin" "$GOPATH/pkg"
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.10"
+      - name: Verify toolchain
+        run: |
+          set -euo pipefail
+          goneat --version
+          go version
+          go mod download
+      - name: Release build (cross-compile all platforms + checksums)
+        run: |
+          set -euo pipefail
+          make release-build
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          make release-verify-checksums
