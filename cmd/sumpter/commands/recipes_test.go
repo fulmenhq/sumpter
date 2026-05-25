@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/provenance"
@@ -69,6 +70,185 @@ func TestRecipeRunExtractCommandRegistersFormatsFlag(t *testing.T) {
 	cmd := newRecipeRunExtractCommand()
 	if flag := cmd.Flags().Lookup("formats"); flag == nil {
 		t.Fatalf("recipes run extract command missing --formats flag")
+	}
+}
+
+func TestExecuteExtractRecipeApplicabilityNotApplicable(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeApplicabilityWorkspace(t, `<root><Other>skip</Other></root>`)
+	cmd := recipeRunExtractTestCommand()
+
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", Progress: false})
+	if err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	manifest := readManifest(t, filepath.Join(workspace, "outputs", provenance.ManifestFileName))
+	if len(manifest.Inputs) != 1 {
+		t.Fatalf("manifest inputs len = %d, want 1", len(manifest.Inputs))
+	}
+	input := manifest.Inputs[0]
+	if input.Disposition != "not_applicable" {
+		t.Fatalf("input disposition = %q, want not_applicable", input.Disposition)
+	}
+	if input.DispositionReason != "applicability_predicate_false" {
+		t.Fatalf("input disposition_reason = %q, want applicability_predicate_false", input.DispositionReason)
+	}
+
+	summary := readDispositionSummary(t, filepath.Join(workspace, "outputs", "dispositions.json"))
+	if summary["not_applicable"] != float64(1) || summary["applied"] != float64(0) || summary["failed"] != float64(0) {
+		t.Fatalf("disposition counts = %#v, want one not_applicable", summary)
+	}
+}
+
+func TestExecuteExtractRecipeApplicabilityApplied(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeApplicabilityWorkspace(t, `<root><TargetElement><Name>Alpha</Name></TargetElement></root>`)
+	cmd := recipeRunExtractTestCommand()
+
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", Progress: false})
+	if err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	outputPath := filepath.Join(workspace, "outputs", "extract-input.xml.json")
+	file, err := os.Open(outputPath)
+	if err != nil {
+		t.Fatalf("Open output: %v", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	var record map[string]interface{}
+	if err := json.NewDecoder(file).Decode(&record); err != nil {
+		t.Fatalf("Decode output: %v", err)
+	}
+	data := extractData(t, record)
+	if data["name"] != "Alpha" {
+		t.Fatalf("extract.data[name] = %#v, want Alpha", data["name"])
+	}
+
+	manifest := readManifest(t, filepath.Join(workspace, "outputs", provenance.ManifestFileName))
+	if got := manifest.Inputs[0].Disposition; got != "applied" {
+		t.Fatalf("input disposition = %q, want applied", got)
+	}
+	summary := readDispositionSummary(t, filepath.Join(workspace, "outputs", "dispositions.json"))
+	if summary["applied"] != float64(1) || summary["not_applicable"] != float64(0) || summary["failed"] != float64(0) {
+		t.Fatalf("disposition counts = %#v, want one applied", summary)
+	}
+}
+
+func TestExecuteExtractRecipeApplicabilityTrueSignatureMismatchFailed(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeApplicabilityWorkspace(t, `<root><TargetElement><Name>Alpha</Name></TargetElement></root>`)
+	mustWriteFile(t, filepath.Join(workspace, "signature", "signature.yaml"), `signature_id: sample
+name: Sample
+match_patterns:
+  - pattern_id: missing
+    name: Missing
+    selector: /MissingRoot
+    weight: 1
+confidence_threshold: 1
+`)
+	cmd := recipeRunExtractTestCommand()
+
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", Progress: false})
+	if err == nil {
+		t.Fatal("expected signature mismatch disposition failure")
+	}
+	if !strings.Contains(err.Error(), "signature_mismatch") {
+		t.Fatalf("error = %v, want signature_mismatch", err)
+	}
+
+	manifest := readManifest(t, filepath.Join(workspace, "outputs", provenance.ManifestFileName))
+	if got := manifest.Inputs[0].Disposition; got != "failed" {
+		t.Fatalf("input disposition = %q, want failed", got)
+	}
+	if got := manifest.Inputs[0].DispositionReason; got != "signature_mismatch" {
+		t.Fatalf("input disposition_reason = %q, want signature_mismatch", got)
+	}
+	summary := readDispositionSummary(t, filepath.Join(workspace, "outputs", "dispositions.json"))
+	if summary["failed"] != float64(1) || summary["applied"] != float64(0) || summary["not_applicable"] != float64(0) {
+		t.Fatalf("disposition counts = %#v, want one failed", summary)
+	}
+}
+
+func TestExecuteExtractRecipeApplicabilityTrueMinOccurrencesFailed(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeApplicabilityWorkspace(t, `<root><TargetElement><Name>Alpha</Name></TargetElement></root>`)
+	mustWriteFile(t, filepath.Join(workspace, "extract", "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //MissingElement
+    min_occurrences: 1
+field_mappings:
+  - output_field: name
+    xpath: Name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+	cmd := recipeRunExtractTestCommand()
+
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", Progress: false})
+	if err == nil {
+		t.Fatal("expected min_occurrences disposition failure")
+	}
+	if !strings.Contains(err.Error(), "min_occurrences violation") {
+		t.Fatalf("error = %v, want min_occurrences violation", err)
+	}
+
+	manifest := readManifest(t, filepath.Join(workspace, "outputs", provenance.ManifestFileName))
+	if got := manifest.Inputs[0].Disposition; got != "failed" {
+		t.Fatalf("input disposition = %q, want failed", got)
+	}
+	if got := manifest.Inputs[0].DispositionReason; got != "min_occurrences_violation" {
+		t.Fatalf("input disposition_reason = %q, want min_occurrences_violation", got)
+	}
+	summary := readDispositionSummary(t, filepath.Join(workspace, "outputs", "dispositions.json"))
+	if summary["failed"] != float64(1) || summary["applied"] != float64(0) || summary["not_applicable"] != float64(0) {
+		t.Fatalf("disposition counts = %#v, want one failed", summary)
+	}
+}
+
+func TestExecuteExtractRecipeWithoutApplicabilityPreservesMinOccurrencesFailure(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeApplicabilityWorkspace(t, `<root><Other>skip</Other></root>`)
+	manifestText := strings.ReplaceAll(readFileString(t, filepath.Join(workspace, "recipe.yaml")), "  applicability: applicability/applicability.yaml\n", "")
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), manifestText)
+	cmd := recipeRunExtractTestCommand()
+
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", Progress: false})
+	if err == nil {
+		t.Fatal("expected min_occurrences failure without applicability")
+	}
+	if !strings.Contains(err.Error(), "min_occurrences violation") {
+		t.Fatalf("error = %v, want min_occurrences violation", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "outputs", "dispositions.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("dispositions.json stat error = %v, want not exist", statErr)
+	}
+}
+
+func TestExecuteExtractRecipeApplicabilityRejectsEscapingAsset(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeApplicabilityWorkspace(t, `<root><TargetElement><Name>Alpha</Name></TargetElement></root>`)
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), strings.ReplaceAll(readFileString(t, filepath.Join(workspace, "recipe.yaml")), "applicability: applicability/applicability.yaml", "applicability: ../outside.yaml"))
+	cmd := recipeRunExtractTestCommand()
+
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", Progress: false})
+	if err == nil {
+		t.Fatal("expected escaping applicability asset error")
+	}
+	if !strings.Contains(err.Error(), "escapes workspace") {
+		t.Fatalf("error = %v, want escapes workspace", err)
 	}
 }
 
@@ -382,6 +562,90 @@ func TestExecuteExtractRecipeInjectsSourceExtractionPerFile(t *testing.T) {
 			}
 		})
 	}
+}
+
+func readDispositionSummary(t *testing.T, path string) map[string]interface{} {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Open dispositions summary: %v", err)
+	}
+	defer func() { _ = file.Close() }()
+	var summary map[string]interface{}
+	if err := json.NewDecoder(file).Decode(&summary); err != nil {
+		t.Fatalf("Decode dispositions summary: %v", err)
+	}
+	return summary
+}
+
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path) // #nosec G304 - test-owned temp path.
+	if err != nil {
+		t.Fatalf("ReadFile %s: %v", path, err)
+	}
+	return string(data)
+}
+
+func createRecipeApplicabilityWorkspace(t *testing.T, inputXML string) string {
+	t.Helper()
+	workspace := createWorkingTempDir(t)
+	for _, dir := range []string{"signature", "extract", "applicability", "testdata", "outputs"} {
+		if err := os.MkdirAll(filepath.Join(workspace, dir), 0o750); err != nil {
+			t.Fatalf("MkdirAll %s: %v", dir, err)
+		}
+	}
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), `version: recipe/v0.1.0
+kind: extract
+id: applicability_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/signature.yaml
+  extract: extract/extract.yaml
+  applicability: applicability/applicability.yaml
+defaults:
+  input:
+    mode: files
+    files:
+      - testdata/input.xml
+    include_pattern: "*.xml"
+  output:
+    format: json
+    path: outputs
+    pattern: extract-{}.json
+  workers: 1
+  progress: false
+`)
+	mustWriteFile(t, filepath.Join(workspace, "signature", "signature.yaml"), `signature_id: sample
+name: Sample
+match_patterns:
+  - pattern_id: root
+    name: Root
+    selector: /root
+    weight: 1
+confidence_threshold: 1
+`)
+	mustWriteFile(t, filepath.Join(workspace, "applicability", "applicability.yaml"), `applicability:
+  type: xpath
+  expression: "count(//TargetElement) > 0"
+  description: "Applies to inputs with TargetElement"
+`)
+	mustWriteFile(t, filepath.Join(workspace, "extract", "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //TargetElement
+    min_occurrences: 1
+field_mappings:
+  - output_field: name
+    xpath: Name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+	mustWriteFile(t, filepath.Join(workspace, "testdata", "input.xml"), inputXML)
+	return workspace
 }
 
 func recipeRunExtractTestCommand() *cobra.Command {

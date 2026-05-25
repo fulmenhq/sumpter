@@ -54,6 +54,15 @@ declare `min_occurrences: N` with `N > 0` opt into fail-loud enforcement; if a
 source yields fewer matches than the selector's floor, the command exits
 non-zero before writing payload output or `manifest.json`.
 
+Recipes may declare an optional `assets.applicability` YAML asset with a binary
+XPath predicate. Applicability runs before signature matching. When the
+predicate evaluates false, the file is reported as `not_applicable`, no records
+are extracted, and the condition does not count as a failure. When the predicate
+evaluates true, the recipe proceeds through signature matching and extraction as
+usual. Recipe runs that declare applicability add disposition fields to the
+provenance input entries and write a lightweight `dispositions.json` summary at
+the output root.
+
 Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
 For the full expression grammar, function set, and parser behavior contracts,
 see [Sumpter DSL Reference](../../dsl-reference.md). For conditional
@@ -106,6 +115,7 @@ created_at: "2025-10-02T14:00:00Z"
 assets:
   signature: signature/retail-journal-signature.yaml
   extract: extract/retail-journal-extract.yaml
+  applicability: applicability/applicability.yaml
   validation: ""
 defaults:
   cadence: daily-rolling

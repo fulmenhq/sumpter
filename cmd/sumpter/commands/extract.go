@@ -43,6 +43,7 @@ type ExtractOptions struct {
 	ParquetWithholdColumns   []string
 	SignatureConfig          string
 	ExtractConfig            string
+	ApplicabilityConfig      *extract.ApplicabilityConfig
 	ClientID                 string
 	SiteID                   string
 	ManifestParameters       map[string]string
@@ -239,6 +240,10 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	warnLimiter := newSourceExtractionWarnLimiter(1000)
 
+	if opts.ApplicabilityConfig != nil && opts.RecordIndex != "" {
+		return fmt.Errorf("applicability declared but not supported in record-index mode")
+	}
+
 	// Route to parallel extraction if --record-index is provided
 	if opts.RecordIndex != "" {
 		logger.Info("Parallel extraction mode enabled", zap.String("record_index", opts.RecordIndex))
@@ -264,6 +269,11 @@ func runExtract(opts *ExtractOptions) error {
 		}
 	}
 	logger.Debug("File discovery complete", zap.Int("file_count", len(files)))
+	if opts.ApplicabilityConfig != nil {
+		if err := validateApplicabilityMode(opts, files); err != nil {
+			return err
+		}
+	}
 
 	// Dry run: just list files
 	if opts.DryRun {
@@ -293,6 +303,8 @@ func runExtract(opts *ExtractOptions) error {
 	if manifestEnabled {
 		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
 	}
+	dispositionSummary := newDispositionSummary(len(files))
+	var dispositionFailure error
 
 	// For now, serial processing
 	for _, file := range files {
@@ -300,13 +312,39 @@ func runExtract(opts *ExtractOptions) error {
 		if err != nil {
 			return fmt.Errorf("failed to build external fields for file %s: %w", file, err)
 		}
-		result := extract.ProcessFileWithProvenance(file, sigCfg, extCfg, externalFields, opts.AllowLargeFiles, runtimeProvenance)
+		result := extract.ProcessFileWithApplicability(file, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, runtimeProvenance)
 		results <- result
 	}
 	close(results)
 
 	// Collect and output results
 	for result := range results {
+		if result.Disposition == extract.DispositionFailed {
+			if result.Error != nil {
+				logger.Error("Failed to process file",
+					zap.String("file", result.File),
+					zap.Error(result.Error))
+			}
+			dispositionSummary.add(result, sanitizeRoots)
+			if manifestEnabled {
+				input, err := provenance.BuildInputLedger(result.File, sanitizeRoots...)
+				if err != nil {
+					return err
+				}
+				input.RecordType = extCfg.RecordType
+				applyInputDisposition(&input, result, sanitizeRoots)
+				manifestInputs = append(manifestInputs, input)
+			}
+			if dispositionFailure == nil {
+				if result.Error != nil {
+					dispositionFailure = fmt.Errorf("failed to process file %s: %w", provenance.SanitizePath(result.File, sanitizeRoots...), result.Error)
+				} else {
+					dispositionFailure = fmt.Errorf("failed to process file %s: %s", provenance.SanitizePath(result.File, sanitizeRoots...), result.DispositionReason)
+				}
+			}
+			continue
+		}
+
 		if result.Error != nil {
 			logger.Error("Failed to process file",
 				zap.String("file", result.File),
@@ -314,8 +352,33 @@ func runExtract(opts *ExtractOptions) error {
 			return fmt.Errorf("failed to process file %s: %w", result.File, result.Error)
 		}
 
-		if err := enforceMinOccurrences(opts, extCfg, result.File, result.PerSelectorCounts, result.PerSelectorCountsComplete); err != nil {
-			return err
+		if result.Disposition != extract.DispositionNotApplicable {
+			if err := enforceMinOccurrences(opts, extCfg, result.File, result.PerSelectorCounts, result.PerSelectorCountsComplete); err != nil {
+				if result.Disposition == extract.DispositionApplied {
+					result.Disposition = extract.DispositionFailed
+					result.DispositionReason = extract.DispositionReasonMinOccurrencesViolation
+					result.DispositionDetail = err.Error()
+					dispositionSummary.add(result, sanitizeRoots)
+					if manifestEnabled {
+						input, ledgerErr := provenance.BuildInputLedger(result.File, sanitizeRoots...)
+						if ledgerErr != nil {
+							return ledgerErr
+						}
+						input.RecordType = extCfg.RecordType
+						applyInputDisposition(&input, result, sanitizeRoots)
+						manifestInputs = append(manifestInputs, input)
+					}
+					if dispositionFailure == nil {
+						dispositionFailure = err
+					}
+					continue
+				}
+				return err
+			}
+		}
+
+		if result.Disposition != "" {
+			dispositionSummary.add(result, sanitizeRoots)
 		}
 
 		if manifestEnabled {
@@ -324,6 +387,7 @@ func runExtract(opts *ExtractOptions) error {
 				return err
 			}
 			input.RecordType = extCfg.RecordType
+			applyInputDisposition(&input, result, sanitizeRoots)
 			manifestInputs = append(manifestInputs, input)
 		}
 
@@ -364,6 +428,12 @@ func runExtract(opts *ExtractOptions) error {
 		}
 	}
 
+	if opts.ApplicabilityConfig != nil && opts.OutputPath != "" {
+		if err := writeDispositionSummary(filepath.Join(opts.OutputPath, "dispositions.json"), dispositionSummary); err != nil {
+			return err
+		}
+	}
+
 	if manifestEnabled {
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
 		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
@@ -374,6 +444,115 @@ func runExtract(opts *ExtractOptions) error {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
 	}
 
+	if dispositionFailure != nil {
+		return dispositionFailure
+	}
+	return nil
+}
+
+type dispositionSummaryFile struct {
+	CohortSize    int                     `json:"cohort_size"`
+	Applied       int                     `json:"applied"`
+	NotApplicable int                     `json:"not_applicable"`
+	Failed        int                     `json:"failed"`
+	Files         []dispositionSummaryRow `json:"files"`
+}
+
+type dispositionSummaryRow struct {
+	File              string `json:"file"`
+	Disposition       string `json:"disposition"`
+	DispositionReason string `json:"disposition_reason,omitempty"`
+	DispositionDetail string `json:"disposition_detail,omitempty"`
+}
+
+func newDispositionSummary(cohortSize int) *dispositionSummaryFile {
+	return &dispositionSummaryFile{CohortSize: cohortSize}
+}
+
+func (s *dispositionSummaryFile) add(result extract.ExtractResult, roots []string) {
+	if s == nil || result.Disposition == "" {
+		return
+	}
+	switch result.Disposition {
+	case extract.DispositionApplied:
+		s.Applied++
+	case extract.DispositionNotApplicable:
+		s.NotApplicable++
+	case extract.DispositionFailed:
+		s.Failed++
+	}
+	s.Files = append(s.Files, dispositionSummaryRow{
+		File:              provenance.SanitizePath(result.File, roots...),
+		Disposition:       string(result.Disposition),
+		DispositionReason: string(result.DispositionReason),
+		DispositionDetail: sanitizeDispositionText(result.DispositionDetail, roots),
+	})
+}
+
+func applyInputDisposition(input *provenance.Input, result extract.ExtractResult, roots []string) {
+	if input == nil || result.Disposition == "" {
+		return
+	}
+	input.Disposition = string(result.Disposition)
+	input.DispositionReason = string(result.DispositionReason)
+	input.DispositionDetail = sanitizeDispositionText(result.DispositionDetail, roots)
+}
+
+func sanitizeDispositionText(text string, roots []string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	for _, root := range roots {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		clean := filepath.Clean(abs)
+		text = strings.ReplaceAll(text, clean, provenance.SanitizePath(clean, roots...))
+	}
+	return text
+}
+
+func writeDispositionSummary(path string, summary *dispositionSummaryFile) error {
+	if summary == nil || len(summary.Files) == 0 {
+		return nil
+	}
+	data, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal dispositions summary: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("create dispositions directory: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write dispositions summary %s: %w", path, err)
+	}
+	return nil
+}
+
+func validateApplicabilityMode(opts *ExtractOptions, files []string) error {
+	if opts == nil || opts.ApplicabilityConfig == nil || !opts.AllowLargeFiles {
+		return nil
+	}
+	const streamingThreshold = 100 * 1024 * 1024
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if err != nil {
+			continue
+		}
+		estimatedSize := info.Size()
+		if strings.HasSuffix(strings.ToLower(filepath.Ext(file)), ".gz") {
+			estimatedSize *= 10
+		}
+		if estimatedSize > streamingThreshold {
+			return fmt.Errorf("applicability declared but not supported in streaming mode")
+		}
+	}
 	return nil
 }
 

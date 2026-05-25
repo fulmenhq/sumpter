@@ -13,6 +13,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/assets"
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
@@ -385,12 +386,29 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 
 	signaturePath := manifest.Assets.Signature
 	extractPath := manifest.Assets.Extract
+	applicabilityPath := manifest.Assets.Applicability
 
 	if opts.SignatureOverride != "" {
 		signaturePath = opts.SignatureOverride
 	}
 	if opts.ExtractOverride != "" {
 		extractPath = opts.ExtractOverride
+	}
+
+	var applicabilityCfg *extract.ApplicabilityConfig
+	if strings.TrimSpace(applicabilityPath) != "" {
+		asset, err := recipesmanifest.OpenRelativeFile(absWorkspace, applicabilityPath)
+		if err != nil {
+			return fmt.Errorf("failed to open applicability asset: %w", err)
+		}
+		if err := asset.Close(); err != nil {
+			return fmt.Errorf("failed to close applicability asset: %w", err)
+		}
+		applicabilityPath = recipesmanifest.ResolvePath(absWorkspace, applicabilityPath)
+		applicabilityCfg, err = extract.LoadApplicabilityConfig(applicabilityPath)
+		if err != nil {
+			return err
+		}
 	}
 
 	signaturePath = recipesmanifest.ResolvePath(absWorkspace, signaturePath)
@@ -416,12 +434,13 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 
 	extractOpts := &ExtractOptions{
-		SignatureConfig: signaturePath,
-		ExtractConfig:   extractPath,
-		AllowLargeFiles: allowLargeFiles,
-		RunID:           opts.RunID,
-		NoManifest:      opts.NoManifest,
-		CommandName:     "sumpter recipes run extract",
+		SignatureConfig:     signaturePath,
+		ExtractConfig:       extractPath,
+		ApplicabilityConfig: applicabilityCfg,
+		AllowLargeFiles:     allowLargeFiles,
+		RunID:               opts.RunID,
+		NoManifest:          opts.NoManifest,
+		CommandName:         "sumpter recipes run extract",
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,

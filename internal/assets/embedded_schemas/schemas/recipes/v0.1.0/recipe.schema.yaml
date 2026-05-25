@@ -82,6 +82,12 @@ properties:
         type: string
       extract:
         type: string
+      applicability:
+        type: string
+        description: |
+          Optional path to a YAML asset declaring a recipe-applicability
+          predicate. Evaluated before the signature predicate; non-match
+          resolves the per-input disposition to not_applicable.
       validation:
         type: string
       retrieve:
