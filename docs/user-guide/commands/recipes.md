@@ -64,6 +64,20 @@ provenance input entries and write a lightweight `dispositions.json` summary at
 the output root. The summary includes `schema_version: extract-dispositions/v0.1.0`
 and is schema-backed by `schemas/extract/v0.1.0/dispositions.schema.json`.
 
+The applicability asset is a standalone file referenced by
+`assets.applicability`. Its predicate fields must be nested under the top-level
+`applicability:` key:
+
+```yaml
+applicability:
+  type: xpath
+  expression: "boolean(/*[local-name()='Document'])"
+  description: "Only run this recipe for document-style XML inputs"
+```
+
+Do not place `type:` or `expression:` at the asset file top level; the schema
+requires `applicability.type` and `applicability.expression`.
+
 Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
 For the full expression grammar, function set, and parser behavior contracts,
 see [Sumpter DSL Reference](../../dsl-reference.md). For conditional

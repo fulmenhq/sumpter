@@ -309,6 +309,18 @@ alongside the schema-version bump).
 gains the new optional fields under `additionalProperties: false`. No
 version bump in v0.1.3; v0.1.4 will introduce `v0.2.0`.
 
+**Applicability config** (the YAML pointed to by
+`assets.applicability`) is a standalone behavior-bearing asset with a
+top-level `applicability:` wrapper. Predicate fields are nested under that
+wrapper; top-level `type:` or `expression:` fields are invalid.
+
+```yaml
+applicability:
+  type: xpath
+  expression: "boolean(/*[local-name()='Document'])"
+  description: "Only run this recipe for document-style XML inputs"
+```
+
 ### Recipe content hash — narrow scope
 
 Goal: hash is stable across whitespace, comment, and key-order churn, but
