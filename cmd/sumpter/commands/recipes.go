@@ -310,6 +310,7 @@ func newRecipeRunExtractCommand() *cobra.Command {
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", -1, "Override manifest max depth")
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symlinks (overrides manifest)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview files without processing")
+	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue processing sibling files after recoverable per-file failures; requires --output-path")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 0, "Number of parallel workers (overrides manifest)")
 	cmd.Flags().StringVar(&opts.Format, "format", "", "Override output format")
@@ -336,6 +337,7 @@ type recipeRunExtractOptions struct {
 	MaxDepth          int
 	FollowSymlinks    bool
 	DryRun            bool
+	ContinueOnError   bool
 	Progress          bool
 	Workers           int
 	Format            string
@@ -442,6 +444,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		SignatureConfig:     signaturePath,
 		ExtractConfig:       extractPath,
 		ApplicabilityConfig: applicabilityCfg,
+		ContinueOnError:     opts.ContinueOnError,
 		AllowLargeFiles:     allowLargeFiles,
 		RunID:               opts.RunID,
 		NoManifest:          opts.NoManifest,
@@ -635,6 +638,9 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 	appendFlag("--run-id", opts.RunID)
 	for _, parameter := range opts.Parameters {
 		appendFlag("--parameter", parameter)
+	}
+	if opts.ContinueOnError {
+		args = append(args, "--continue-on-error")
 	}
 	if opts.NoManifest {
 		args = append(args, "--no-manifest")

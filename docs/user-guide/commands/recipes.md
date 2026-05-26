@@ -78,6 +78,16 @@ applicability:
 Do not place `type:` or `expression:` at the asset file top level; the schema
 requires `applicability.type` and `applicability.expression`.
 
+Multi-file runs may opt into per-file failure isolation with
+`--continue-on-error`. In v0 this flag requires `--output-path`; successful
+input files still emit their normal output artifacts, recoverable per-file
+failures are written to `<output-path>/failures.json`, and the command exits
+non-zero when any file failed. Output-write and failure-manifest-write errors
+remain terminal. The failure manifest is schema-backed by
+`schemas/extract/v0.1.0/failures.schema.json` and uses the closed reason set
+`parse_error`, `signature_mismatch`, `min_occurrences_violation`,
+`validation_error`, and `internal_error`.
+
 Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
 For the full expression grammar, function set, and parser behavior contracts,
 see [Sumpter DSL Reference](../../dsl-reference.md). For conditional
