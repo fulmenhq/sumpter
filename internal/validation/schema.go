@@ -115,6 +115,15 @@ func (v *SchemaValidator) ValidateDispositionSummary(data []byte, summaryFile st
 	return v.validateAgainstSchema(data, schemaBytes, summaryFile, "extract-dispositions-v0.1.0")
 }
 
+// ValidateFailureManifest validates an extract continue-on-error failure manifest.
+func (v *SchemaValidator) ValidateFailureManifest(data []byte, manifestFile string) (*ValidationResult, error) {
+	schemaBytes, err := v.loadSchema("extract", "v0.1.0", "failures.schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("extract", "v0.1.0", "failures.schema.json"), err)
+	}
+	return v.validateAgainstSchema(data, schemaBytes, manifestFile, "extract-failures-v0.1.0")
+}
+
 func (v *SchemaValidator) loadSchema(parts ...string) ([]byte, error) {
 	rel := path.Join(parts...)
 

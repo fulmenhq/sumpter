@@ -345,7 +345,7 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 		logger = zap.NewNop()
 	}
 
-	result := ExtractResult{File: filePath}
+	result := ExtractResult{File: filePath, SignatureMatchStatus: SignatureMatchUnknown}
 
 	logger.Info("Starting streaming extraction",
 		zap.String("file", filePath),
@@ -494,7 +494,7 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	}
 	logger.Debug("Starting file processing", zap.String("file", filePath))
 
-	result := ExtractResult{File: filePath}
+	result := ExtractResult{File: filePath, SignatureMatchStatus: SignatureMatchUnknown}
 	markFailed := func(reason DispositionReason, detail string) {
 		if appCfg == nil {
 			return
@@ -581,18 +581,20 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 
 	// Check if file matches signature
 	logger.Debug("Checking signature match", zap.String("file", filePath), zap.String("signature", sigCfg.SignatureID))
-	matches, err := matchesSignature(doc, sigCfg)
+	matches, confidence, err := matchesSignature(doc, sigCfg)
+	result.SignatureConfidence = confidence
 	if err != nil {
 		logger.Error("Failed to check signature", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to check signature: %w", err)
 		markFailed(DispositionReasonInternalError, result.Error.Error())
 		return result
 	}
-	logger.Debug("Signature check complete", zap.String("file", filePath), zap.Bool("matches", matches))
+	logger.Debug("Signature check complete", zap.String("file", filePath), zap.Bool("matches", matches), zap.Float64("confidence", confidence))
 
 	if !matches {
 		// File doesn't match signature, return empty result unless applicability made the mismatch a failed disposition.
 		logger.Debug("File does not match signature", zap.String("file", filePath))
+		result.SignatureMatchStatus = SignatureMatchMismatched
 		result.PerSelectorCounts = zeroSelectorCounts(extCfg)
 		result.PerSelectorCountsComplete = true
 		if appCfg != nil {
@@ -602,6 +604,8 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 		}
 		return result
 	}
+
+	result.SignatureMatchStatus = SignatureMatchMatched
 
 	if err := prepareExtractConfig(extCfg); err != nil {
 		logger.Error("Failed to prepare extract config", zap.String("file", filePath), zap.Error(err))
@@ -648,7 +652,7 @@ func evaluateApplicability(doc *xmlquery.Node, cfg *ApplicabilityConfig) (bool, 
 }
 
 // matchesSignature checks if the document matches the signature
-func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, error) {
+func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, float64, error) {
 	score := 0.0
 	totalWeight := 0.0
 
@@ -661,11 +665,11 @@ func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, error) {
 	}
 
 	if totalWeight == 0 {
-		return false, fmt.Errorf("no patterns with weight > 0")
+		return false, 0, fmt.Errorf("no patterns with weight > 0")
 	}
 
 	confidence := score / totalWeight
-	return confidence >= cfg.ConfidenceThreshold, nil
+	return confidence >= cfg.ConfidenceThreshold, confidence, nil
 }
 
 // matchesPattern checks if a pattern matches the document.

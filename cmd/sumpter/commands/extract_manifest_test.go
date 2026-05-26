@@ -11,6 +11,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
+	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/validation"
 )
 
@@ -72,6 +73,9 @@ func TestExtractFilesCommandRegistersFormatsFlag(t *testing.T) {
 	cmd := newExtractFilesCommand()
 	if flag := cmd.Flags().Lookup("formats"); flag == nil {
 		t.Fatalf("extract files command missing --formats flag")
+	}
+	if flag := cmd.Flags().Lookup("continue-on-error"); flag == nil {
+		t.Fatalf("extract files command missing --continue-on-error flag")
 	}
 }
 
@@ -216,6 +220,283 @@ output_schema:
 	}
 	if _, err := os.Stat(filepath.Join(outputDir, provenance.ManifestFileName)); !os.IsNotExist(err) {
 		t.Fatalf("manifest stat error = %v, want not exists", err)
+	}
+}
+
+func TestRunExtractContinueOnErrorFilesWritesFailureManifestAndOutputs(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	validA := filepath.Join(dir, "valid-a.xml")
+	malformed := filepath.Join(dir, "malformed.xml")
+	validB := filepath.Join(dir, "valid-b.xml")
+	mustWriteFile(t, validA, `<root><item><name>A</name></item></root>`)
+	mustWriteFile(t, malformed, `<root><item><name>broken</name>`)
+	mustWriteFile(t, validB, `<root><item><name>B</name></item></root>`)
+
+	opts := &ExtractOptions{
+		Files:           strings.Join([]string{validA, malformed, validB}, ","),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "extract-{}.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		ContinueOnError: true,
+		Recipe:          &provenance.Recipe{ID: "sample-recipe"},
+	}
+
+	err := runExtract(opts)
+	if err == nil {
+		t.Fatal("expected partial extraction failure")
+	}
+	if !strings.Contains(err.Error(), "partial extraction failure") {
+		t.Fatalf("error = %v, want partial extraction failure", err)
+	}
+	for _, name := range []string{"extract-valid-a.xml.json", "extract-valid-b.xml.json"} {
+		data, readErr := os.ReadFile(filepath.Join(outputDir, name))
+		if readErr != nil {
+			t.Fatalf("ReadFile %s: %v", name, readErr)
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			t.Fatalf("%s is empty, want one emitted record", name)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(outputDir, "extract-malformed.xml.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("malformed output stat error = %v, want not exists", statErr)
+	}
+
+	manifest := readFailureManifest(t, filepath.Join(outputDir, "failures.json"))
+	if manifest.CohortSize != 3 || manifest.Applied != 2 || manifest.Failed != 1 {
+		t.Fatalf("failure manifest counts = %#v, want cohort=3 applied=2 failed=1", manifest)
+	}
+	if len(manifest.Failures) != 1 {
+		t.Fatalf("failures len = %d, want 1", len(manifest.Failures))
+	}
+	failure := manifest.Failures[0]
+	if failure.Disposition != "failed" || failure.Reason != "parse_error" {
+		t.Fatalf("failure row = %#v, want failed parse_error", failure)
+	}
+	if strings.Contains(failure.File, dir) || strings.Contains(failure.Detail, dir) {
+		t.Fatalf("failure manifest leaked temp path: %#v", failure)
+	}
+}
+
+func TestRunExtractContinueOnErrorMissingFileSkipsFailedLedger(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	validA := filepath.Join(dir, "valid-a.xml")
+	missing := filepath.Join(dir, "missing.xml")
+	validB := filepath.Join(dir, "valid-b.xml")
+	mustWriteFile(t, validA, `<root><item><name>A</name></item></root>`)
+	mustWriteFile(t, validB, `<root><item><name>B</name></item></root>`)
+
+	opts := &ExtractOptions{
+		Files:           strings.Join([]string{validA, missing, validB}, ","),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "extract-{}.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		ContinueOnError: true,
+	}
+
+	err := runExtract(opts)
+	if err == nil || !strings.Contains(err.Error(), "partial extraction failure") {
+		t.Fatalf("error = %v, want partial extraction failure", err)
+	}
+	for _, name := range []string{"extract-valid-a.xml.json", "extract-valid-b.xml.json"} {
+		if _, readErr := os.ReadFile(filepath.Join(outputDir, name)); readErr != nil {
+			t.Fatalf("ReadFile %s: %v", name, readErr)
+		}
+	}
+	failureManifest := readFailureManifest(t, filepath.Join(outputDir, "failures.json"))
+	if failureManifest.CohortSize != 3 || failureManifest.Applied != 2 || failureManifest.Failed != 1 {
+		t.Fatalf("failure manifest counts = %#v, want cohort=3 applied=2 failed=1", failureManifest)
+	}
+	failure := failureManifest.Failures[0]
+	if failure.Reason != "internal_error" || !strings.Contains(failure.Detail, "failed to read file") {
+		t.Fatalf("failure row = %#v, want internal_error read failure", failure)
+	}
+	if strings.Contains(failure.File, dir) || strings.Contains(failure.Detail, dir) {
+		t.Fatalf("failure manifest leaked temp path: %#v", failure)
+	}
+
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.Inputs) != 2 {
+		t.Fatalf("manifest inputs len = %d, want only the two ledger-buildable successes", len(manifest.Inputs))
+	}
+	if len(manifest.Outputs) != 2 {
+		t.Fatalf("manifest outputs len = %d, want 2", len(manifest.Outputs))
+	}
+}
+
+func TestRunExtractContinueOnErrorRequiresOutputPath(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		ContinueOnError: true,
+	}
+
+	err := runExtract(opts)
+	if err == nil || !strings.Contains(err.Error(), "--continue-on-error requires --output-path") {
+		t.Fatalf("error = %v, want output-path requirement", err)
+	}
+}
+
+func TestRunExtractContinueOnErrorInputPathProducerFailureIsIsolated(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	inputDir := filepath.Join(dir, "inputs")
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(inputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll input: %v", err)
+	}
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	missingToken := filepath.Join(inputDir, "missing-token.xml")
+	valid := filepath.Join(inputDir, "2026-05-26-valid.xml")
+	mustWriteFile(t, missingToken, `<root><item><name>A</name></item></root>`)
+	mustWriteFile(t, valid, `<root><item><name>B</name></item></root>`)
+
+	opts := &ExtractOptions{
+		InputPath:                inputDir,
+		IncludePattern:           "*.xml",
+		Format:                   "json",
+		OutputPath:               outputDir,
+		OutputPattern:            "extract-{}.json",
+		SignatureConfig:          filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:            filepath.Join(dir, "extract.yaml"),
+		ContinueOnError:          true,
+		SourceExtraction:         []recipesmanifest.SourceExtractionPattern{sourcePattern("date-token", recipesmanifest.SourceExtractionFilename, `^(?P<event_date>\d{4}-\d{2}-\d{2})`)},
+		SourceExtractionRequired: []string{"event_date"},
+		SourceExtractionInput:    recipesmanifest.InputDefaults{Path: inputDir},
+	}
+
+	err := runExtract(opts)
+	if err == nil || !strings.Contains(err.Error(), "partial extraction failure") {
+		t.Fatalf("error = %v, want partial extraction failure", err)
+	}
+	if _, readErr := os.ReadFile(filepath.Join(outputDir, "extract-2026-05-26-valid.xml.json")); readErr != nil {
+		t.Fatalf("valid output missing after producer-side failure isolation: %v", readErr)
+	}
+	manifest := readFailureManifest(t, filepath.Join(outputDir, "failures.json"))
+	if manifest.Failed != 1 || manifest.Failures[0].Reason != "validation_error" {
+		t.Fatalf("failure manifest = %#v, want one validation_error", manifest)
+	}
+}
+
+func TestRunExtractContinueOnErrorOutputAndFailureManifestWritesAreTerminal(t *testing.T) {
+	t.Run("output write failure", func(t *testing.T) {
+		dir := createExtractManifestFixture(t)
+		outputPath := filepath.Join(dir, "output-as-file")
+		mustWriteFile(t, outputPath, "not a directory")
+
+		opts := &ExtractOptions{
+			Files:           filepath.Join(dir, "input.xml"),
+			Format:          "json",
+			OutputPath:      outputPath,
+			OutputPattern:   "extract-{}.json",
+			SignatureConfig: filepath.Join(dir, "signature.yaml"),
+			ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+			ContinueOnError: true,
+		}
+
+		err := runExtract(opts)
+		if err == nil || !strings.Contains(err.Error(), "failed to write output") {
+			t.Fatalf("error = %v, want terminal output write failure", err)
+		}
+		if strings.Contains(err.Error(), "partial extraction failure") {
+			t.Fatalf("error = %v, output failure must not be recoverable partial failure", err)
+		}
+	})
+
+	t.Run("failure manifest write failure", func(t *testing.T) {
+		dir := createExtractManifestFixture(t)
+		outputPath := filepath.Join(dir, "output-as-file")
+		malformed := filepath.Join(dir, "malformed.xml")
+		mustWriteFile(t, outputPath, "not a directory")
+		mustWriteFile(t, malformed, `<root><item><name>broken</name>`)
+
+		opts := &ExtractOptions{
+			Files:           malformed,
+			Format:          "json",
+			OutputPath:      outputPath,
+			OutputPattern:   "extract-{}.json",
+			SignatureConfig: filepath.Join(dir, "signature.yaml"),
+			ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+			ContinueOnError: true,
+		}
+
+		err := runExtract(opts)
+		if err == nil || !strings.Contains(err.Error(), "create extraction failure manifest directory") {
+			t.Fatalf("error = %v, want terminal failure-manifest write failure", err)
+		}
+		if strings.Contains(err.Error(), "partial extraction failure") {
+			t.Fatalf("error = %v, failure-manifest write failure must not be recoverable partial failure", err)
+		}
+	})
+}
+
+func TestRunExtractSignatureMismatchRoutesBeforeMinOccurrences(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(dir, "signature.yaml"), `signature_id: sample
+name: Sample
+match_patterns:
+  - pattern_id: document
+    name: Document
+    selector: /Document
+    weight: 1
+confidence_threshold: 1
+`)
+	mustWriteFile(t, filepath.Join(dir, "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+    min_occurrences: 1
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "extract-{}.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		Recipe:          &provenance.Recipe{ID: "sample-recipe"},
+	}
+
+	err := runExtract(opts)
+	if err == nil {
+		t.Fatal("expected signature mismatch error")
+	}
+	errText := err.Error()
+	for _, want := range []string{"signature mismatch", `recipe "sample-recipe"`, "confidence=0.000", "threshold=1.000"} {
+		if !strings.Contains(errText, want) {
+			t.Fatalf("error %q missing %q", errText, want)
+		}
+	}
+	if strings.Contains(errText, "min_occurrences violation") {
+		t.Fatalf("error %q should not mention min_occurrences violation", errText)
 	}
 }
 
@@ -618,6 +899,27 @@ func mustWriteFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile %s: %v", path, err)
 	}
+}
+
+func readFailureManifest(t *testing.T, path string) extractFailureManifestFile {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failure manifest: %v", err)
+	}
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "..", "schemas"))
+	result, err := validator.ValidateFailureManifest(data, filepath.Base(path))
+	if err != nil {
+		t.Fatalf("ValidateFailureManifest: %v", err)
+	}
+	if !result.IsValid() {
+		t.Fatalf("failure manifest did not validate: %s", result.ErrorSummary())
+	}
+	var manifest extractFailureManifestFile
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("Unmarshal failure manifest: %v", err)
+	}
+	return manifest
 }
 
 func readManifest(t *testing.T, path string) provenance.Manifest {

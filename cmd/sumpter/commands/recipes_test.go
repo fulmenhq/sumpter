@@ -72,6 +72,9 @@ func TestRecipeRunExtractCommandRegistersFormatsFlag(t *testing.T) {
 	if flag := cmd.Flags().Lookup("formats"); flag == nil {
 		t.Fatalf("recipes run extract command missing --formats flag")
 	}
+	if flag := cmd.Flags().Lookup("continue-on-error"); flag == nil {
+		t.Fatalf("recipes run extract command missing --continue-on-error flag")
+	}
 }
 
 func TestExecuteExtractRecipeApplicabilityNotApplicable(t *testing.T) {

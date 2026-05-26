@@ -119,6 +119,17 @@ type PolymorphicMapping struct {
 	CompiledMatchXPath *xpath.Expr    `yaml:"-" json:"-"`
 }
 
+// SignatureMatchStatus records whether an extraction result was produced
+// after evaluating a file signature. Unknown is used for paths that do not
+// perform full-document signature matching, such as streaming extraction.
+type SignatureMatchStatus string
+
+const (
+	SignatureMatchUnknown    SignatureMatchStatus = "unknown"
+	SignatureMatchMatched    SignatureMatchStatus = "matched"
+	SignatureMatchMismatched SignatureMatchStatus = "mismatched"
+)
+
 // ExtractResult represents the result of processing a file
 type ExtractResult struct {
 	File                      string                   `json:"file"`
@@ -126,6 +137,8 @@ type ExtractResult struct {
 	Error                     error                    `json:"error,omitempty"`
 	PerSelectorCounts         map[int]int              `json:"per_selector_counts,omitempty"`
 	PerSelectorCountsComplete bool                     `json:"-"`
+	SignatureMatchStatus      SignatureMatchStatus     `json:"signature_match_status,omitempty"`
+	SignatureConfidence       float64                  `json:"signature_confidence,omitempty"`
 	Disposition               Disposition              `json:"disposition,omitempty"`
 	DispositionReason         DispositionReason        `json:"disposition_reason,omitempty"`
 	DispositionDetail         string                   `json:"disposition_detail,omitempty"`

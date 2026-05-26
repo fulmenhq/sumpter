@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,6 +34,7 @@ type ExtractOptions struct {
 	FollowSymlinks           bool
 	Workers                  int
 	DryRun                   bool
+	ContinueOnError          bool
 	Progress                 bool
 	Format                   string
 	Formats                  []string
@@ -123,6 +125,7 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symbolic links")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 1, "Number of parallel workers")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview operation without execution")
+	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue processing sibling files after recoverable per-file failures; requires --output-path")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "json", "Output format")
 	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Output formats (comma-separated or repeatable; json/ndjson/parquet)")
@@ -202,6 +205,9 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	if hasOutputFormat(outputFormats, recipesmanifest.OutputFormatParquet) && opts.OutputPath == "" {
 		return fmt.Errorf("parquet output requires --output-path")
+	}
+	if opts.ContinueOnError && strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
+		return fmt.Errorf("--continue-on-error requires --output-path")
 	}
 	logger.Debug("Options validated")
 
@@ -307,12 +313,18 @@ func runExtract(opts *ExtractOptions) error {
 		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
 	}
 	dispositionSummary := newDispositionSummary(len(files))
+	failureManifest := newExtractFailureManifest(len(files))
 	var dispositionFailure error
 
 	// For now, serial processing
 	for _, file := range files {
 		externalFields, err := buildExternalFieldsForFile(file, opts, fieldPlan, warnLimiter)
 		if err != nil {
+			if opts.ContinueOnError {
+				result := recoverableFailureResult(file, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
+				results <- result
+				continue
+			}
 			return fmt.Errorf("failed to build external fields for file %s: %w", file, err)
 		}
 		result := extract.ProcessFileWithApplicability(file, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, runtimeProvenance)
@@ -329,21 +341,30 @@ func runExtract(opts *ExtractOptions) error {
 					zap.Error(result.Error))
 			}
 			dispositionSummary.add(result, sanitizeRoots)
+			failureErr := failureErrorForResult(result, sanitizeRoots)
+			if opts.ContinueOnError {
+				detail := result.DispositionDetail
+				if detail == "" && result.Error != nil {
+					detail = result.Error.Error()
+				}
+				failureManifest.add(result.File, result.DispositionReason, detail, sanitizeRoots)
+			}
 			if manifestEnabled {
 				input, err := provenance.BuildInputLedger(result.File, sanitizeRoots...)
 				if err != nil {
-					return err
-				}
-				input.RecordType = extCfg.RecordType
-				applyInputDisposition(&input, result, sanitizeRoots)
-				manifestInputs = append(manifestInputs, input)
-			}
-			if dispositionFailure == nil {
-				if result.Error != nil {
-					dispositionFailure = fmt.Errorf("failed to process file %s: %w", provenance.SanitizePath(result.File, sanitizeRoots...), result.Error)
+					if opts.ContinueOnError {
+						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.File), zap.Error(err))
+					} else {
+						return err
+					}
 				} else {
-					dispositionFailure = fmt.Errorf("failed to process file %s: %s", provenance.SanitizePath(result.File, sanitizeRoots...), result.DispositionReason)
+					input.RecordType = extCfg.RecordType
+					applyInputDisposition(&input, result, sanitizeRoots)
+					manifestInputs = append(manifestInputs, input)
 				}
+			}
+			if !opts.ContinueOnError && dispositionFailure == nil {
+				dispositionFailure = failureErr
 			}
 			continue
 		}
@@ -352,16 +373,44 @@ func runExtract(opts *ExtractOptions) error {
 			logger.Error("Failed to process file",
 				zap.String("file", result.File),
 				zap.Error(result.Error))
+			if opts.ContinueOnError {
+				reason := failureReasonForError(result.Error)
+				if reason == "" {
+					reason = extract.DispositionReasonInternalError
+				}
+				result.Disposition = extract.DispositionFailed
+				result.DispositionReason = reason
+				result.DispositionDetail = result.Error.Error()
+				failureManifest.add(result.File, reason, result.Error.Error(), sanitizeRoots)
+				if manifestEnabled {
+					input, ledgerErr := provenance.BuildInputLedger(result.File, sanitizeRoots...)
+					if ledgerErr != nil {
+						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.File), zap.Error(ledgerErr))
+					} else {
+						input.RecordType = extCfg.RecordType
+						applyInputDisposition(&input, result, sanitizeRoots)
+						manifestInputs = append(manifestInputs, input)
+					}
+				}
+				continue
+			}
 			return fmt.Errorf("failed to process file %s: %w", result.File, result.Error)
 		}
 
 		if result.Disposition != extract.DispositionNotApplicable {
-			if err := enforceMinOccurrences(opts, extCfg, result.File, result.PerSelectorCounts, result.PerSelectorCountsComplete); err != nil {
-				if result.Disposition == extract.DispositionApplied {
+			if err := enforceMinOccurrences(opts, extCfg, sigCfg, result.File, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); err != nil {
+				if result.Disposition == extract.DispositionApplied || opts.ContinueOnError {
+					reason := failureReasonForError(err)
+					if reason == "" {
+						reason = extract.DispositionReasonMinOccurrencesViolation
+					}
 					result.Disposition = extract.DispositionFailed
-					result.DispositionReason = extract.DispositionReasonMinOccurrencesViolation
+					result.DispositionReason = reason
 					result.DispositionDetail = err.Error()
 					dispositionSummary.add(result, sanitizeRoots)
+					if opts.ContinueOnError {
+						failureManifest.add(result.File, reason, err.Error(), sanitizeRoots)
+					}
 					if manifestEnabled {
 						input, ledgerErr := provenance.BuildInputLedger(result.File, sanitizeRoots...)
 						if ledgerErr != nil {
@@ -371,7 +420,7 @@ func runExtract(opts *ExtractOptions) error {
 						applyInputDisposition(&input, result, sanitizeRoots)
 						manifestInputs = append(manifestInputs, input)
 					}
-					if dispositionFailure == nil {
+					if !opts.ContinueOnError && dispositionFailure == nil {
 						dispositionFailure = err
 					}
 					continue
@@ -429,6 +478,14 @@ func runExtract(opts *ExtractOptions) error {
 				}
 			}
 		}
+		failureManifest.addApplied()
+	}
+
+	if opts.ContinueOnError && failureManifest.Failed > 0 {
+		failuresPath := filepath.Join(opts.OutputPath, "failures.json")
+		if err := writeExtractFailureManifest(failuresPath, failureManifest); err != nil {
+			return err
+		}
 	}
 
 	if opts.ApplicabilityConfig != nil && opts.OutputPath != "" {
@@ -450,7 +507,98 @@ func runExtract(opts *ExtractOptions) error {
 	if dispositionFailure != nil {
 		return dispositionFailure
 	}
+	if opts.ContinueOnError && failureManifest.Failed > 0 {
+		return fmt.Errorf("partial extraction failure: applied=%d failed=%d failures=%s", failureManifest.Applied, failureManifest.Failed, filepath.Join(opts.OutputPath, "failures.json"))
+	}
 	return nil
+}
+
+type extractFailureManifestFile struct {
+	SchemaVersion string                      `json:"schema_version"`
+	CohortSize    int                         `json:"cohort_size"`
+	Applied       int                         `json:"applied"`
+	Failed        int                         `json:"failed"`
+	Failures      []extractFailureManifestRow `json:"failures"`
+}
+
+type extractFailureManifestRow struct {
+	File        string `json:"file"`
+	Disposition string `json:"disposition"`
+	Reason      string `json:"reason"`
+	Detail      string `json:"detail"`
+}
+
+func newExtractFailureManifest(cohortSize int) *extractFailureManifestFile {
+	return &extractFailureManifestFile{
+		SchemaVersion: "extract-failures/v0.1.0",
+		CohortSize:    cohortSize,
+	}
+}
+
+func (m *extractFailureManifestFile) addApplied() {
+	if m == nil {
+		return
+	}
+	m.Applied++
+}
+
+func (m *extractFailureManifestFile) add(file string, reason extract.DispositionReason, detail string, roots []string) {
+	if m == nil {
+		return
+	}
+	if reason == "" {
+		reason = extract.DispositionReasonInternalError
+	}
+	m.Failed++
+	m.Failures = append(m.Failures, extractFailureManifestRow{
+		File:        provenance.SanitizePath(file, roots...),
+		Disposition: string(extract.DispositionFailed),
+		Reason:      string(reason),
+		Detail:      sanitizeDispositionText(detail, roots),
+	})
+}
+
+func writeExtractFailureManifest(path string, manifest *extractFailureManifestFile) error {
+	if manifest == nil || manifest.Failed == 0 {
+		return nil
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal extraction failures: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("create extraction failure manifest directory: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write extraction failure manifest %s: %w", path, err)
+	}
+	return nil
+}
+
+func recoverableFailureResult(file string, err error, reason extract.DispositionReason) extract.ExtractResult {
+	return extract.ExtractResult{
+		File:                 file,
+		Error:                err,
+		SignatureMatchStatus: extract.SignatureMatchUnknown,
+		Disposition:          extract.DispositionFailed,
+		DispositionReason:    reason,
+		DispositionDetail:    err.Error(),
+	}
+}
+
+func failureErrorForResult(result extract.ExtractResult, roots []string) error {
+	file := provenance.SanitizePath(result.File, roots...)
+	if result.Error != nil {
+		return fmt.Errorf("failed to process file %s: %w", file, result.Error)
+	}
+	if strings.TrimSpace(result.DispositionDetail) != "" {
+		if result.DispositionReason != "" {
+			return fmt.Errorf("failed to process file %s: %s: %s", file, result.DispositionReason, sanitizeDispositionText(result.DispositionDetail, roots))
+		}
+		return fmt.Errorf("failed to process file %s: %s", file, sanitizeDispositionText(result.DispositionDetail, roots))
+	}
+	return fmt.Errorf("failed to process file %s: %s", file, result.DispositionReason)
 }
 
 type dispositionSummaryFile struct {
@@ -629,7 +777,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	if err != nil {
 		return err
 	}
-	if err := enforceMinOccurrences(opts, extCfg, header.Source.Path, perSelectorCounts, true); err != nil {
+	if err := enforceMinOccurrences(opts, extCfg, sigCfg, header.Source.Path, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
 		return err
 	}
 
@@ -695,11 +843,61 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	return nil
 }
 
-func enforceMinOccurrences(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, sourceFile string, perSelectorCounts map[int]int, countsComplete bool) error {
+type routedExtractError struct {
+	reason  extract.DispositionReason
+	message string
+}
+
+func (e routedExtractError) Error() string {
+	return e.message
+}
+
+func failureReasonForError(err error) extract.DispositionReason {
+	var routed routedExtractError
+	if errors.As(err, &routed) {
+		return routed.reason
+	}
+	if err == nil {
+		return ""
+	}
+	text := err.Error()
+	switch {
+	case strings.Contains(text, "failed to parse XML") || strings.Contains(text, "XML syntax error"):
+		return extract.DispositionReasonParseError
+	case strings.Contains(text, "signature mismatch"):
+		return extract.DispositionReasonSignatureMismatch
+	case strings.Contains(text, "min_occurrences violation"):
+		return extract.DispositionReasonMinOccurrencesViolation
+	case strings.Contains(text, "validation") || strings.Contains(text, "required") || strings.Contains(text, "collides"):
+		return extract.DispositionReasonValidationError
+	default:
+		return ""
+	}
+}
+
+func enforceMinOccurrences(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, sigCfg *extract.FileSignature, sourceFile string, perSelectorCounts map[int]int, countsComplete bool, signatureMatchStatus extract.SignatureMatchStatus, signatureConfidence float64) error {
 	if extCfg == nil {
 		return nil
 	}
 	recipeID := recipeIdentifier(opts)
+	hasDeclaredFloor := false
+	for _, selector := range extCfg.MatchSelectors {
+		if selector.MinOccurrences > 0 {
+			hasDeclaredFloor = true
+			break
+		}
+	}
+	if signatureMatchStatus == extract.SignatureMatchMismatched && hasDeclaredFloor {
+		threshold := 0.0
+		if sigCfg != nil {
+			threshold = sigCfg.ConfidenceThreshold
+		}
+		return routedExtractError{
+			reason: extract.DispositionReasonSignatureMismatch,
+			message: fmt.Sprintf("signature mismatch: recipe %q signature predicate did not match source %q (confidence=%.3f below threshold=%.3f)",
+				recipeID, sourceFile, signatureConfidence, threshold),
+		}
+	}
 	for i, selector := range extCfg.MatchSelectors {
 		if selector.MinOccurrences <= 0 {
 			continue
@@ -712,8 +910,11 @@ func enforceMinOccurrences(opts *ExtractOptions, extCfg *extract.ExtractRecordMa
 			actual = 0
 		}
 		if actual < selector.MinOccurrences {
-			return fmt.Errorf("min_occurrences violation: recipe %q selector %d (xpath=%q) declared min_occurrences=%d but extraction yielded %d matches against source %q",
-				recipeID, i, selector.XPath, selector.MinOccurrences, actual, sourceFile)
+			return routedExtractError{
+				reason: extract.DispositionReasonMinOccurrencesViolation,
+				message: fmt.Sprintf("min_occurrences violation: recipe %q selector %d (xpath=%q) declared min_occurrences=%d but extraction yielded %d matches against source %q",
+					recipeID, i, selector.XPath, selector.MinOccurrences, actual, sourceFile),
+			}
 		}
 	}
 	return nil
@@ -988,6 +1189,9 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	appendFlag("--run-id", opts.RunID)
 	for _, parameter := range opts.Parameters {
 		appendFlag("--parameter", parameter)
+	}
+	if opts.ContinueOnError {
+		args = append(args, "--continue-on-error")
 	}
 	if opts.NoManifest {
 		args = append(args, "--no-manifest")
