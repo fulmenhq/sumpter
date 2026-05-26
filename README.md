@@ -2,12 +2,12 @@
 
 **Crush XML. Haul Data. Ship Insights. Thrive on Scale.**
 
-[![Go Version](https://img.shields.io/badge/go-1.25%2B-blue)]()
-[![CI Status](https://github.com/sumpterhq/sumpter/actions/workflows/test.yml/badge.svg)]()
+[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)]()
+[![CI Status](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml/badge.svg)](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)]()
 [![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)]()
 
-Sumpter is a high-performance, Go-based streaming XML engine that transforms massive, malformed, and variant-heavy XML into clean, analytics-ready tables. With sub-second inspection, auto-generated extraction configs, and resilient outputs to Parquet, DuckDB, or NDJSON, Sumpter helps teams **start fast and thrive on scale**. Built for enterprises where XML still runs the world, Sumpter makes the messy manageable — with speed, safety, and clarity.
+Sumpter is a high-performance, Go-based streaming XML engine that transforms massive, malformed, and variant-heavy XML into clean, analytics-ready tables. With sub-second inspection, auto-generated extraction configs, and resilient outputs to NDJSON or Parquet, Sumpter helps teams **start fast and thrive on scale**. Built for enterprises where XML still runs the world, Sumpter makes the messy manageable — with speed, safety, and clarity.
 
 ---
 
@@ -15,7 +15,7 @@ Sumpter is a high-performance, Go-based streaming XML engine that transforms mas
 
 **Requirements**
 
-- Go 1.25+
+- Go 1.26+
 - Standard build toolchain
 - (Optional) CGO for seekable-zstd compressed indexes
 
@@ -113,16 +113,19 @@ See also:
 
 ## 📂 Project Status
 
-**Current Version:** v0.1.2 (Alpha)
+**Current Version:** v0.1.5 (Alpha)
 
 Core capabilities available:
 - ✅ XML inspection and structure discovery
 - ✅ Record indexing with byte offsets and checksums
-- ✅ Seekable-zstd compressed indexes (10-20x smaller)
+- ✅ Seekable-zstd compressed indexes (10-20x smaller, CGO/source builds)
 - ✅ Parallel extraction with worker pools
-- ✅ Streaming mode for 50GB+ files
-- 🔄 NDJSON output (in progress)
-- 🔜 Parquet & DuckDB outputs (planned)
+- ✅ Streaming mode for very large XML files
+- ✅ NDJSON output with sidecar manifests
+- ✅ Parquet secondary output
+- ✅ Recipe applicability gates and schema-backed dispositions
+- ✅ Multi-file continue-on-error failure manifests
+- 🔜 DuckDB output (planned)
 
 See `docs/releases/` for detailed release notes and `docs/user-guide/` for workflow documentation.
 
