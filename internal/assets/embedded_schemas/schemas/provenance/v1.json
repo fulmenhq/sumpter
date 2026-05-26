@@ -139,6 +139,9 @@
         "extract_yaml": {
           "type": "string"
         },
+        "applicability_yaml": {
+          "type": "string"
+        },
         "field_provenance": {
           "type": "array",
           "items": {
@@ -230,6 +233,17 @@
           "minimum": 0
         },
         "record_type": {
+          "type": "string"
+        },
+        "disposition": {
+          "type": "string",
+          "enum": ["applied", "not_applicable", "failed"]
+        },
+        "disposition_reason": {
+          "type": "string",
+          "enum": ["applicability_predicate_false", "signature_mismatch", "min_occurrences_violation", "parse_error", "validation_error", "internal_error"]
+        },
+        "disposition_detail": {
           "type": "string"
         }
       }

@@ -103,11 +103,12 @@ type Documentation struct {
 
 // Assets identifies files that make up the recipe implementation.
 type Assets struct {
-	Signature  string   `yaml:"signature"`
-	Extract    string   `yaml:"extract"`
-	Validation string   `yaml:"validation"`
-	Retrieve   string   `yaml:"retrieve"`
-	Extras     []string `yaml:"extras"`
+	Signature     string   `yaml:"signature"`
+	Extract       string   `yaml:"extract"`
+	Applicability string   `yaml:"applicability,omitempty"`
+	Validation    string   `yaml:"validation"`
+	Retrieve      string   `yaml:"retrieve"`
+	Extras        []string `yaml:"extras"`
 }
 
 // Defaults captures runtime defaults for executing the recipe.
@@ -551,6 +552,7 @@ func (m *Manifest) ListAssets(base string) []string {
 
 	add(m.Assets.Signature)
 	add(m.Assets.Extract)
+	add(m.Assets.Applicability)
 	add(m.Assets.Validation)
 	add(m.Assets.Retrieve)
 	for _, extra := range m.Assets.Extras {

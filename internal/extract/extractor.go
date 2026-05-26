@@ -62,6 +62,41 @@ func LoadSignatureConfig(path string) (*FileSignature, error) {
 	return &cfg, nil
 }
 
+// LoadApplicabilityConfig loads a recipe applicability predicate from YAML.
+func LoadApplicabilityConfig(path string) (*ApplicabilityConfig, error) {
+	data, err := os.ReadFile(path) // #nosec G304 - path comes from validated recipe asset path
+	if err != nil {
+		return nil, fmt.Errorf("failed to read applicability config: %w", err)
+	}
+
+	var cfg ApplicabilityConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse applicability config: %w", err)
+	}
+	if err := validateApplicabilityConfig(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+func validateApplicabilityConfig(cfg *ApplicabilityConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("applicability config cannot be nil")
+	}
+	predicate := cfg.Applicability
+	if strings.TrimSpace(predicate.Type) == "" {
+		return fmt.Errorf("applicability.type is required")
+	}
+	if strings.ToLower(strings.TrimSpace(predicate.Type)) != "xpath" {
+		return fmt.Errorf("unsupported applicability.type %q", predicate.Type)
+	}
+	if strings.TrimSpace(predicate.Expression) == "" {
+		return fmt.Errorf("applicability.expression is required")
+	}
+	return nil
+}
+
 // LoadExtractConfig loads an extract configuration from YAML file
 func LoadExtractConfig(path string) (*ExtractRecordMatch, error) {
 	data, err := os.ReadFile(path) // #nosec G304 - path comes from user-provided config file path
@@ -441,9 +476,18 @@ func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMa
 	return ProcessFileWithProvenance(filePath, sigCfg, extCfg, externalFields, allowLargeFiles, provenance.RuntimeOptions{})
 }
 
+// ProcessFileWithApplicability processes a file with an optional recipe applicability gate.
+func ProcessFileWithApplicability(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
+	return processFileWithProvenance(filePath, sigCfg, extCfg, appCfg, externalFields, allowLargeFiles, runtimeProvenance)
+}
+
 // ProcessFileWithProvenance processes a single file for extraction and enriches
 // each record with runtime provenance.
 func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
+	return processFileWithProvenance(filePath, sigCfg, extCfg, nil, externalFields, allowLargeFiles, runtimeProvenance)
+}
+
+func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
 	logger := logging.GetLogger()
 	if logger == nil {
 		logger = zap.NewNop()
@@ -451,6 +495,14 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	logger.Debug("Starting file processing", zap.String("file", filePath))
 
 	result := ExtractResult{File: filePath}
+	markFailed := func(reason DispositionReason, detail string) {
+		if appCfg == nil {
+			return
+		}
+		result.Disposition = DispositionFailed
+		result.DispositionReason = reason
+		result.DispositionDetail = detail
+	}
 
 	// Check if we should use streaming mode for large files
 	// Streaming mode threshold: 100MB uncompressed (or 10MB compressed with 10x ratio estimate)
@@ -467,6 +519,11 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 
 			// Use streaming mode for files > 100MB
 			if estimatedSize > streamingThreshold {
+				if appCfg != nil {
+					result.Error = fmt.Errorf("applicability declared but not supported in streaming mode")
+					markFailed(DispositionReasonInternalError, result.Error.Error())
+					return result
+				}
 				logger.Info("Using streaming mode for large file",
 					zap.String("file", filePath),
 					zap.Int64("estimated_size_mb", estimatedSize/(1024*1024)),
@@ -482,6 +539,7 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	if err != nil {
 		logger.Error("Failed to read file", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to read file: %w", err)
+		markFailed(DispositionReasonInternalError, result.Error.Error())
 		return result
 	}
 	isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
@@ -497,9 +555,29 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	if err != nil {
 		logger.Error("Failed to parse XML", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to parse XML: %w", err)
+		markFailed(DispositionReasonParseError, result.Error.Error())
 		return result
 	}
 	logger.Debug("XML parsed successfully", zap.String("file", filePath))
+
+	if appCfg != nil {
+		applies, err := evaluateApplicability(doc, appCfg)
+		if err != nil {
+			logger.Error("Failed to evaluate applicability", zap.String("file", filePath), zap.Error(err))
+			result.Error = fmt.Errorf("failed to evaluate applicability: %w", err)
+			markFailed(DispositionReasonValidationError, result.Error.Error())
+			return result
+		}
+		if !applies {
+			logger.Debug("File is not applicable to recipe", zap.String("file", filePath))
+			result.Disposition = DispositionNotApplicable
+			result.DispositionReason = DispositionReasonApplicabilityPredicateFalse
+			result.DispositionDetail = "applicability predicate evaluated false"
+			result.PerSelectorCounts = zeroSelectorCounts(extCfg)
+			result.PerSelectorCountsComplete = true
+			return result
+		}
+	}
 
 	// Check if file matches signature
 	logger.Debug("Checking signature match", zap.String("file", filePath), zap.String("signature", sigCfg.SignatureID))
@@ -507,15 +585,21 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	if err != nil {
 		logger.Error("Failed to check signature", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to check signature: %w", err)
+		markFailed(DispositionReasonInternalError, result.Error.Error())
 		return result
 	}
 	logger.Debug("Signature check complete", zap.String("file", filePath), zap.Bool("matches", matches))
 
 	if !matches {
-		// File doesn't match signature, return empty result
+		// File doesn't match signature, return empty result unless applicability made the mismatch a failed disposition.
 		logger.Debug("File does not match signature", zap.String("file", filePath))
 		result.PerSelectorCounts = zeroSelectorCounts(extCfg)
 		result.PerSelectorCountsComplete = true
+		if appCfg != nil {
+			result.Disposition = DispositionFailed
+			result.DispositionReason = DispositionReasonSignatureMismatch
+			result.DispositionDetail = "signature predicate did not match"
+		}
 		return result
 	}
 
@@ -531,6 +615,7 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	if err != nil {
 		logger.Error("Failed to extract records", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to extract records: %w", err)
+		markFailed(DispositionReasonInternalError, result.Error.Error())
 		return result
 	}
 	logger.Debug("Record extraction complete", zap.String("file", filePath), zap.Int("record_count", len(records)))
@@ -538,13 +623,28 @@ func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	if err := enrichRecords(records, filePath, sigCfg, extCfg, runtimeProvenance); err != nil {
 		logger.Error("Failed to apply metadata", zap.String("file", filePath), zap.Error(err))
 		result.Error = err
+		markFailed(DispositionReasonInternalError, result.Error.Error())
 		return result
 	}
 
+	if appCfg != nil {
+		result.Disposition = DispositionApplied
+	}
 	result.Records = records
 	result.PerSelectorCounts = perSelectorCounts
 	result.PerSelectorCountsComplete = true
 	return result
+}
+
+func evaluateApplicability(doc *xmlquery.Node, cfg *ApplicabilityConfig) (bool, error) {
+	if cfg == nil {
+		return true, nil
+	}
+	predicate := cfg.Applicability
+	if strings.ToLower(strings.TrimSpace(predicate.Type)) != "xpath" {
+		return false, fmt.Errorf("unsupported applicability.type %q", predicate.Type)
+	}
+	return evaluateXPathBoolean(doc, predicate.Expression)
 }
 
 // matchesSignature checks if the document matches the signature
@@ -593,29 +693,34 @@ func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, error) {
 //
 // A compile error or evaluation error is treated as a non-match.
 func matchesPattern(doc *xmlquery.Node, pattern MatchPattern) bool {
-	selector := strings.TrimSpace(pattern.Selector)
+	matched, err := evaluateXPathBoolean(doc, pattern.Selector)
+	return err == nil && matched
+}
+
+func evaluateXPathBoolean(doc *xmlquery.Node, selector string) (bool, error) {
+	selector = strings.TrimSpace(selector)
 	if selector == "" {
-		return false
+		return false, fmt.Errorf("empty XPath expression")
 	}
 
 	expr, err := xpath.Compile(selector)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("compile XPath %q: %w", selector, err)
 	}
 
 	switch v := expr.Evaluate(xmlquery.CreateXPathNavigator(doc)).(type) {
 	case bool:
-		return v
+		return v, nil
 	case float64:
 		// Per XPath 1.0 §4.3 boolean(): a number is true iff non-zero AND not NaN.
-		return v != 0 && !math.IsNaN(v)
+		return v != 0 && !math.IsNaN(v), nil
 	case string:
-		return v != ""
+		return v != "", nil
 	case *xpath.NodeIterator:
 		// Truthy iff at least one node is yielded.
-		return v != nil && v.MoveNext()
+		return v != nil && v.MoveNext(), nil
 	default:
-		return false
+		return false, fmt.Errorf("unsupported XPath result type %T", v)
 	}
 }
 

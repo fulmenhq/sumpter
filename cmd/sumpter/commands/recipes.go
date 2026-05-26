@@ -13,6 +13,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/assets"
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
@@ -385,12 +386,34 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 
 	signaturePath := manifest.Assets.Signature
 	extractPath := manifest.Assets.Extract
+	applicabilityPath := manifest.Assets.Applicability
 
 	if opts.SignatureOverride != "" {
 		signaturePath = opts.SignatureOverride
 	}
 	if opts.ExtractOverride != "" {
 		extractPath = opts.ExtractOverride
+	}
+
+	var applicabilityCfg *extract.ApplicabilityConfig
+	var applicabilityBytes []byte
+	if strings.TrimSpace(applicabilityPath) != "" {
+		asset, err := recipesmanifest.OpenRelativeFile(absWorkspace, applicabilityPath)
+		if err != nil {
+			return fmt.Errorf("failed to open applicability asset: %w", err)
+		}
+		if err := asset.Close(); err != nil {
+			return fmt.Errorf("failed to close applicability asset: %w", err)
+		}
+		applicabilityPath = recipesmanifest.ResolvePath(absWorkspace, applicabilityPath)
+		applicabilityBytes, err = os.ReadFile(applicabilityPath) // #nosec G304 - path resolved from validated recipe asset path
+		if err != nil {
+			return fmt.Errorf("failed to read applicability asset for provenance: %w", err)
+		}
+		applicabilityCfg, err = extract.LoadApplicabilityConfig(applicabilityPath)
+		if err != nil {
+			return err
+		}
 	}
 
 	signaturePath = recipesmanifest.ResolvePath(absWorkspace, signaturePath)
@@ -404,7 +427,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	if err != nil {
 		return fmt.Errorf("failed to read extract asset for provenance: %w", err)
 	}
-	recipeContentHash, err := provenance.RecipeContentHash(signatureBytes, extractBytes)
+	recipeContentHash, err := provenance.RecipeContentHash(signatureBytes, extractBytes, applicabilityBytes)
 	if err != nil {
 		return fmt.Errorf("failed to compute recipe content hash: %w", err)
 	}
@@ -416,17 +439,18 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 
 	extractOpts := &ExtractOptions{
-		SignatureConfig: signaturePath,
-		ExtractConfig:   extractPath,
-		AllowLargeFiles: allowLargeFiles,
-		RunID:           opts.RunID,
-		NoManifest:      opts.NoManifest,
-		CommandName:     "sumpter recipes run extract",
+		SignatureConfig:     signaturePath,
+		ExtractConfig:       extractPath,
+		ApplicabilityConfig: applicabilityCfg,
+		AllowLargeFiles:     allowLargeFiles,
+		RunID:               opts.RunID,
+		NoManifest:          opts.NoManifest,
+		CommandName:         "sumpter recipes run extract",
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,
 		},
-		Recipe: buildRecipeProvenance(manifest, manifestBytes, signatureBytes, extractBytes, recipeContentHash),
+		Recipe: buildRecipeProvenance(manifest, manifestBytes, signatureBytes, extractBytes, applicabilityBytes, recipeContentHash),
 	}
 
 	defaults := manifest.Defaults
@@ -560,7 +584,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	return runExtract(extractOpts)
 }
 
-func buildRecipeProvenance(manifest *recipesmanifest.Manifest, manifestBytes, signatureBytes, extractBytes []byte, contentHash string) *provenance.Recipe {
+func buildRecipeProvenance(manifest *recipesmanifest.Manifest, manifestBytes, signatureBytes, extractBytes, applicabilityBytes []byte, contentHash string) *provenance.Recipe {
 	if manifest == nil {
 		return nil
 	}
@@ -582,6 +606,7 @@ func buildRecipeProvenance(manifest *recipesmanifest.Manifest, manifestBytes, si
 		ManifestYAML:          string(manifestBytes),
 		SignatureYAML:         string(signatureBytes),
 		ExtractYAML:           string(extractBytes),
+		ApplicabilityYAML:     string(applicabilityBytes),
 	}
 }
 

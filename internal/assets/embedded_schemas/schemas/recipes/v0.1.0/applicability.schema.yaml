@@ -1,0 +1,22 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: "Sumpter Recipe Applicability Predicate"
+type: object
+additionalProperties: false
+required:
+  - applicability
+properties:
+  applicability:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - expression
+    properties:
+      type:
+        type: string
+        const: xpath
+      expression:
+        type: string
+        minLength: 1
+      description:
+        type: string

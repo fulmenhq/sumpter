@@ -34,6 +34,18 @@ type MatchPattern struct {
 	Dialect   string  `yaml:"dialect" json:"dialect"`
 }
 
+// ApplicabilityConfig declares whether a recipe applies to a file.
+type ApplicabilityConfig struct {
+	Applicability ApplicabilityPredicate `yaml:"applicability" json:"applicability"`
+}
+
+// ApplicabilityPredicate is a binary, file-level applicability predicate.
+type ApplicabilityPredicate struct {
+	Type        string `yaml:"type" json:"type"`
+	Expression  string `yaml:"expression" json:"expression"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
 // Dialect represents a vendor-specific dialect configuration.
 //
 // Dialects describe variants of the same format family (for example,
@@ -114,7 +126,31 @@ type ExtractResult struct {
 	Error                     error                    `json:"error,omitempty"`
 	PerSelectorCounts         map[int]int              `json:"per_selector_counts,omitempty"`
 	PerSelectorCountsComplete bool                     `json:"-"`
+	Disposition               Disposition              `json:"disposition,omitempty"`
+	DispositionReason         DispositionReason        `json:"disposition_reason,omitempty"`
+	DispositionDetail         string                   `json:"disposition_detail,omitempty"`
 }
+
+// Disposition is the per-file extraction outcome for recipe applicability.
+type Disposition string
+
+const (
+	DispositionApplied       Disposition = "applied"
+	DispositionNotApplicable Disposition = "not_applicable"
+	DispositionFailed        Disposition = "failed"
+)
+
+// DispositionReason is a closed machine-readable outcome reason.
+type DispositionReason string
+
+const (
+	DispositionReasonApplicabilityPredicateFalse DispositionReason = "applicability_predicate_false"
+	DispositionReasonSignatureMismatch           DispositionReason = "signature_mismatch"
+	DispositionReasonMinOccurrencesViolation     DispositionReason = "min_occurrences_violation"
+	DispositionReasonParseError                  DispositionReason = "parse_error"
+	DispositionReasonValidationError             DispositionReason = "validation_error"
+	DispositionReasonInternalError               DispositionReason = "internal_error"
+)
 
 // OutputOptions controls optional output sections.
 type OutputOptions struct {

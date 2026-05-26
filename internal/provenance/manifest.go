@@ -53,6 +53,7 @@ type Recipe struct {
 	ManifestYAML          string            `json:"manifest_yaml,omitempty"`
 	SignatureYAML         string            `json:"signature_yaml"`
 	ExtractYAML           string            `json:"extract_yaml"`
+	ApplicabilityYAML     string            `json:"applicability_yaml,omitempty"`
 	FieldProvenance       []FieldProvenance `json:"field_provenance,omitempty"`
 }
 
@@ -73,12 +74,15 @@ type FieldProvenance struct {
 	Transform   string `json:"transform,omitempty"`
 }
 
-// Input describes an input file that was successfully processed.
+// Input describes an input file considered by the extract run.
 type Input struct {
-	Path       string `json:"path"`
-	SHA256     string `json:"sha256"`
-	SizeBytes  int64  `json:"size_bytes"`
-	RecordType string `json:"record_type,omitempty"`
+	Path              string `json:"path"`
+	SHA256            string `json:"sha256"`
+	SizeBytes         int64  `json:"size_bytes"`
+	RecordType        string `json:"record_type,omitempty"`
+	Disposition       string `json:"disposition,omitempty"`
+	DispositionReason string `json:"disposition_reason,omitempty"`
+	DispositionDetail string `json:"disposition_detail,omitempty"`
 }
 
 // Output describes an output artifact written by the extract run.
