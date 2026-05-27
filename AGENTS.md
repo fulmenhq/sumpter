@@ -116,6 +116,9 @@ The org-root warmup in [`../AGENTS.md`](../AGENTS.md) is authoritative for
 identity, Mattermost channel usage, and checkpointing. Repo guidance here is
 authoritative for Sumpter build, safety, lifecycle, and XML-processing rules.
 
+Detailed operator guidance and command patterns live in local-only
+`AGENTS.local.md` when present.
+
 Role functions are coordinated by slug rather than persona name:
 
 | Role family | Typical Sumpter focus                                             |
