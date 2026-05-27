@@ -8,6 +8,41 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-26
+
+**Release-readiness hardening, recipe applicability gates, and resilient multi-file extraction.**
+
+See [`docs/releases/v0.1.5.md`](docs/releases/v0.1.5.md) for the full release narrative.
+
+### Added
+
+- **Recipe applicability gates** - recipes may reference an `assets.applicability` YAML asset with an XPath predicate. Applicability runs before signature matching; false predicates mark inputs `not_applicable` without counting them as extraction failures (PR #39, SUM-022).
+- **Schema-backed extraction dispositions** - applicability-aware runs add per-input provenance dispositions and write `dispositions.json` summaries backed by `schemas/extract/v0.1.0/dispositions.schema.json` (PR #39, SUM-022).
+- **Per-file failure manifests** - `sumpter extract files` and `sumpter recipes run extract` support `--continue-on-error` for multi-file cohorts. Recoverable per-input failures are written to `failures.json`, backed by `schemas/extract/v0.1.0/failures.schema.json` (PR #40, SUM-023).
+- **PR-time release-build dry run** - CI now runs normal quality gates plus a `make release-build` dry run in the same container shape used by the tag-triggered release workflow, catching release-container drift before tag time (PR #38).
+
+### Changed
+
+- **Release workflow hardening** - tag-triggered releases publish as drafts first, so signing manifests and provenance assets can be attached before the release is made public (PR #37).
+- **Release tag guardrails** - release ceremony targets prefer `SUMPTER_RELEASE_TAG` and fail loud if the requested tag does not match `VERSION`; `RELEASE_TAG` remains available for one-off invocations (PR #37).
+- **Go toolchain pin** - CI and release workflows now use Go `1.26.3`, and CI installs `golangci-lint` `v2.11.2` so linting can analyze Go 1.26 source (PR #41).
+- **VERSION bumped to `0.1.5`** for this release.
+
+### Fixed
+
+- **PGP verification ceremony** - release signature verification now checks for both minisign and PGP output when both signatures are present, preventing a silent skipped-verification path (PR #37).
+- **Signature mismatch routing** - inputs that miss a recipe signature and then encounter declared `min_occurrences` floors now report `signature_mismatch` with confidence details instead of a misleading `min_occurrences` violation (PR #40, SUM-023).
+
+### Security
+
+- **No unsigned public-release window** - GitHub Releases remain drafts until checksum manifests, signatures, public keys, and release notes are attached and verified by the operator ceremony (PR #37).
+- **Go standard-library vulnerability fix path** - the local and CI toolchains are aligned on Go `1.26.3`, resolving the Go 1.26.1 standard-library vulnerability findings that blocked local `govulncheck` during SUM-022/SUM-023 validation (PR #41).
+
+### Deferred
+
+- **Cloud URI I/O** remains deferred to a future cycle; v0.1.5 focuses on release hardening and local/multi-file extraction resilience.
+- **Shell shfmt baseline cleanup** remains visible as nine medium goneat lint findings in release scripts. It is non-blocking under the current hook policy and is intentionally deferred to a separate housekeeping PR.
+
 ## [0.1.4] - 2026-05-23
 
 **First tagged release since v0.1.1 OSS-clean; introduces the signed-release pipeline and brings the v0.1.4 cycle (SUM-010..020) under a tag.**
@@ -35,7 +70,7 @@ See [`docs/releases/v0.1.4.md`](docs/releases/v0.1.4.md) for the full release na
 
 ### Deferred
 
-- **SUM-005 — Cloud URI I/O** (S3/GCS/Azure input/output paths) deferred to v0.1.5; gonimbus-tag-blocked through most of the v0.1.4 cycle and unblocked just as v0.1.4 closed.
+- **SUM-005 - Cloud URI I/O** (S3/GCS/Azure input/output paths) deferred beyond v0.1.4; still out of scope for v0.1.5.
 
 ## [0.1.3] - 2026-05-18
 
@@ -75,7 +110,7 @@ See [`docs/releases/v0.1.4.md`](docs/releases/v0.1.4.md) for the full release na
 ### Docs
 
 - **OSS-clean sanitization** — genericized ADR examples, swept legacy persona names, added public-data examples index (PRs #7, #14).
-- **Dataeng role override** for `agent-dataeng-blue` (PR #12).
+- **Dataeng role override** for downstream review workflows (PR #12).
 - **Agents-md alignment** with the role model (PR #6).
 
 ### Removed
