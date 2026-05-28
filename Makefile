@@ -524,10 +524,20 @@ pr-final-drift-check: ## Verify final PR validation leaves tracked files unchang
 		git diff --name-only; \
 		exit 1; \
 	fi
+	@if ! git diff --cached --quiet; then \
+		echo "$(RED)❌ Staged tracked-file drift exists before final validation. Commit or unstage these files first:$(NC)"; \
+		git diff --cached --name-only; \
+		exit 1; \
+	fi
 	$(GOMOD) tidy
 	@if ! git diff --quiet -- go.mod go.sum; then \
 		echo "$(RED)❌ go.mod/go.sum drift after go mod tidy. Commit dependency changes in a separate PR.$(NC)"; \
 		git diff -- go.mod go.sum; \
+		exit 1; \
+	fi
+	@if ! git diff --cached --quiet; then \
+		echo "$(RED)❌ Staged tracked-file drift after final validation:$(NC)"; \
+		git diff --cached --name-only; \
 		exit 1; \
 	fi
 	@if ! git diff --quiet; then \
