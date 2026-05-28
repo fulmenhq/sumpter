@@ -526,10 +526,10 @@ changes only.
 
 ## Implementation sequencing
 
-Tracked in `#release-sumpter-v012` (Mattermost, org-fulmenhq) — that
-channel carries the PR sequencing, scope splits, and coordination history
-for the v0.1.3 rollout. This ADR records the durable decisions; the
-release channel records how they landed.
+Tracked in the release coordination channel for the v0.1.3 rollout. That
+channel carried the PR sequencing, scope splits, and coordination history.
+This ADR records the durable decisions; the release channel recorded how
+they landed.
 
 Standing constraints regardless of sequencing:
 

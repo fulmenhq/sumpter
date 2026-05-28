@@ -516,8 +516,29 @@ pre-push: prepush ## Deprecated: use 'prepush' instead
 ci: check-all test coverage-check build ## Run CI pipeline
 	@echo "$(GREEN)✅ CI pipeline completed successfully!$(NC)"
 
+.PHONY: pr-final-drift-check
+pr-final-drift-check: ## Verify final PR validation leaves tracked files unchanged
+	@echo "$(BLUE)Checking final PR drift...$(NC)"
+	@if ! git diff --quiet; then \
+		echo "$(RED)❌ Tracked-file drift exists before final validation. Commit or revert these files first:$(NC)"; \
+		git diff --name-only; \
+		exit 1; \
+	fi
+	$(GOMOD) tidy
+	@if ! git diff --quiet -- go.mod go.sum; then \
+		echo "$(RED)❌ go.mod/go.sum drift after go mod tidy. Commit dependency changes in a separate PR.$(NC)"; \
+		git diff -- go.mod go.sum; \
+		exit 1; \
+	fi
+	@if ! git diff --quiet; then \
+		echo "$(RED)❌ Tracked-file drift after final validation:$(NC)"; \
+		git diff --name-only; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Final PR drift check passed$(NC)"
+
 .PHONY: pr-final
-pr-final: prepush examples ## Run final PR validation, including examples
+pr-final: prepush examples pr-final-drift-check ## Run final PR validation, including examples and drift checks
 	@echo "$(GREEN)✅ PR final validation passed!$(NC)"
 
 # Safety checks

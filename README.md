@@ -128,6 +128,8 @@ Core capabilities available:
 - 🔜 DuckDB output (planned)
 
 See `docs/releases/` for detailed release notes and `docs/user-guide/` for workflow documentation.
+Public-data examples and acquisition notes start at `docs/user-guide/public-data-examples.md`,
+including `docs/appnotes/sourcedata/finance/sec-edgar-usage.md` for SEC EDGAR workflows.
 
 ---
 
@@ -139,8 +141,6 @@ We welcome issues and PRs. Please:
 - Respect coding and testing standards.
 - Security concerns? Open a private advisory or contact maintainers.
 
-Formal `CONTRIBUTING.md` coming soon.
-
 ---
 
 ## 🏛 Governance & Funding
@@ -151,7 +151,7 @@ Sumpter is part of the **FulmenHQ** ecosystem, funded by **3 Leaps**, and mainta
 
 ## 📜 License
 
-Apache 2.0 (to be finalized).
+Apache 2.0.
 
 ---
 

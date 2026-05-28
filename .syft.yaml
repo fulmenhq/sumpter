@@ -1,0 +1,12 @@
+exclude:
+  - "./.cache/**"
+  - "./.gocache/**"
+  - "./bin/**"
+  - "./coverage*/**"
+  - "./dist/**"
+  - "./node_modules/**"
+  - "./sbom/**"
+  - "./test-results/**"
+  - "./tmp/**"
+  - "./sumpter"
+  - "./sumpter-test"
