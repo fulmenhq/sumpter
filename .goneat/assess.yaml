@@ -22,7 +22,7 @@ lint:
   shell:
     shfmt:
       enabled: true
-      fix: false
+      fix: true
     shellcheck:
       enabled: false
       path: ""
