@@ -3,6 +3,8 @@ package dsl
 import (
 	"math"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestEvaluateReconciliationsGroupByGeneratesComponents(t *testing.T) {
@@ -130,6 +132,310 @@ func TestRunValidationRuleUsesTernaryExpression(t *testing.T) {
 	}
 	if runtime.ValidationResults[0].Result != "pass" {
 		t.Fatalf("validation result = %q, want pass", runtime.ValidationResults[0].Result)
+	}
+}
+
+func TestRunValidationDisabledReturnsNil(t *testing.T) {
+	runtime, err := RunValidation(&ValidationMetadata{Enable: false}, map[string]interface{}{"value": 1})
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+	if runtime != nil {
+		t.Fatalf("runtime = %#v, want nil for disabled validation", runtime)
+	}
+}
+
+func TestRunValidationRejectsUnsupportedExpressionLanguage(t *testing.T) {
+	_, err := RunValidation(&ValidationMetadata{
+		Enable:             true,
+		ExpressionLanguage: "jsonata",
+	}, map[string]interface{}{"value": 1})
+	if err == nil {
+		t.Fatal("RunValidation error = nil, want unsupported expression language error")
+	}
+}
+
+func TestRunValidationAccumulatesArrayPathRecords(t *testing.T) {
+	record := map[string]interface{}{
+		"items": []interface{}{
+			map[string]interface{}{"active": true, "amount": 4},
+			map[string]interface{}{"active": false, "amount": 9},
+			map[string]interface{}{"active": true, "amount": 6},
+		},
+	}
+	metadata := &ValidationMetadata{
+		Enable:    true,
+		ArrayPath: "items",
+		Accumulations: []AccumulationConfig{
+			{Name: "active_count", Operation: "count", Filter: "active == true"},
+			{Name: "active_amount", Operation: "sum", Field: "amount", Filter: "active == true"},
+		},
+		Aggregations: []AggregationConfig{
+			{Name: "active_total", Expression: "active_amount"},
+		},
+	}
+
+	runtime, err := RunValidation(metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+	if runtime.RecordCount != 3 {
+		t.Fatalf("RecordCount = %d, want 3", runtime.RecordCount)
+	}
+
+	count, err := runtime.Accumulators["active_count"].GetResult()
+	if err != nil {
+		t.Fatalf("active_count GetResult failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("active_count = %#v, want 2", count)
+	}
+
+	total, err := toFloat64(runtime.AggregationResults["active_total"])
+	if err != nil {
+		t.Fatalf("active_total = %#v, want numeric: %v", runtime.AggregationResults["active_total"], err)
+	}
+	if !almostEqual(total, 10) {
+		t.Fatalf("active_total = %f, want 10", total)
+	}
+}
+
+func TestValidationSeverity_OmittedSeverity_DefaultsError(t *testing.T) {
+	record := map[string]interface{}{"actual": 1}
+	var metadata ValidationMetadata
+	if err := yaml.Unmarshal([]byte(`
+enable: true
+validations:
+  - name: actual_matches_expected
+    rule: actual == 2
+    message: actual should match expected
+`), &metadata); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	runtime, err := RunValidation(&metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+
+	if len(runtime.ValidationResults) != 1 {
+		t.Fatalf("validation results len = %d, want 1", len(runtime.ValidationResults))
+	}
+	if runtime.ValidationResults[0].Severity != "error" {
+		t.Fatalf("severity = %q, want error", runtime.ValidationResults[0].Severity)
+	}
+	summary := runtime.GetQualitySummary()
+	if summary.Errors != 1 {
+		t.Fatalf("Errors = %d, want 1", summary.Errors)
+	}
+}
+
+func TestRunValidation_OmittedFailurePolicyFailsOnFatal(t *testing.T) {
+	record := map[string]interface{}{"actual": 1}
+	var metadata ValidationMetadata
+	if err := yaml.Unmarshal([]byte(`
+enable: true
+validations:
+  - name: fatal_mismatch
+    rule: actual == 2
+    severity: fatal
+    message: fatal mismatch
+`), &metadata); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	runtime, err := RunValidation(&metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+
+	shouldFail, err := runtime.ShouldFailExtraction(metadata.FailurePolicy)
+	if !shouldFail {
+		t.Fatalf("ShouldFailExtraction = false, want true; err=%v", err)
+	}
+	if err == nil {
+		t.Fatal("ShouldFailExtraction error = nil, want fatal validation error")
+	}
+}
+
+func TestRunValidation_ExplicitFailOnFatalFalseDoesNotFailFatal(t *testing.T) {
+	record := map[string]interface{}{"actual": 1}
+	var metadata ValidationMetadata
+	if err := yaml.Unmarshal([]byte(`
+enable: true
+failure_policy:
+  fail_on_fatal: false
+validations:
+  - name: fatal_mismatch
+    rule: actual == 2
+    severity: fatal
+    message: fatal mismatch
+`), &metadata); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	runtime, err := RunValidation(&metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+
+	shouldFail, err := runtime.ShouldFailExtraction(metadata.FailurePolicy)
+	if shouldFail {
+		t.Fatalf("ShouldFailExtraction = true, want false for explicit fail_on_fatal false; err=%v", err)
+	}
+}
+
+func TestRunValidation_HaltOnFirstFatalDefaultsTrue(t *testing.T) {
+	record := map[string]interface{}{"actual": 1}
+	var metadata ValidationMetadata
+	if err := yaml.Unmarshal([]byte(`
+enable: true
+validations:
+  - name: fatal_mismatch
+    rule: actual == 2
+    severity: fatal
+    message: fatal mismatch
+  - name: skipped_after_fatal
+    rule: actual == 2
+    severity: error
+    message: should be skipped
+`), &metadata); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	runtime, err := RunValidation(&metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+
+	if len(runtime.ValidationResults) != 1 {
+		t.Fatalf("validation results len = %d, want 1 due to halt_on_first_fatal default", len(runtime.ValidationResults))
+	}
+	if runtime.ValidationResults[0].Name != "fatal_mismatch" {
+		t.Fatalf("first validation = %q, want fatal_mismatch", runtime.ValidationResults[0].Name)
+	}
+}
+
+func TestRunValidation_ExplicitHaltOnFirstFatalFalseContinues(t *testing.T) {
+	record := map[string]interface{}{"actual": 1}
+	var metadata ValidationMetadata
+	if err := yaml.Unmarshal([]byte(`
+enable: true
+failure_policy:
+  halt_on_first_fatal: false
+validations:
+  - name: fatal_mismatch
+    rule: actual == 2
+    severity: fatal
+    message: fatal mismatch
+  - name: evaluated_after_fatal
+    rule: actual == 2
+    severity: error
+    message: should be evaluated
+`), &metadata); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	runtime, err := RunValidation(&metadata, record)
+	if err != nil {
+		t.Fatalf("RunValidation failed: %v", err)
+	}
+
+	if len(runtime.ValidationResults) != 2 {
+		t.Fatalf("validation results len = %d, want 2", len(runtime.ValidationResults))
+	}
+}
+
+func TestComputeAggregationsStoresResultAndComparesWithinTolerance(t *testing.T) {
+	runtime := NewValidationRuntime()
+	doc := map[string]interface{}{
+		"reported_total": 10.005,
+	}
+
+	err := ComputeAggregations(runtime, []AggregationConfig{
+		{
+			Name:       "computed_total",
+			Expression: "10",
+			CompareTo:  "reported_total",
+			Tolerance:  0.01,
+		},
+	}, doc)
+	if err != nil {
+		t.Fatalf("ComputeAggregations failed: %v", err)
+	}
+
+	got, err := toFloat64(runtime.AggregationResults["computed_total"])
+	if err != nil {
+		t.Fatalf("computed_total = %#v, want numeric: %v", runtime.AggregationResults["computed_total"], err)
+	}
+	if !almostEqual(got, 10) {
+		t.Fatalf("computed_total = %f, want 10", got)
+	}
+}
+
+func TestComputeAggregationsUsesDefaultTolerance(t *testing.T) {
+	runtime := NewValidationRuntime()
+	doc := map[string]interface{}{
+		"reported_total": 10.005,
+	}
+
+	err := ComputeAggregations(runtime, []AggregationConfig{
+		{
+			Name:       "computed_total",
+			Expression: "10",
+			CompareTo:  "reported_total",
+		},
+	}, doc)
+	if err != nil {
+		t.Fatalf("ComputeAggregations failed: %v", err)
+	}
+}
+
+func TestAggregationExplicitZeroToleranceRequiresExactMatch(t *testing.T) {
+	var metadata ValidationMetadata
+	if err := yaml.Unmarshal([]byte(`
+enable: true
+aggregations:
+  - name: computed_total
+    expression: "10"
+    compare_to: reported_total
+    tolerance: 0
+`), &metadata); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	err := ComputeAggregations(NewValidationRuntime(), metadata.Aggregations, map[string]interface{}{
+		"reported_total": 10.005,
+	})
+	if err == nil {
+		t.Fatal("ComputeAggregations succeeded, want exact-match failure")
+	}
+}
+
+func TestBuildValidationReportIncludesQualitySummary(t *testing.T) {
+	metadata := &ValidationMetadata{
+		Enable:             true,
+		ExpressionLanguage: "sumpter-dsl",
+	}
+	runtime := NewValidationRuntime()
+	runtime.RecordCount = 3
+	runtime.AddValidationResult(ValidationResult{Result: "pass", Severity: "error"})
+	runtime.AddValidationResult(ValidationResult{Result: "fail", Severity: "fatal"})
+
+	report, err := BuildValidationReport(metadata, runtime)
+	if err != nil {
+		t.Fatalf("BuildValidationReport failed: %v", err)
+	}
+
+	summary, ok := report["quality_summary"].(QualitySummary)
+	if !ok {
+		t.Fatalf("quality_summary = %#v, want QualitySummary", report["quality_summary"])
+	}
+	if summary.Passed != 1 || summary.Fatals != 1 {
+		t.Fatalf("quality_summary = %+v, want 1 pass and 1 fatal", summary)
+	}
+	if report["record_count"] != 3 {
+		t.Fatalf("record_count = %#v, want 3", report["record_count"])
 	}
 }
 

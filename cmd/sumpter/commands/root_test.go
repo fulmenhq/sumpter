@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/fulmenhq/sumpter/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -272,4 +274,43 @@ func TestTestableInitializeEnvironmentPathResolutionError(t *testing.T) {
 	// Note: config.ResolvePaths may have fallback logic, so we just verify it doesn't crash
 	// The important thing is that the function handles the environment gracefully
 	_ = err // We don't assert on the error since it may succeed with fallbacks
+}
+
+func TestLogFilePath_AbsolutePath_UsedAsIs(t *testing.T) {
+	paths := &config.Paths{Logs: filepath.Join(t.TempDir(), "logs")}
+	absolute := filepath.Join(t.TempDir(), "custom.log")
+
+	got := resolveLogFilePath(absolute, paths)
+	if got != absolute {
+		t.Fatalf("resolveLogFilePath() = %q, want %q", got, absolute)
+	}
+}
+
+func TestLogFilePath_BareFilename_PlacedUnderSumpterHomeLogs(t *testing.T) {
+	paths := &config.Paths{Logs: filepath.Join(t.TempDir(), "logs")}
+
+	got := resolveLogFilePath("custom.log", paths)
+	want := filepath.Join(paths.Logs, "custom.log")
+	if got != want {
+		t.Fatalf("resolveLogFilePath() = %q, want %q", got, want)
+	}
+}
+
+func TestLogFilePath_RelativeWithSubdir_UsesBasenameUnderSumpterHomeLogs(t *testing.T) {
+	paths := &config.Paths{Logs: filepath.Join(t.TempDir(), "logs")}
+
+	got := resolveLogFilePath(filepath.Join("local", "custom.log"), paths)
+	want := filepath.Join(paths.Logs, "custom.log")
+	if got != want {
+		t.Fatalf("resolveLogFilePath() = %q, want %q", got, want)
+	}
+}
+
+func TestLogFilePath_Unset_NoFileLogging(t *testing.T) {
+	paths := &config.Paths{Logs: filepath.Join(t.TempDir(), "logs")}
+
+	got := resolveLogFilePath("", paths)
+	if got != "" {
+		t.Fatalf("resolveLogFilePath() = %q, want empty path", got)
+	}
 }

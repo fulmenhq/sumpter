@@ -144,6 +144,8 @@ See [examples/index/](../../../examples/index/) for complete example record inde
 
 ## Related Documentation
 
-- [High-Scale XML Processing MVP Plan](../../../.plans/active/v0.1.2/xml_highscale_mvp.md)
 - [ADR-0005: Hybrid Streaming XML Architecture](../../../docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md)
 - [RecordScanner Implementation](../../../internal/extract/streaming/scanner.go)
+
+The high-scale index design is captured in the schema contract here and in
+ADR-0005's streaming architecture rationale.

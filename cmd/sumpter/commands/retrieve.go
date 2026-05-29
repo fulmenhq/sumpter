@@ -1,7 +1,10 @@
 package commands
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +114,52 @@ func validateWritableFile(filePath string) error {
 		return fmt.Errorf("cannot create/write to file: %s: %w", filePath, err)
 	}
 	_ = file.Close()
+
+	return nil
+}
+
+// ensureWritableTarget checks that path can be written without creating or
+// truncating the target as a validation side effect.
+func ensureWritableTarget(filePath string) error {
+	if filePath == "" {
+		return fmt.Errorf("file path cannot be empty")
+	}
+
+	parentDir := filepath.Dir(filePath)
+	parentInfo, err := os.Stat(parentDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("parent directory does not exist: %s", parentDir)
+		}
+		return fmt.Errorf("cannot access parent directory: %s: %w", parentDir, err)
+	}
+	if !parentInfo.IsDir() {
+		return fmt.Errorf("parent path is not a directory: %s", parentDir)
+	}
+
+	if info, err := os.Stat(filePath); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("output path is a directory: %s", filePath)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("output path is not a regular file: %s", filePath)
+		}
+		file, err := os.OpenFile(filePath, os.O_WRONLY, 0) // #nosec G304 - User-specified output path validated by caller.
+		if err != nil {
+			return fmt.Errorf("output file is not writable: %s: %w", filePath, err)
+		}
+		_ = file.Close()
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("cannot access output path: %s: %w", filePath, err)
+	}
+
+	tempFile, err := os.CreateTemp(parentDir, ".sumpter-find-write-*")
+	if err != nil {
+		return fmt.Errorf("parent directory is not writable: %s: %w", parentDir, err)
+	}
+	_ = tempFile.Close()
+	_ = os.Remove(tempFile.Name())
 
 	return nil
 }
@@ -272,7 +321,14 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 
 	// Validate output file if specified
 	if outputPath != "" {
-		if err := validateWritableFile(outputPath); err != nil {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		if err := utils.ValidateUserPathWithRoot(outputPath, utils.RootCwd, cwd); err != nil {
+			return fmt.Errorf("invalid output path: %w", err)
+		}
+		if err := ensureWritableTarget(outputPath); err != nil {
 			return fmt.Errorf("output path validation failed: %w", err)
 		}
 	}
@@ -282,28 +338,31 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 		includePattern = "*" + includePattern + "*"
 	}
 
-	output := os.Stdout
+	var output io.Writer = os.Stdout
+	var outputFile *os.File
 	if outputPath != "" {
-		// Get current working directory for path validation
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
-		}
-
-		// Validate user-provided output path
-		if err := utils.ValidateUserPathForCreate(outputPath, utils.RootCwd, cwd); err != nil {
-			return fmt.Errorf("invalid output path: %w", err)
-		}
 		var err2 error
-		output, err2 = os.Create(outputPath) // #nosec G304 - Path validated by ValidateUserPathForCreate
+		outputFile, err2 = os.Create(outputPath) // #nosec G304 - Path validated above.
 		if err2 != nil {
 			return fmt.Errorf("failed to create output file: %w", err2)
 		}
-		_ = output.Close()
+		defer func() {
+			if outputFile != nil {
+				_ = outputFile.Close()
+			}
+		}()
+		output = outputFile
 	}
 
+	writer := bufio.NewWriter(output)
+
+	type findMatch struct {
+		Path string `json:"path"`
+	}
+	matches := []findMatch{}
+
 	// Walk the directory tree
-	return filepath.Walk(inputPath, func(currentPath string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(inputPath, func(currentPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -359,17 +418,34 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 			}
 
 			if format == "json" {
-				// Output as JSON
-				if _, err := fmt.Fprintf(output, "{\"path\": %q}\n", line); err != nil {
-					return err
-				}
+				matches = append(matches, findMatch{Path: line})
 			} else {
-				if _, err := fmt.Fprintln(output, line); err != nil {
+				if _, err := fmt.Fprintln(writer, line); err != nil {
 					return err
 				}
 			}
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	if format == "json" {
+		if err := json.NewEncoder(writer).Encode(matches); err != nil {
+			return fmt.Errorf("failed to write JSON find results: %w", err)
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush find results: %w", err)
+	}
+	if outputFile != nil {
+		if err := outputFile.Close(); err != nil {
+			return fmt.Errorf("failed to close output file: %w", err)
+		}
+		outputFile = nil
+	}
+
+	return nil
 }

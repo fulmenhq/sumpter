@@ -47,7 +47,8 @@ SUMPTER_WORKDIR is determined in this order:
 
 - Default logger writes to stderr.
 - `--log-file <path>` writes logs to the specified file (append-safe) in addition to stderr.
-- When `--log-file` is provided without a directory component, logs are placed in `SUMPTER_HOME/logs/`.
+- When `--log-file` is provided as a relative path, logs are placed in `SUMPTER_HOME/logs/` using the path's basename. For example, `--log-file sumpter.log` and `--log-file ./local/sumpter.log` both write to `SUMPTER_HOME/logs/sumpter.log`.
+- When `--log-file` is provided as an absolute path, that path is used as-is.
 
 ---
 

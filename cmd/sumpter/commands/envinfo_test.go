@@ -368,8 +368,8 @@ func TestCollectXMLCapabilities(t *testing.T) {
 		}
 	}
 
-	if caps.MaxMemoryTarget != "<50MB RSS" {
-		t.Errorf("Expected MaxMemoryTarget '<50MB RSS', got '%s'", caps.MaxMemoryTarget)
+	if caps.MaxMemoryTarget != "input-streaming only" {
+		t.Errorf("Expected MaxMemoryTarget 'input-streaming only', got '%s'", caps.MaxMemoryTarget)
 	}
 
 	expectedOutputs := []string{"NDJSON", "Parquet", "DuckDB", "Markdown"}

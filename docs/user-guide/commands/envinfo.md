@@ -68,7 +68,7 @@ Timestamp       | 2024-01-15T14:30:25Z
 📄 XML Processing Capabilities
 ==================================================
 Streaming       | true
-Memory Target   | <50MB RSS
+Memory Target   | input-streaming only
 Encodings       | UTF-8, UTF-16, ISO-8859-1, Windows-1252
 Outputs         | NDJSON, Parquet, DuckDB, Markdown
 
@@ -159,7 +159,7 @@ Output:
 📄 XML Processing Capabilities
 ==================================================
 Streaming       | true
-Memory Target   | <50MB RSS
+Memory Target   | input-streaming only
 Encodings       | UTF-8, UTF-16, ISO-8859-1, Windows-1252
 Outputs         | NDJSON, Parquet, DuckDB, Markdown
 ```
@@ -180,7 +180,7 @@ Outputs         | NDJSON, Parquet, DuckDB, Markdown
 ### XML Processing Capabilities
 
 - **Streaming**: Whether streaming XML processing is supported
-- **Memory Target**: Maximum memory usage target
+- **Memory Target**: Current memory contract
 - **Encodings**: Supported character encodings
 - **Outputs**: Available output formats
 

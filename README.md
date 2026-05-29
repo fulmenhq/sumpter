@@ -85,7 +85,7 @@ See `schemas/envinfo/README.md` for details and validation examples.
 
 ## 🔑 Features
 
-- **Streaming-first**: Token-by-token parsing with constant memory profile (<50MB RSS)
+- **Streaming input parsing**: Gigabyte-class XML inputs are tokenized incrementally without loading the document into memory. Extracted records are buffered per file before output; the record-sink streaming refactor that makes bounded end-to-end memory true across sequential and parallel paths is on the v0.1.6 roadmap.
 - **Record Indexing**: Build seekable indexes for parallel extraction of multi-GB XML files
 - **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors

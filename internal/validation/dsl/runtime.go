@@ -19,6 +19,7 @@ func RunValidation(metadata *ValidationMetadata, record map[string]interface{}) 
 	if metadata.ExpressionLanguage != "" && metadata.ExpressionLanguage != "sumpter-dsl" {
 		return nil, fmt.Errorf("unsupported expression language %q: only 'sumpter-dsl' is currently supported", metadata.ExpressionLanguage)
 	}
+	metadata.ApplyDefaults()
 
 	runtime := NewValidationRuntime()
 	metadata.Runtime = runtime
@@ -124,6 +125,7 @@ func buildVariableContext(runtime *ValidationRuntime, doc map[string]interface{}
 
 func ComputeAggregations(ctx *ValidationRuntime, configs []AggregationConfig, doc map[string]interface{}) error {
 	for _, config := range configs {
+		config.ApplyDefaults()
 		variables := make(map[string]interface{})
 
 		for name, acc := range ctx.Accumulators {
@@ -361,9 +363,10 @@ func evaluateValidations(runtime *ValidationRuntime, configs []ValidationConfig,
 			return fmt.Errorf("validation %s did not return a boolean result", config.Name)
 		}
 
+		severity := normalizeValidationSeverity(config.Severity)
 		validationResult := ValidationResult{
 			Name:     config.Name,
-			Severity: config.Severity,
+			Severity: severity,
 			Value:    result,
 		}
 
@@ -377,7 +380,7 @@ func evaluateValidations(runtime *ValidationRuntime, configs []ValidationConfig,
 		validationResult.Message = formatValidationMessage(config.Message, variables)
 		runtime.AddValidationResult(validationResult)
 
-		if strings.EqualFold(config.Severity, "fatal") && policy.HaltOnFirstFatal {
+		if severity == "fatal" && policy.HaltOnFirstFatal {
 			break
 		}
 	}
