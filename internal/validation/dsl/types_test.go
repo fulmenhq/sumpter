@@ -95,6 +95,25 @@ func TestSchemaRuntimeParity_ValidationSeverityDefault(t *testing.T) {
 	}
 }
 
+func TestSchemaRuntimeParity_AggregationToleranceDefault(t *testing.T) {
+	schema := readExtractSchema(t)
+	validationMetadata := mustMappingChild(t, schema, "properties", "validation_metadata", "properties")
+	aggregations := mustMappingChild(t, validationMetadata, "aggregations", "items", "properties")
+	tolerance := mustMappingChild(t, aggregations, "tolerance")
+	defaultNode := mustDirectMappingChild(t, tolerance, "default")
+
+	var schemaDefault float64
+	if err := defaultNode.Decode(&schemaDefault); err != nil {
+		t.Fatalf("failed to decode aggregation tolerance default: %v", err)
+	}
+
+	config := AggregationConfig{}
+	config.ApplyDefaults()
+	if config.Tolerance != schemaDefault {
+		t.Fatalf("runtime aggregation tolerance default = %v, schema default = %v", config.Tolerance, schemaDefault)
+	}
+}
+
 func readExtractSchema(t *testing.T) *yaml.Node {
 	t.Helper()
 

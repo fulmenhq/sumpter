@@ -15,6 +15,7 @@ import (
 const (
 	defaultExpressionLanguage      = "sumpter-dsl"
 	defaultPlacement               = "footer"
+	defaultAggregationTolerance    = 0.01
 	defaultValidationSeverity      = "error"
 	defaultReconciliationSeverity  = "warning"
 	defaultReconciliationTolerance = 0.01
@@ -59,6 +60,8 @@ type AggregationConfig struct {
 	Expression string  `yaml:"expression" json:"expression"`
 	CompareTo  string  `yaml:"compare_to" json:"compare_to"`
 	Tolerance  float64 `yaml:"tolerance" json:"tolerance"`
+
+	toleranceSet bool `yaml:"-" json:"-"`
 }
 
 // ReconciliationConfig defines a reconciliation workflow for balancing aggregates.
@@ -179,6 +182,9 @@ func (m *ValidationMetadata) ApplyDefaults() {
 		m.Placement = defaultPlacement
 	}
 	m.FailurePolicy.ApplyDefaults()
+	for i := range m.Aggregations {
+		m.Aggregations[i].ApplyDefaults()
+	}
 	for i := range m.Validations {
 		m.Validations[i].Severity = normalizeValidationSeverity(m.Validations[i].Severity)
 	}
@@ -193,6 +199,52 @@ func (m *ValidationMetadata) ApplyDefaults() {
 			m.Reconciliations[i].GroupBy.ApplyDefaults()
 		}
 	}
+}
+
+// ApplyDefaults materializes aggregation defaults from the extract schema.
+func (c *AggregationConfig) ApplyDefaults() {
+	if c == nil {
+		return
+	}
+	if !c.toleranceSet && c.Tolerance == 0 {
+		c.Tolerance = defaultAggregationTolerance
+	}
+}
+
+// UnmarshalYAML tracks whether tolerance was explicitly supplied so authors
+// can opt into exact comparisons with tolerance: 0.
+func (c *AggregationConfig) UnmarshalYAML(value *yaml.Node) error {
+	type aggregationConfigYAML struct {
+		Name       string  `yaml:"name"`
+		Expression string  `yaml:"expression"`
+		CompareTo  string  `yaml:"compare_to"`
+		Tolerance  float64 `yaml:"tolerance"`
+	}
+
+	raw := aggregationConfigYAML{
+		Tolerance: defaultAggregationTolerance,
+	}
+
+	toleranceSet := false
+	if value.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			if value.Content[i].Value == "tolerance" {
+				toleranceSet = true
+				break
+			}
+		}
+	}
+
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	c.Name = raw.Name
+	c.Expression = raw.Expression
+	c.CompareTo = raw.CompareTo
+	c.Tolerance = raw.Tolerance
+	c.toleranceSet = toleranceSet
+	return nil
 }
 
 // ApplyDefaults materializes failure-policy defaults while preserving explicit

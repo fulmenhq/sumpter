@@ -373,6 +373,45 @@ func TestComputeAggregationsStoresResultAndComparesWithinTolerance(t *testing.T)
 	}
 }
 
+func TestComputeAggregationsUsesDefaultTolerance(t *testing.T) {
+	runtime := NewValidationRuntime()
+	doc := map[string]interface{}{
+		"reported_total": 10.005,
+	}
+
+	err := ComputeAggregations(runtime, []AggregationConfig{
+		{
+			Name:       "computed_total",
+			Expression: "10",
+			CompareTo:  "reported_total",
+		},
+	}, doc)
+	if err != nil {
+		t.Fatalf("ComputeAggregations failed: %v", err)
+	}
+}
+
+func TestAggregationExplicitZeroToleranceRequiresExactMatch(t *testing.T) {
+	var metadata ValidationMetadata
+	if err := yaml.Unmarshal([]byte(`
+enable: true
+aggregations:
+  - name: computed_total
+    expression: "10"
+    compare_to: reported_total
+    tolerance: 0
+`), &metadata); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	err := ComputeAggregations(NewValidationRuntime(), metadata.Aggregations, map[string]interface{}{
+		"reported_total": 10.005,
+	})
+	if err == nil {
+		t.Fatal("ComputeAggregations succeeded, want exact-match failure")
+	}
+}
+
 func TestBuildValidationReportIncludesQualitySummary(t *testing.T) {
 	metadata := &ValidationMetadata{
 		Enable:             true,

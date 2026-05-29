@@ -125,6 +125,7 @@ func buildVariableContext(runtime *ValidationRuntime, doc map[string]interface{}
 
 func ComputeAggregations(ctx *ValidationRuntime, configs []AggregationConfig, doc map[string]interface{}) error {
 	for _, config := range configs {
+		config.ApplyDefaults()
 		variables := make(map[string]interface{})
 
 		for name, acc := range ctx.Accumulators {

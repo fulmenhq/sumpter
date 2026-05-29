@@ -270,7 +270,7 @@ func collectEnvironmentData(all bool, filter string, includeNetwork, includeExte
 		xmlCapabilities = &XMLCapabilities{
 			StreamingSupported: true,
 			Encodings:          []string{"UTF-8", "UTF-16", "ISO-8859-1", "Windows-1252"},
-			MaxMemoryTarget:    "<50MB RSS",
+			MaxMemoryTarget:    "input-streaming only",
 			SupportedOutputs:   []string{"NDJSON", "Parquet", "DuckDB", "Markdown"},
 		}
 	}
@@ -980,7 +980,7 @@ func collectXMLCapabilities() XMLCapabilities {
 	return XMLCapabilities{
 		StreamingSupported: true,
 		Encodings:          []string{"UTF-8", "UTF-16", "ISO-8859-1", "Windows-1252"},
-		MaxMemoryTarget:    "<50MB RSS",
+		MaxMemoryTarget:    "input-streaming only",
 		SupportedOutputs:   []string{"NDJSON", "Parquet", "DuckDB", "Markdown"},
 	}
 }

@@ -346,12 +346,15 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 		if err2 != nil {
 			return fmt.Errorf("failed to create output file: %w", err2)
 		}
-		defer func() { _ = outputFile.Close() }()
+		defer func() {
+			if outputFile != nil {
+				_ = outputFile.Close()
+			}
+		}()
 		output = outputFile
 	}
 
 	writer := bufio.NewWriter(output)
-	defer func() { _ = writer.Flush() }()
 
 	type findMatch struct {
 		Path string `json:"path"`
@@ -432,6 +435,16 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 		if err := json.NewEncoder(writer).Encode(matches); err != nil {
 			return fmt.Errorf("failed to write JSON find results: %w", err)
 		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush find results: %w", err)
+	}
+	if outputFile != nil {
+		if err := outputFile.Close(); err != nil {
+			return fmt.Errorf("failed to close output file: %w", err)
+		}
+		outputFile = nil
 	}
 
 	return nil

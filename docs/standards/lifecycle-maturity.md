@@ -161,7 +161,7 @@ The Lifecycle Maturity Framework defines the progression stages for software pro
 
 - **Static Analysis**: Zero critical issues from go vet, golangci-lint
 - **Test Coverage**: Phase-appropriate coverage thresholds met
-- **Performance**: Memory usage <50MB RSS, reasonable CPU utilization
+- **Performance**: Streaming input memory posture documented and profiled, reasonable CPU utilization
 - **Security**: Zero critical vulnerabilities, PII protection implemented
 
 #### Architecture

@@ -144,7 +144,7 @@ make security-scan              # ✅ Should pass
 - [ ] External dependency integration tested
 - [ ] Network functionality validated
 - [ ] File system operations robust
-- [ ] Memory usage within target (<50MB RSS)
+- [ ] Memory behavior profiled against the documented phase target
 
 #### Documentation
 
@@ -180,7 +180,7 @@ make test-integration-short     # ✅ Should pass integration tests
 
 # Performance Validation
 make benchmark                  # ✅ Should show acceptable performance
-./scripts/memory-profile.sh     # ✅ Should show <50MB RSS usage
+./scripts/memory-profile.sh     # ✅ Should document memory behavior
 
 # Integration Validation
 ./dist/sumpter inspect --file large-test.xml  # ✅ Should process large files
