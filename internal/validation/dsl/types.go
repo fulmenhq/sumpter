@@ -6,7 +6,18 @@ package dsl
 
 import (
 	"fmt"
+	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	defaultExpressionLanguage      = "sumpter-dsl"
+	defaultPlacement               = "footer"
+	defaultValidationSeverity      = "error"
+	defaultReconciliationSeverity  = "warning"
+	defaultReconciliationTolerance = 0.01
 )
 
 // ValidationMetadata defines the complete validation configuration and runtime state.
@@ -29,6 +40,9 @@ type FailurePolicy struct {
 	ErrorThreshold   int  `yaml:"error_threshold" json:"error_threshold"`
 	WarningThreshold int  `yaml:"warning_threshold" json:"warning_threshold"`
 	HaltOnFirstFatal bool `yaml:"halt_on_first_fatal" json:"halt_on_first_fatal"`
+
+	failOnFatalSet      bool `yaml:"-" json:"-"`
+	haltOnFirstFatalSet bool `yaml:"-" json:"-"`
 }
 
 // AccumulationConfig defines an incremental operation computed during extraction.
@@ -151,6 +165,115 @@ type QualitySummary struct {
 	Fatals      int `json:"fatals"`
 }
 
+// ApplyDefaults materializes schema-declared validation metadata defaults at
+// runtime. YAML schema defaults are documentation unless the application
+// explicitly applies them after loading.
+func (m *ValidationMetadata) ApplyDefaults() {
+	if m == nil {
+		return
+	}
+	if strings.TrimSpace(m.ExpressionLanguage) == "" {
+		m.ExpressionLanguage = defaultExpressionLanguage
+	}
+	if strings.TrimSpace(m.Placement) == "" {
+		m.Placement = defaultPlacement
+	}
+	m.FailurePolicy.ApplyDefaults()
+	for i := range m.Validations {
+		m.Validations[i].Severity = normalizeValidationSeverity(m.Validations[i].Severity)
+	}
+	for i := range m.Reconciliations {
+		if strings.TrimSpace(m.Reconciliations[i].Severity) == "" {
+			m.Reconciliations[i].Severity = defaultReconciliationSeverity
+		}
+		if m.Reconciliations[i].Tolerance == 0 {
+			m.Reconciliations[i].Tolerance = defaultReconciliationTolerance
+		}
+		if m.Reconciliations[i].GroupBy != nil {
+			m.Reconciliations[i].GroupBy.ApplyDefaults()
+		}
+	}
+}
+
+// ApplyDefaults materializes failure-policy defaults while preserving explicit
+// YAML false overrides captured by UnmarshalYAML.
+func (p *FailurePolicy) ApplyDefaults() {
+	if p == nil {
+		return
+	}
+	if !p.failOnFatalSet {
+		p.FailOnFatal = true
+	}
+	if !p.haltOnFirstFatalSet {
+		p.HaltOnFirstFatal = true
+	}
+}
+
+// UnmarshalYAML sets the schema-documented defaults before applying user
+// values, preserving explicit false overrides for boolean fields.
+func (p *FailurePolicy) UnmarshalYAML(value *yaml.Node) error {
+	type failurePolicyYAML struct {
+		FailOnFatal      bool `yaml:"fail_on_fatal"`
+		ErrorThreshold   int  `yaml:"error_threshold"`
+		WarningThreshold int  `yaml:"warning_threshold"`
+		HaltOnFirstFatal bool `yaml:"halt_on_first_fatal"`
+	}
+
+	raw := failurePolicyYAML{
+		FailOnFatal:      true,
+		HaltOnFirstFatal: true,
+	}
+
+	failOnFatalSet := false
+	haltOnFirstFatalSet := false
+	if value.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			switch value.Content[i].Value {
+			case "fail_on_fatal":
+				failOnFatalSet = true
+			case "halt_on_first_fatal":
+				haltOnFirstFatalSet = true
+			}
+		}
+	}
+
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	p.FailOnFatal = raw.FailOnFatal
+	p.ErrorThreshold = raw.ErrorThreshold
+	p.WarningThreshold = raw.WarningThreshold
+	p.HaltOnFirstFatal = raw.HaltOnFirstFatal
+	p.failOnFatalSet = failOnFatalSet
+	p.haltOnFirstFatalSet = haltOnFirstFatalSet
+	return nil
+}
+
+// ApplyDefaults materializes group_by defaults from the extract schema.
+func (c *ReconciliationGroupByConfig) ApplyDefaults() {
+	if c == nil {
+		return
+	}
+	if strings.TrimSpace(c.MissingLabel) == "" {
+		c.MissingLabel = "unknown"
+	}
+	if strings.TrimSpace(c.Aggregation) == "" {
+		c.Aggregation = "sum"
+	}
+	if strings.TrimSpace(c.OverflowStrategy) == "" {
+		c.OverflowStrategy = "none"
+	}
+}
+
+func normalizeValidationSeverity(severity string) string {
+	normalized := strings.ToLower(strings.TrimSpace(severity))
+	if normalized == "" {
+		return defaultValidationSeverity
+	}
+	return normalized
+}
+
 // FilterExpression represents a parsed filter expression.
 type FilterExpression struct {
 	Field    string
@@ -232,7 +355,7 @@ func (r *ValidationRuntime) GetQualitySummary() QualitySummary {
 		if result.Result == "pass" {
 			summary.Passed++
 		} else {
-			switch result.Severity {
+			switch normalizeValidationSeverity(result.Severity) {
 			case "info":
 			case "warning":
 				summary.Warnings++
@@ -249,6 +372,7 @@ func (r *ValidationRuntime) GetQualitySummary() QualitySummary {
 
 // ShouldFailExtraction determines if extraction should fail based on policy.
 func (r *ValidationRuntime) ShouldFailExtraction(policy FailurePolicy) (bool, error) {
+	policy.ApplyDefaults()
 	summary := r.GetQualitySummary()
 
 	if policy.FailOnFatal && summary.Fatals > 0 {
