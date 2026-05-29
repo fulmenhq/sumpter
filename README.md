@@ -7,7 +7,61 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)]()
 [![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)]()
 
-Sumpter is a high-performance, Go-based streaming XML engine that transforms massive, malformed, and variant-heavy XML into clean, analytics-ready tables. With sub-second inspection, auto-generated extraction configs, and resilient outputs to NDJSON or Parquet, Sumpter helps teams **start fast and thrive on scale**. Built for enterprises where XML still runs the world, Sumpter makes the messy manageable — with speed, safety, and clarity.
+Sumpter is a streaming XML extraction engine for the inputs where the obvious tools break: large files, variant-heavy schemas, and recipe-driven outputs to NDJSON or Parquet. It's format-agnostic — the engine bakes in no vertical's schemas or record types; the shapes you extract live in recipes you author.
+
+---
+
+## 🧭 Why Sumpter?
+
+Sumpter is the streaming XML extraction engine for production pipelines: gigabyte-class regulatory filings (think XBRL on the scale of SEC EDGAR), variant-heavy scientific XML where the schema is more guideline than contract, and any pipeline that needs reproducible recipe-driven extraction into NDJSON or Parquet with reconciliation primitives built in. If that's the shape of what you process, Sumpter is built for you. If you're doing ad-hoc XML inspection on small files, `xmlstarlet` or `xq` are still the fast answer — and we'll point you there.
+
+---
+
+## ⏱️ See it in 30 seconds
+
+Inspect an XML file, run an extraction recipe against it, and read back structured records — using only the bundled `examples/` corpus, no external data required:
+
+```console
+$ sumpter inspect examples/cases/01-basic-extraction/input.xml
+# XML Inspection Report
+#
+# Encoding: WINDOWS-1252
+#
+# ## Top Paths
+# | Path                                  | Count | Attributes |
+# |---------------------------------------|-------|------------|
+# | WidgetCoData.Orders.Order             | 1     | 2          |
+# | WidgetCoData.Orders.Order.Customer    | 1     | 0          |
+# | WidgetCoData.Orders.Order.TotalAmount | 1     | 0          |
+
+$ sumpter recipes run extract examples/cases/01-basic-extraction/recipe \
+    --files examples/cases/01-basic-extraction/input.xml \
+    --output-path out/
+
+$ jq .extract.data out/records.jsonl
+{
+  "customer": "WidgetCo North",
+  "order_id": "ORDER-1001",
+  "status": "open",
+  "total_amount": 42.5
+}
+```
+
+<sub>Recorded with Sumpter v0.1.6 (alpha) against the bundled synthetic corpus. Pass <code>--log-level error</code> to silence startup logs as shown.</sub>
+
+---
+
+## 📂 Project status: alpha
+
+Sumpter is in **alpha** — for us that's about *interface stability*, not maturity. The CLI surface, recipe schema, and DSL may still change between releases as we converge on stable contracts. The engine runs real extraction workloads, gates every change behind tests (coverage thresholds rise from the alpha 50% baseline toward beta), and ships on a clean `govulncheck` security baseline.
+
+**What alpha means for you:** pin a version, skim the release notes before upgrading, and expect occasional breaking changes to recipes or flags. **What it doesn't mean:** that Sumpter is untested or unused.
+
+**Contributions are welcome** — issues, design discussion, and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md); for anything beyond a small fix, open an issue first so we can point you at in-flight work. The road to beta is about freezing the recipe/DSL/adapter contracts and raising coverage, not about whether the core works.
+
+**Memory contract:** XML input is tokenized incrementally, but extracted records are buffered per file before output. Bounded end-to-end memory across sequential and parallel paths is on the v0.1.6 roadmap — see [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md).
+
+Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
 
 ---
 
@@ -83,6 +137,14 @@ See `schemas/envinfo/README.md` for details and validation examples.
 
 ---
 
+## 🔎 Explore the examples
+
+The repository ships a corpus of self-contained, runnable examples — synthetic WidgetCo/GearCo orders that double as recipe-authoring references and extraction smoke tests. Start at [`examples/README.md`](examples/README.md) for the full case-by-feature index, or run them all with `make examples`.
+
+The public-data exemplars are deliberately drawn from **different verticals** to show the engine is domain-neutral: **financial filings** (SEC EDGAR XBRL) and **genomics** (NCBI ClinVar variant archives). ClinVar's ~50 GB release is sumpter's canonical scale test — it drove the streaming and seekable-index architecture. See [`docs/user-guide/public-data-examples.md`](docs/user-guide/public-data-examples.md) for acquisition and recipes, the [SEC EDGAR XBRL walkthrough](docs/appnotes/sourcedata/finance/sec-edgar-usage.md), and the [ClinVar parallel-extraction runbook](docs/runbooks/clinvar-parallel.md).
+
+---
+
 ## 🔑 Features
 
 - **Streaming input parsing**: Gigabyte-class XML inputs are tokenized incrementally without loading the document into memory. Extracted records are buffered per file before output; the record-sink streaming refactor that makes bounded end-to-end memory true across sequential and parallel paths is on the v0.1.6 roadmap.
@@ -111,11 +173,9 @@ See also:
 
 ---
 
-## 📂 Project Status
+## 📦 Capabilities
 
-**Current Version:** v0.1.5 (Alpha)
-
-Core capabilities available:
+Available today:
 - ✅ XML inspection and structure discovery
 - ✅ Record indexing with byte offsets and checksums
 - ✅ Seekable-zstd compressed indexes (10-20x smaller, CGO/source builds)
@@ -128,18 +188,12 @@ Core capabilities available:
 - 🔜 DuckDB output (planned)
 
 See `docs/releases/` for detailed release notes and `docs/user-guide/` for workflow documentation.
-Public-data examples and acquisition notes start at `docs/user-guide/public-data-examples.md`,
-including `docs/appnotes/sourcedata/finance/sec-edgar-usage.md` for SEC EDGAR workflows.
 
 ---
 
 ## 🤝 Contributing
 
-We welcome issues and PRs. Please:
-
-- Be constructive and include context/reproduction steps.
-- Respect coding and testing standards.
-- Security concerns? Open a private advisory or contact maintainers.
+Contributions are welcome — issues, design discussion, and pull requests. Sumpter is in alpha and the surface is still moving, so for anything beyond a small, self-contained fix please open an issue first and we'll point you at in-flight work. See [CONTRIBUTING.md](CONTRIBUTING.md) for details and the road to beta, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
 
 ---
 
