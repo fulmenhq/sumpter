@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -249,6 +252,219 @@ func TestValidateWritableFile(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnsureWritableTargetRejectsDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	err := ensureWritableTarget(tmpDir)
+	if err == nil {
+		t.Fatal("ensureWritableTarget() expected error for directory target, got nil")
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("ensureWritableTarget() error = %v, want directory message", err)
+	}
+}
+
+func TestEnsureWritableTargetRejectsMissingParent(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "missing", "results.txt")
+
+	err := ensureWritableTarget(target)
+	if err == nil {
+		t.Fatal("ensureWritableTarget() expected error for missing parent, got nil")
+	}
+	if !strings.Contains(err.Error(), "parent directory does not exist") {
+		t.Fatalf("ensureWritableTarget() error = %v, want missing parent message", err)
+	}
+}
+
+func TestEnsureWritableTargetDoesNotTruncateExistingFile(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "results.txt")
+	const sentinel = "existing content\n"
+	if err := os.WriteFile(target, []byte(sentinel), 0600); err != nil {
+		t.Fatalf("failed to write target file: %v", err)
+	}
+
+	if err := ensureWritableTarget(target); err != nil {
+		t.Fatalf("ensureWritableTarget() unexpected error = %v", err)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("failed to read target file: %v", err)
+	}
+	if string(got) != sentinel {
+		t.Fatalf("target content = %q, want %q", string(got), sentinel)
+	}
+}
+
+func TestRetrieveFind_Stdout_NoOutputPath(t *testing.T) {
+	searchRoot := makeRetrieveFindTree(t)
+
+	output := captureStdout(t, func() {
+		err := runFind(&RetrieveOptions{Flatten: true}, searchRoot, "*.xml", "", 0, false, "text", "", false)
+		if err != nil {
+			t.Fatalf("runFind() unexpected error = %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "a.xml\n") {
+		t.Fatalf("stdout output = %q, want a.xml match", output)
+	}
+	if strings.Contains(output, "b.txt") {
+		t.Fatalf("stdout output = %q, did not expect b.txt", output)
+	}
+}
+
+func TestRetrieveFind_OutputPath_Text(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	searchRoot := makeRetrieveFindTree(t)
+	outputPath := filepath.Join(workspace, "results.txt")
+
+	err := runFind(&RetrieveOptions{Flatten: true}, searchRoot, "*.xml", "", 0, false, "text", outputPath, false)
+	if err != nil {
+		t.Fatalf("runFind() unexpected error = %v", err)
+	}
+
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if !strings.Contains(string(got), "a.xml\n") || !strings.Contains(string(got), filepath.Join("nested", "c.xml")+"\n") {
+		t.Fatalf("output file = %q, want XML matches", string(got))
+	}
+	if strings.Contains(string(got), "b.txt") {
+		t.Fatalf("output file = %q, did not expect b.txt", string(got))
+	}
+}
+
+func TestRetrieveFind_OutputPath_JSON(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	searchRoot := makeRetrieveFindTree(t)
+	outputPath := filepath.Join(workspace, "results.json")
+
+	err := runFind(&RetrieveOptions{Flatten: true}, searchRoot, "*.xml", "", 0, false, "json", outputPath, false)
+	if err != nil {
+		t.Fatalf("runFind() unexpected error = %v", err)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+
+	var matches []struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(data, &matches); err != nil {
+		t.Fatalf("output file is not a valid JSON document: %v; data=%q", err, string(data))
+	}
+	if len(matches) != 2 {
+		t.Fatalf("matches len = %d, want 2; matches=%v", len(matches), matches)
+	}
+	if matches[0].Path == "" || matches[1].Path == "" {
+		t.Fatalf("matches = %v, want populated paths", matches)
+	}
+}
+
+func TestRetrieveFind_NoMatches(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	searchRoot := makeRetrieveFindTree(t)
+	outputPath := filepath.Join(workspace, "results.txt")
+
+	err := runFind(&RetrieveOptions{Flatten: true}, searchRoot, "*.csv", "", 0, false, "text", outputPath, false)
+	if err != nil {
+		t.Fatalf("runFind() unexpected error = %v", err)
+	}
+
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("output file = %q, want empty file for no text matches", string(got))
+	}
+}
+
+func TestRetrieveFind_OutputPath_RejectsDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	searchRoot := makeRetrieveFindTree(t)
+
+	err := runFind(&RetrieveOptions{}, searchRoot, "*.xml", "", 0, false, "text", workspace, false)
+	if err == nil {
+		t.Fatal("runFind() expected directory target error, got nil")
+	}
+	if !strings.Contains(err.Error(), "output path validation failed") {
+		t.Fatalf("runFind() error = %v, want output path validation failure", err)
+	}
+}
+
+func TestRetrieveFind_OutputPath_RejectsUnwritableParent(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	searchRoot := makeRetrieveFindTree(t)
+	outputPath := filepath.Join(workspace, "missing", "results.txt")
+
+	err := runFind(&RetrieveOptions{}, searchRoot, "*.xml", "", 0, false, "text", outputPath, false)
+	if err == nil {
+		t.Fatal("runFind() expected missing parent error, got nil")
+	}
+	if !strings.Contains(err.Error(), "parent directory does not exist") {
+		t.Fatalf("runFind() error = %v, want missing parent message", err)
+	}
+}
+
+func makeRetrieveFindTree(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	files := map[string]string{
+		"a.xml":                          "<root/>",
+		"b.txt":                          "not xml",
+		filepath.Join("nested", "c.xml"): "<root/>",
+	}
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+			t.Fatalf("failed to create parent for %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatalf("failed to write %s: %v", path, err)
+		}
+	}
+	return root
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	originalStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	fn()
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("failed to read captured stdout: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("failed to close pipe reader: %v", err)
+	}
+	return string(output)
 }
 
 func TestCopyCommandStructure(t *testing.T) {
