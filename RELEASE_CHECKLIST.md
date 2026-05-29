@@ -199,3 +199,8 @@ For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<versi
 - Some items may not apply to all releases (use judgment)
 - Prioritize quality over speed - never skip tests or code review
 - When in doubt, consult @3leapsdave before proceeding
+
+## Confidentiality (ADR-0008)
+
+- [ ] `make pr-final` passes (it runs the confidentiality hook; for a release, confirm a concrete check is configured via the operator/CI environment).
+- [ ] Any tooling configured with a local-data path points outside the repository tree (via an environment variable), per [ADR-0008](docs/architecture/adr/0008-sensitive-data-outside-repository-trees.md).

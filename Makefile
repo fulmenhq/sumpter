@@ -548,8 +548,13 @@ pr-final-drift-check: ## Verify final PR validation leaves tracked files unchang
 	@echo "$(GREEN)✅ Final PR drift check passed$(NC)"
 
 .PHONY: pr-final
-pr-final: prepush examples pr-final-drift-check ## Run final PR validation, including examples and drift checks
+pr-final: prepush examples confidentiality-tree-check pr-final-drift-check ## Run final PR validation, including examples and drift checks
 	@echo "$(GREEN)✅ PR final validation passed!$(NC)"
+
+.PHONY: confidentiality-tree-check
+confidentiality-tree-check: ## Verify no local-data file lives in the repo tree (ADR-0008)
+	@echo "$(BLUE)🔒 confidentiality tree check (ADR-0008)...$(NC)"
+	@bash scripts/confidentiality-tree-check.sh
 
 # Safety checks
 .PHONY: safety-check
