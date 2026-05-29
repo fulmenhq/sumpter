@@ -96,7 +96,6 @@ cooling:
 #
 policy_engine:
   type: embedded  # Recommended for most use cases
-
 # ============================================================================
 # SBOM CONFIGURATION (Software Bill of Materials)
 # ============================================================================
@@ -109,11 +108,28 @@ policy_engine:
 #
 # ⚠️  IMPORTANT: Add 'sbom/' to .gitignore
 #
-# Uncomment to customize SBOM settings:
-# sbom:
-#   output_dir: sbom
-#   format: cyclonedx-json
-#   include_dev_dependencies: false
+sbom:
+  output_dir: sbom
+  format: cyclonedx-json
+  include_dev_dependencies: false
+# Repository-local Syft exclusions live in .syft.yaml so SBOM generation
+# inventories tracked source/dependency manifests without local ignored caches.
+
+# ============================================================================
+# VULNERABILITY SCANNING
+# ============================================================================
+# Scans SBOM output using grype. The policy fails on high+ findings in the
+# tracked dependency surface; raw scanner noise from ignored local artifacts is
+# excluded at the Syft source layer.
+#
+# Commands:
+#   goneat dependencies --vuln
+#
+vulnerabilities:
+  enabled: true
+  tool: grype
+  fail_on: high
+  ignore_unfixed: false
 
 # ============================================================================
 # ASSESSMENT INTEGRATION

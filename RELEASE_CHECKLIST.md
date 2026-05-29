@@ -6,7 +6,7 @@ Standard checklist for sumpter releases to ensure consistency and quality.
 
 ### Version Planning
 
-- [ ] Feature briefs in productbook sumpter stream (`fulmenhq-productbook-internal/content/projmgmt/sumpter/`) marked done
+- [ ] Release-tracking briefs marked done in the internal roadmap source
 - [ ] All planned features implemented and tested
 - [ ] Breaking changes documented
 - [ ] Migration guide written (if applicable)
@@ -38,15 +38,17 @@ Standard checklist for sumpter releases to ensure consistency and quality.
 - [ ] `go.mod` dependencies reviewed
 - [ ] Local replace directives removed (switch to GitHub releases)
 - [ ] Dependency versions finalized
-- [ ] `go mod tidy` executed
-- [ ] No security vulnerabilities in dependencies
+- [ ] `make mod-tidy` executed and `git diff --exit-code go.mod go.sum` confirms no module drift; if drift appears, handle it in a dedicated dependency PR before continuing
+- [ ] `goneat dependencies --licenses --vuln` reports `Passed: true` and `violations: 0`
+- [ ] SBOM/vulnerability output under `sbom/` spot-checked; raw scanner noise is documented in the security notes or SDRs, not ignored silently
+- [ ] No reachable security vulnerabilities in dependencies
 
 ## Release Preparation
 
 ### Version Updates
 
 - [ ] Update `VERSION` file (sumpter injects version via LDFLAGS — no `.fulmen/app.yaml` or `internal/buildinfo/VERSION` mirror to keep in sync)
-- [ ] Version sanity check: `make release-guard-tag-version SUMPTER_RELEASE_TAG=v<version>` (or `RELEASE_TAG=v<version>` for one-off invocations; SUMPTER_RELEASE_TAG is preferred when sourced from `~/devsecops/vars/fulmenhq-sumpter-cicd.sh`)
+- [ ] Version sanity check: `make release-guard-tag-version SUMPTER_RELEASE_TAG=v<version>` (or `RELEASE_TAG=v<version>` for one-off invocations; SUMPTER_RELEASE_TAG is preferred when sourced from the operator-private release environment)
 - [ ] Search for hardcoded version references (`grep -rE "0\\.1\\.3" --include=\"*.go\" --include=\"*.md\" --include=\"*.yaml\"`)
 
 ### Git Hygiene
@@ -56,9 +58,11 @@ Standard checklist for sumpter releases to ensure consistency and quality.
 - [ ] No uncommitted changes: `git status` clean
 - [ ] All commits have proper trailers
 - [ ] Pre-push checks run: `make prepush`
+- [ ] Final PR checks run: `make pr-final`; if `pr-final-drift-check` reports tracked-file or module drift, split that drift into a separate PR before release
 
 ### Final Validation
 
+- [ ] `make pr-final` passes from a clean working tree
 - [ ] Fresh clone test: Clone repo fresh, run `make build && make test`
 - [ ] Integration tests pass
 - [ ] Performance benchmarks acceptable (if applicable)
@@ -73,10 +77,10 @@ Follow the Fulmen "manifest-only" provenance pattern:
 - Sign manifests with minisign (primary) and optionally PGP
 - Ship trust anchors (public keys) with the release
 
-- [ ] Source the operator-private env file once (sets SUMPTER_MINISIGN_KEY, SUMPTER_MINISIGN_PUB, SUMPTER_PGP_KEY_ID, SUMPTER_GPG_HOMEDIR — keys are fulmenhq-org-scoped, identical across fulmenhq Go repos):
+- [ ] Source the operator-private release env file once (sets SUMPTER_MINISIGN_KEY, SUMPTER_MINISIGN_PUB, SUMPTER_PGP_KEY_ID, SUMPTER_GPG_HOMEDIR — keys are fulmenhq-org-scoped, identical across fulmenhq Go repos):
 
   ```bash
-  source ~/devsecops/vars/fulmenhq-sumpter-cicd.sh
+  source <operator-private-release-env>
   ```
 
 - [ ] Set the release tag once for the whole ceremony (the Makefile resolves SUMPTER_RELEASE_TAG → RELEASE_TAG; never auto-defaults to v<VERSION>, so a forgotten export fails loud rather than silently picking the wrong tag):
@@ -111,6 +115,7 @@ For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<versi
 
 ### Tagging
 
+- [ ] Confirm the release tag is created from the exact tree that just passed `make pr-final`; if an emergency hotfix must bypass this, document the bypass reason in the release notes
 - [ ] Create annotated git tag: `git tag -a v<version> -m "Release v<version>"`
 - [ ] Tag message includes brief release summary
 
@@ -130,13 +135,13 @@ For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<versi
 
 ### Communication
 
-- [ ] Announce release in Mattermost `#repo-sumpter-ops` (on `org-fulmenhq`)
-- [ ] Notify downstream consumer teams via the relevant Mattermost channel if integration patterns changed (DSL semantics, recipe schema additions, CLI surface changes)
+- [ ] Announce release in the project release-ops channel
+- [ ] Notify downstream consumer teams through the relevant coordination channel if integration patterns changed (DSL semantics, recipe schema additions, CLI surface changes)
 
 ### Housekeeping
 
-- [ ] Update productbook sumpter stream (`content/projmgmt/sumpter/index.md`) — mark shipped SUM-NNN briefs as ✅ done
-- [ ] Plan next version features in productbook
+- [ ] Update the internal roadmap source and mark shipped SUM-NNN briefs done
+- [ ] Plan next version features in the internal roadmap source
 
 ### Monitoring
 
