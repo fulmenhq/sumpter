@@ -130,12 +130,13 @@ func initializeEnvironment(cmd *cobra.Command, args []string) {
 	}
 
 	// Override config with command-line flags
+	resolvedLogFile := resolveLogFilePath(logFile, paths)
 	mainCfg.Logging.Level = logLevel
 	mainCfg.Logging.Format = logFormat
 	mainCfg.Logging.UseColor = logColor
 	mainCfg.Logging.File.Enabled = logFile != ""
 	if logFile != "" {
-		mainCfg.Logging.File.Path = logFile
+		mainCfg.Logging.File.Path = resolvedLogFile
 	}
 	mainCfg.Logging.Telemetry.Enabled = logTelemetry
 
@@ -146,7 +147,7 @@ func initializeEnvironment(cmd *cobra.Command, args []string) {
 		Component:       "sumpter",
 		PIIMode:         logging.PIIModeSafe,
 		PIISafeOnly:     true,
-		LogFile:         logFile,
+		LogFile:         resolvedLogFile,
 		EnableTelemetry: logTelemetry,
 		ServiceName:     "sumpter",
 		ServiceVersion:  "dev",
@@ -159,11 +160,6 @@ func initializeEnvironment(cmd *cobra.Command, args []string) {
 			Compress:   true,
 			TimeFormat: "2006-01-02",
 		},
-	}
-
-	// Update log file path if relative
-	if logFile != "" && !filepath.IsAbs(logFile) {
-		logCfg.LogFile = paths.GetDefaultLogPath()
 	}
 
 	// Initialize logger
@@ -255,12 +251,13 @@ func testableInitializeEnvironment(cmd *cobra.Command, args []string) (*config.P
 	}
 
 	// Override config with command-line flags (same as original)
+	resolvedLogFile := resolveLogFilePath(logFile, paths)
 	mainCfg.Logging.Level = logLevel
 	mainCfg.Logging.Format = logFormat
 	mainCfg.Logging.UseColor = logColor
 	mainCfg.Logging.File.Enabled = logFile != ""
 	if logFile != "" {
-		mainCfg.Logging.File.Path = logFile
+		mainCfg.Logging.File.Path = resolvedLogFile
 	}
 	mainCfg.Logging.Telemetry.Enabled = logTelemetry
 
@@ -271,7 +268,7 @@ func testableInitializeEnvironment(cmd *cobra.Command, args []string) (*config.P
 		Component:       "sumpter",
 		PIIMode:         logging.PIIModeSafe,
 		PIISafeOnly:     true,
-		LogFile:         logFile,
+		LogFile:         resolvedLogFile,
 		EnableTelemetry: logTelemetry,
 		ServiceName:     "sumpter",
 		ServiceVersion:  "dev",
@@ -285,11 +282,7 @@ func testableInitializeEnvironment(cmd *cobra.Command, args []string) (*config.P
 			TimeFormat: "2006-01-02",
 		},
 	}
-
-	// Update log file path if relative (same as original)
-	if logFile != "" && !filepath.IsAbs(logFile) {
-		logCfg.LogFile = paths.GetDefaultLogPath()
-	}
+	_ = logCfg
 
 	// Skip actual logging initialization to avoid global state issues
 	// In a real scenario, this would call: logging.Initialize(logCfg)
@@ -298,4 +291,14 @@ func testableInitializeEnvironment(cmd *cobra.Command, args []string) (*config.P
 	cmd.Context()
 
 	return paths, nil
+}
+
+func resolveLogFilePath(logFile string, paths *config.Paths) string {
+	if strings.TrimSpace(logFile) == "" {
+		return ""
+	}
+	if filepath.IsAbs(logFile) {
+		return logFile
+	}
+	return filepath.Join(paths.Logs, filepath.Base(filepath.Clean(logFile)))
 }
