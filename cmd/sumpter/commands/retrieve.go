@@ -359,7 +359,7 @@ func runFind(opts *RetrieveOptions, inputPath, includePattern, excludePattern st
 	type findMatch struct {
 		Path string `json:"path"`
 	}
-	var matches []findMatch
+	matches := []findMatch{}
 
 	// Walk the directory tree
 	if err := filepath.Walk(inputPath, func(currentPath string, info os.FileInfo, err error) error {

@@ -389,6 +389,36 @@ func TestRetrieveFind_NoMatches(t *testing.T) {
 	}
 }
 
+func TestRetrieveFind_NoMatches_JSON(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	searchRoot := makeRetrieveFindTree(t)
+	outputPath := filepath.Join(workspace, "results.json")
+
+	err := runFind(&RetrieveOptions{Flatten: true}, searchRoot, "*.csv", "", 0, false, "json", outputPath, false)
+	if err != nil {
+		t.Fatalf("runFind() unexpected error = %v", err)
+	}
+
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "[]" {
+		t.Fatalf("output file = %q, want empty JSON array", string(got))
+	}
+
+	var matches []struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(got, &matches); err != nil {
+		t.Fatalf("output file is not a valid JSON array: %v; data=%q", err, string(got))
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches len = %d, want 0; matches=%v", len(matches), matches)
+	}
+}
+
 func TestRetrieveFind_OutputPath_RejectsDirectory(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
