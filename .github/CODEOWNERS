@@ -1,0 +1,23 @@
+# Sumpter — Code Owners
+#
+# Required reviewers for changes in matching paths. The last matching pattern
+# wins, so order specific overrides AFTER the catch-all.
+#
+# See: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything not otherwise covered
+*                              @3leapsdave
+
+# Governance / safety / release surfaces — explicit owner pin
+LICENSE                        @3leapsdave
+NOTICE                         @3leapsdave
+MAINTAINERS.md                 @3leapsdave
+SECURITY.md                    @3leapsdave
+CODE_OF_CONDUCT.md             @3leapsdave
+CONTRIBUTING.md                @3leapsdave
+REPOSITORY-SAFETY-PROTOCOLS.md @3leapsdave
+RELEASE_CHECKLIST.md           @3leapsdave
+/.github/                      @3leapsdave
+/docs/standards/               @3leapsdave
+/docs/sop/                     @3leapsdave
+/.goneat/                      @3leapsdave
