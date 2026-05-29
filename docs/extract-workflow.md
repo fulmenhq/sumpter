@@ -1,6 +1,6 @@
 # Sumpter Extract Workflow
 
-The extract command streams XML through recipe-driven field mappings and produces JSON output. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
+The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces JSON output. Extracted records are currently buffered per file before output; the record-sink streaming refactor that makes bounded end-to-end memory true across sequential and parallel paths is on the v0.1.6 roadmap. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
 
 ## Output Formats
 

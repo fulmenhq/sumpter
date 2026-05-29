@@ -10,7 +10,7 @@ sumpter inspect [file] [flags]
 
 ## Description
 
-The `inspect` command performs a comprehensive streaming analysis of XML files to understand their structure, encoding, and content patterns. It's designed for large files (100MB+) with constant memory usage and configurable sampling to balance speed and insight.
+The `inspect` command performs a comprehensive streaming analysis of XML files to understand their structure, encoding, and content patterns. It uses streaming input parsing for large files (100MB+) with configurable sampling to balance speed and insight.
 
 ## Parameters
 
@@ -333,7 +333,7 @@ Error: output invalid against schema: 2 error(s)
 
 ## Notes
 
-- Streaming processing ensures constant memory usage
+- Streaming input parsing avoids loading the full XML document into memory
 - Default limits prevent excessive memory consumption
 - Progress reporting uses stderr to avoid interfering with output
 - Schema validation requires `goneat` library

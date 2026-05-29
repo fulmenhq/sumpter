@@ -360,8 +360,8 @@ This command performs a streaming analysis of XML files to:
 - Sample text content for understanding data patterns
 - Generate reports in Markdown or JSON format
 
-The command is designed for large files (100MB+) with constant memory usage
-and configurable sampling to balance speed and insight.`,
+The command uses streaming input parsing for large files (100MB+) with
+configurable sampling to balance speed and insight.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				opts.File = args[0]

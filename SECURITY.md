@@ -69,10 +69,10 @@ If you follow this policy in good faith (e.g., no exploitation beyond proof-of-c
 
 When using sumpter in your applications and pipelines:
 
-- **XML Input Validation**: Treat untrusted XML as untrusted. Sumpter's streaming token decoder is designed to bound memory on large inputs, but operator-supplied recipes and DSL expressions can still amplify problematic inputs.
+- **XML Input Validation**: Treat untrusted XML as untrusted. Sumpter tokenizes large XML inputs incrementally, but extracted records are buffered per file before output and operator-supplied recipes or DSL expressions can amplify problematic inputs.
 - **Recipe Trust Boundary**: Recipes are executable configuration. Run recipes you didn't write the same way you'd run a script you didn't write — review the DSL, the field bindings, and any external references before invoking.
 - **Output Path Discipline**: Use the documented output-path validation and never disable it for production runs. Avoid writing into shared directories that other processes are reading from.
-- **Resource Limits**: For unattended pipelines, run sumpter with explicit memory and time bounds (ulimit, systemd resource controls, container limits). The streaming architecture targets sub-50MB RSS for typical inputs but is not a hard cap.
+- **Resource Limits**: For unattended pipelines, run sumpter with explicit memory and time bounds (ulimit, systemd resource controls, container limits). Current releases do not promise bounded end-to-end extraction memory across all paths.
 - **Dependency Hygiene**: Keep your Go toolchain and `go.sum` current. Sumpter ships with a clean `govulncheck` baseline; preserve that posture in downstream forks by running `govulncheck ./...` after dependency changes.
 - **Logging**: Sumpter's logging package applies environment-variable redaction. Don't disable that redaction in production. If your recipes embed credentials (they shouldn't), audit log output before forwarding to centralized logging.
 
