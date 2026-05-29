@@ -231,7 +231,9 @@ go test -v ./internal/index/... -run TestBuilder_Build_SmallXML
 - **Schema**: `schemas/index/v0.1.0/record-index.schema.json`
 - **Examples**: `examples/index/clinvar-sample.recordindex.json`
 - **ADR-0005**: Hybrid Streaming XML Architecture
-- **Plan**: `.plans/active/v0.1.2/xml_highscale_mvp.md`
+- **Design summary**: Record indexes persist byte ranges, hashes, and record
+  metadata so extraction can seek directly to records without reparsing
+  predecessor content.
 - **RecordScanner**: `internal/extract/streaming/scanner.go`
 
 ## Future Enhancements (Phase 3)
