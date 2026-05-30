@@ -723,9 +723,9 @@ version-set: ## Set explicit version (usage: make version-set VERSION_NEW=1.2.3)
 #   2. CI workflow (.github/workflows/release.yml) builds + publishes binaries
 #   3. operator (@3leapsdave) runs signing ceremony (release publishes as DRAFT
 #      from CI; the ceremony promotes it to published as the final step. Set
-#      SUMPTER_RELEASE_TAG once — sourced from ~/devsecops/vars/fulmenhq-sumpter-
-#      cicd.sh OR passed as RELEASE_TAG= on each invocation):
-#        source ~/devsecops/vars/fulmenhq-sumpter-cicd.sh   # signing keys
+#      SUMPTER_RELEASE_TAG once — sourced from your operator release-signing
+#      env file OR passed as RELEASE_TAG= on each invocation):
+#        source <operator release-signing env file>   # signing keys (operator-local)
 #        export SUMPTER_RELEASE_TAG=v<version>
 #        make release-clean
 #        make release-download
@@ -767,7 +767,7 @@ release-guard-tag-version: ## Guard: ensure RELEASE_TAG is set (via SUMPTER_RELE
 	@if [ -z "$(RELEASE_TAG)" ]; then \
 		echo "$(RED)❌ RELEASE_TAG not set.$(NC)" >&2; \
 		echo "$(RED)   Set SUMPTER_RELEASE_TAG in your shell environment (preferred):$(NC)" >&2; \
-		echo "$(RED)     source ~/devsecops/vars/fulmenhq-sumpter-cicd.sh$(NC)" >&2; \
+		echo "$(RED)     source <operator release-signing env file>$(NC)" >&2; \
 		echo "$(RED)     export SUMPTER_RELEASE_TAG=v$(VERSION)$(NC)" >&2; \
 		echo "$(RED)   OR pass RELEASE_TAG= on the make invocation (one-off):$(NC)" >&2; \
 		echo "$(RED)     make $(MAKECMDGOALS) RELEASE_TAG=v$(VERSION)$(NC)" >&2; \

@@ -380,8 +380,8 @@ git push origin [branch-name]
 ### AI Agent Development Workflow
 
 ```bash
-# 1. Confirm role/scope/identity (see AGENTS.md warmup)
-source ~/devsecops/vars/agent-identity/<role>-fulmenhq.sh
+# 1. Confirm role/scope/identity (see AGENTS.md warmup; identity setup is
+#    operator-local — see AGENTS.local.md when present)
 echo "role=$LANYTE_AGENT_ROLE scope=$LANYTE_AGENT_SCOPE"
 
 # 2. Work on a feature branch (NOT main)
