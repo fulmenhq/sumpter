@@ -84,17 +84,19 @@ tree, never in-tree behind `.gitignore` (a convenience filter, not a security
 boundary). `make pr-final` runs a confidentiality hook for this; the concrete
 check is configured by the operator or CI per
 [ADR-0008](docs/architecture/adr/0008-sensitive-data-outside-repository-trees.md).
-Concrete machine-local locations and tooling specifics are in `AGENTS.local.md`.
+Concrete machine-local locations and tooling specifics are operator-private
+and **maintainer-held out of the repo tree** (not in any tracked or gitignored
+in-tree file). Ask the maintainer if you need them.
 
 ## 🗂️ Local-Only Scratchpads
 
 A `.plans/active/` directory at the repo root is the conventional location
 for **machine-local, non-evergreen** planning notes (in-flight design,
 release checkpoints, strategy drafts). It is gitignored — you will not find
-it in a fresh clone, and it is not synchronized across machines. (This
-replaces the older single-file `AGENTS.local.md` convention with a directory
-of dated documents.) Anything that needs to be shared or versioned belongs
-in `docs/` and goes through the normal PR flow.
+it in a fresh clone, and it is not synchronized across machines. It holds
+machine-local planning notes as a directory of dated documents. Anything that
+needs to be shared or versioned belongs in `docs/` and goes through the normal
+PR flow.
 
 ## 📋 Quick Reference SOPs
 
@@ -124,8 +126,9 @@ The org-root warmup in [`../AGENTS.md`](../AGENTS.md) is authoritative for
 identity, Mattermost channel usage, and checkpointing. Repo guidance here is
 authoritative for Sumpter build, safety, lifecycle, and XML-processing rules.
 
-Detailed operator guidance and command patterns live in local-only
-`AGENTS.local.md` when present.
+Detailed operator guidance and command patterns are operator-private and
+maintainer-held **outside the repo tree** (see the org-root warm-up). They are
+not shipped in this repo; ask the maintainer if you need them.
 
 Role functions are coordinated by slug rather than persona name:
 

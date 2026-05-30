@@ -38,14 +38,16 @@ tree.**
   rejects a configured path that resolves inside the repository root, and does
   not echo sensitive content in its own output.
 - Concrete machine-local locations and any operational specifics belong in
-  local operator notes (`AGENTS.local.md`), not in tracked files.
+  operator notes held **outside the repo tree**, not in tracked (or gitignored
+  in-tree) files.
 
 ### Permitted in-tree exception: abstract placeholders only
 
-Gitignored operator-guidance files intended to be local (`AGENTS.local.md`,
-local planning notes) may remain in the tree only if they contain abstract
-placeholders, never concrete sensitive values. Concrete values always go to the
-out-of-tree location.
+Gitignored operator-guidance files intended to be local (e.g. local planning
+notes under `.plans/active/`) may remain in the tree only if they contain
+abstract placeholders, never concrete sensitive values. Operator notes that
+carry concrete machine paths or tooling specifics live fully out of the tree;
+concrete values always go to the out-of-tree location.
 
 ### `.env` files: secrets by reference
 
@@ -81,10 +83,10 @@ conventionally sit inside the tree.
 
 - One extra local-setup step per machine or worktree to point tooling at the
   out-of-tree location → keep machine-specific *locations* (not values) in
-  `AGENTS.local.md`; prefer environment variables for paths.
+  out-of-tree operator notes; prefer environment variables for paths.
 
 ## References
 
 - [3leaps/oss-policies — SENSITIVE-LOCAL-DATA.md](https://github.com/3leaps/oss-policies/blob/main/SENSITIVE-LOCAL-DATA.md) — canonical org policy (this ADR declares conformance and adds sumpter-specific detail).
 - `AGENTS.md` § Confidentiality Posture (OSS Surface) — the behavioral half; this ADR is the structural half.
-- `AGENTS.local.md` — local operator guidance, including the concrete out-of-tree locations and any tooling specifics.
+- Operator notes (maintainer-held, out of the repo tree) — concrete out-of-tree locations and tooling specifics; not shipped in this repo.
