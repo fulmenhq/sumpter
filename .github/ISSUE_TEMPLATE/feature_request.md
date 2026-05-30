@@ -7,10 +7,10 @@ assignees: ''
 ---
 
 <!--
-Sumpter is in alpha — we welcome feature ideas via issue discussion before
-any code is written. External pull requests are paused except by invitation
-during alpha (see CONTRIBUTING.md); design discussion in issues is the
-fastest path to influence the roadmap.
+Sumpter is in alpha — we welcome feature ideas, and contributions are welcome
+too (see CONTRIBUTING.md). Because the surface is still moving, opening an issue
+to discuss the design before writing code is the fastest path to influence the
+roadmap and avoid colliding with in-flight work.
 -->
 
 ## Problem / use case

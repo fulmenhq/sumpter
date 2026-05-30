@@ -2,13 +2,15 @@
 
 Thanks for your interest in Sumpter! We're currently in the **ALPHA** phase. We value your feedback and early testing while we stabilize the streaming-XML core, the recipe DSL, and the output adapters.
 
+> For an overview of what alpha means across the whole project, see the **Project status: alpha** section of the [README](README.md). This document is the canonical home for the contribution posture specifically.
+
 ## Current posture
 
-- **External pull requests**: Temporarily paused except by invitation
+- **External pull requests**: Welcome. The surface is still moving, so for anything beyond a small, self-contained fix, open an issue first — we'll point you at in-flight work and the right shape before you invest time.
 - **Issues and discussions**: Welcome — bug reports, feature requests, recipe-DSL questions, UX feedback
 - **Security reports**: Please report privately per [SECURITY.md](SECURITY.md); coordinated disclosure only
 
-Rationale: during ALPHA we iterate quickly, may make breaking changes to the CLI, the recipe schema, and the DSL, and are prioritizing velocity and internal dogfooding. This posture prevents churn for contributors while we converge on stable APIs. We expect to open PRs to external contributors at BETA.
+Rationale: during ALPHA we iterate quickly and may make breaking changes to the CLI, the recipe schema, and the DSL. The "issue first for non-trivial work" step isn't a gate on contribution — it's how we keep your effort from colliding with a surface that's still converging. Alpha here is a statement about *interface stability*, not about whether the engine is ready: it runs real workloads, every change is gated behind tests, and we ship on a clean security baseline.
 
 ## How to help today
 
@@ -19,17 +21,17 @@ Rationale: during ALPHA we iterate quickly, may make breaking changes to the CLI
 
 ## Road to BETA
 
-We expect to accept public PRs at BETA when:
+What we're converging on before we call Sumpter beta:
 
 - The recipe DSL surface stabilizes (no more breaking grammar changes)
 - The output-adapter contracts (NDJSON, Parquet) freeze on minor versions
 - Coverage gates raise from the alpha 50% baseline toward the beta 70% target
 
-Until then, maintainers may tag issues as **"help wanted (invited)"** for targeted contributions.
+Until then, expect breaking changes between releases — pin a version and read the release notes before upgrading. Maintainers tag issues as **"help wanted"** when they're well-scoped for an outside contributor.
 
 ## Development basics
 
-If you're working on an invited contribution or a maintainer-internal fork:
+To build and test locally:
 
 ```bash
 # Build
