@@ -75,8 +75,16 @@ formats, or vertical-trade identifiers**. Generic industry framing is fine
 examples (ClinVar, SEC EDGAR XBRL) are encouraged. Client-specific recipes,
 fixtures, and workspaces live outside this repo and stay there.
 
-The forthcoming `limensafe` scanner will enforce this in CI/DX; until then,
-follow the posture manually and call out questionable wording in review.
+Automated CI/DX checks are being introduced to support this posture; until
+they are in place, follow the posture manually and call out questionable
+wording in review.
+
+Sensitive or proprietary local data lives **outside** the repository working
+tree, never in-tree behind `.gitignore` (a convenience filter, not a security
+boundary). `make pr-final` runs a confidentiality hook for this; the concrete
+check is configured by the operator or CI per
+[ADR-0008](docs/architecture/adr/0008-sensitive-data-outside-repository-trees.md).
+Concrete machine-local locations and tooling specifics are in `AGENTS.local.md`.
 
 ## 🗂️ Local-Only Scratchpads
 
