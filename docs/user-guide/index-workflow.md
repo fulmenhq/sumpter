@@ -16,6 +16,7 @@ Record indexes map the byte boundaries of repeating XML elements in your source 
 ### Good Use Cases
 
 **Large Files with Repeating Records**
+
 ```xml
 <!-- Multi-GB file with thousands of repeating elements -->
 <ClinicalData>
@@ -26,6 +27,7 @@ Record indexes map the byte boundaries of repeating XML elements in your source 
 ```
 
 Indexing helps when:
+
 - Source file is >100 MB
 - File contains hundreds or thousands of records
 - You need to extract subsets of records
@@ -33,6 +35,7 @@ Indexing helps when:
 - File will be processed multiple times
 
 **Compressed Archives**
+
 ```bash
 # Index builder transparently handles gzip compression
 sumpter index build large-dataset.xml.gz --selector "//Record"
@@ -43,11 +46,13 @@ Indexing decompresses once during build, then enables seekable access to the unc
 ### When Indexes Don't Help
 
 **Small Files**
+
 - Files under 10 MB: Sequential extraction is faster
 - Single-record files: No benefit to indexing
 - Ad-hoc exploration: Use `sumpter inspect` instead
 
 **Simple Transformations**
+
 - One-time conversions where you'll extract all records anyway
 - Files that change frequently (index becomes stale)
 - Scenarios where build time exceeds extraction savings
@@ -69,6 +74,7 @@ sumpter inspect data.xml \
 ```
 
 The inspect command shows:
+
 - How many records match the selector
 - Average record size
 - Total file size
@@ -97,6 +103,7 @@ sumpter index build large-file.xml \
 ```
 
 **What Happens During Build:**
+
 1. First pass: Compute SHA-256 hash of entire source file
 2. Second pass: Stream through file to detect record boundaries
 3. For each record: Capture start/end byte offsets and size
@@ -104,6 +111,7 @@ sumpter index build large-file.xml \
 5. Write index file with metadata and record map
 
 **Memory Usage:**
+
 - Constant regardless of source file size
 - Tested with 59 GB XML file using <100 MB RAM
 - Index size: ~25-35 bytes per record in JSON format
@@ -122,12 +130,14 @@ sumpter index verify data.xml \
 ```
 
 Verification checks:
+
 - ✓ Source file size matches index metadata
 - ✓ Source file SHA-256 matches index metadata
 - ✓ Source file has not been modified since index creation
 - ✓ (Deep mode) Each record's byte range checksum matches
 
 **When to Verify:**
+
 - Before parallel extraction runs
 - After transferring files between systems
 - When debugging extraction issues
@@ -148,6 +158,7 @@ sumpter extract files \
 ```
 
 Even with sequential extraction, the index provides:
+
 - Record-level tamper detection
 - Progress tracking (N of M records)
 - Ability to resume from specific record numbers
@@ -166,6 +177,7 @@ sumpter extract files \
 ```
 
 Parallel extraction:
+
 - Spawns worker pool (default: 4 workers)
 - Each worker seeks to specific record byte offsets
 - No need to parse preceding records
@@ -183,6 +195,7 @@ sumpter index build retail-journal.xml \
 ```
 
 **Results:**
+
 - Records: 588 transactions
 - Total size: 3.08 MB
 - Average record: 5.36 KB
@@ -190,6 +203,7 @@ sumpter index build retail-journal.xml \
 - Index size: 47 KB
 
 **Verification:**
+
 ```bash
 sumpter index verify retail-journal.xml \
   --index retail.recordindex.json \
@@ -197,6 +211,7 @@ sumpter index verify retail-journal.xml \
 ```
 
 Output:
+
 ```
 ✓ Index verification passed
   Source size: match
@@ -225,6 +240,7 @@ sumpter index build ClinVarVCVRelease_00-latest.xml.gz \
 ```
 
 **Results:**
+
 - Compressed: 4.7 GB (.gz)
 - Uncompressed: 59.1 GB
 - Records: 3,772,454 variants
@@ -235,6 +251,7 @@ sumpter index build ClinVarVCVRelease_00-latest.xml.gz \
 - Index file: 1.0 GB (JSON) or ~50-100 MB (seekable-zstd)
 
 **Record Size Distribution:**
+
 - P50 (median): 12.2 KB
 - P95: 33.2 KB
 - P99: 63.9 KB
@@ -246,9 +263,9 @@ Traditional DOM-based extraction of this file would require ~111 GB of RAM (1.88
 
 Sumpter supports two index formats:
 
-| Format | Extension | Use Case |
-|--------|-----------|----------|
-| JSON | `*.recordindex.json` | Default, human-readable, debuggable |
+| Format        | Extension                   | Use Case                                |
+| ------------- | --------------------------- | --------------------------------------- |
+| JSON          | `*.recordindex.json`        | Default, human-readable, debuggable     |
 | Seekable-Zstd | `*.recordindex.header.json` | Large indexes (1M+ records), compressed |
 
 ### JSON Format Structure
@@ -300,19 +317,23 @@ Sumpter supports two index formats:
 ### Fields
 
 **source**: Immutable metadata about the indexed file
+
 - Changing the source file invalidates the index
 - Verification compares current file against these values
 
 **selector**: XPath and extracted element name
+
 - Used to locate record boundaries
 - Must match the extraction recipe's record selector
 
 **records**: Array of record metadata (can be very large)
+
 - Byte offsets enable seekable access
 - SHA-256 allows per-record integrity checking
 - Sorted by `record_num` (1-indexed)
 
 **summary**: Statistical overview
+
 - Helps estimate extraction performance
 - Percentiles show data distribution
 - Useful for capacity planning
@@ -323,11 +344,11 @@ For extreme-scale indexes (millions of records), Sumpter supports a compressed b
 
 ### Why Seekable-Zstd?
 
-| Metric | JSON Format | Seekable-Zstd | Improvement |
-|--------|-------------|---------------|-------------|
-| Disk Size (3.7M records) | ~1 GB | ~50-100 MB | 10-20x smaller |
-| Memory (streaming) | Constant | Constant | Same |
-| Random Access | Sequential scan | O(1) seek | Parallel-ready |
+| Metric                   | JSON Format     | Seekable-Zstd | Improvement    |
+| ------------------------ | --------------- | ------------- | -------------- |
+| Disk Size (3.7M records) | ~1 GB           | ~50-100 MB    | 10-20x smaller |
+| Memory (streaming)       | Constant        | Constant      | Same           |
+| Random Access            | Sequential scan | O(1) seek     | Parallel-ready |
 
 ### Output Files
 
@@ -339,12 +360,14 @@ source.recordindex.records.szst  # Binary records (compressed)
 ```
 
 **Header file** contains:
+
 - Source file metadata (path, size, SHA-256)
 - Selector information
 - Summary statistics
 - Records encoding metadata (width, count, endianness)
 
 **Records file** contains:
+
 - Fixed-width binary records (64 bytes each)
 - Seekable-zstd compression with frame-level random access
 
@@ -395,6 +418,7 @@ CGO_ENABLED=1 go build -tags seekablezstd ./cmd/sumpter
 ```
 
 **Platform Support:**
+
 - Linux glibc (amd64): Pre-built static library
 - Linux musl (amd64): Pre-built static library
 - macOS: Requires building seekable-zstd from source
@@ -434,13 +458,14 @@ sumpter index build compressed.xml.gz \
 ```
 
 **Process:**
+
 1. Detect compression from file extension
 2. Wrap file reader in decompressor
 3. Stream decompressed bytes to scanner
 4. Build index from uncompressed offsets
 5. Mark `source.compressed = true` in index
 
-**Important:** Byte offsets in the index refer to the *uncompressed* stream. When using the index for extraction, Sumpter handles decompression transparently.
+**Important:** Byte offsets in the index refer to the _uncompressed_ stream. When using the index for extraction, Sumpter handles decompression transparently.
 
 ## Integration with Extract Workflow
 
@@ -464,6 +489,7 @@ indexes:
 ```
 
 Run with an index:
+
 ```bash
 sumpter recipes run extract ./recipes/retail-daily-sales \
   --input-path testdata/transactions.xml \
@@ -496,12 +522,12 @@ sumpter extract files \
 
 **Worker Pool Sizing:**
 
-| Workers | Use Case |
-|---------|----------|
-| 1 | Sequential processing (default) |
-| 4 | Balanced for most workloads |
-| 8-16 | CPU-bound extraction logic |
-| 16+ | Very large files with simple extraction |
+| Workers | Use Case                                |
+| ------- | --------------------------------------- |
+| 1       | Sequential processing (default)         |
+| 4       | Balanced for most workloads             |
+| 8-16    | CPU-bound extraction logic              |
+| 16+     | Very large files with simple extraction |
 
 Performance scales linearly up to I/O saturation or CPU core count.
 
@@ -510,6 +536,7 @@ Performance scales linearly up to I/O saturation or CPU core count.
 ### Index Storage
 
 **Location:**
+
 ```
 project/
 ├── data/
@@ -521,6 +548,7 @@ project/
 ```
 
 **Version Control:**
+
 - Commit indexes for test data (small, stable files)
 - Exclude indexes for production data (.gitignore)
 - Document index rebuild process in README
@@ -528,12 +556,14 @@ project/
 ### Index Lifecycle
 
 **When to Rebuild:**
+
 - Source file modified (hash mismatch)
 - Selector changed (different record boundaries)
 - Sumpter version upgrade (format compatibility)
 - Compression format changed
 
 **When to Keep:**
+
 - Source file unchanged
 - Multiple extraction runs planned
 - Sharing work with teammates
@@ -542,11 +572,13 @@ project/
 ### Performance Tips
 
 **Index Build:**
+
 - Build on local SSD (not network storage)
 - Enable `--progress` for large files
 - Consider compression for index storage (gzip the .json file)
 
 **Index Usage:**
+
 - Verify before long extraction runs
 - Use `--workers` based on available CPU cores
 - Monitor memory usage with large indexes (1M+ records)
@@ -655,6 +687,7 @@ sumpter extract files \
 ## Summary
 
 Record indexes enable efficient processing of large XML files by:
+
 - Mapping record boundaries once, using many times
 - Enabling random access without full file parsing
 - Supporting parallel extraction with worker pools

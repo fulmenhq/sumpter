@@ -53,7 +53,7 @@ $ jq .extract.data out/records.jsonl
 
 ## 📂 Project status: alpha
 
-Sumpter is in **alpha** — for us that's about *interface stability*, not maturity. The CLI surface, recipe schema, and DSL may still change between releases as we converge on stable contracts. The engine runs real extraction workloads, gates every change behind tests (coverage thresholds rise from the alpha 50% baseline toward beta), and ships on a clean `govulncheck` security baseline.
+Sumpter is in **alpha** — for us that's about _interface stability_, not maturity. The CLI surface, recipe schema, and DSL may still change between releases as we converge on stable contracts. The engine runs real extraction workloads, gates every change behind tests (coverage thresholds rise from the alpha 50% baseline toward beta), and ships on a clean `govulncheck` security baseline.
 
 **What alpha means for you:** pin a version, skim the release notes before upgrading, and expect occasional breaking changes to recipes or flags. **What it doesn't mean:** that Sumpter is untested or unused.
 
@@ -176,6 +176,7 @@ See also:
 ## 📦 Capabilities
 
 Available today:
+
 - ✅ XML inspection and structure discovery
 - ✅ Record indexing with byte offsets and checksums
 - ✅ Seekable-zstd compressed indexes (10-20x smaller, CGO/source builds)

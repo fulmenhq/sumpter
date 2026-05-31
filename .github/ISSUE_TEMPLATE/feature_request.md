@@ -3,7 +3,7 @@ name: Feature request
 about: Suggest a new capability or improvement for sumpter
 title: "[feature] "
 labels: enhancement
-assignees: ''
+assignees: ""
 ---
 
 <!--

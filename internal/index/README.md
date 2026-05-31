@@ -5,6 +5,7 @@ Package `index` provides streaming XML record index building and verification wi
 ## Overview
 
 This package implements Phase 2 of the High-Scale XML Processing MVP, enabling:
+
 - **Streaming index building** with constant memory usage (<100MB regardless of file size)
 - **SHA-256 integrity verification** at both file and per-record levels
 - **Statistical analysis** (min/max/avg/percentiles) of record sizes
@@ -20,6 +21,7 @@ The builder uses a **two-pass streaming architecture**:
 2. **Second Pass**: Stream through records, collect metadata, compute per-record hashes
 
 Memory usage remains constant because:
+
 - Records are scanned using `streaming.RecordScannerSizeOnly` (no XML buffering)
 - Per-record hashes are computed by seeking to byte ranges (no full record buffering)
 - Statistics are calculated incrementally
@@ -28,7 +30,9 @@ Memory usage remains constant because:
 ### Key Types
 
 #### RecordIndex
+
 Complete index structure conforming to `record-index/v0.1.0` schema:
+
 ```go
 type RecordIndex struct {
     Version  string           // Schema version
@@ -41,7 +45,9 @@ type RecordIndex struct {
 ```
 
 #### Builder
+
 Streaming index builder:
+
 ```go
 builder := index.NewBuilder(index.BuildOptions{
     InputPath:      "/path/to/file.xml",
@@ -60,7 +66,9 @@ err = builder.WriteToFile(idx, "/path/to/output.recordindex.json")
 ```
 
 #### Verifier
+
 Index integrity verifier:
+
 ```go
 verifier := index.NewVerifier(index.VerifyOptions{
     InputPath:     "/path/to/file.xml",
@@ -171,10 +179,12 @@ Memory usage: <100MB regardless of file size
 ### SHA-256 Computation
 
 **File Hash** (`computeFileSHA256`):
+
 - Streams entire file through SHA-256 hasher
 - Constant memory (streaming I/O)
 
 **Record Hash** (`computeRangeHashSHA256`):
+
 - Seeks to record start offset
 - Reads exactly `endOffset - startOffset` bytes
 - Computes SHA-256 of that range
@@ -183,6 +193,7 @@ Memory usage: <100MB regardless of file size
 ### Percentile Calculation
 
 Uses **linear interpolation** between sorted values:
+
 ```go
 index = p * (len(sizes) - 1)
 lower := int(index)
@@ -196,6 +207,7 @@ This matches standard statistical percentile definitions (R-7 method).
 ### Compression Detection
 
 Detects compression based on file extension:
+
 - `.gz` → gzip
 - `.bz2` → bzip2
 - `.xz` → xz
@@ -208,6 +220,7 @@ Note: Compressed files record logical offsets (decompressed positions), not phys
 ### Test Coverage
 
 80.1% statement coverage across:
+
 - Builder tests (build, write, helpers)
 - Verifier tests (valid, tampered, missing file, record verification)
 - Utility function tests (hash, percentile, compression detection)
