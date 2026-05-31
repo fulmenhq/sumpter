@@ -8,6 +8,8 @@ Versioned JSON Schemas for Sumpter configurations and outputs.
 
 - `inspect-report/`
   - `v0.1.0/inspect-report.schema.yaml` — SSOT for inspect JSON output
+- `index/`
+  - `v0.1.1/record-index.schema.json` — SSOT for record index JSON output
 - `extract-config/` (future)
   - `v1.0.0/extract-config.schema.json`
 - `env/` (future)

@@ -192,6 +192,9 @@ func TestWriteReadRoundtrip(t *testing.T) {
 	if header.Summary.TotalRecords != testIndex.Summary.TotalRecords {
 		t.Errorf("TotalRecords mismatch: got %d, want %d", header.Summary.TotalRecords, testIndex.Summary.TotalRecords)
 	}
+	if header.Source.OffsetKind != index.OffsetKindSourceBytes {
+		t.Errorf("OffsetKind mismatch: got %q, want %q", header.Source.OffsetKind, index.OffsetKindSourceBytes)
+	}
 
 	// Read all records and verify SHA256 values match
 	iter, err := store.Records(context.Background())

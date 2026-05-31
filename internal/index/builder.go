@@ -1,7 +1,6 @@
 package index
 
 import (
-	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,11 +13,6 @@ import (
 	"time"
 
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
-)
-
-const (
-	// SchemaVersion is the current record index schema version
-	SchemaVersion = "record-index/v0.1.0"
 )
 
 // Builder creates XML record indexes with streaming architecture
@@ -47,14 +41,17 @@ func (b *Builder) Build() (*RecordIndex, error) {
 		return nil, fmt.Errorf("failed to stat input file: %w", err)
 	}
 
+	// Detect and reject compressed inputs before any hashing, scanning, or output.
+	compressed, compressionFormat := DetectCompression(b.opts.InputPath)
+	if compressed {
+		return nil, CompressedSourceIndexBuildError(b.opts.InputPath, compressionFormat)
+	}
+
 	// Compute source file SHA256 (first pass)
 	sourceHash, err := computeFileSHA256(b.opts.InputPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute source file hash: %w", err)
 	}
-
-	// Detect compression
-	compressed, compressionFormat := detectCompression(b.opts.InputPath)
 
 	// Open file for record scanning (second pass)
 	file, err := os.Open(b.opts.InputPath)
@@ -63,21 +60,7 @@ func (b *Builder) Build() (*RecordIndex, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	// Wrap reader in decompressor if needed
 	var reader io.Reader = file
-	if compressed {
-		switch compressionFormat {
-		case "gzip":
-			gzReader, err := gzip.NewReader(file)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create gzip reader: %w", err)
-			}
-			defer func() { _ = gzReader.Close() }()
-			reader = gzReader
-		default:
-			return nil, fmt.Errorf("unsupported compression format: %s", compressionFormat)
-		}
-	}
 
 	// Create record scanner in size-only mode for memory efficiency
 	scanner := streaming.NewRecordScannerSizeOnly(reader, b.opts.Selector)
@@ -181,6 +164,7 @@ func (b *Builder) Build() (*RecordIndex, error) {
 			SHA256:            sourceHash,
 			Compressed:        compressed,
 			CompressionFormat: compressionFormat,
+			OffsetKind:        OffsetKindSourceBytes,
 			CreatedAt:         time.Now().UTC(),
 		},
 		Selector: SelectorInfo{
@@ -201,6 +185,13 @@ func (b *Builder) Build() (*RecordIndex, error) {
 
 // WriteToFile writes the record index to a JSON file
 func (b *Builder) WriteToFile(index *RecordIndex, outputPath string) error {
+	if index == nil {
+		return fmt.Errorf("record index is required")
+	}
+	normalized := *index
+	normalized.Version = SchemaVersion
+	NormalizeRecordIndex(&normalized)
+
 	// Create output directory if needed
 	dir := filepath.Dir(outputPath)
 	// #nosec G301 - standard permissions for output directories
@@ -217,7 +208,7 @@ func (b *Builder) WriteToFile(index *RecordIndex, outputPath string) error {
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(index); err != nil {
+	if err := encoder.Encode(&normalized); err != nil {
 		return fmt.Errorf("failed to encode index to JSON: %w", err)
 	}
 
@@ -261,21 +252,6 @@ func computeRangeHashSHA256(path string, start, end int64) (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-// detectCompression determines if a file is compressed based on extension
-func detectCompression(path string) (bool, string) {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".gz":
-		return true, "gzip"
-	case ".bz2":
-		return true, "bzip2"
-	case ".xz":
-		return true, "xz"
-	default:
-		return false, "none"
-	}
 }
 
 // extractElementName extracts the element name from an XPath selector

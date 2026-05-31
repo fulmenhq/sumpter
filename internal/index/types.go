@@ -2,8 +2,22 @@ package index
 
 import "time"
 
+const (
+	// SchemaVersion is the current JSON record index schema version.
+	SchemaVersion = "record-index/v0.1.1"
+
+	// LegacySchemaVersion is the previous JSON record index schema version.
+	LegacySchemaVersion = "record-index/v0.1.0"
+
+	// OffsetKindSourceBytes means record offsets address the source file bytes.
+	OffsetKindSourceBytes = "source_bytes"
+
+	// OffsetKindDecompressedBytes means record offsets address a decompressed stream.
+	OffsetKindDecompressedBytes = "decompressed_bytes"
+)
+
 // RecordIndex represents the complete XML record index structure
-// conforming to the record-index/v0.1.0 JSON schema.
+// conforming to the record-index JSON schema.
 type RecordIndex struct {
 	Version  string           `json:"version"`
 	Source   SourceInfo       `json:"source"`
@@ -20,6 +34,7 @@ type SourceInfo struct {
 	SHA256            string    `json:"sha256"`
 	Compressed        bool      `json:"compressed"`
 	CompressionFormat string    `json:"compression_format,omitempty"`
+	OffsetKind        string    `json:"offset_kind,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	Encoding          string    `json:"encoding,omitempty"`
 }

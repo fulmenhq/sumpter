@@ -37,11 +37,12 @@ Indexing helps when:
 **Compressed Archives**
 
 ```bash
-# Index builder transparently handles gzip compression
-sumpter index build large-dataset.xml.gz --selector "//Record"
+# Decompress first, then build the index from source bytes
+gunzip -c large-dataset.xml.gz > large-dataset.xml
+sumpter index build large-dataset.xml --selector "//Record"
 ```
 
-Indexing decompresses once during build, then enables seekable access to the uncompressed stream.
+Record indexes are source-byte indexes. Build them from uncompressed XML so verification and parallel extraction can seek to the same bytes recorded in the index.
 
 ### When Indexes Don't Help
 
@@ -219,18 +220,21 @@ Output:
   Records verified: 588
 ```
 
-### Example 2: Genomics Variant Data (4.7 GB Compressed, 3.7M Records)
+### Example 2: Large Public Variant Data (4.7 GB Archive, 3.7M Records)
 
 ```bash
+# Decompress the public archive before indexing
+gunzip -c ClinVarVCVRelease_00-latest.xml.gz > ClinVarVCVRelease_00-latest.xml
+
 # Build index for ClinVar release (JSON format)
-sumpter index build ClinVarVCVRelease_00-latest.xml.gz \
+sumpter index build ClinVarVCVRelease_00-latest.xml \
   --selector "//VariationArchive" \
   --output ClinVarVCVRelease.recordindex.json \
   --progress \
   --allow-large-files
 
 # Or use seekable-zstd for 10-20x smaller index (v0.1.2+)
-sumpter index build ClinVarVCVRelease_00-latest.xml.gz \
+sumpter index build ClinVarVCVRelease_00-latest.xml \
   --selector "//VariationArchive" \
   --emit-szst \
   --emit-json=false \
@@ -272,13 +276,14 @@ Sumpter supports two index formats:
 
 ```json
 {
-  "version": "record-index/v0.1.0",
+  "version": "record-index/v0.1.1",
   "source": {
     "path": "/path/to/source.xml",
     "size_bytes": 3235840,
     "sha256": "a7f3e9d2...",
-    "compressed": true,
-    "compression_format": "gzip",
+    "compressed": false,
+    "compression_format": "none",
+    "offset_kind": "source_bytes",
     "created_at": "2024-11-17T12:35:41Z"
   },
   "selector": {
@@ -396,13 +401,13 @@ sumpter index build data.xml \
 All commands auto-detect the format by extension:
 
 ```bash
-# Stream-walk compressed index
+# Stream-walk seekable-zstd index
 sumpter index stream data.recordindex.header.json
 
-# Verify with compressed index
+# Verify with seekable-zstd index
 sumpter index verify data.xml --index data.recordindex.header.json
 
-# Extract with compressed index (parallel workers)
+# Extract with seekable-zstd index (parallel workers)
 sumpter extract files \
   --record-index data.recordindex.header.json \
   --workers 8 \
@@ -444,15 +449,16 @@ ENTRYPOINT ["sumpter"]
 
 ### Supported Formats
 
-- **gzip** (.gz): Fully supported
-- **bzip2** (.bz2): Detected but not yet implemented
-- **xz** (.xz): Detected but not yet implemented
+- **gzip** (.gz): Detected and rejected for index builds; decompress before indexing
+- **bzip2** (.bz2): Detected and rejected for index builds
+- **xz** (.xz): Detected and rejected for index builds
 
 ### Compression Workflow
 
 ```bash
-# Index builder transparently decompresses
-sumpter index build compressed.xml.gz \
+# Decompress first, then index source bytes
+gunzip -c compressed.xml.gz > compressed.xml
+sumpter index build compressed.xml \
   --selector "//Record" \
   --output compressed.recordindex.json
 ```
@@ -460,12 +466,12 @@ sumpter index build compressed.xml.gz \
 **Process:**
 
 1. Detect compression from file extension
-2. Wrap file reader in decompressor
-3. Stream decompressed bytes to scanner
-4. Build index from uncompressed offsets
-5. Mark `source.compressed = true` in index
+2. Reject compressed input before hashing, scanning, or writing an index
+3. Decompress to a normal XML file
+4. Build index from source-byte offsets
+5. Mark `source.compressed = false` and `source.offset_kind = "source_bytes"` in index
 
-**Important:** Byte offsets in the index refer to the _uncompressed_ stream. When using the index for extraction, Sumpter handles decompression transparently.
+**Important:** Byte offsets in supported indexes refer to bytes in the indexed source file. Verification and parallel extraction refuse indexes marked as compressed or `offset_kind = "decompressed_bytes"`.
 
 ## Integration with Extract Workflow
 
@@ -575,7 +581,7 @@ project/
 
 - Build on local SSD (not network storage)
 - Enable `--progress` for large files
-- Consider compression for index storage (gzip the .json file)
+- Use seekable-zstd index storage for large record maps
 
 **Index Usage:**
 
@@ -589,9 +595,14 @@ project/
 
 **Error:** `XML syntax error on line 1: illegal character code U+001F`
 
-**Cause:** Compressed file not decompressed before parsing
+**Cause:** Compressed file was passed where uncompressed XML was expected
 
-**Solution:** Ensure you're using Sumpter v0.1.2+ which includes gzip decompression support
+**Solution:** Decompress first, then rebuild the index:
+
+```bash
+gunzip -c input.xml.gz > input.xml
+sumpter index build input.xml --selector "//Record"
+```
 
 ---
 

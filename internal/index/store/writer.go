@@ -32,7 +32,7 @@ const (
 )
 
 // SzstStoreVersion is the version identifier for the seekable-zstd store format.
-// This is distinct from the JSON schema version (record-index/v0.1.0) to allow
+// This is distinct from the JSON schema version (record-index/v0.1.1) to allow
 // independent evolution of the binary store format.
 const SzstStoreVersion = "record-index-szst/v0.1.0"
 
@@ -65,23 +65,29 @@ type SzstRecordsMetadata struct {
 //   - /path/to/clinvar.recordindex.header.json
 //   - /path/to/clinvar.recordindex.records.szst
 func WriteSeekableIndex(basePath string, idx *index.RecordIndex) error {
+	if idx == nil {
+		return fmt.Errorf("record index is required")
+	}
+	normalized := *idx
+	index.NormalizeRecordIndex(&normalized)
+
 	headerPath := basePath + ".recordindex.header.json"
 	recordsPath := basePath + ".recordindex.records.szst"
 
 	// Write binary records first (so we can fail early if encoder unavailable)
-	if err := writeBinaryRecords(recordsPath, idx.Records); err != nil {
+	if err := writeBinaryRecords(recordsPath, normalized.Records); err != nil {
 		return fmt.Errorf("failed to write binary records: %w", err)
 	}
 
 	// Create header
 	header := SzstIndexHeader{
 		Version:  SzstStoreVersion,
-		Source:   idx.Source,
-		Selector: idx.Selector,
-		Summary:  idx.Summary,
-		Metadata: idx.Metadata,
+		Source:   normalized.Source,
+		Selector: normalized.Selector,
+		Summary:  normalized.Summary,
+		Metadata: normalized.Metadata,
 		Records: SzstRecordsMetadata{
-			RecordCount:      len(idx.Records),
+			RecordCount:      len(normalized.Records),
 			RecordWidthBytes: BinaryRecordWidth,
 			SHAEncoding:      "raw32",
 			Endianness:       "little",

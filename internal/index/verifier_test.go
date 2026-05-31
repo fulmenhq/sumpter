@@ -3,6 +3,7 @@ package index
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -355,5 +356,115 @@ func TestLoadIndex(t *testing.T) {
 	if len(loaded.Records) != len(index.Records) {
 		t.Errorf("Records count mismatch: expected %d, got %d",
 			len(index.Records), len(loaded.Records))
+	}
+}
+
+func TestLoadIndex_LegacyVersionDefaultsSourceByteOffsets(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "legacy.index.json")
+
+	rawLegacy := `{
+  "version": "record-index/v0.1.0",
+  "source": {
+    "path": "/test/file.xml",
+    "size_bytes": 1024,
+    "sha256": "abc123",
+    "compressed": false,
+    "compression_format": "none",
+    "created_at": "2026-05-31T00:00:00Z"
+  },
+  "selector": {
+    "xpath": "//Record",
+    "element_name": "Record"
+  },
+  "records": [],
+  "summary": {
+    "total_records": 0,
+    "total_bytes": 0,
+    "avg_record_size_bytes": 0,
+    "min_record_size_bytes": 0,
+    "max_record_size_bytes": 0
+  },
+  "metadata": {
+    "generator": "test"
+  }
+}`
+	if err := os.WriteFile(indexPath, []byte(rawLegacy), 0644); err != nil {
+		t.Fatalf("Failed to write raw legacy index: %v", err)
+	}
+
+	loaded, err := LoadIndex(indexPath)
+	if err != nil {
+		t.Fatalf("Failed to load legacy index: %v", err)
+	}
+	if loaded.Source.OffsetKind != OffsetKindSourceBytes {
+		t.Fatalf("Expected legacy index offset kind %q, got %q", OffsetKindSourceBytes, loaded.Source.OffsetKind)
+	}
+}
+
+func TestVerifier_Verify_RejectsDecompressedOffsetKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "test.xml")
+	if err := os.WriteFile(xmlPath, []byte(`<?xml version="1.0"?><root><Record>Data</Record></root>`), 0644); err != nil {
+		t.Fatalf("Failed to create test XML: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{InputPath: xmlPath, Selector: "//Record"})
+	idx, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Failed to build index: %v", err)
+	}
+	idx.Source.OffsetKind = OffsetKindDecompressedBytes
+
+	indexPath := filepath.Join(tmpDir, "test.index.json")
+	if err := builder.WriteToFile(idx, indexPath); err != nil {
+		t.Fatalf("Failed to write index: %v", err)
+	}
+
+	result, err := NewVerifier(VerifyOptions{InputPath: xmlPath, IndexPath: indexPath}).Verify()
+	if err != nil {
+		t.Fatalf("Verify returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatal("Expected decompressed offsets to be rejected")
+	}
+	if !strings.Contains(result.ErrorMessage, OffsetKindDecompressedBytes) {
+		t.Fatalf("Expected offset kind in error, got: %s", result.ErrorMessage)
+	}
+}
+
+func TestVerifier_Verify_RejectsCompressedLiveSourcePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "test.xml")
+	xmlContent := []byte(`<?xml version="1.0"?><root><Record>Data</Record></root>`)
+	if err := os.WriteFile(xmlPath, xmlContent, 0644); err != nil {
+		t.Fatalf("Failed to create test XML: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{InputPath: xmlPath, Selector: "//Record"})
+	idx, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Failed to build index: %v", err)
+	}
+
+	indexPath := filepath.Join(tmpDir, "test.index.json")
+	if err := builder.WriteToFile(idx, indexPath); err != nil {
+		t.Fatalf("Failed to write index: %v", err)
+	}
+
+	compressedPath := filepath.Join(tmpDir, "test.xml.gz")
+	if err := os.WriteFile(compressedPath, xmlContent, 0644); err != nil {
+		t.Fatalf("Failed to create compressed-path fixture: %v", err)
+	}
+
+	result, err := NewVerifier(VerifyOptions{InputPath: compressedPath, IndexPath: indexPath}).Verify()
+	if err != nil {
+		t.Fatalf("Verify returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatal("Expected compressed live source path to be rejected")
+	}
+	if !strings.Contains(result.ErrorMessage, "appears gzip compressed") {
+		t.Fatalf("Expected compressed source path error, got: %s", result.ErrorMessage)
 	}
 }

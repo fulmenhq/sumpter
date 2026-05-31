@@ -110,13 +110,15 @@ func openSeekableZstdStore(headerPath string) (IndexStore, error) {
 // Note: This converts from SzstHeader to index.RecordIndex for compatibility
 // with the existing extraction pipeline.
 func (s *szstStore) Header() (*index.RecordIndex, error) {
-	return &index.RecordIndex{
+	header := &index.RecordIndex{
 		Version:  s.szstHeader.Version,
 		Source:   s.szstHeader.Source,
 		Selector: s.szstHeader.Selector,
 		Summary:  s.szstHeader.Summary,
 		// Records slice is intentionally empty - use Records() iterator instead
-	}, nil
+	}
+	index.NormalizeRecordIndex(header)
+	return header, nil
 }
 
 // Records returns an iterator over all record metadata entries.

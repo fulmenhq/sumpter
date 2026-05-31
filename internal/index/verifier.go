@@ -61,6 +61,16 @@ func (v *Verifier) VerifyWithProvider(provider RecordProvider) (*VerifyResult, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to read index header: %w", err)
 	}
+	if err := ValidateRecordIndexHeaderVersion(header.Version); err != nil {
+		return nil, err
+	}
+	NormalizeRecordIndex(header)
+
+	if err := ValidateSourceByteOffsets(header, v.opts.InputPath); err != nil {
+		result.Valid = false
+		result.ErrorMessage = err.Error()
+		return result, nil
+	}
 
 	// Verify source file exists
 	fileInfo, err := os.Stat(v.opts.InputPath)
@@ -181,6 +191,12 @@ func (v *Verifier) Verify() (*VerifyResult, error) {
 		return nil, fmt.Errorf("failed to load index: %w", err)
 	}
 
+	if err := ValidateSourceByteOffsets(index, v.opts.InputPath); err != nil {
+		result.Valid = false
+		result.ErrorMessage = err.Error()
+		return result, nil
+	}
+
 	// Verify source file exists
 	fileInfo, err := os.Stat(v.opts.InputPath)
 	if err != nil {
@@ -277,14 +293,10 @@ func (v *Verifier) loadIndex() (*RecordIndex, error) {
 		return nil, fmt.Errorf("failed to decode index JSON: %w", err)
 	}
 
-	// Validate schema version
-	if index.Version != SchemaVersion {
-		return nil, fmt.Errorf(
-			"unsupported index version: %s (expected %s)",
-			index.Version,
-			SchemaVersion,
-		)
+	if err := ValidateRecordIndexVersion(index.Version); err != nil {
+		return nil, err
 	}
+	NormalizeRecordIndex(&index)
 
 	return &index, nil
 }
@@ -303,14 +315,10 @@ func LoadIndex(path string) (*RecordIndex, error) {
 		return nil, fmt.Errorf("failed to decode index JSON: %w", err)
 	}
 
-	// Validate schema version
-	if index.Version != SchemaVersion {
-		return nil, fmt.Errorf(
-			"unsupported index version: %s (expected %s)",
-			index.Version,
-			SchemaVersion,
-		)
+	if err := ValidateRecordIndexVersion(index.Version); err != nil {
+		return nil, err
 	}
+	NormalizeRecordIndex(&index)
 
 	return &index, nil
 }
