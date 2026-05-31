@@ -137,12 +137,7 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 
 	cfg.prepareOnce.Do(func() {
 		if len(cfg.OutputSchema) > 0 && cfg.OutputValidator == nil {
-			schemaBytes, err := json.Marshal(cfg.OutputSchema)
-			if err != nil {
-				cfg.prepareErr = fmt.Errorf("failed to marshal output schema: %w", err)
-				return
-			}
-			validator, err := schema.NewValidatorFromBytes(schemaBytes)
+			validator, err := buildOutputValidator(cfg.OutputSchema, cfg.UniformSchema)
 			if err != nil {
 				cfg.prepareErr = fmt.Errorf("failed to prepare output validator: %w", err)
 				return
@@ -174,6 +169,67 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 	})
 
 	return cfg.prepareErr
+}
+
+// SetUniformSchema enables recipe-level uniform record shape on a prepared
+// extract config and rebuilds output validation to admit explicit null fields.
+func SetUniformSchema(cfg *ExtractRecordMatch, enabled bool) error {
+	if cfg == nil {
+		return fmt.Errorf("extract config is nil")
+	}
+	cfg.UniformSchema = enabled
+	if len(cfg.OutputSchema) == 0 {
+		return nil
+	}
+	validator, err := buildOutputValidator(cfg.OutputSchema, enabled)
+	if err != nil {
+		return fmt.Errorf("failed to prepare output validator: %w", err)
+	}
+	cfg.OutputValidator = validator
+	return nil
+}
+
+func buildOutputValidator(outputSchema map[string]interface{}, uniform bool) (*schema.Validator, error) {
+	schemaForValidation := outputSchema
+	if uniform {
+		var err error
+		schemaForValidation, err = nullableOutputSchema(outputSchema)
+		if err != nil {
+			return nil, err
+		}
+	}
+	schemaBytes, err := json.Marshal(schemaForValidation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal output schema: %w", err)
+	}
+	return schema.NewValidatorFromBytes(schemaBytes)
+}
+
+func nullableOutputSchema(outputSchema map[string]interface{}) (map[string]interface{}, error) {
+	if len(outputSchema) == 0 {
+		return outputSchema, nil
+	}
+	schemaBytes, err := json.Marshal(outputSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to copy output schema: %w", err)
+	}
+	var copied map[string]interface{}
+	if err := json.Unmarshal(schemaBytes, &copied); err != nil {
+		return nil, fmt.Errorf("failed to copy output schema: %w", err)
+	}
+	properties, ok := copied["properties"].(map[string]interface{})
+	if !ok {
+		return copied, nil
+	}
+	for name, raw := range properties {
+		properties[name] = map[string]interface{}{
+			"anyOf": []interface{}{
+				map[string]interface{}{"type": "null"},
+				raw,
+			},
+		}
+	}
+	return copied, nil
 }
 
 func compileFieldMapping(mapping *FieldMapping) error {
@@ -788,6 +844,7 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 				}
 				record[key] = value
 			}
+			applyUniformSchema(record, cfg)
 
 			// Apply filters
 			if passesFilters(record, cfg.Filters) {
@@ -806,6 +863,21 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 	}
 
 	return records, perSelectorCounts, nil
+}
+
+func applyUniformSchema(record map[string]interface{}, cfg *ExtractRecordMatch) {
+	if record == nil || cfg == nil || !cfg.UniformSchema {
+		return
+	}
+	properties, ok := cfg.OutputSchema["properties"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	for name := range properties {
+		if _, exists := record[name]; !exists {
+			record[name] = nil
+		}
+	}
 }
 
 func zeroSelectorCounts(cfg *ExtractRecordMatch) map[int]int {

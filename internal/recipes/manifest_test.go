@@ -54,6 +54,7 @@ defaults:
   output:
     formats: [json, parquet]
     path: outputs
+    uniform_schema: true
     patterns:
       json: extract-{}.jsonl
       parquet: extract-{}.parquet
@@ -86,6 +87,9 @@ defaults:
 	}
 	if got := strings.Join(manifest.Defaults.Output.Parquet.WithholdColumns, ","); got != "year,site" {
 		t.Fatalf("withhold_columns = %q, want year,site", got)
+	}
+	if !manifest.Defaults.Output.UniformSchema {
+		t.Fatal("uniform_schema = false, want true")
 	}
 }
 

@@ -114,7 +114,7 @@ func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]inter
 			continue
 		}
 		property := schemaProperties[mapping.OutputField]
-		spec := specFromMapping(mapping, property, required[mapping.OutputField])
+		spec := specFromMapping(mapping, property, parquetFieldRequired(cfg, required[mapping.OutputField]))
 		if spec.name == "" {
 			continue
 		}
@@ -137,7 +137,7 @@ func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]inter
 		ordered = append(ordered, fieldSpec{
 			name:        name,
 			fieldType:   property.fieldType,
-			required:    required[name],
+			required:    parquetFieldRequired(cfg, required[name]),
 			description: property.description,
 		})
 		byName[name] = ordered[len(ordered)-1]
@@ -166,6 +166,13 @@ func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]inter
 	}
 
 	return ordered, nil
+}
+
+func parquetFieldRequired(cfg *extract.ExtractRecordMatch, required bool) bool {
+	if cfg != nil && cfg.UniformSchema {
+		return false
+	}
+	return required
 }
 
 func normalizeWithholdColumns(columns []string) []string {

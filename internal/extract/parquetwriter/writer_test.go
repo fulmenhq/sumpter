@@ -195,6 +195,78 @@ func TestWriteFileWithholdColumnsOmitsAllFieldSourcesAndWritesMetadata(t *testin
 	}
 }
 
+func TestWriteFileUniformSchemaKeepsDeclaredNullColumnsAndWithhold(t *testing.T) {
+	cfg := &extract.ExtractRecordMatch{
+		RecordType:    "sample_record",
+		UniformSchema: true,
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "record_id", XPath: "@id", Type: "string"},
+			{OutputField: "label", XPath: "Label", Type: "string"},
+			{OutputField: "quantity", XPath: "Quantity", Type: "integer"},
+			{OutputField: "segment", XPath: "Segment", Type: "string"},
+		},
+		OutputSchema: map[string]interface{}{
+			"properties": map[string]interface{}{
+				"record_id": map[string]interface{}{"type": "string"},
+				"label":     map[string]interface{}{"type": "string"},
+				"quantity":  map[string]interface{}{"type": "integer"},
+				"segment":   map[string]interface{}{"type": "string"},
+			},
+			"required": []interface{}{"record_id", "label", "quantity", "segment"},
+		},
+	}
+	records := []map[string]interface{}{
+		{
+			"extract": map[string]interface{}{
+				"data": map[string]interface{}{
+					"record_id": "A-1",
+					"label":     nil,
+					"quantity":  nil,
+					"segment":   nil,
+				},
+			},
+		},
+	}
+
+	path := filepath.Join(t.TempDir(), "records.parquet")
+	if err := WriteFile(path, cfg, records, Options{
+		Compression:     "none",
+		WithholdColumns: []string{"segment"},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	type Row struct {
+		RecordID *string `parquet:"record_id,optional"`
+		Label    *string `parquet:"label,optional"`
+		Quantity *int64  `parquet:"quantity,optional"`
+	}
+	rows, err := parquet.ReadFile[Row](path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if len(rows) != 1 || rows[0].RecordID == nil || *rows[0].RecordID != "A-1" {
+		t.Fatalf("rows = %#v, want one row with record_id", rows)
+	}
+	if rows[0].Label != nil || rows[0].Quantity != nil {
+		t.Fatalf("uniform null cells = label:%#v quantity:%#v, want nil/nil", rows[0].Label, rows[0].Quantity)
+	}
+
+	file := openParquetFile(t, path)
+	fields := parquetFieldNames(file)
+	for _, field := range []string{"record_id", "label", "quantity"} {
+		if !fields[field] {
+			t.Fatalf("field %q missing from parquet schema: %#v", field, fields)
+		}
+	}
+	if fields["segment"] {
+		t.Fatalf("withheld field segment was written to parquet schema: %#v", fields)
+	}
+	if _, ok := file.Lookup("sumpter.column.segment.recipe_field"); ok {
+		t.Fatal("metadata for withheld field segment was emitted")
+	}
+}
+
 func TestWriteFileWithholdColumnsSkipsObservedOnlyFields(t *testing.T) {
 	cfg := &extract.ExtractRecordMatch{
 		RecordType: "order",

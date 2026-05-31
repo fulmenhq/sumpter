@@ -155,6 +155,8 @@ properties:
               enum: ["json", "ndjson", "parquet"]
             additionalProperties:
               type: string
+          uniform_schema:
+            type: boolean
           parquet:
             type: object
             additionalProperties: false
