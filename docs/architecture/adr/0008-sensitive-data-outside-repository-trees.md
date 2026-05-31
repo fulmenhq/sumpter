@@ -82,7 +82,7 @@ conventionally sit inside the tree.
 ### Negative / mitigations
 
 - One extra local-setup step per machine or worktree to point tooling at the
-  out-of-tree location → keep machine-specific *locations* (not values) in
+  out-of-tree location → keep machine-specific _locations_ (not values) in
   out-of-tree operator notes; prefer environment variables for paths.
 
 ## References

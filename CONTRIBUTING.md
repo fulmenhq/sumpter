@@ -10,13 +10,13 @@ Thanks for your interest in Sumpter! We're currently in the **ALPHA** phase. We 
 - **Issues and discussions**: Welcome — bug reports, feature requests, recipe-DSL questions, UX feedback
 - **Security reports**: Please report privately per [SECURITY.md](SECURITY.md); coordinated disclosure only
 
-Rationale: during ALPHA we iterate quickly and may make breaking changes to the CLI, the recipe schema, and the DSL. The "issue first for non-trivial work" step isn't a gate on contribution — it's how we keep your effort from colliding with a surface that's still converging. Alpha here is a statement about *interface stability*, not about whether the engine is ready: it runs real workloads, every change is gated behind tests, and we ship on a clean security baseline.
+Rationale: during ALPHA we iterate quickly and may make breaking changes to the CLI, the recipe schema, and the DSL. The "issue first for non-trivial work" step isn't a gate on contribution — it's how we keep your effort from colliding with a surface that's still converging. Alpha here is a statement about _interface stability_, not about whether the engine is ready: it runs real workloads, every change is gated behind tests, and we ship on a clean security baseline.
 
 ## How to help today
 
 - Try the latest release (see [releases](https://github.com/fulmenhq/sumpter/releases)) and file issues with clear repro steps
 - Share use cases and environment details (OS, Go version, sumpter version, representative XML input size and shape)
-- Propose design ideas in issues *before* coding — we can provide guidance and pointers to in-flight work
+- Propose design ideas in issues _before_ coding — we can provide guidance and pointers to in-flight work
 - For public-data examples (SEC EDGAR XBRL, ClinVar, similar), recipe contributions via issue discussion are welcome
 
 ## Road to BETA

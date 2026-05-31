@@ -111,7 +111,7 @@ Follow the Fulmen "manifest-only" provenance pattern:
 - [ ] Upload provenance assets: `make release-upload`
 - [ ] **Promote draft → public** (final step — CI publishes as draft so consumers don't see an unsigned release window): `make release-publish`
 
-For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<version>` on each make command. Both forms are equivalent — the guard target `release-guard-tag-version` (wired as a dep of release-sign / release-notes / release-upload-* / release-download / release-publish) fails loud if neither is set.
+For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<version>` on each make command. Both forms are equivalent — the guard target `release-guard-tag-version` (wired as a dep of release-sign / release-notes / release-upload-\* / release-download / release-publish) fails loud if neither is set.
 
 ### Tagging
 

@@ -102,6 +102,7 @@ The index includes two levels of SHA-256 hashing:
 2. **Record Hashes**: Detects tampering with individual records
 
 Verification compares:
+
 - Source file size and SHA-256 against recorded values
 - Individual record checksums during extraction (optional)
 
@@ -138,6 +139,7 @@ Memory usage: <100MB regardless of source file size (streaming architecture)
 ## Example Files
 
 See [examples/index/](../../../examples/index/) for complete example record index files including:
+
 - ClinVar genomics data index (2.4M records, 50GB source)
 - Performance benchmarking examples
 - Usage demonstrations

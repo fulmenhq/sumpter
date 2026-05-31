@@ -20,7 +20,7 @@ sumpter recipes init --path <target> [--id <recipe-id>] [--git-init]
 
 **Flags:**
 
-- `--path` *(required)*: Target directory for the new recipe workspace
+- `--path` _(required)_: Target directory for the new recipe workspace
 - `--id`: Recipe identifier injected into templates
 - `--git-init`: Initialize a git repository inside the workspace
 
@@ -168,7 +168,7 @@ defaults:
       pattern: '^(?P<business_date>\d{4}-\d{2}-\d{2})-.*\.xml$'
     - id: path-site-identifier
       source: relative_path
-      pattern: '^sites/(?P<source_site_id>[a-z0-9-]+)/'
+      pattern: "^sites/(?P<source_site_id>[a-z0-9-]+)/"
   source_extraction_required:
     - business_date
   workers: 1

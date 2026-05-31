@@ -14,17 +14,17 @@ metadata only; Sumpter does not currently accept a runtime declaration such as
 
 Sumpter DSL expressions appear in these recipe surfaces:
 
-| Surface | Field | Expected result |
-|---|---|---|
-| Scalar field mappings | `field_mappings[].expression` | Value compatible with the declared output field type |
-| Validation aggregations | `validation_metadata.aggregations[].expression` | Scalar value |
-| Reconciliation totals | `validation_metadata.reconciliations[].base_expression` | Numeric value |
-| Reconciliation components | `validation_metadata.reconciliations[].components[].expression` | Numeric value |
-| Reconciliation grouping | `validation_metadata.reconciliations[].group_by.filter` | Boolean value |
-| Reconciliation grouping | `validation_metadata.reconciliations[].group_by.value_expression` | Numeric value |
-| Validation rules | `validation_metadata.validations[].rule` | Boolean value |
-| Summaries | `summaries[].total.expression` and `summaries[].components[].expression` | Scalar value |
-| Accumulation filters | `validation_metadata.accumulations[].filter` | Boolean match decision |
+| Surface                   | Field                                                                    | Expected result                                      |
+| ------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------- |
+| Scalar field mappings     | `field_mappings[].expression`                                            | Value compatible with the declared output field type |
+| Validation aggregations   | `validation_metadata.aggregations[].expression`                          | Scalar value                                         |
+| Reconciliation totals     | `validation_metadata.reconciliations[].base_expression`                  | Numeric value                                        |
+| Reconciliation components | `validation_metadata.reconciliations[].components[].expression`          | Numeric value                                        |
+| Reconciliation grouping   | `validation_metadata.reconciliations[].group_by.filter`                  | Boolean value                                        |
+| Reconciliation grouping   | `validation_metadata.reconciliations[].group_by.value_expression`        | Numeric value                                        |
+| Validation rules          | `validation_metadata.validations[].rule`                                 | Boolean value                                        |
+| Summaries                 | `summaries[].total.expression` and `summaries[].components[].expression` | Scalar value                                         |
+| Accumulation filters      | `validation_metadata.accumulations[].filter`                             | Boolean match decision                               |
 
 Expression mappings run after top-level XPath mappings are populated.
 Expression mappings are evaluated in declaration order, so an expression can
@@ -37,15 +37,15 @@ not later expression fields.
 
 The parser recognizes:
 
-| Form | Example | Runtime value |
-|---|---|---|
-| Integer | `42` | `int64` |
-| Float | `3.14` | `float64` |
-| Boolean | `true`, `false` | `bool` |
-| Null literal | `null` | `nil` in filter null comparisons and evaluator context |
-| Double-quoted string | `"ready"` | Raw string interior |
-| Single-quoted string | `'ready'` | Raw string interior |
-| Variable | `total_amount` | Value from the current evaluation context |
+| Form                 | Example         | Runtime value                                          |
+| -------------------- | --------------- | ------------------------------------------------------ |
+| Integer              | `42`            | `int64`                                                |
+| Float                | `3.14`          | `float64`                                              |
+| Boolean              | `true`, `false` | `bool`                                                 |
+| Null literal         | `null`          | `nil` in filter null comparisons and evaluator context |
+| Double-quoted string | `"ready"`       | Raw string interior                                    |
+| Single-quoted string | `'ready'`       | Raw string interior                                    |
+| Variable             | `total_amount`  | Value from the current evaluation context              |
 
 Unquoted strings are accepted as filter values in simple filters, for example
 `status == active`. In full expressions, unquoted identifiers are variables.
@@ -98,15 +98,15 @@ error.
 
 From lowest to highest precedence:
 
-| Precedence | Operators | Associativity | Notes |
-|---|---|---|---|
-| 1 | `?:` | Right | Conditional expression; only the selected branch evaluates |
-| 2 | `||`, `&&` | Left | Logical operators; both operands currently evaluate before the operator is applied |
-| 3 | `==`, `!=`, `>=`, `<=`, `>`, `<` | Left | Comparisons |
-| 4 | `+`, `-` | Left | Numeric addition and subtraction |
-| 5 | `*`, `/` | Left | Numeric multiplication and division |
-| 6 | `!` | Right | Boolean negation |
-| 7 | `(...)`, functions, constants, variables | N/A | Grouping, function calls, atoms |
+| Precedence | Operators                                | Associativity | Notes                                                      |
+| ---------- | ---------------------------------------- | ------------- | ---------------------------------------------------------- | ---- | ---------------------------------------------------------------------------------- |
+| 1          | `?:`                                     | Right         | Conditional expression; only the selected branch evaluates |
+| 2          | `                                        |               | `, `&&`                                                    | Left | Logical operators; both operands currently evaluate before the operator is applied |
+| 3          | `==`, `!=`, `>=`, `<=`, `>`, `<`         | Left          | Comparisons                                                |
+| 4          | `+`, `-`                                 | Left          | Numeric addition and subtraction                           |
+| 5          | `*`, `/`                                 | Left          | Numeric multiplication and division                        |
+| 6          | `!`                                      | Right         | Boolean negation                                           |
+| 7          | `(...)`, functions, constants, variables | N/A           | Grouping, function calls, atoms                            |
 
 Parentheses can override grouping:
 
@@ -146,15 +146,15 @@ operator.
 
 Function names are case-insensitive at evaluation time.
 
-| Function | Signature | Behavior |
-|---|---|---|
-| `abs` | `abs(number)` | Absolute value |
-| `round` | `round(number)` | Round to the nearest integer |
-| `round` | `round(number, places)` | Round to the requested non-negative decimal precision; negative precision is clamped to zero |
-| `min` | `min(number, ...)` | Minimum numeric argument; requires at least one argument |
-| `max` | `max(number, ...)` | Maximum numeric argument; requires at least one argument |
-| `count` | `count()` | Returns the `count` variable when present, otherwise `0` |
-| `sum` | `sum()` | Returns the `sum` variable when present, otherwise `0.0` |
+| Function | Signature               | Behavior                                                                                     |
+| -------- | ----------------------- | -------------------------------------------------------------------------------------------- |
+| `abs`    | `abs(number)`           | Absolute value                                                                               |
+| `round`  | `round(number)`         | Round to the nearest integer                                                                 |
+| `round`  | `round(number, places)` | Round to the requested non-negative decimal precision; negative precision is clamped to zero |
+| `min`    | `min(number, ...)`      | Minimum numeric argument; requires at least one argument                                     |
+| `max`    | `max(number, ...)`      | Maximum numeric argument; requires at least one argument                                     |
+| `count`  | `count()`               | Returns the `count` variable when present, otherwise `0`                                     |
+| `sum`    | `sum()`                 | Returns the `sum` variable when present, otherwise `0.0`                                     |
 
 `count(expr)` and `sum(expr)` are not supported in expression context today.
 Use accumulation configuration for data-wide counts and sums.
@@ -166,15 +166,15 @@ literals or nested parentheses do not split arguments.
 
 String function names are case-insensitive, like numeric function names.
 
-| Function | Signature | Behavior |
-|---|---|---|
-| `lower` | `lower(string)` | Unicode-aware lower-casing per Go `strings.ToLower`. Nil-valued argument returns nil. |
-| `upper` | `upper(string)` | Unicode-aware upper-casing per Go `strings.ToUpper`. Nil-valued argument returns nil. |
-| `normalize_space` | `normalize_space(string)` | Trims leading/trailing Unicode whitespace and collapses internal Unicode whitespace runs to single ASCII spaces. Nil-valued argument returns nil. |
-| `mask_tail` | `mask_tail(string, keep_n)` | Replaces all but the last `keep_n` runes with `X`. Nil-valued argument returns nil. Empty string returns empty string. `keep_n >= rune_count(input)` returns the input unchanged. |
-| `mask_tail` | `mask_tail(string, keep_n, mask_char)` | Same as above, with a custom single-rune mask character. |
-| `mask_middle` | `mask_middle(string, head_n, tail_n)` | Replaces runes between the first `head_n` and last `tail_n` runes with `X`. Nil-valued argument returns nil. `head_n + tail_n >= rune_count(input)` returns the input unchanged. |
-| `mask_middle` | `mask_middle(string, head_n, tail_n, mask_char)` | Same as above, with a custom single-rune mask character. |
+| Function          | Signature                                        | Behavior                                                                                                                                                                          |
+| ----------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lower`           | `lower(string)`                                  | Unicode-aware lower-casing per Go `strings.ToLower`. Nil-valued argument returns nil.                                                                                             |
+| `upper`           | `upper(string)`                                  | Unicode-aware upper-casing per Go `strings.ToUpper`. Nil-valued argument returns nil.                                                                                             |
+| `normalize_space` | `normalize_space(string)`                        | Trims leading/trailing Unicode whitespace and collapses internal Unicode whitespace runs to single ASCII spaces. Nil-valued argument returns nil.                                 |
+| `mask_tail`       | `mask_tail(string, keep_n)`                      | Replaces all but the last `keep_n` runes with `X`. Nil-valued argument returns nil. Empty string returns empty string. `keep_n >= rune_count(input)` returns the input unchanged. |
+| `mask_tail`       | `mask_tail(string, keep_n, mask_char)`           | Same as above, with a custom single-rune mask character.                                                                                                                          |
+| `mask_middle`     | `mask_middle(string, head_n, tail_n)`            | Replaces runes between the first `head_n` and last `tail_n` runes with `X`. Nil-valued argument returns nil. `head_n + tail_n >= rune_count(input)` returns the input unchanged.  |
+| `mask_middle`     | `mask_middle(string, head_n, tail_n, mask_char)` | Same as above, with a custom single-rune mask character.                                                                                                                          |
 
 `normalize_space` uses Go `strings.Fields` / `unicode.IsSpace` semantics, so
 it treats the full Unicode whitespace class as whitespace. This is broader than

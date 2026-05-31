@@ -85,7 +85,7 @@ We also generate an SBOM and run a Common Platform Enumeration (CPE) match again
 1. **Go stdlib findings against an older minor version** — The SBOM generator sometimes records an older Go stdlib version than the toolchain actually used to build the binary. Sumpter is built against the Go toolchain pinned in `go.mod`; check the actual binary's stdlib version with `go version <binary>` to determine whether the flagged CVE applies. Sumpter releases pin a toolchain that includes upstream Go security patches at release time.
 2. **Non-runtime artifacts in the source tree** — The SBOM may include packages from documentation tooling, embedded asset bundles, GitHub Actions, or build-only dependencies that are not part of the shipped binary. These do not affect sumpter at runtime.
 3. **Transitive Go modules not reachable from sumpter code** — Some Go modules are pulled in by your dependency graph but never called by sumpter. `govulncheck ./...` is authoritative on reachability.
-4. **Genuine runtime CVEs** — Anything that survives the above three categories *is* a real concern. Report it via the process above.
+4. **Genuine runtime CVEs** — Anything that survives the above three categories _is_ a real concern. Report it via the process above.
 
 If you're triaging a scan report against sumpter and want to confirm whether a finding is actionable, the fastest path is:
 
@@ -97,7 +97,7 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 govulncheck ./...
 ```
 
-If govulncheck says the vulnerability is not reachable from your call graph, sumpter is not affected. If it *is* reachable, please report it (see "Reporting a Vulnerability" above).
+If govulncheck says the vulnerability is not reachable from your call graph, sumpter is not affected. If it _is_ reachable, please report it (see "Reporting a Vulnerability" above).
 
 ## Dependency Audit
 

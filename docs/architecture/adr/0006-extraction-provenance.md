@@ -21,7 +21,11 @@ Sumpter's extract command produces JSONL records today with a per-record
     "summaries_included": false,
     "validation_included": false
   },
-  "extract": { "data": { /* record fields */ } }
+  "extract": {
+    "data": {
+      /* record fields */
+    }
+  }
 }
 ```
 
@@ -57,8 +61,8 @@ reserves the schema surface for v0.1.4+ attestation work.
 
 ### Summary
 
-Provenance ships as a **hybrid model**: per-record inline carries the *run-level
-identity* a consumer needs to correlate and verify, and a **sidecar manifest
+Provenance ships as a **hybrid model**: per-record inline carries the _run-level
+identity_ a consumer needs to correlate and verify, and a **sidecar manifest
 co-located with the extract output** carries the per-field XPath/description
 detail, the verbatim recipe content, and the input-file ledger. The manifest
 reserves an `attestations[]` field — empty in v0.1.3, populated by v0.1.4+
@@ -66,15 +70,15 @@ signing and encryption workflows.
 
 ### Seven concrete decisions
 
-| # | Decision | Notes |
-|---|----------|-------|
-| 1 | **Sidecar manifest is the canonical provenance artifact**, co-located with extract output (same folder or object-store prefix). Per-record `_runtime` carries run-level identity only. An opt-in `--inline-provenance` flag enables per-record field-level annotation for users who need self-contained records. | See "Sidecar layout" below. |
-| 2 | **Recipe versioning uses both semver and content-hash**, both emitted. Semver is author-managed in the recipe YAML; content-hash is auto-computed by sumpter from canonical recipe bytes (JCS). The hash is authoritative when they disagree. | See "Recipe versioning" below. |
-| 3 | **Field-level byte/line offsets deferred to v0.1.4** (evaluation target, snooze-able). v0.1.3 emits *record-level* `record_byte_range` opportunistically when IndexStore has tracked the source. | Tracked in backlog; not lost. |
-| 4 | **Run ID is a UUIDv7**, generated once per `sumpter extract` invocation and shared across parallel workers. No hostname, PID, or argv leakage. Sorts chronologically as lexicographic strings. `SUMPTER_RUN_ID` env var and `--run-id` flag override for deterministic replay. | See "Run identity" below. |
-| 5 | **Provenance in Parquet is a projection of the sidecar**, not a divergent source of truth. Parquet column-level KV metadata carries `source_xpath`, `description`, `recipe_field_id`; file-level KV metadata carries `run_id`, `recipe_version`, `recipe_content_hash`, `sumpter_version`. JSONL paths stay sidecar-only. | Stacks on top of the Parquet writer (separate PR slice). |
-| 6 | **Recipe author attribution extends the existing `owners` block** on the recipe manifest with an optional `role` field (`name` required, `contact` and `role` optional). Safe default = name only. Workspace maintainers decide what propagates. Future signing/encryption attestation gates on `contact` and `role` being filled in. Surfaces in `manifest.recipe.owners` in the provenance sidecar; never in per-record `_runtime`. | See "Recipe authorship" below. |
-| 7 | **Manifest reserves an `attestations[]` field for v0.1.4+ signing and encryption** (Ed25519 via seclusor or SSH, age encryption via seclusor). v0.1.3 outputs omit the field; the canonical-for-attestation byte sequence is locked **now** as JCS (RFC 8785). | See "Forward compatibility for attestation" below. |
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                              | Notes                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| 1   | **Sidecar manifest is the canonical provenance artifact**, co-located with extract output (same folder or object-store prefix). Per-record `_runtime` carries run-level identity only. An opt-in `--inline-provenance` flag enables per-record field-level annotation for users who need self-contained records.                                                                                                                      | See "Sidecar layout" below.                              |
+| 2   | **Recipe versioning uses both semver and content-hash**, both emitted. Semver is author-managed in the recipe YAML; content-hash is auto-computed by sumpter from canonical recipe bytes (JCS). The hash is authoritative when they disagree.                                                                                                                                                                                         | See "Recipe versioning" below.                           |
+| 3   | **Field-level byte/line offsets deferred to v0.1.4** (evaluation target, snooze-able). v0.1.3 emits _record-level_ `record_byte_range` opportunistically when IndexStore has tracked the source.                                                                                                                                                                                                                                      | Tracked in backlog; not lost.                            |
+| 4   | **Run ID is a UUIDv7**, generated once per `sumpter extract` invocation and shared across parallel workers. No hostname, PID, or argv leakage. Sorts chronologically as lexicographic strings. `SUMPTER_RUN_ID` env var and `--run-id` flag override for deterministic replay.                                                                                                                                                        | See "Run identity" below.                                |
+| 5   | **Provenance in Parquet is a projection of the sidecar**, not a divergent source of truth. Parquet column-level KV metadata carries `source_xpath`, `description`, `recipe_field_id`; file-level KV metadata carries `run_id`, `recipe_version`, `recipe_content_hash`, `sumpter_version`. JSONL paths stay sidecar-only.                                                                                                             | Stacks on top of the Parquet writer (separate PR slice). |
+| 6   | **Recipe author attribution extends the existing `owners` block** on the recipe manifest with an optional `role` field (`name` required, `contact` and `role` optional). Safe default = name only. Workspace maintainers decide what propagates. Future signing/encryption attestation gates on `contact` and `role` being filled in. Surfaces in `manifest.recipe.owners` in the provenance sidecar; never in per-record `_runtime`. | See "Recipe authorship" below.                           |
+| 7   | **Manifest reserves an `attestations[]` field for v0.1.4+ signing and encryption** (Ed25519 via seclusor or SSH, age encryption via seclusor). v0.1.3 outputs omit the field; the canonical-for-attestation byte sequence is locked **now** as JCS (RFC 8785).                                                                                                                                                                        | See "Forward compatibility for attestation" below.       |
 
 ## Detailed design
 
@@ -97,7 +101,11 @@ signing and encryption workflows.
     "summaries_included": false,
     "validation_included": false
   },
-  "extract": { "data": { /* unchanged */ } }
+  "extract": {
+    "data": {
+      /* unchanged */
+    }
+  }
 }
 ```
 
@@ -134,16 +142,19 @@ pairs with `outputs/<run_id>/manifest.json`.
   "completed_at": "2026-05-11T14:31:17Z",
   "cli": {
     "command": "sumpter extract files",
-    "argv_sanitized": ["--recipe", "recipes/retail", "--out", "outputs/<run_id>"]
+    "argv_sanitized": [
+      "--recipe",
+      "recipes/retail",
+      "--out",
+      "outputs/<run_id>"
+    ]
   },
   "recipe": {
     "id": "retail-saleevent-summary",
     "manifest_schema_version": "recipe/v0.1.0",
     "content_version": "1.0.0",
     "content_hash": "sha256:7b3f...c2e1",
-    "owners": [
-      { "name": "Fulmen Sumpter contributors" }
-    ],
+    "owners": [{ "name": "Fulmen Sumpter contributors" }],
     "manifest_yaml": "...verbatim...",
     "signature_yaml": "...verbatim...",
     "extract_yaml": "...verbatim...",
@@ -190,7 +201,7 @@ Notes:
 - `argv_sanitized` strips secrets and absolute paths; the sanitization
   rules live next to the env-var redaction helpers.
 - `signature_yaml` / `extract_yaml` / optional `applicability_yaml` are the
-  *verbatim* loaded recipe bytes (not the canonicalized hash input).
+  _verbatim_ loaded recipe bytes (not the canonicalized hash input).
   Audit-friendly.
 - Derived fields use `expression` instead of `xpath` in
   `field_provenance` so consumers can distinguish recipe-computed values
@@ -207,8 +218,8 @@ The recipe manifest (`recipe.yaml`) already carries an `owners` array
 ```yaml
 # Today
 owners:
-  - name: "Fulmen Sumpter contributors"            # required
-    contact: "noreply@fulmenhq.dev"                # optional
+  - name: "Fulmen Sumpter contributors" # required
+    contact: "noreply@fulmenhq.dev" # optional
 ```
 
 v0.1.3 extends `Owner` with an optional `role` slug:
@@ -216,9 +227,9 @@ v0.1.3 extends `Owner` with an optional `role` slug:
 ```yaml
 # v0.1.3
 owners:
-  - name: "Fulmen Sumpter contributors"            # required
-    contact: "noreply@fulmenhq.dev"                # optional
-    role: "india-devlead"                          # optional (new)
+  - name: "Fulmen Sumpter contributors" # required
+    contact: "noreply@fulmenhq.dev" # optional
+    role: "india-devlead" # optional (new)
 ```
 
 Sumpter copies the block verbatim into `manifest.recipe.owners` in the
@@ -238,9 +249,9 @@ No personal contact info in OSS-shipped recipes. A future lint rule
 will enforce this (out of scope here).
 
 **Independence from git commit attribution**: `manifest.recipe.owners`
-identifies who maintains the *recipe workspace*. Git commit attribution
+identifies who maintains the _recipe workspace_. Git commit attribution
 (per `docs/standards/agentic-attribution.md`) identifies who authored the
-*code change*. These are different surfaces and the same person/agent may
+_code change_. These are different surfaces and the same person/agent may
 appear in one, both, or neither. Tooling must not conflate them.
 
 **Why `owners` (not a new `authors` block)**: the existing manifest
@@ -262,18 +273,18 @@ an optional `role` field on each `owner`. The existing schema-level
 
 ```yaml
 # Existing (unchanged in v0.1.3)
-version: "recipe/v0.1.0"           # manifest schema version
+version: "recipe/v0.1.0" # manifest schema version
 id: "retail-saleevent-summary"
 kind: "extract"
 
 # New in v0.1.3 (optional; required in v0.1.4)
-content_version: "1.0.0"           # semver, author-managed
+content_version: "1.0.0" # semver, author-managed
 
 # Existing block, now with optional `role`
 owners:
   - name: "Fulmen Sumpter contributors"
-    contact: "noreply@fulmenhq.dev"   # optional
-    role: "india-devlead"             # optional (new)
+    contact: "noreply@fulmenhq.dev" # optional
+    role: "india-devlead" # optional (new)
 ```
 
 A recipe manifest missing `content_version:` emits a deprecation warning
@@ -298,7 +309,7 @@ field_mappings:
   - output_field: "business_date"
     xpath: "BusinessDate"
     type: "string"
-    description: "POS-reported business date for the event"   # new (optional)
+    description: "POS-reported business date for the event" # new (optional)
 ```
 
 **Signature config** is unchanged in v0.1.3. The existing per-dialect
@@ -485,7 +496,7 @@ changes only.
   to know about the sidecar (or opt out with `--no-manifest`).
 - Recipe authors are nudged to add `content_version:` to their manifests
   (warning in v0.1.3, hard error in v0.1.4). The one-time `sumpter recipes
-  migrate` helper handles bulk stamping and the v0.1.4 schema-version bump.
+migrate` helper handles bulk stamping and the v0.1.4 schema-version bump.
 - JCS canonicalization adds a Go dependency (a JCS library — small).
 - Canonical-hash computation adds O(recipe-size) work on extract startup —
   negligible (recipes are <100KB) but a measurable line item.

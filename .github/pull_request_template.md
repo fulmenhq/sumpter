@@ -47,6 +47,7 @@ Implements brief: SUM-
 <!-- Describe manual testing performed -->
 
 **Test Environment:**
+
 - OS:
 - Go version:
 - Sumpter version (`sumpter version`):

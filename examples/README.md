@@ -18,22 +18,22 @@ go test ./examples/...
 
 Positive cases live in `01`-`89`; negative cases live in `90`-`99`.
 
-| Case | Feature |
-| ---- | ------- |
-| `01-basic-extraction` | XPath scalar extraction |
-| `02-multi-record-line-items` | Array `item_mapping` |
-| `03-summaries-with-remainder` | Summary components and remainder |
-| `04-validation-metadata-clean` | Validation metadata accumulations and validations |
-| `05-validation-metadata-reconciliation` | Validation metadata reconciliation |
-| `05b-validation-metadata-grouped-reconciliation` | Declarative reconciliation grouping |
-| `06-derived-field-convenience-sums` | SUM-002 expression fields |
-| `06b-derived-field-ternary` | SUM-011 conditional expression fields |
-| `07-declared-parameters-injection` | SUM-003 declared parameters |
-| `08-polymorphic-line-items` | Polymorphic array mapping |
-| `09-predicate-match-selector` | Predicate match selectors |
-| `10-optional-fields` | Optional fields and boolean coercion |
-| `90-negative-malformed-xml` | XML parser failure |
-| `91-negative-missing-required` | Output schema required failure |
-| `92-negative-validation-fails` | Validation failure |
-| `93-negative-parameter-required-missing` | Missing required declared parameter |
-| `94-negative-schema-collision` | Parameter/field collision |
+| Case                                             | Feature                                           |
+| ------------------------------------------------ | ------------------------------------------------- |
+| `01-basic-extraction`                            | XPath scalar extraction                           |
+| `02-multi-record-line-items`                     | Array `item_mapping`                              |
+| `03-summaries-with-remainder`                    | Summary components and remainder                  |
+| `04-validation-metadata-clean`                   | Validation metadata accumulations and validations |
+| `05-validation-metadata-reconciliation`          | Validation metadata reconciliation                |
+| `05b-validation-metadata-grouped-reconciliation` | Declarative reconciliation grouping               |
+| `06-derived-field-convenience-sums`              | SUM-002 expression fields                         |
+| `06b-derived-field-ternary`                      | SUM-011 conditional expression fields             |
+| `07-declared-parameters-injection`               | SUM-003 declared parameters                       |
+| `08-polymorphic-line-items`                      | Polymorphic array mapping                         |
+| `09-predicate-match-selector`                    | Predicate match selectors                         |
+| `10-optional-fields`                             | Optional fields and boolean coercion              |
+| `90-negative-malformed-xml`                      | XML parser failure                                |
+| `91-negative-missing-required`                   | Output schema required failure                    |
+| `92-negative-validation-fails`                   | Validation failure                                |
+| `93-negative-parameter-required-missing`         | Missing required declared parameter               |
+| `94-negative-schema-collision`                   | Parameter/field collision                         |
