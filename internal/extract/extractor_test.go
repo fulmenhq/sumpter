@@ -259,6 +259,105 @@ func TestProcessFileWithProvenanceTracksPerSelectorCounts(t *testing.T) {
 	}
 }
 
+func TestExtractRecordsUniformSchemaNullFillsDeclaredProperties(t *testing.T) {
+	doc, err := xmlquery.Parse(strings.NewReader(`<root><item><id>A-1</id><present>yes</present></item></root>`))
+	if err != nil {
+		t.Fatalf("Parse XML: %v", err)
+	}
+	outputSchema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id":            map[string]interface{}{"type": "string"},
+			"present":       map[string]interface{}{"type": "string"},
+			"missing_text":  map[string]interface{}{"type": "string"},
+			"missing_count": map[string]interface{}{"type": "integer"},
+			"missing_state": map[string]interface{}{"type": "string", "enum": []interface{}{"active", "inactive"}},
+			"empty_label":   map[string]interface{}{"type": "string"},
+		},
+		"required": []interface{}{"id", "present", "missing_text", "missing_count", "empty_label"},
+	}
+	cfg := &ExtractRecordMatch{
+		RecordType:    "sample_record",
+		UniformSchema: true,
+		MatchSelectors: []MatchSelector{
+			{XPath: "//item"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "id", XPath: "id", Type: "string"},
+			{OutputField: "present", XPath: "present", Type: "string"},
+			{OutputField: "missing_text", XPath: "missing", Type: "string"},
+			{OutputField: "missing_count", XPath: "missing-count", Type: "integer"},
+			{OutputField: "missing_state", XPath: "state", Type: "string"},
+		},
+		OutputSchema: outputSchema,
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	records, err := extractRecords(doc, cfg, map[string]interface{}{"empty_label": ""})
+	if err != nil {
+		t.Fatalf("extractRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+	record := records[0]
+	if record["id"] != "A-1" || record["present"] != "yes" {
+		t.Fatalf("present fields = %#v", record)
+	}
+	for _, field := range []string{"missing_text", "missing_count", "missing_state"} {
+		if value, ok := record[field]; !ok || value != nil {
+			t.Fatalf("%s = %#v/%t, want nil/true in %#v", field, value, ok, record)
+		}
+	}
+	if value, ok := record["empty_label"]; !ok || value != "" {
+		t.Fatalf("empty_label = %#v/%t, want empty string/true in %#v", value, ok, record)
+	}
+	properties := outputSchema["properties"].(map[string]interface{})
+	if typ := properties["missing_text"].(map[string]interface{})["type"]; typ != "string" {
+		t.Fatalf("source output schema was mutated: %#v", typ)
+	}
+}
+
+func TestExtractRecordsUniformSchemaDisabledOmitsAbsentProperties(t *testing.T) {
+	doc, err := xmlquery.Parse(strings.NewReader(`<root><item><id>A-1</id></item></root>`))
+	if err != nil {
+		t.Fatalf("Parse XML: %v", err)
+	}
+	cfg := &ExtractRecordMatch{
+		RecordType: "sample_record",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//item"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "id", XPath: "id", Type: "string"},
+			{OutputField: "missing_text", XPath: "missing", Type: "string"},
+		},
+		OutputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id":           map[string]interface{}{"type": "string"},
+				"missing_text": map[string]interface{}{"type": "string"},
+			},
+		},
+	}
+	if err := prepareExtractConfig(cfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+
+	records, err := extractRecords(doc, cfg, nil)
+	if err != nil {
+		t.Fatalf("extractRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+	if _, ok := records[0]["missing_text"]; ok {
+		t.Fatalf("missing_text emitted with uniform_schema disabled: %#v", records[0])
+	}
+}
+
 func TestLoadExtractConfig_ValidatesSchema(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "extract.yaml")

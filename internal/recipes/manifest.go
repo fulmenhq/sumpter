@@ -147,12 +147,13 @@ type InputDefaults struct {
 
 // OutputDefaults controls output formatting when executing extract recipes.
 type OutputDefaults struct {
-	Format   string            `yaml:"format,omitempty"`
-	Formats  []string          `yaml:"formats,omitempty"`
-	Path     string            `yaml:"path"`
-	Pattern  string            `yaml:"pattern,omitempty"`
-	Patterns map[string]string `yaml:"patterns,omitempty"`
-	Parquet  *ParquetDefaults  `yaml:"parquet,omitempty"`
+	Format        string            `yaml:"format,omitempty"`
+	Formats       []string          `yaml:"formats,omitempty"`
+	Path          string            `yaml:"path"`
+	Pattern       string            `yaml:"pattern,omitempty"`
+	Patterns      map[string]string `yaml:"patterns,omitempty"`
+	UniformSchema bool              `yaml:"uniform_schema,omitempty"`
+	Parquet       *ParquetDefaults  `yaml:"parquet,omitempty"`
 }
 
 // ParquetDefaults controls recipe-level Parquet output behavior.

@@ -41,6 +41,7 @@ type ExtractOptions struct {
 	OutputPath               string
 	OutputPattern            string
 	OutputPatterns           map[string]string
+	UniformSchema            bool
 	ParquetCompression       string
 	ParquetWithholdColumns   []string
 	SignatureConfig          string
@@ -223,6 +224,9 @@ func runExtract(opts *ExtractOptions) error {
 	extCfg, err := extract.LoadExtractConfig(opts.ExtractConfig)
 	if err != nil {
 		return fmt.Errorf("failed to load extract config: %w", err)
+	}
+	if err := extract.SetUniformSchema(extCfg, opts.UniformSchema); err != nil {
+		return err
 	}
 	logger.Debug("Extract config loaded", zap.String("record_type", extCfg.RecordType))
 	if err := validateParquetWithholdColumns(opts.ParquetWithholdColumns, extCfg.OutputSchema); err != nil {

@@ -155,6 +155,7 @@ defaults:
     format: json
     path: outputs
     pattern: extract-{}.jsonl
+    uniform_schema: false
   client_id: ""
   site_id: ""
   parameters:
@@ -176,6 +177,7 @@ defaults:
 ```
 
 - **`assets`** points at the core configuration files required to run the recipe.
+- **`defaults.output.uniform_schema`** optionally emits every declared `output_schema.properties` key on each record, using JSON `null` for absent values.
 - **`defaults.input`** defines how the runner discovers XML (directory scanning or explicit file list).
 - **`defaults.output`** controls output formatting and destination, allowing NDJSON/structured JSON switches later.
 - **`defaults.cadence`** records operator-readable run cadence intent such as `daily-rolling`, `weekly`, `weekly-2x`, `on-demand`, `hourly`, `monthly`, or `quarterly`.

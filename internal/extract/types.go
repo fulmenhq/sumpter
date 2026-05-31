@@ -77,6 +77,7 @@ type ExtractRecordMatch struct {
 	ValidationMetadata *dsl.ValidationMetadata `yaml:"validation_metadata,omitempty" json:"validation_metadata,omitempty"`
 	OutputOptions      *OutputOptions          `yaml:"output_options,omitempty" json:"output_options,omitempty"`
 	Summaries          []SummaryConfig         `yaml:"summaries,omitempty" json:"summaries,omitempty"`
+	UniformSchema      bool                    `yaml:"-" json:"-"`
 	OutputValidator    *schema.Validator       `yaml:"-" json:"-"`
 	prepareOnce        sync.Once               `yaml:"-" json:"-"`
 	prepareErr         error                   `yaml:"-" json:"-"`

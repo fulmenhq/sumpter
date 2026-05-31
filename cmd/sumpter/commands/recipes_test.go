@@ -485,6 +485,78 @@ output_schema:
 	}
 }
 
+func TestExecuteExtractRecipeUniformSchemaWritesNulls(t *testing.T) {
+	initExtractManifestTestLogger(t)
+
+	workspace := createRecipeParameterWorkspace(t)
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), `version: recipe/v0.1.0
+kind: extract
+id: uniform_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/signature.yaml
+  extract: extract/extract.yaml
+defaults:
+  input:
+    mode: files
+    files:
+      - testdata/input.xml
+    include_pattern: "*.xml"
+  output:
+    format: json
+    path: outputs
+    pattern: extract-{}.jsonl
+    uniform_schema: true
+  workers: 1
+  progress: false
+`)
+	mustWriteFile(t, filepath.Join(workspace, "extract", "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+  - output_field: missing_code
+    xpath: missing-code
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+    missing_code:
+      type: string
+  required:
+    - name
+    - missing_code
+`)
+	mustWriteFile(t, filepath.Join(workspace, "testdata", "input.xml"), `<root><item><name>Alpha</name></item></root>`)
+
+	cmd := recipeRunExtractTestCommand()
+	err := executeExtractRecipe(cmd, workspace, &recipeRunExtractOptions{
+		ManifestPath: "recipe.yaml",
+		Progress:     false,
+	})
+	if err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	outputPath := filepath.Join(workspace, "outputs", "extract-input.xml.jsonl")
+	raw := readFileString(t, outputPath)
+	if !strings.Contains(raw, `"missing_code":null`) {
+		t.Fatalf("JSONL output missing explicit null field: %s", raw)
+	}
+	var record map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		t.Fatalf("Decode JSONL output: %v", err)
+	}
+	data := extractData(t, record)
+	if value, ok := data["missing_code"]; !ok || value != nil {
+		t.Fatalf("missing_code = %#v/%t, want nil/true in %#v", value, ok, data)
+	}
+}
+
 func TestExecuteExtractRecipeWithholdsParquetPartitionColumns(t *testing.T) {
 	initExtractManifestTestLogger(t)
 

@@ -540,6 +540,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		return err
 	}
 	extractOpts.ParquetCompression = parquetCompression
+	extractOpts.UniformSchema = defaults.Output.UniformSchema
 	if defaults.Output.Parquet != nil && len(defaults.Output.Parquet.WithholdColumns) > 0 {
 		extractOpts.ParquetWithholdColumns = append([]string(nil), defaults.Output.Parquet.WithholdColumns...)
 	}
