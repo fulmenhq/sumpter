@@ -56,3 +56,43 @@ lint:
     paths:
       - "**/Makefile"
     ignore: []
+# Format configuration. Without this block goneat's format category falls back
+# to whitespace/EOF normalization only; the markdown/json/yaml sub-formatters
+# are not scoped. Mirrors the goneat-ecosystem reference configuration so
+# `goneat assess --categories format` (and the format leg of the pre-commit /
+# pre-push hooks in .goneat/hooks.yaml) actually formats Markdown, JSON, and YAML.
+format:
+  eof:
+    enabled: true
+    enforce_single_newline: true
+  trailing_whitespace:
+    enabled: true
+  markdown:
+    enabled: true
+    paths:
+      - "**/*.md"
+    ignore:
+      - ".plans/**"
+      - ".cache/**"
+      - "**/vendor/**"
+      - "**/node_modules/**"
+  json:
+    enabled: true
+    paths:
+      - "**/*.json"
+    ignore:
+      - "go.sum"
+      - ".plans/**"
+      - ".cache/**"
+      - "**/vendor/**"
+      - "**/node_modules/**"
+  yaml:
+    enabled: true
+    paths:
+      - "**/*.yaml"
+      - "**/*.yml"
+    ignore:
+      - ".plans/**"
+      - ".cache/**"
+      - "**/vendor/**"
+      - "**/node_modules/**"

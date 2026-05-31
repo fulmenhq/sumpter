@@ -25,6 +25,7 @@ scopes:
       - govulncheck
       - yamlfmt
       - yq
+      - prettier
   foundation:
     description: Core project tools used by Sumpter developer workflows
     tools:
@@ -36,6 +37,7 @@ scopes:
       - gofmt
       - goimports
       - yamlfmt
+      - prettier
   go:
     description: Go development tools
     tools:
@@ -58,6 +60,17 @@ scopes:
       - yamlfmt
       - yq
 tools:
+  prettier:
+    name: prettier
+    description: Code formatter for Markdown, JSON, and YAML (used by `goneat format`)
+    kind: node
+    detect_command: prettier --version
+    version_args:
+      - --version
+    installer_priority:
+      all:
+        - npm
+        - bun
   yq:
     name: yq
     description: YAML/JSON processor with jq-compatible syntax

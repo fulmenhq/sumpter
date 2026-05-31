@@ -234,7 +234,7 @@ participate in attestation until they're added.
 
 **OSS-recipe convention** (any recipes shipped inside this repo): name-only
 entries using the project handle (e.g. `"Fulmen Sumpter contributors"`).
-No personal contact info in OSS-shipped recipes. A future `limensafe` rule
+No personal contact info in OSS-shipped recipes. A future lint rule
 will enforce this (out of scope here).
 
 **Independence from git commit attribution**: `manifest.recipe.owners`
@@ -521,7 +521,7 @@ changes only.
   recipes are versioned, which the registry will formalize.
 - **Datalake-format provenance** (Iceberg snapshot metadata, Delta commit
   info) — separate ADR when those sinks land.
-- **OSS-recipe author-block enforcement** — future `limensafe` rule that
+- **OSS-recipe author-block enforcement** — future lint rule that
   flags emails/roles in `recipes/**` under this repo. Out of scope here.
 
 ## Implementation sequencing

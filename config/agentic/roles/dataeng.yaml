@@ -108,8 +108,9 @@ context: |
   - Engagement-side coordination -> the engagement's private collaboration
     channel (operator-provided; request a pointer if you do not have one)
   - Coordination uses the team's chat/coordination tooling; concrete tool
-    names, setup, and channel routing are operator-machine-local — see
-    AGENTS.local.md (not part of this public role file).
+    names, setup, and channel routing are operator-private and maintainer-held
+    out of the repo tree (not part of this public role file). Ask the
+    maintainer if you need them.
 
   Anchors for live operations:
   - Sumpter release coordination lives in the relevant release channel.
@@ -127,11 +128,11 @@ context: |
 
   For operator-specific pointers (engagement workspace path, private
   runbook/productbook locations, MM channel names for this engagement, agent
-  identity scripts) see the local AGENTS.local.md if present. That file is
-  gitignored by design and may not exist on every clone; agents whose work
-  needs those pointers should request them from their supervisor when not
-  provided. The OSS sumpter repo intentionally keeps engagement-private
-  identifiers out of all committed content.
+  identity scripts) consult the maintainer-held operator notes kept out of the
+  repo tree. They are not shipped in this repo and may not exist on every
+  machine; agents whose work needs those pointers should request them from
+  their supervisor when not provided. The OSS sumpter repo intentionally keeps
+  engagement-private identifiers out of all committed content.
 
   Known v1.0.0 documentation gaps (for future operators to flesh out from
   operational experience): vertical-specific recipe library structure
@@ -152,7 +153,7 @@ scope:
   - Lifecycle-aware quality gates (alpha 50% / beta 70% / production 80% coverage)
   - "Workspace pattern: private engagement workspaces hold recipes/, manifests/, outputs/; sumpter is the tool invoked from inside that pattern"
   - Engagement-fit review of sumpter briefs and PR deliveries
-  - Cross-team coordination via the team's chat/coordination tooling (tooling specifics in AGENTS.local.md)
+  - Cross-team coordination via the team's chat/coordination tooling (tooling specifics in maintainer-held operator notes, out of the repo tree)
   - Authoring runbook procedures from operational learnings (procedures live in the private engagement runbook, not in this repo)
   - Maintaining the private engagement workspace's AGENTS.md / runjournal as the current-state pointer for the next operator session
 mindset:
@@ -209,7 +210,7 @@ does_not:
   - Skip schema validation on new recipes
   - Skip dry-run / sample-slice before full-cohort extraction
   - Commit client identifiers, client codenames, vertical-trade brand names, operator-machine paths, private-repo names, engagement-codename channels, fixtures containing client data, or any PII to the OSS sumpter repo (confidentiality posture is mandatory; see this repo's AGENTS.md)
-  - "Keep sensitive or proprietary local data inside the repo tree, even gitignored (ADR-0008). Such data lives outside the tree and tools read it via an environment variable; `make pr-final` runs a confidentiality hook (concrete check configured by operator/CI). See docs/architecture/adr/0008-sensitive-data-outside-repository-trees.md (concrete locations: AGENTS.local.md)."
+  - "Keep sensitive or proprietary local data inside the repo tree, even gitignored (ADR-0008). Such data lives outside the tree and tools read it via an environment variable; `make pr-final` runs a confidentiality hook (concrete check configured by operator/CI). See docs/architecture/adr/0008-sensitive-data-outside-repository-trees.md (concrete locations are in maintainer-held operator notes, out of the repo tree)."
   - Author recipes without content_version (v0.1.3+ deprecation warning; v0.1.4 hard error)
   - Push to remote without per-occurrence approval (per AGENTS.md feature-branch policy — commits are free on branches; pushes still gated)
   - Operate on `main` directly (feature-branch model only)

@@ -292,8 +292,8 @@ Individual workstations may use a `.plans/active/` directory at repo root for
 in-flight design notes, release checkpoints, and strategy drafts. **This is
 local-only and not evergreen**: the path is in `.gitignore`, never travels to
 the OSS repo, and is not synchronized across machines. If you don't see it in
-a fresh clone, that is expected. (Prior practice used `AGENTS.local.md`; the
-`.plans/active/` convention extends that to a directory of dated documents.)
+a fresh clone, that is expected. The `.plans/active/` convention holds these
+notes as a directory of dated documents.
 
 Anything that needs to be shared, versioned, or evergreen belongs in `docs/`
 and goes through the normal PR flow.
@@ -380,8 +380,8 @@ git push origin [branch-name]
 ### AI Agent Development Workflow
 
 ```bash
-# 1. Confirm role/scope/identity (see AGENTS.md warmup)
-source ~/devsecops/vars/agent-identity/<role>-fulmenhq.sh
+# 1. Confirm role/scope/identity (see AGENTS.md warmup; identity setup is
+#    operator-local and maintainer-held out of the repo tree — ask if unsure)
 echo "role=$LANYTE_AGENT_ROLE scope=$LANYTE_AGENT_SCOPE"
 
 # 2. Work on a feature branch (NOT main)
