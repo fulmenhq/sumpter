@@ -117,6 +117,9 @@ func TestParallelExtraction_EndToEnd(t *testing.T) {
 		if runtimeBlock["source_file"] != xmlPath {
 			t.Errorf("Record %d source_file = %v, want %s", i, runtimeBlock["source_file"], xmlPath)
 		}
+		if runtimeBlock["record_num"] != i+1 {
+			t.Errorf("Record %d record_num = %v, want %d", i, runtimeBlock["record_num"], i+1)
+		}
 
 		extractBlock, ok := record["extract"].(map[string]interface{})
 		if !ok {

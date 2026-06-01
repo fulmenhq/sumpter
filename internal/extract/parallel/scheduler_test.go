@@ -10,8 +10,8 @@ func TestNewWorkScheduler(t *testing.T) {
 	idx := &index.RecordIndex{
 		Version: "1.0.0",
 		Records: []index.RecordMetadata{
-			{RecordNum: 0, StartOffset: 0, EndOffset: 100, SizeBytes: 100},
-			{RecordNum: 1, StartOffset: 100, EndOffset: 200, SizeBytes: 100},
+			{RecordNum: 1, StartOffset: 0, EndOffset: 100, SizeBytes: 100},
+			{RecordNum: 2, StartOffset: 100, EndOffset: 200, SizeBytes: 100},
 		},
 	}
 
@@ -40,9 +40,9 @@ func TestWorkScheduler_SkipLargeRecords(t *testing.T) {
 	idx := &index.RecordIndex{
 		Version: "1.0.0",
 		Records: []index.RecordMetadata{
-			{RecordNum: 0, StartOffset: 0, EndOffset: 100, SizeBytes: 100},
-			{RecordNum: 1, StartOffset: 100, EndOffset: 300000, SizeBytes: 199900}, // ~200KB (large)
-			{RecordNum: 2, StartOffset: 300000, EndOffset: 300100, SizeBytes: 100},
+			{RecordNum: 1, StartOffset: 0, EndOffset: 100, SizeBytes: 100},
+			{RecordNum: 2, StartOffset: 100, EndOffset: 300000, SizeBytes: 199900}, // ~200KB (large)
+			{RecordNum: 3, StartOffset: 300000, EndOffset: 300100, SizeBytes: 100},
 		},
 	}
 

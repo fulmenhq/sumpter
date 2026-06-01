@@ -215,6 +215,77 @@ func TestProcessFileWithProvenanceAddsRuntimeFields(t *testing.T) {
 	if _, exists := runtimeBlock["extract_config_path"]; exists {
 		t.Fatal("_runtime must not include extract_config_path")
 	}
+	if got := runtimeBlock["record_num"]; got != 1 {
+		t.Fatalf("_runtime.record_num = %#v, want 1", got)
+	}
+}
+
+func TestEnrichRecordOmittedRecordNumForLegacyHelper(t *testing.T) {
+	record := map[string]interface{}{"name": "alpha"}
+	cfg := &ExtractRecordMatch{RecordType: "sample"}
+
+	if err := EnrichRecord(record, "sample.xml", nil, cfg, provenance.RuntimeOptions{}); err != nil {
+		t.Fatalf("EnrichRecord() error = %v", err)
+	}
+
+	runtimeBlock := extractRuntimeBlock(t, record)
+	if _, exists := runtimeBlock["record_num"]; exists {
+		t.Fatalf("legacy EnrichRecord helper emitted record_num: %#v", runtimeBlock["record_num"])
+	}
+}
+
+func TestProcessFileRecordNumDocumentOrderAndFilterGaps(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := filepath.Join(tmpDir, "batch.xml")
+	xmlContent := `<Batch>
+  <Group id="A">
+    <Item status="normal"><Value>A1</Value></Item>
+    <Item status="cancel"><Value>A2</Value></Item>
+    <Item status="normal"><Value>A3</Value></Item>
+  </Group>
+  <Group id="B">
+    <Item status="normal"><Value>B1</Value></Item>
+    <Item status="normal"><Value>B2</Value></Item>
+  </Group>
+</Batch>`
+	if err := os.WriteFile(inputPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write xml fixture: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "batch-signature",
+		ConfidenceThreshold: 1.0,
+		MatchPatterns: []MatchPattern{
+			{PatternID: "root", Selector: "/Batch", Weight: 1.0},
+		},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "batch_item",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//Item"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "group_id", XPath: "../@id", Type: "string"},
+			{OutputField: "status", XPath: "@status", Type: "string"},
+			{OutputField: "value", XPath: "Value", Type: "string"},
+		},
+		Filters: map[string]interface{}{
+			"status": "> cancel",
+		},
+	}
+
+	result := ProcessFile(inputPath, signature, extractCfg, nil, false)
+	if result.Error != nil {
+		t.Fatalf("ProcessFile() error = %v", result.Error)
+	}
+
+	assertRecordValuesAndNums(t, result.Records, []string{"A1", "A3", "B1", "B2"}, []int{1, 3, 4, 5})
+
+	rerun := ProcessFile(inputPath, signature, extractCfg, nil, false)
+	if rerun.Error != nil {
+		t.Fatalf("ProcessFile() rerun error = %v", rerun.Error)
+	}
+	assertRecordValuesAndNums(t, rerun.Records, []string{"A1", "A3", "B1", "B2"}, []int{1, 3, 4, 5})
 }
 
 func TestProcessFileWithProvenanceTracksPerSelectorCounts(t *testing.T) {
@@ -1354,6 +1425,47 @@ func TestProcessFileStreaming_vs_NonStreaming(t *testing.T) {
 	t.Logf("✓ Streaming and non-streaming produce identical results for %d records", len(resultNonStreaming.Records))
 }
 
+func TestProcessFileStreamingRecordNumDocumentOrderAndFilterGaps(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "streaming-gap.xml")
+	xmlContent := `<Batch>
+  <Item status="normal"><Value>A1</Value></Item>
+  <Item status="cancel"><Value>A2</Value></Item>
+  <Item status="normal"><Value>A3</Value></Item>
+</Batch>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write xml fixture: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "batch-signature",
+		ConfidenceThreshold: 1.0,
+		MatchPatterns: []MatchPattern{
+			{PatternID: "root", Selector: "/Batch", Weight: 1.0},
+		},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "batch_item",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//Item"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "status", XPath: "@status", Type: "string"},
+			{OutputField: "value", XPath: "Value", Type: "string"},
+		},
+		Filters: map[string]interface{}{
+			"status": "> cancel",
+		},
+	}
+
+	result := ProcessFileStreaming(testFile, signature, extractCfg, nil)
+	if result.Error != nil {
+		t.Fatalf("ProcessFileStreaming() error = %v", result.Error)
+	}
+
+	assertRecordValuesAndNums(t, result.Records, []string{"A1", "A3"}, []int{1, 3})
+}
+
 func TestProcessFileStreaming_RejectsUnsupportedRecordSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "predicate-selector.xml")
@@ -1533,6 +1645,37 @@ func extractDataBlock(t *testing.T, record map[string]interface{}) map[string]in
 	}
 
 	return dataBlock
+}
+
+func extractRuntimeBlock(t *testing.T, record map[string]interface{}) map[string]interface{} {
+	t.Helper()
+
+	runtimeBlock, ok := record["_runtime"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("_runtime block missing or wrong type: %T", record["_runtime"])
+	}
+	return runtimeBlock
+}
+
+func assertRecordValuesAndNums(t *testing.T, records []map[string]interface{}, wantValues []string, wantRecordNums []int) {
+	t.Helper()
+
+	if len(wantValues) != len(wantRecordNums) {
+		t.Fatalf("test setup mismatch: %d values, %d record numbers", len(wantValues), len(wantRecordNums))
+	}
+	if len(records) != len(wantValues) {
+		t.Fatalf("records len = %d, want %d", len(records), len(wantValues))
+	}
+	for i, record := range records {
+		dataBlock := extractDataBlock(t, record)
+		if got := dataBlock["value"]; got != wantValues[i] {
+			t.Fatalf("record %d value = %#v, want %q", i, got, wantValues[i])
+		}
+		runtimeBlock := extractRuntimeBlock(t, record)
+		if got := runtimeBlock["record_num"]; got != wantRecordNums[i] {
+			t.Fatalf("record %d _runtime.record_num = %#v, want %d", i, got, wantRecordNums[i])
+		}
+	}
 }
 
 // TestProcessFileStreaming_LargeRecordCount tests streaming with many records

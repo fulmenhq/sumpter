@@ -62,9 +62,10 @@ reserves the schema surface for v0.1.4+ attestation work.
 ### Summary
 
 Provenance ships as a **hybrid model**: per-record inline carries the _run-level
-identity_ a consumer needs to correlate and verify, and a **sidecar manifest
-co-located with the extract output** carries the per-field XPath/description
-detail, the verbatim recipe content, and the input-file ledger. The manifest
+identity_ and stable record source position a consumer needs to correlate and
+verify, and a **sidecar manifest co-located with the extract output** carries
+the per-field XPath/description detail, the verbatim recipe content, and the
+input-file ledger. The manifest
 reserves an `attestations[]` field — empty in v0.1.3, populated by v0.1.4+
 signing and encryption workflows.
 
@@ -72,7 +73,7 @@ signing and encryption workflows.
 
 | #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                              | Notes                                                    |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| 1   | **Sidecar manifest is the canonical provenance artifact**, co-located with extract output (same folder or object-store prefix). Per-record `_runtime` carries run-level identity only. An opt-in `--inline-provenance` flag enables per-record field-level annotation for users who need self-contained records.                                                                                                                      | See "Sidecar layout" below.                              |
+| 1   | **Sidecar manifest is the canonical provenance artifact**, co-located with extract output (same folder or object-store prefix). Per-record `_runtime` carries run-level identity and the stable source-position field `record_num`. An opt-in `--inline-provenance` flag enables per-record field-level annotation for users who need self-contained records.                                                                          | See "Sidecar layout" below.                              |
 | 2   | **Recipe versioning uses both semver and content-hash**, both emitted. Semver is author-managed in the recipe YAML; content-hash is auto-computed by sumpter from canonical recipe bytes (JCS). The hash is authoritative when they disagree.                                                                                                                                                                                         | See "Recipe versioning" below.                           |
 | 3   | **Field-level byte/line offsets deferred to v0.1.4** (evaluation target, snooze-able). v0.1.3 emits _record-level_ `record_byte_range` opportunistically when IndexStore has tracked the source.                                                                                                                                                                                                                                      | Tracked in backlog; not lost.                            |
 | 4   | **Run ID is a UUIDv7**, generated once per `sumpter extract` invocation and shared across parallel workers. No hostname, PID, or argv leakage. Sorts chronologically as lexicographic strings. `SUMPTER_RUN_ID` env var and `--run-id` flag override for deterministic replay.                                                                                                                                                        | See "Run identity" below.                                |
@@ -97,6 +98,7 @@ signing and encryption workflows.
     "recipe_content_hash": "sha256:7b3f...c2e1",
     "source_file": "input.xml",
     "source_file_sha256": "sha256:9a1d...4f0e",
+    "record_num": 42,
     "record_byte_range": [102400, 104832],
     "summaries_included": false,
     "validation_included": false
@@ -123,6 +125,11 @@ Field notes:
 - `source_file` — relative path under the extract input root, not absolute.
   Reduces accidental hostname/path leakage on shipped output.
 - `source_file_sha256` — computed lazily on first record from each file.
+- `record_num` — 1-based pre-filter source-document position among records
+  matched by the record-boundary selector. Filtered or skipped records leave
+  gaps; surviving records are not renumbered. In v0.1.7 this is contracted as
+  global source-document order only for single-selector recipes. Multi-selector
+  recipes remain selector-major and are not a global document-order contract.
 - `record_byte_range` — present when the streaming scanner tracked
   per-record offsets (IndexStore-backed path); absent otherwise.
 
@@ -593,3 +600,9 @@ Standing constraints regardless of sequencing:
   optional-with-warning; v0.1.4 bumps to `recipe/v0.2.0` with it required.
 - **2026-05-11** — ADR-0006 v3 accepted (this document). Branch
   `feat/provenance-recipe-schema` opened; PR-A work begins.
+- **2026-06-01** — SUM-034 addendum: per-record `_runtime` now always carries
+  `record_num`, the 1-based pre-filter source-document position among
+  record-boundary selector matches. This refines the original "run-level
+  identity only" wording without adding field-level provenance. Document-order
+  emission and `record_num` semantics are a required invariant for the
+  record-sink refactor.
