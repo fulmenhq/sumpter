@@ -2,7 +2,7 @@
 
 **Crush XML. Haul Data. Ship Insights. Thrive on Scale.**
 
-[![Go Version](https://img.shields.io/badge/go-1.25%2B-blue)]()
+[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)]()
 [![CI Status](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml/badge.svg)](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)]()
 [![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)]()
@@ -59,7 +59,7 @@ Sumpter is in **alpha** — for us that's about _interface stability_, not matur
 
 **Contributions are welcome** — issues, design discussion, and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md); for anything beyond a small fix, open an issue first so we can point you at in-flight work. The road to beta is about freezing the recipe/DSL/adapter contracts and raising coverage, not about whether the core works.
 
-**Memory contract:** XML input is tokenized incrementally, but extracted records are buffered per file before output. Bounded end-to-end memory across sequential and parallel paths is on the v0.1.6 roadmap — see [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md).
+**Memory contract:** XML input is tokenized incrementally, but extracted records are buffered per file before output. Bounded end-to-end memory across sequential and parallel paths is on the post-v0.1.6 roadmap — see [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md).
 
 Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
 
@@ -69,7 +69,7 @@ Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.m
 
 **Requirements**
 
-- Go 1.25+
+- Go 1.26+
 - Standard build toolchain
 - (Optional) CGO for seekable-zstd compressed indexes
 
@@ -147,7 +147,7 @@ The public-data exemplars are deliberately drawn from **different verticals** to
 
 ## 🔑 Features
 
-- **Streaming input parsing**: Gigabyte-class XML inputs are tokenized incrementally without loading the document into memory. Extracted records are buffered per file before output; the record-sink streaming refactor that makes bounded end-to-end memory true across sequential and parallel paths is on the v0.1.6 roadmap.
+- **Streaming input parsing**: Gigabyte-class XML inputs are tokenized incrementally without loading the document into memory. Extracted records are buffered per file before output; the record-sink streaming refactor that makes bounded end-to-end memory true across sequential and parallel paths is on the post-v0.1.6 roadmap.
 - **Record Indexing**: Build seekable indexes for parallel extraction of multi-GB XML files
 - **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors

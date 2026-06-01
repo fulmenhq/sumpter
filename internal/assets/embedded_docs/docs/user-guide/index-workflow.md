@@ -441,7 +441,7 @@ Without CGO, Sumpter falls back to JSON-only mode.
 
 ```dockerfile
 # Dockerfile with seekable-zstd support
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 WORKDIR /build
 COPY . .
 RUN CGO_ENABLED=1 go build -tags seekablezstd -o sumpter ./cmd/sumpter

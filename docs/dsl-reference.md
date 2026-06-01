@@ -1,6 +1,6 @@
 # Sumpter DSL Reference
 
-**Reference version:** Sumpter DSL reference v1.3 (as of post-SUM-020 release)
+**Reference version:** Sumpter DSL reference v1.3
 **Runtime language value:** `sumpter-dsl`
 **Status:** Current recipe-author reference for v0.1.4
 
@@ -370,8 +370,8 @@ literal recognition replaces the current scanner edge cases.
 
 ### Ternary Expressions
 
-SUM-011 added ternary expressions. Existing expressions continue to work.
-Authors can use ternaries for concise conditional relabeling:
+Ternary expressions were added in the v0.1.4 cycle. Existing expressions
+continue to work. Authors can use ternaries for concise conditional relabeling:
 
 ```yaml
 field_mappings:
@@ -382,9 +382,9 @@ field_mappings:
 
 ### Quoted String Hardening
 
-SUM-012 hardened quoted string scanning across parser surfaces. Expressions
-that previously relied on bare unquoted values containing quote characters
-must quote those values explicitly:
+Quoted string scanning is hardened across parser surfaces. Expressions that
+previously relied on bare unquoted values containing quote characters must
+quote those values explicitly:
 
 ```text
 name == "Bob's"
