@@ -59,7 +59,7 @@ context: |
 
   Cross-tool pairing (typical operational chain):
   In production engagements sumpter rarely operates alone. The typical chain
-  is: an upstream capture / index / reflow tool (gonimbus is one example;
+  is: an upstream capture / index / reflow tool (one of several such tools;
   others exist) -> sumpter recipes (extraction from captured artifacts). The
   upstream tool decides the destination layout; sumpter recipes match that
   layout via `defaults.input.path` globs and per-record `signature`
@@ -300,7 +300,7 @@ checklists:
     - "Sidecar .prov.json produced (v0.1.4+) and retained alongside outputs?"
     - "field_mappings[].description populated where provenance correlation matters?"
   cross_tool_pairing:
-    # Mirror of gonimbus dataeng cross_tool_pairing checklist, from the
+    # Mirror of a shared dataeng cross_tool_pairing checklist, from the
     # sumpter side of the chain.
     - "Upstream tool identified (capture/reflow stage)?"
     - "Recipe's defaults.input.path matches upstream destination layout?"
