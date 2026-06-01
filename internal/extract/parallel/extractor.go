@@ -73,7 +73,7 @@ func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 		return result
 	}
 
-	if err := extract.EnrichRecord(recordData, se.filePath, se.sigCfg, se.extCfg, se.provenance); err != nil {
+	if err := extract.EnrichRecordWithRecordNum(recordData, se.filePath, se.sigCfg, se.extCfg, se.provenance, item.RecordNum); err != nil {
 		result.Error = fmt.Errorf("failed to enrich record %d: %w", item.RecordNum, err)
 		return result
 	}

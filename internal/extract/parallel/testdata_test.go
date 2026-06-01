@@ -60,19 +60,19 @@ func createTestIndex(t *testing.T, dir, xmlPath string) string {
 		},
 		Records: []index.RecordMetadata{
 			{
-				RecordNum:   0,
+				RecordNum:   1,
 				StartOffset: 45,
 				EndOffset:   130,
 				SizeBytes:   85,
 			},
 			{
-				RecordNum:   1,
+				RecordNum:   2,
 				StartOffset: 133,
 				EndOffset:   215,
 				SizeBytes:   82,
 			},
 			{
-				RecordNum:   2,
+				RecordNum:   3,
 				StartOffset: 218,
 				EndOffset:   305,
 				SizeBytes:   87,

@@ -52,7 +52,7 @@ func TestSeekableExtractor_ExtractRecord_FileNotFound(t *testing.T) {
 	extractor := NewSeekableExtractor("/nonexistent/file.xml", extCfg, sigCfg, nil)
 
 	workItem := WorkItem{
-		RecordNum:   0,
+		RecordNum:   1,
 		StartOffset: 0,
 		EndOffset:   100,
 		SizeBytes:   100,
@@ -63,8 +63,8 @@ func TestSeekableExtractor_ExtractRecord_FileNotFound(t *testing.T) {
 	if result.Error == nil {
 		t.Error("Expected error for nonexistent file")
 	}
-	if result.RecordNum != 0 {
-		t.Errorf("Expected RecordNum=0, got %d", result.RecordNum)
+	if result.RecordNum != 1 {
+		t.Errorf("Expected RecordNum=1, got %d", result.RecordNum)
 	}
 }
 
@@ -90,7 +90,7 @@ func TestSeekableExtractor_ExtractRecord_InvalidByteRange(t *testing.T) {
 
 	// Try to read beyond file size
 	workItem := WorkItem{
-		RecordNum:   0,
+		RecordNum:   1,
 		StartOffset: 0,
 		EndOffset:   10000, // Way beyond file size
 		SizeBytes:   10000,
@@ -124,7 +124,7 @@ func TestSeekableExtractor_ExtractRecord_InvalidXML(t *testing.T) {
 	extractor := NewSeekableExtractor(xmlPath, extCfg, sigCfg, nil)
 
 	workItem := WorkItem{
-		RecordNum:   0,
+		RecordNum:   1,
 		StartOffset: 0,
 		EndOffset:   int64(len(invalidXML)),
 		SizeBytes:   int64(len(invalidXML)),
@@ -181,6 +181,9 @@ func TestSeekableExtractor_ExtractRecordAddsRuntimeProvenance(t *testing.T) {
 	}
 	if got := runtimeBlock["sumpter_version"]; got != runtimeProvenance.SumpterVersion {
 		t.Fatalf("sumpter_version = %#v, want %q", got, runtimeProvenance.SumpterVersion)
+	}
+	if got := runtimeBlock["record_num"]; got != 1 {
+		t.Fatalf("record_num = %#v, want 1", got)
 	}
 
 	extractBlock, ok := result.Data["extract"].(map[string]interface{})

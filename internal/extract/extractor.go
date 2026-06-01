@@ -454,6 +454,7 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 	}()
 
 	var allRecords []map[string]interface{}
+	var allRecordNums []int
 	perSelectorCounts := make(map[int]int)
 
 	// Note: In streaming mode, signature checking is skipped because we don't have access
@@ -502,6 +503,9 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 		}
 
 		allRecords = append(allRecords, records...)
+		for range records {
+			allRecordNums = append(allRecordNums, recordBuffer.RecordNum)
+		}
 	}
 	perSelectorCounts[0] = scanner.RecordCount()
 
@@ -512,7 +516,7 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 		zap.String("record_element", parsedSelector.ElementName))
 
 	// Enrich records with metadata
-	if err := enrichRecords(allRecords, filePath, sigCfg, streamingCfg, runtimeProvenance); err != nil {
+	if err := enrichRecordsWithRecordNums(allRecords, allRecordNums, filePath, sigCfg, streamingCfg, runtimeProvenance); err != nil {
 		logger.Error("Failed to enrich records", zap.Error(err))
 		result.Error = err
 		return result
@@ -668,16 +672,17 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 
 	// Extract records
 	logger.Debug("Starting record extraction", zap.String("file", filePath), zap.String("record_type", extCfg.RecordType))
-	records, perSelectorCounts, err := extractRecordsWithCounts(doc, extCfg, externalFields)
+	extractedRecords, perSelectorCounts, err := extractRecordsWithCountsAndRecordNums(doc, extCfg, externalFields)
 	if err != nil {
 		logger.Error("Failed to extract records", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to extract records: %w", err)
 		markFailed(DispositionReasonInternalError, result.Error.Error())
 		return result
 	}
+	records, recordNums := splitExtractedRecords(extractedRecords)
 	logger.Debug("Record extraction complete", zap.String("file", filePath), zap.Int("record_count", len(records)))
 
-	if err := enrichRecords(records, filePath, sigCfg, extCfg, runtimeProvenance); err != nil {
+	if err := enrichRecordsWithRecordNums(records, recordNums, filePath, sigCfg, extCfg, runtimeProvenance); err != nil {
 		logger.Error("Failed to apply metadata", zap.String("file", filePath), zap.Error(err))
 		result.Error = err
 		markFailed(DispositionReasonInternalError, result.Error.Error())
@@ -787,9 +792,24 @@ func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields 
 	return records, err
 }
 
+type extractedRecord struct {
+	data      map[string]interface{}
+	recordNum int
+}
+
 func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]map[string]interface{}, map[int]int, error) {
-	var records []map[string]interface{}
+	extractedRecords, perSelectorCounts, err := extractRecordsWithCountsAndRecordNums(doc, cfg, externalFields)
+	if err != nil {
+		return nil, nil, err
+	}
+	records, _ := splitExtractedRecords(extractedRecords)
+	return records, perSelectorCounts, nil
+}
+
+func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]extractedRecord, map[int]int, error) {
+	var extractedRecords []extractedRecord
 	perSelectorCounts := make(map[int]int, len(cfg.MatchSelectors))
+	recordNum := 0
 
 	for i := range cfg.MatchSelectors {
 		selector := &cfg.MatchSelectors[i]
@@ -803,6 +823,7 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 		}
 
 		for _, node := range nodes {
+			recordNum++
 			record := make(map[string]interface{})
 
 			// Apply field mappings
@@ -854,12 +875,25 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 						return nil, nil, fmt.Errorf("output schema validation failed:\n%s", formatValidationErrors(res.Errors))
 					}
 				}
-				records = append(records, record)
+				extractedRecords = append(extractedRecords, extractedRecord{
+					data:      record,
+					recordNum: recordNum,
+				})
 			}
 		}
 	}
 
-	return records, perSelectorCounts, nil
+	return extractedRecords, perSelectorCounts, nil
+}
+
+func splitExtractedRecords(extractedRecords []extractedRecord) ([]map[string]interface{}, []int) {
+	records := make([]map[string]interface{}, 0, len(extractedRecords))
+	recordNums := make([]int, 0, len(extractedRecords))
+	for _, extracted := range extractedRecords {
+		records = append(records, extracted.data)
+		recordNums = append(recordNums, extracted.recordNum)
+	}
+	return records, recordNums
 }
 
 func applyUniformSchema(record map[string]interface{}, cfg *ExtractRecordMatch) {
@@ -888,13 +922,20 @@ func zeroSelectorCounts(cfg *ExtractRecordMatch) map[int]int {
 	return counts
 }
 
-func enrichRecords(records []map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtimeProvenance provenance.RuntimeOptions) error {
+func enrichRecordsWithRecordNums(records []map[string]interface{}, recordNums []int, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtimeProvenance provenance.RuntimeOptions) error {
 	if len(records) == 0 {
 		return nil
 	}
+	if recordNums != nil && len(recordNums) != len(records) {
+		return fmt.Errorf("record number count %d does not match record count %d", len(recordNums), len(records))
+	}
 
-	for _, record := range records {
-		if err := EnrichRecord(record, sourceFile, sigCfg, cfg, runtimeProvenance); err != nil {
+	for i, record := range records {
+		recordNum := 0
+		if recordNums != nil {
+			recordNum = recordNums[i]
+		}
+		if err := EnrichRecordWithRecordNum(record, sourceFile, sigCfg, cfg, runtimeProvenance, recordNum); err != nil {
 			return err
 		}
 	}
@@ -905,6 +946,12 @@ func enrichRecords(records []map[string]interface{}, sourceFile string, sigCfg *
 // EnrichRecord wraps a raw extracted record in Sumpter's standard output
 // envelope and attaches safe runtime provenance fields.
 func EnrichRecord(record map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtimeProvenance provenance.RuntimeOptions) error {
+	return EnrichRecordWithRecordNum(record, sourceFile, sigCfg, cfg, runtimeProvenance, 0)
+}
+
+// EnrichRecordWithRecordNum wraps a raw extracted record and, when provided,
+// records the 1-based pre-filter source-document position in _runtime.
+func EnrichRecordWithRecordNum(record map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtimeProvenance provenance.RuntimeOptions, recordNum int) error {
 	showSummaries := true
 	showValidation := true
 	if cfg.OutputOptions != nil {
@@ -947,7 +994,7 @@ func EnrichRecord(record map[string]interface{}, sourceFile string, sigCfg *File
 		}
 	}
 
-	runtimeMetadata := buildRuntimeMetadata(sourceFile, sigCfg, cfg, runtime, showSummaries && len(summary) > 0, showValidation && validationReport != nil, runtimeProvenance)
+	runtimeMetadata := buildRuntimeMetadata(sourceFile, sigCfg, cfg, runtime, showSummaries && len(summary) > 0, showValidation && validationReport != nil, runtimeProvenance, recordNum)
 
 	final := make(map[string]interface{}, 3)
 	final["_runtime"] = runtimeMetadata
@@ -1185,13 +1232,16 @@ func coerceToFloat(value interface{}) (float64, error) {
 	}
 }
 
-func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtime *dsl.ValidationRuntime, summariesIncluded, validationIncluded bool, runtimeProvenance provenance.RuntimeOptions) map[string]interface{} {
+func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtime *dsl.ValidationRuntime, summariesIncluded, validationIncluded bool, runtimeProvenance provenance.RuntimeOptions, recordNum int) map[string]interface{} {
 	metadata := map[string]interface{}{
 		"generated_at":        time.Now().UTC().Format(time.RFC3339),
 		"source_file":         sourceFile,
 		"record_type":         cfg.RecordType,
 		"summaries_included":  summariesIncluded,
 		"validation_included": validationIncluded,
+	}
+	if recordNum > 0 {
+		metadata["record_num"] = recordNum
 	}
 
 	if sigCfg != nil {
