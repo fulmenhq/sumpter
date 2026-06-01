@@ -1441,6 +1441,9 @@ type ElementStats struct {
 
 // createRecordScannerSizeOnly creates a size-only record scanner for analysis
 func createRecordScannerSizeOnly(reader io.Reader, selector string, encoding string) (*streaming.RecordScanner, error) {
+	if err := streaming.ValidateRecordSelector(selector); err != nil {
+		return nil, err
+	}
 	scanner := streaming.NewRecordScannerSizeOnlyWithEncoding(reader, selector, encoding)
 	return scanner, nil
 }

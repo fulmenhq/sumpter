@@ -8,44 +8,62 @@ import (
 	"testing"
 )
 
-func TestExtractElementName(t *testing.T) {
+func TestParseRecordSelector(t *testing.T) {
 	tests := []struct {
 		name     string
 		selector string
-		want     string
+		want     RecordSelector
+		wantErr  bool
 	}{
 		{
 			name:     "simple double slash",
 			selector: "//VariationArchive",
-			want:     "VariationArchive",
-		},
-		{
-			name:     "absolute path",
-			selector: "/root/child/Record",
-			want:     "Record",
-		},
-		{
-			name:     "with predicate",
-			selector: "//Transaction[@type='sale']",
-			want:     "Transaction",
+			want:     RecordSelector{Raw: "//VariationArchive", ElementName: "VariationArchive"},
 		},
 		{
 			name:     "just element name",
 			selector: "Element",
-			want:     "Element",
+			want:     RecordSelector{Raw: "Element", ElementName: "Element"},
 		},
 		{
-			name:     "nested path with predicate",
-			selector: "/root/items/Item[1]",
-			want:     "Item",
+			name:     "absolute path rejected",
+			selector: "/root/child/Record",
+			wantErr:  true,
+		},
+		{
+			name:     "predicate rejected",
+			selector: "//Transaction[@type='sale']",
+			wantErr:  true,
+		},
+		{
+			name:     "namespace prefix rejected",
+			selector: "//ns:Record",
+			wantErr:  true,
+		},
+		{
+			name:     "empty selector rejected",
+			selector: " ",
+			wantErr:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractElementName(tt.selector)
+			got, err := ParseRecordSelector(tt.selector)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseRecordSelector(%q) succeeded, want error", tt.selector)
+				}
+				if !strings.Contains(err.Error(), "not yet supported for streaming/index mode") {
+					t.Fatalf("error = %q, want streaming/index mode wording", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseRecordSelector(%q) failed: %v", tt.selector, err)
+			}
 			if got != tt.want {
-				t.Errorf("extractElementName(%q) = %q, want %q", tt.selector, got, tt.want)
+				t.Errorf("ParseRecordSelector(%q) = %#v, want %#v", tt.selector, got, tt.want)
 			}
 		})
 	}
@@ -116,6 +134,46 @@ func TestRecordScanner_BasicScan(t *testing.T) {
 	}
 	if record != nil {
 		t.Errorf("expected nil record at EOF, got %v", record)
+	}
+}
+
+func TestRecordScanner_RejectsUnsupportedSelectorForms(t *testing.T) {
+	xmlData := `<root><Transaction type="sale"><ID>1</ID></Transaction></root>`
+
+	for _, selector := range []string{
+		`//Transaction[@type='sale']`,
+		`/root/Transaction`,
+		`//ns:Transaction`,
+		``,
+	} {
+		t.Run(selector, func(t *testing.T) {
+			scanner := NewRecordScanner(strings.NewReader(xmlData), selector)
+			_, err := scanner.Next()
+			if err == nil {
+				t.Fatal("expected unsupported selector error")
+			}
+			if !strings.Contains(err.Error(), "not yet supported for streaming/index mode") {
+				t.Fatalf("error = %q, want streaming/index mode wording", err.Error())
+			}
+		})
+	}
+}
+
+func TestRecordScanner_MatchesLocalElementNameExactly(t *testing.T) {
+	xmlData := `<root><Record><ID>1</ID></Record><record><ID>2</ID></record></root>`
+
+	scanner := NewRecordScanner(strings.NewReader(xmlData), "//Record")
+	record, err := scanner.Next()
+	if err != nil {
+		t.Fatalf("first record: %v", err)
+	}
+	if strings.Contains(record.XML, "<record>") {
+		t.Fatalf("scanner matched lowercase element unexpectedly: %s", record.XML)
+	}
+
+	record, err = scanner.Next()
+	if err != io.EOF {
+		t.Fatalf("second record err = %v, want EOF; record=%v", err, record)
 	}
 }
 

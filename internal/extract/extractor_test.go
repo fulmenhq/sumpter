@@ -12,6 +12,7 @@ import (
 	"github.com/antchfx/xmlquery"
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/provenance"
+	"github.com/fulmenhq/sumpter/internal/validation/dsl"
 )
 
 func TestProcessFilePolymorphicArray(t *testing.T) {
@@ -1351,6 +1352,170 @@ func TestProcessFileStreaming_vs_NonStreaming(t *testing.T) {
 	}
 
 	t.Logf("✓ Streaming and non-streaming produce identical results for %d records", len(resultNonStreaming.Records))
+}
+
+func TestProcessFileStreaming_RejectsUnsupportedRecordSelector(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "predicate-selector.xml")
+	xmlContent := `<Envelope><Transaction type="sale"><ID>1</ID></Transaction></Envelope>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType:     "transaction",
+		MatchSelectors: []MatchSelector{{XPath: `//Transaction[@type='sale']`}},
+		FieldMappings:  []FieldMapping{{OutputField: "id", XPath: "ID", Type: "string"}},
+	}
+
+	result := ProcessFileStreaming(testFile, signature, extractCfg, nil)
+	if result.Error == nil {
+		t.Fatal("expected unsupported selector error")
+	}
+	if !strings.Contains(result.Error.Error(), "not yet supported for streaming/index mode") {
+		t.Fatalf("error = %q, want streaming/index mode wording", result.Error.Error())
+	}
+	if strings.Contains(strings.ToLower(result.Error.Error()), "non-streaming") {
+		t.Fatalf("error should not steer users to non-streaming mode: %v", result.Error)
+	}
+}
+
+func TestProcessFileStreaming_DoesNotMutatePreparedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "reuse.xml")
+	xmlContent := `<Envelope>
+  <Record><ID>1</ID><Name>First</Name></Record>
+  <Record><ID>2</ID><Name>Second</Name></Record>
+</Envelope>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType:     "test_record",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "id", XPath: "ID", Type: "string"},
+			{OutputField: "name", XPath: "Name", Type: "string"},
+		},
+	}
+	if err := prepareExtractConfig(extractCfg); err != nil {
+		t.Fatalf("prepareExtractConfig: %v", err)
+	}
+	originalSelectorExpr := extractCfg.MatchSelectors[0].CompiledXPath
+	originalIDExpr := extractCfg.FieldMappings[0].CompiledXPath
+
+	streamingResult := ProcessFileStreaming(testFile, signature, extractCfg, nil)
+	if streamingResult.Error != nil {
+		t.Fatalf("streaming extraction failed: %v", streamingResult.Error)
+	}
+	if len(streamingResult.Records) != 2 {
+		t.Fatalf("streaming records = %d, want 2", len(streamingResult.Records))
+	}
+	if len(extractCfg.MatchSelectors) != 1 || extractCfg.MatchSelectors[0].XPath != "//Record" {
+		t.Fatalf("caller match selectors mutated: %#v", extractCfg.MatchSelectors)
+	}
+	if extractCfg.MatchSelectors[0].CompiledXPath != originalSelectorExpr {
+		t.Fatal("caller match selector compiled state changed")
+	}
+	if extractCfg.FieldMappings[0].CompiledXPath != originalIDExpr {
+		t.Fatal("caller field mapping compiled state changed")
+	}
+
+	regularResult := ProcessFile(testFile, signature, extractCfg, nil, false)
+	if regularResult.Error != nil {
+		t.Fatalf("regular extraction after streaming failed: %v", regularResult.Error)
+	}
+	if len(regularResult.Records) != 2 {
+		t.Fatalf("regular records = %d, want 2", len(regularResult.Records))
+	}
+}
+
+func TestProcessFileStreaming_DoesNotMutateValidationMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "validation.xml")
+	xmlContent := `<Envelope>
+  <Record><ID>1</ID><Name>First</Name></Record>
+</Envelope>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+	}
+	originalRuntime := dsl.NewValidationRuntime()
+	extractCfg := &ExtractRecordMatch{
+		RecordType:     "test_record",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "id", XPath: "ID", Type: "string"},
+		},
+		ValidationMetadata: &dsl.ValidationMetadata{
+			Enable:  true,
+			Runtime: originalRuntime,
+			Validations: []dsl.ValidationConfig{
+				{Name: "has_id", Rule: `id == "1"`, Message: "id should be present"},
+			},
+			Reconciliations: []dsl.ReconciliationConfig{
+				{
+					Name:           "shape",
+					BaseExpression: "1",
+					Components: []dsl.ReconciliationComponentConfig{
+						{Name: "component", Expression: "1"},
+					},
+					GroupBy: &dsl.ReconciliationGroupByConfig{
+						Source:          "lines[]",
+						Field:           "kind",
+						ValueExpression: "amount",
+					},
+				},
+			},
+		},
+	}
+
+	result := ProcessFileStreaming(testFile, signature, extractCfg, nil)
+	if result.Error != nil {
+		t.Fatalf("streaming extraction failed: %v", result.Error)
+	}
+	if len(result.Records) != 1 {
+		t.Fatalf("streaming records = %d, want 1", len(result.Records))
+	}
+
+	metadata := extractCfg.ValidationMetadata
+	if metadata.ExpressionLanguage != "" {
+		t.Fatalf("caller expression language mutated to %q", metadata.ExpressionLanguage)
+	}
+	if metadata.Placement != "" {
+		t.Fatalf("caller placement mutated to %q", metadata.Placement)
+	}
+	if metadata.Runtime != originalRuntime {
+		t.Fatal("caller validation runtime pointer changed")
+	}
+	if metadata.Validations[0].Severity != "" {
+		t.Fatalf("caller validation severity mutated to %q", metadata.Validations[0].Severity)
+	}
+	if metadata.Reconciliations[0].Severity != "" {
+		t.Fatalf("caller reconciliation severity mutated to %q", metadata.Reconciliations[0].Severity)
+	}
+	if metadata.Reconciliations[0].Tolerance != 0 {
+		t.Fatalf("caller reconciliation tolerance mutated to %v", metadata.Reconciliations[0].Tolerance)
+	}
+	if metadata.Reconciliations[0].GroupBy.MissingLabel != "" {
+		t.Fatalf("caller group_by missing_label mutated to %q", metadata.Reconciliations[0].GroupBy.MissingLabel)
+	}
 }
 
 // extractDataBlock extracts the data portion from a record for comparison

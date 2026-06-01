@@ -65,6 +65,11 @@ if err != nil {
 err = builder.WriteToFile(idx, "/path/to/output.recordindex.json")
 ```
 
+The index builder uses the same record boundary grammar as streaming
+extraction: `Name` and `//Name` are supported, matched exactly by local element
+name. Predicates, multi-segment paths, and namespace-prefixed forms are not yet
+supported for streaming/index mode and return an error before scanning.
+
 #### Verifier
 
 Index integrity verifier:

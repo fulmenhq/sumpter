@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
@@ -47,6 +46,11 @@ func (b *Builder) Build() (*RecordIndex, error) {
 		return nil, CompressedSourceIndexBuildError(b.opts.InputPath, compressionFormat)
 	}
 
+	recordSelector, err := streaming.ParseRecordSelector(b.opts.Selector)
+	if err != nil {
+		return nil, err
+	}
+
 	// Compute source file SHA256 (first pass)
 	sourceHash, err := computeFileSHA256(b.opts.InputPath)
 	if err != nil {
@@ -63,7 +67,7 @@ func (b *Builder) Build() (*RecordIndex, error) {
 	var reader io.Reader = file
 
 	// Create record scanner in size-only mode for memory efficiency
-	scanner := streaming.NewRecordScannerSizeOnly(reader, b.opts.Selector)
+	scanner := streaming.NewRecordScannerSizeOnly(reader, recordSelector.Raw)
 	defer func() { _ = scanner.Close() }()
 
 	// Collect records with incremental statistics
@@ -152,9 +156,6 @@ func (b *Builder) Build() (*RecordIndex, error) {
 		}
 	}
 
-	// Extract element name from selector
-	elementName := extractElementName(b.opts.Selector)
-
 	// Build index structure
 	index := &RecordIndex{
 		Version: SchemaVersion,
@@ -168,8 +169,8 @@ func (b *Builder) Build() (*RecordIndex, error) {
 			CreatedAt:         time.Now().UTC(),
 		},
 		Selector: SelectorInfo{
-			XPath:       b.opts.Selector,
-			ElementName: elementName,
+			XPath:       recordSelector.Raw,
+			ElementName: recordSelector.ElementName,
 		},
 		Records: records,
 		Summary: summary,
@@ -252,26 +253,6 @@ func computeRangeHashSHA256(path string, start, end int64) (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-// extractElementName extracts the element name from an XPath selector
-func extractElementName(selector string) string {
-	selector = strings.TrimSpace(selector)
-	selector = strings.TrimPrefix(selector, "//")
-	selector = strings.TrimPrefix(selector, "/")
-
-	parts := strings.Split(selector, "/")
-	if len(parts) > 0 {
-		elementName := parts[len(parts)-1]
-		if idx := strings.Index(elementName, "["); idx >= 0 {
-			elementName = elementName[:idx]
-		}
-		if colon := strings.Index(elementName, ":"); colon >= 0 {
-			elementName = elementName[colon+1:]
-		}
-		return strings.TrimSpace(elementName)
-	}
-	return selector
 }
 
 // percentile calculates the percentile value from a sorted slice

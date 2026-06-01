@@ -149,3 +149,8 @@ See [examples/index/](../../../examples/index/) for complete example record inde
 
 The high-scale index design is captured in the schema contract here and in
 ADR-0005's streaming architecture rationale.
+
+Record index builders use the streaming/index record boundary grammar:
+`Name` and `//Name` are supported, matched exactly by local element name.
+Predicate selectors, multi-segment paths, and namespace-prefixed forms are not
+yet supported for streaming/index mode and are rejected before scanning.

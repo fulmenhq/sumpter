@@ -232,10 +232,13 @@ successful zero-record runs, `manifest.json` includes an `outputs[]` entry with
 type with value `0`.
 
 `--allow-large-files` streaming mode currently tracks selector counts for the
-streaming record selector. Multi-selector streaming recipes may return sparse
-per-selector counts, so per-selector floor enforcement can be relaxed for
-selectors the streaming scanner did not count. Run without streaming when
-strict multi-selector `min_occurrences` enforcement is required.
+streaming record selector. The streaming/index record boundary grammar is a
+single local element name with exact case-sensitive matching: `Record` and
+`//Record` are supported. Predicate selectors, multi-segment paths, and
+namespace-prefixed forms are not yet supported for streaming/index mode and
+fail before scanning so they cannot silently over-match. Multi-selector
+streaming recipes may return sparse per-selector counts, so per-selector floor
+enforcement can be relaxed for selectors the streaming scanner did not count.
 
 The CLI applies this enforcement at the command layer. Library consumers that
 call `extract.ProcessFileWithProvenance` directly should iterate
