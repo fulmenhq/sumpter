@@ -84,6 +84,6 @@ See [`docs/releases/v0.1.4.md`](docs/releases/v0.1.4.md) for the full release na
 
 ## v0.1.3 (no separate release)
 
-The v0.1.3 development cycle shipped continuously to main without a tagged release. SUM-001..009 (process-debt cleanup, recipe declared/derived parameters, provenance core + sidecar manifests, recipe `content_version` + `migrate`, extract derived field mappings, examples harness + replacement, Parquet secondary output, validator grouped-reconciliation hardening, extract output integrity, DSL ternary conditionals, DSL quoted-string hardening, DSL reference consolidation) all landed during the v0.1.3 cycle and are included in the v0.1.4 tag.
+The v0.1.3 development cycle shipped continuously to main without a tagged release. That work (process-debt cleanup, recipe declared/derived parameters, provenance core + sidecar manifests, recipe `content_version` + `migrate`, extract derived field mappings, examples harness + replacement, Parquet secondary output, validator grouped-reconciliation hardening, extract output integrity, DSL ternary conditionals, DSL quoted-string hardening, DSL reference consolidation) all landed during the cycle and is included in the v0.1.4 tag.
 
 The earlier `docs/releases/v0.1.3.md` skeleton was never finalized into a release narrative; v0.1.4 supersedes it. See [`CHANGELOG.md`](CHANGELOG.md) for the chronological change list.

@@ -710,7 +710,7 @@ version-set: ## Set explicit version (usage: make version-set VERSION_NEW=1.2.3)
 # Release Pipeline (v0.1.4+)
 # =====================================================================
 # Hand-rolled release ceremony pattern; see RELEASE_CHECKLIST.md for the
-# operator runbook. Mirrors the gonimbus pattern, adapted for sumpter.
+# operator runbook. Mirrors a shared operator-runbook pattern, adapted for sumpter.
 #
 # Signing keys (set on operator machine, NOT in CI):
 #   SUMPTER_MINISIGN_KEY   - path to minisign secret key (required for signing)

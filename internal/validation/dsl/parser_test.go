@@ -441,7 +441,7 @@ func TestParseTernaryExpressionShape(t *testing.T) {
 }
 
 func TestParseExpressionQuotedOperatorsUseOuterSplitPoints(t *testing.T) {
-	// Test 10 retired by SUM-012: the temporary SUM-011 limitation lock is
+	// Test 10 retired when quoted-string scanning was hardened: the earlier ternary limitation lock is
 	// replaced by the long-term quoted-string-aware parser contract here.
 	expr, err := ParseExpression(`x == "==" ? 1 : 0`)
 	if err != nil {

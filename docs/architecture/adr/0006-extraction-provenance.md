@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-05-11
-**Deciders:** @3leapsdave, agent-india-devlead (Claude Opus via Claude Code)
+**Deciders:** @3leapsdave (with Claude Opus via Claude Code)
 **Context:** Alpha phase / v0.1.3 — making every extracted record traceable to its source
 
 ## Context
@@ -430,7 +430,7 @@ Shape:
     "signature": "...",
     "covers_hash": "sha256:<JCS hash of manifest with attestations excluded>",
     "signed_at": "2026-05-11T14:31:18Z",
-    "signed_by": "agent-india-devlead"
+    "signed_by": "release-signer"
   },
   {
     "algorithm": "seclusor-age",
