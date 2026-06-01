@@ -407,10 +407,30 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 		zap.String("file", filePath),
 		zap.String("mode", "streaming"))
 
-	// Prepare extract config
-	if err := prepareExtractConfig(extCfg); err != nil {
-		logger.Error("Failed to prepare extract config", zap.String("file", filePath), zap.Error(err))
-		result.Error = fmt.Errorf("failed to prepare extract config: %w", err)
+	if extCfg == nil {
+		result.Error = fmt.Errorf("extract config is nil")
+		return result
+	}
+
+	// Get the record selector from the first match selector
+	if len(extCfg.MatchSelectors) == 0 {
+		result.Error = fmt.Errorf("no match selectors defined in extract config")
+		return result
+	}
+	recordSelector := extCfg.MatchSelectors[0].XPath
+	parsedSelector, err := streaming.ParseRecordSelector(recordSelector)
+	if err != nil {
+		result.Error = err
+		return result
+	}
+
+	logger.Info("Initializing record scanner",
+		zap.String("record_selector", recordSelector))
+
+	streamingCfg := cloneExtractConfigForStreaming(extCfg)
+	if err := prepareExtractConfig(streamingCfg); err != nil {
+		logger.Error("Failed to prepare streaming extract config", zap.String("file", filePath), zap.Error(err))
+		result.Error = fmt.Errorf("failed to prepare streaming extract config: %w", err)
 		return result
 	}
 
@@ -427,16 +447,6 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 		}
 	}()
 
-	// Get the record selector from the first match selector
-	if len(extCfg.MatchSelectors) == 0 {
-		result.Error = fmt.Errorf("no match selectors defined in extract config")
-		return result
-	}
-	recordSelector := extCfg.MatchSelectors[0].XPath
-
-	logger.Info("Initializing record scanner",
-		zap.String("record_selector", recordSelector))
-
 	// Create record scanner
 	scanner := streaming.NewRecordScanner(stream, recordSelector)
 	defer func() {
@@ -450,20 +460,6 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 	// to the full document structure. Signature checking should be done before calling
 	// ProcessFileStreaming, or the caller should ensure the file matches the expected format.
 	logger.Debug("Streaming mode: signature checking skipped (checking against individual records)")
-
-	// For streaming mode, we need to adjust the match selectors to work with mini-DOMs
-	// Save the original selectors and temporarily replace them
-	originalSelectors := extCfg.MatchSelectors
-	extCfg.MatchSelectors = []MatchSelector{{XPath: "/*"}} // Match the root element of each mini-DOM
-	// Compile the new selector
-	if err := prepareExtractConfig(extCfg); err != nil {
-		extCfg.MatchSelectors = originalSelectors // Restore
-		result.Error = fmt.Errorf("failed to prepare streaming extract config: %w", err)
-		return result
-	}
-	defer func() {
-		extCfg.MatchSelectors = originalSelectors // Restore when done
-	}()
 
 	// Process records one at a time
 	for {
@@ -494,9 +490,9 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 			return result
 		}
 
-		// Extract records from this mini-DOM
-		// The match selector has been temporarily changed to "/*" to match the root of each mini-DOM
-		records, err := extractRecords(recordDoc, extCfg, externalFields)
+		// Extract records from this mini-DOM using a cloned config whose match
+		// selector targets the record root.
+		records, err := extractRecords(recordDoc, streamingCfg, externalFields)
 		if err != nil {
 			logger.Error("Failed to extract from record",
 				zap.Int("record_num", recordBuffer.RecordNum),
@@ -512,10 +508,11 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 	logger.Info("Streaming extraction complete",
 		zap.String("file", filePath),
 		zap.Int("total_records_scanned", scanner.RecordCount()),
-		zap.Int("total_records_extracted", len(allRecords)))
+		zap.Int("total_records_extracted", len(allRecords)),
+		zap.String("record_element", parsedSelector.ElementName))
 
 	// Enrich records with metadata
-	if err := enrichRecords(allRecords, filePath, sigCfg, extCfg, runtimeProvenance); err != nil {
+	if err := enrichRecords(allRecords, filePath, sigCfg, streamingCfg, runtimeProvenance); err != nil {
 		logger.Error("Failed to enrich records", zap.Error(err))
 		result.Error = err
 		return result
@@ -523,7 +520,7 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 
 	result.Records = allRecords
 	result.PerSelectorCounts = perSelectorCounts
-	result.PerSelectorCountsComplete = len(originalSelectors) == 1
+	result.PerSelectorCountsComplete = len(extCfg.MatchSelectors) == 1
 	return result
 }
 

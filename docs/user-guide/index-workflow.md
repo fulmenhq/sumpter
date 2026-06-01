@@ -74,6 +74,12 @@ sumpter inspect data.xml \
   --record-selector "//Transaction"
 ```
 
+Streaming record analysis and `index build --selector` support a single local
+element name with exact case-sensitive matching. Use `Transaction` or
+`//Transaction`. Predicate selectors, multi-segment paths, and
+namespace-prefixed forms are rejected because they are not yet supported for
+streaming/index mode.
+
 The inspect command shows:
 
 - How many records match the selector

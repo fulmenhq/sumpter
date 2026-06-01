@@ -316,30 +316,6 @@ func TestDetectCompression(t *testing.T) {
 	}
 }
 
-func TestExtractElementName(t *testing.T) {
-	tests := []struct {
-		selector string
-		want     string
-	}{
-		{"//Record", "Record"},
-		{"/root/Record", "Record"},
-		{"Record", "Record"},
-		{"//ns:Record", "Record"},
-		{"//Record[1]", "Record"},
-		{"//Record[@id='1']", "Record"},
-		{"  //Record  ", "Record"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.selector, func(t *testing.T) {
-			got := extractElementName(tt.selector)
-			if got != tt.want {
-				t.Errorf("extractElementName(%q) = %q, want %q", tt.selector, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestPercentile(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -575,22 +551,61 @@ func TestBuilder_Build_InvalidSelector(t *testing.T) {
 		t.Fatalf("Failed to create test XML: %v", err)
 	}
 
-	// Empty selector should still work (extracts to empty string)
-	opts := BuildOptions{
+	tests := []struct {
+		name     string
+		selector string
+	}{
+		{name: "empty", selector: ""},
+		{name: "predicate", selector: "//Record[@type='sale']"},
+		{name: "path", selector: "/root/Record"},
+		{name: "namespace prefix", selector: "//ns:Record"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := BuildOptions{
+				InputPath:      xmlPath,
+				Selector:       tt.selector,
+				SumpterVersion: "0.1.2-test",
+			}
+
+			builder := NewBuilder(opts)
+			_, err := builder.Build()
+			if err == nil {
+				t.Fatal("expected unsupported selector error")
+			}
+			if !strings.Contains(err.Error(), "not yet supported for streaming/index mode") {
+				t.Fatalf("error = %q, want streaming/index mode wording", err.Error())
+			}
+		})
+	}
+}
+
+func TestBuilder_Build_BareElementSelector(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "test.xml")
+	xmlContent := `<?xml version="1.0"?><root><Record>Data</Record></root>`
+
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0644); err != nil {
+		t.Fatalf("Failed to create test XML: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{
 		InputPath:      xmlPath,
-		Selector:       "",
+		Selector:       "Record",
 		SumpterVersion: "0.1.2-test",
-	}
-
-	builder := NewBuilder(opts)
+	})
 	index, err := builder.Build()
-
-	// Empty selector means no records will match
 	if err != nil {
-		t.Fatalf("Unexpected error with empty selector: %v", err)
+		t.Fatalf("Build() failed: %v", err)
 	}
-
-	if index.Summary.TotalRecords != 0 {
-		t.Errorf("Expected 0 records with empty selector, got %d", index.Summary.TotalRecords)
+	if index.Selector.XPath != "Record" {
+		t.Fatalf("selector xpath = %q, want Record", index.Selector.XPath)
+	}
+	if index.Selector.ElementName != "Record" {
+		t.Fatalf("selector element = %q, want Record", index.Selector.ElementName)
+	}
+	if index.Summary.TotalRecords != 1 {
+		t.Fatalf("records = %d, want 1", index.Summary.TotalRecords)
 	}
 }

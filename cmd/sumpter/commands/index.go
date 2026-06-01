@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
@@ -93,6 +94,9 @@ Example:
 			// Validate selector
 			if selector == "" {
 				return fmt.Errorf("--selector is required (e.g., --selector '//Record')")
+			}
+			if err := streaming.ValidateRecordSelector(selector); err != nil {
+				return err
 			}
 
 			// Validate at least one output format is enabled

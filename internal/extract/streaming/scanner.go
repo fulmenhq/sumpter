@@ -5,14 +5,13 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"strings"
 
 	"golang.org/x/net/html/charset"
 )
 
 // NewRecordScanner creates a new scanner for streaming XML records.
-// The recordSelector should be an XPath expression like "//RecordElement"
-// which will be simplified to just match the element name.
+// The recordSelector must be a single local element name ("RecordElement")
+// or descendant local element selector ("//RecordElement").
 //
 // Example:
 //
@@ -45,9 +44,7 @@ func NewRecordScannerSizeOnlyWithEncoding(reader io.Reader, recordSelector strin
 }
 
 func newRecordScanner(reader io.Reader, recordSelector string, sizeOnly bool) *RecordScanner {
-	// Extract element name from XPath selector
-	// For now, we support simple patterns like "//ElementName" or "/path/to/ElementName"
-	elementName := extractElementName(recordSelector)
+	selector, err := ParseRecordSelector(recordSelector)
 
 	// Wrap reader to track byte position
 	cr := &countingReader{r: reader, count: 0}
@@ -56,48 +53,15 @@ func newRecordScanner(reader io.Reader, recordSelector string, sizeOnly bool) *R
 		decoder:        xml.NewDecoder(cr),
 		reader:         cr,
 		recordSelector: recordSelector,
-		elementName:    elementName,
+		elementName:    selector.ElementName,
 		buffer:         make([]xml.Token, 0, 128),
 		depth:          0,
 		recordDepth:    -1,
 		inRecord:       false,
 		recordCount:    0,
 		sizeOnly:       sizeOnly,
+		err:            err,
 	}
-}
-
-// extractElementName extracts the element name from an XPath selector.
-// Supports patterns like:
-//
-//	"//ElementName" -> "ElementName"
-//	"/root/child/ElementName" -> "ElementName"
-//	"ElementName" -> "ElementName"
-func extractElementName(selector string) string {
-	selector = strings.TrimSpace(selector)
-
-	// Remove leading "//" or "/"
-	selector = strings.TrimPrefix(selector, "//")
-	selector = strings.TrimPrefix(selector, "/")
-
-	// Get the last path component
-	parts := strings.Split(selector, "/")
-	if len(parts) > 0 {
-		elementName := parts[len(parts)-1]
-
-		// Remove predicates like [1] or [@attr='value']
-		if idx := strings.Index(elementName, "["); idx >= 0 {
-			elementName = elementName[:idx]
-		}
-
-		// If a namespace prefix is present (e.g., ns:Record), drop the prefix
-		if colon := strings.Index(elementName, ":"); colon >= 0 {
-			elementName = elementName[colon+1:]
-		}
-
-		return strings.TrimSpace(elementName)
-	}
-
-	return selector
 }
 
 // Next returns the next record from the XML stream.
@@ -200,9 +164,10 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 	}
 }
 
-// matchesRecordElement checks if the given element name matches our record selector
+// matchesRecordElement checks if the given element name matches our record selector.
+// XML element names are case-sensitive.
 func (s *RecordScanner) matchesRecordElement(elementName string) bool {
-	return strings.EqualFold(elementName, s.elementName)
+	return elementName == s.elementName
 }
 
 // serializeTokens converts buffered tokens back into XML string
