@@ -1,15 +1,16 @@
 # Sumpter Extract Workflow
 
-The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces JSON output. Extracted records are currently buffered per file before output; the record-sink streaming refactor that makes bounded end-to-end memory true across sequential and parallel paths is on the v0.1.6 roadmap. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
+The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. Extracted records are currently buffered per file before output; the record-sink streaming refactor that makes bounded end-to-end memory true across sequential and parallel paths is on the post-v0.1.6 roadmap. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
 
 ## Output Formats
 
 | Mode                 | Description                                                       | When to use                                                      |
 | -------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Structured (default) | A single JSON object containing metadata and recipe authored data | Interactive runs, debugging, consumers that expect a single file |
-| NDJSON (planned)     | Header/data/footer records emitted as newline-delimited JSON      | High-volume streaming, pipelines that read records incrementally |
+| Structured (default) | A single JSON object containing metadata and recipe-authored data | Interactive runs, debugging, consumers that expect a single file |
+| NDJSON               | Records emitted as newline-delimited JSON with sidecar manifests | Pipeline ingestion and append-friendly record processing         |
+| Parquet              | Secondary columnar projection declared by recipe output settings | Analytics engines and columnar downstream storage                |
 
-The v0.1.1 release supports only the structured object form. NDJSON is documented here so recipes can be future ready.
+NDJSON is the default durable record output for recipe examples. Parquet is a secondary output path and still requires recipe configuration for the projected columns.
 
 ## Structured Output Layout
 
@@ -441,7 +442,7 @@ key order, then appends hand-written components. This is useful when an audit
 block needs an automatic per-category breakdown plus fixed adjustments such as
 freight, rounding, or manual corrections.
 
-SUM-008 Parquet output intentionally contains only `extract.data`. Validation
+Parquet output intentionally contains only `extract.data`. Validation
 metadata, including grouped reconciliations, remains in the JSONL envelope. Use
 `defaults.output.formats: [json, parquet]` when analytics consumers need
 Parquet columns and auditors need the `_validation` block from the same run.

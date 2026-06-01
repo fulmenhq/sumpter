@@ -36,7 +36,7 @@ jobs:
     name: Linux glibc (Debian Bookworm)
     runs-on: ubuntu-latest
     container:
-      image: golang:1.25-bookworm
+      image: golang:1.26-bookworm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -97,7 +97,7 @@ jobs:
     name: Linux musl (Alpine)
     runs-on: ubuntu-latest
     container:
-      image: golang:1.25-alpine
+      image: golang:1.26-alpine
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

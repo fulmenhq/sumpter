@@ -6,7 +6,7 @@ Date: 2026-05-19
 ## Context
 
 Extract consumers often run Sumpter from drivers that read the declared output
-path after each successful command invocation. Before SUM-010, the sequential
+path after each successful command invocation. Before this ADR, the sequential
 extract path skipped output writing when a source matched the signature but
 yielded zero records. That made a legitimate zero-record result
 indistinguishable from a failed or skipped run.
@@ -49,6 +49,6 @@ floor with `ExtractResult.PerSelectorCounts`.
 
 ## References
 
-- Brief: `.plans/active/v0.1.4/SUM-010-extract-output-integrity.md`
+- Design note: v0.1.4 extract output integrity work
 - ADR 0001: Schema-First Programmatic Outputs
 - ADR 0006: Extraction Provenance
