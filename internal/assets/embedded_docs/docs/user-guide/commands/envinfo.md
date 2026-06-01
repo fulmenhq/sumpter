@@ -46,10 +46,10 @@ Displays all environment information in a comprehensive format.
 
 ## Examples
 
-### Basic Environment Information
+### Environment Information with XML Capabilities
 
 ```bash
-sumpter envinfo
+sumpter envinfo --xml
 ```
 
 Output:
@@ -68,9 +68,9 @@ Timestamp       | 2024-01-15T14:30:25Z
 📄 XML Processing Capabilities
 ==================================================
 Streaming       | true
-Memory Target   | input-streaming only
+Memory Target   | <50MB RSS
 Encodings       | UTF-8, UTF-16, ISO-8859-1, Windows-1252
-Outputs         | NDJSON, Parquet, DuckDB, Markdown
+Outputs         | JSON, NDJSON, Parquet
 
 🏠 Application Environment
 ==================================================
@@ -159,9 +159,9 @@ Output:
 📄 XML Processing Capabilities
 ==================================================
 Streaming       | true
-Memory Target   | input-streaming only
+Memory Target   | <50MB RSS
 Encodings       | UTF-8, UTF-16, ISO-8859-1, Windows-1252
-Outputs         | NDJSON, Parquet, DuckDB, Markdown
+Outputs         | JSON, NDJSON, Parquet
 ```
 
 ## Information Sections
@@ -180,9 +180,9 @@ Outputs         | NDJSON, Parquet, DuckDB, Markdown
 ### XML Processing Capabilities
 
 - **Streaming**: Whether streaming XML processing is supported
-- **Memory Target**: Current memory contract
+- **Memory Target**: Input XML tokenization memory target; extraction outputs may buffer records per file
 - **Encodings**: Supported character encodings
-- **Outputs**: Available output formats
+- **Outputs**: Available extract output formats
 
 ### Application Environment
 

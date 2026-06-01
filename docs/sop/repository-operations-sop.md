@@ -95,6 +95,12 @@ git push origin [branch]
 ✅ Security scanning (gosec)
 ```
 
+When optional local safety or confidentiality scanners are not configured,
+their Makefile hooks may report a skip or pass without exercising the full
+repository confidentiality posture. Treat a local green as a code-quality
+signal, not as a standalone confidentiality clearance; release and PR review
+must still apply the documented OSS-surface confidentiality checks.
+
 #### `make precommit` (Lifecycle-Aware)
 
 ```bash

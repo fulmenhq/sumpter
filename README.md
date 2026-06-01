@@ -2,7 +2,7 @@
 
 **Crush XML. Haul Data. Ship Insights. Thrive on Scale.**
 
-[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)]()
+[![Go Version](https://img.shields.io/badge/go-1.25%2B-blue)]()
 [![CI Status](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml/badge.svg)](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)]()
 [![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)]()
@@ -69,7 +69,7 @@ Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.m
 
 **Requirements**
 
-- Go 1.26+
+- Go 1.25+
 - Standard build toolchain
 - (Optional) CGO for seekable-zstd compressed indexes
 

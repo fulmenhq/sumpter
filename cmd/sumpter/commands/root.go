@@ -23,7 +23,7 @@ var rootCmd = &cobra.Command{
 
 Sumpter is a Go-based streaming XML engine that transforms massive, malformed,
 and variant-heavy XML into clean, analytics-ready tables. With sub-second inspection,
-auto-generated extraction configs, and resilient outputs to Parquet, DuckDB, or NDJSON,
+auto-generated extraction configs, and resilient outputs to JSON, NDJSON, or Parquet,
 Sumpter helps teams start fast and thrive on scale.
 
 Built for: Enterprise XML processing, data transformation, and analytics pipelines.

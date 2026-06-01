@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	goneatschema "github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -368,11 +369,11 @@ func TestCollectXMLCapabilities(t *testing.T) {
 		}
 	}
 
-	if caps.MaxMemoryTarget != "input-streaming only" {
-		t.Errorf("Expected MaxMemoryTarget 'input-streaming only', got '%s'", caps.MaxMemoryTarget)
+	if caps.MaxMemoryTarget != "<50MB RSS" {
+		t.Errorf("Expected MaxMemoryTarget '<50MB RSS', got '%s'", caps.MaxMemoryTarget)
 	}
 
-	expectedOutputs := []string{"NDJSON", "Parquet", "DuckDB", "Markdown"}
+	expectedOutputs := []string{"JSON", "NDJSON", "Parquet"}
 	if len(caps.SupportedOutputs) != len(expectedOutputs) {
 		t.Errorf("Expected %d outputs, got %d", len(expectedOutputs), len(caps.SupportedOutputs))
 	}
@@ -380,6 +381,55 @@ func TestCollectXMLCapabilities(t *testing.T) {
 		if i < len(caps.SupportedOutputs) && caps.SupportedOutputs[i] != expected {
 			t.Errorf("Expected output %s at index %d, got %s", expected, i, caps.SupportedOutputs[i])
 		}
+	}
+}
+
+func TestEnvInfoXMLJSONMatchesSchema(t *testing.T) {
+	var buf bytes.Buffer
+
+	cmd := newEnvInfoXMLCommand()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--json"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("xml command failed: %v", err)
+	}
+
+	var data interface{}
+	if err := json.Unmarshal(buf.Bytes(), &data); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	schemaBytes, err := os.ReadFile("../../../schemas/envinfo/v0.1.0/xml.schema.json")
+	if err != nil {
+		t.Fatalf("read XML envinfo schema: %v", err)
+	}
+
+	result, err := goneatschema.ValidateFromBytes(schemaBytes, data)
+	if err != nil {
+		t.Fatalf("validate XML envinfo schema: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("envinfo xml JSON failed schema validation: %v", result.Errors)
+	}
+}
+
+func TestCollectEnvironmentDataUsesXMLCapabilitySource(t *testing.T) {
+	data, err := collectEnvironmentData(false, "", false, false, true)
+	if err != nil {
+		t.Fatalf("collectEnvironmentData: %v", err)
+	}
+
+	want := collectXMLCapabilities()
+	if data.XML.MaxMemoryTarget != want.MaxMemoryTarget {
+		t.Fatalf("MaxMemoryTarget = %q, want %q", data.XML.MaxMemoryTarget, want.MaxMemoryTarget)
+	}
+	if strings.Join(data.XML.SupportedOutputs, ",") != strings.Join(want.SupportedOutputs, ",") {
+		t.Fatalf("SupportedOutputs = %v, want %v", data.XML.SupportedOutputs, want.SupportedOutputs)
+	}
+	if strings.Join(data.XML.Encodings, ",") != strings.Join(want.Encodings, ",") {
+		t.Fatalf("Encodings = %v, want %v", data.XML.Encodings, want.Encodings)
 	}
 }
 
