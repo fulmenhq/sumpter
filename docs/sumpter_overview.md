@@ -19,16 +19,20 @@ Traditional DOM parsers crash on size. Heavy ETL tools require weeks of configur
 
 ## 2. Sumpter’s Solution
 
-Sumpter is a **Go-based streaming XML engine** designed for:
+Sumpter is a **Go-based XML extraction engine** designed for:
 
 - **Streaming input parsing**: token-by-token XML reads without loading whole documents; extracted records are buffered per file before output until the v0.1.6 record-sink refactor lands.
-- **Resilience**: UTF‑8 normalization, BOM handling, namespace strategies, error modes.
+- **Resilience**: UTF-8 normalization, BOM handling, and explicit fail-fast behavior for malformed inputs.
 - **Config-driven extraction**: YAML-first configs validated against JSON Schema.
-- **Inspection and diagnostics**: auto-config generation with >80% accuracy.
-- **Analytics-ready outputs**: NDJSON (streaming), Parquet, DuckDB.
-- **Observability**: Prometheus metrics, structured logs, health endpoints.
+- **Inspection and diagnostics**: structure reports, encoding detection, and environment diagnostics.
+- **Analytics-ready outputs**: JSON/NDJSON records and Parquet projections.
+- **Operational visibility**: structured logs and machine-readable command output.
 
 This combination enables teams to move from raw XML to queryable tables **in minutes, not weeks**.
+
+Roadmap items such as DuckDB output, service health endpoints, Prometheus metrics,
+adaptive backpressure, repair modes, and end-to-end output streaming are tracked
+separately from the current public capability surface.
 
 ---
 
@@ -37,23 +41,23 @@ This combination enables teams to move from raw XML to queryable tables **in min
 ```
 ┌───────────────┐   ┌───────────────────┐   ┌───────────────────┐   ┌─────────────────┐
 │   Input        │──▶│  Stream Processor │──▶│  Extraction Engine │──▶│   Writers        │
-│ (File/Stdin)   │   │ (encoding/xml)    │   │ (XPath, Filters)   │   │ (NDJSON, Parquet │
-└───────────────┘   └───────────────────┘   └───────────────────┘   │ DuckDB, Preview) │
+│ (File/Stdin)   │   │ (encoding/xml)    │   │ (XPath, Filters)   │   │ (JSON/NDJSON,    │
+└───────────────┘   └───────────────────┘   └───────────────────┘   │ Parquet)         │
                                                                       └─────────────────┘
                         ▲                     │
                         │                     ▼
                   ┌─────────────────────────────────┐
                   │      Observability Layer        │
-                  │  Logs • Metrics • Healthchecks  │
+                  │  Logs • JSON command output     │
                   └─────────────────────────────────┘
 ```
 
 **Key design choices:**
 
-- **XMLWindow**: lightweight struct with offsets and local names only.
-- **Adaptive backpressure**: dynamic buffer sizing based on memory usage.
-- **Namespace strategies**: ignore, strict, auto-detect.
-- **Error modes**: skip, repair (warned), fail.
+- **Input streaming first**: parse XML incrementally and avoid DOM-scale memory growth.
+- **Recipe-owned shape**: extracted fields and output schemas are declared outside the engine.
+- **Versioned schemas**: command outputs and recipe formats have explicit schema contracts.
+- **Fail-fast safety**: malformed inputs and invalid recipes fail clearly instead of silently repairing data.
 
 ---
 
@@ -67,7 +71,7 @@ This combination enables teams to move from raw XML to queryable tables **in min
 ### Finance (FIXML)
 
 - Inspect FIXML allocations → generate config → extract trades.
-- Output: `fixml.duckdb` for regulatory analytics.
+- Output: NDJSON or Parquet for regulatory analytics.
 
 ### General Enterprise
 
@@ -88,9 +92,9 @@ This ensures reproducibility, privacy, and performance validation.
 
 ## 6. Roadmap
 
-- **Week 2**: Schema evolution tooling; normalized outputs.
-- **Week 3**: 200MB/s throughput target; parallel file processing.
-- **Week 4**: Enterprise integrations (Kafka, Arrow, Studio UI).
+- **Record-sink streaming**: reduce output buffering and clarify end-to-end memory bounds.
+- **Additional analytics targets**: DuckDB, Arrow, and service integrations.
+- **Operational integrations**: metrics, health endpoints, and richer runtime diagnostics.
 
 ---
 

@@ -73,6 +73,13 @@ type XMLCapabilities struct {
 	SupportedOutputs   []string `json:"supportedOutputs"`
 }
 
+const xmlInputMemoryTarget = "<50MB RSS"
+
+var (
+	xmlSupportedEncodings = []string{"UTF-8", "UTF-16", "ISO-8859-1", "Windows-1252"}
+	xmlSupportedOutputs   = []string{"JSON", "NDJSON", "Parquet"}
+)
+
 type ApplicationPaths struct {
 	Home    string `json:"home"`
 	WorkDir string `json:"workDir"`
@@ -267,12 +274,8 @@ func collectEnvironmentData(all bool, filter string, includeNetwork, includeExte
 	// XML capabilities
 	var xmlCapabilities *XMLCapabilities
 	if includeXML {
-		xmlCapabilities = &XMLCapabilities{
-			StreamingSupported: true,
-			Encodings:          []string{"UTF-8", "UTF-16", "ISO-8859-1", "Windows-1252"},
-			MaxMemoryTarget:    "input-streaming only",
-			SupportedOutputs:   []string{"NDJSON", "Parquet", "DuckDB", "Markdown"},
-		}
+		caps := collectXMLCapabilities()
+		xmlCapabilities = &caps
 	}
 
 	// Application paths
@@ -979,9 +982,9 @@ func outputEnvironmentVariables(cmd *cobra.Command, variables map[string]string)
 func collectXMLCapabilities() XMLCapabilities {
 	return XMLCapabilities{
 		StreamingSupported: true,
-		Encodings:          []string{"UTF-8", "UTF-16", "ISO-8859-1", "Windows-1252"},
-		MaxMemoryTarget:    "input-streaming only",
-		SupportedOutputs:   []string{"NDJSON", "Parquet", "DuckDB", "Markdown"},
+		Encodings:          append([]string(nil), xmlSupportedEncodings...),
+		MaxMemoryTarget:    xmlInputMemoryTarget,
+		SupportedOutputs:   append([]string(nil), xmlSupportedOutputs...),
 	}
 }
 

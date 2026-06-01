@@ -35,7 +35,7 @@
     },
     "maxMemoryTarget": {
       "type": "string",
-      "description": "Maximum memory usage target for XML processing",
+      "description": "Maximum memory target for input XML tokenization. Extraction outputs may buffer records per file.",
       "pattern": "^<[0-9]+MB RSS$",
       "examples": [
         "<50MB RSS"
@@ -43,25 +43,21 @@
     },
     "supportedOutputs": {
       "type": "array",
-      "description": "Supported output formats for XML processing",
+      "description": "Supported extract output formats for XML processing",
       "items": {
         "type": "string",
         "enum": [
-          "NDJSON",
-          "Parquet",
-          "DuckDB",
-          "Markdown",
           "JSON",
-          "CSV"
+          "NDJSON",
+          "Parquet"
         ]
       },
       "minItems": 1,
       "examples": [
         [
+          "JSON",
           "NDJSON",
-          "Parquet",
-          "DuckDB",
-          "Markdown"
+          "Parquet"
         ]
       ]
     }
