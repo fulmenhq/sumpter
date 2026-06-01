@@ -1,9 +1,11 @@
 package index
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -127,6 +129,48 @@ func TestBuilder_Build_SmallXML(t *testing.T) {
 	if index.Source.CompressionFormat != "none" {
 		t.Errorf("Expected compression format 'none', got %s", index.Source.CompressionFormat)
 	}
+
+	if index.Source.OffsetKind != OffsetKindSourceBytes {
+		t.Errorf("Expected offset kind %q, got %q", OffsetKindSourceBytes, index.Source.OffsetKind)
+	}
+}
+
+func TestBuilder_Build_RejectsCompressedInputBeforeOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	gzipPath := filepath.Join(tmpDir, "test.xml.gz")
+	outputPath := filepath.Join(tmpDir, "test.recordindex.json")
+
+	file, err := os.Create(gzipPath)
+	if err != nil {
+		t.Fatalf("Failed to create gzip fixture: %v", err)
+	}
+	gz := gzip.NewWriter(file)
+	if _, err := gz.Write([]byte(`<root><Record>data</Record></root>`)); err != nil {
+		t.Fatalf("Failed to write gzip fixture: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("Failed to close gzip writer: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Failed to close gzip fixture: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{
+		InputPath:  gzipPath,
+		OutputPath: outputPath,
+		Selector:   "//Record",
+	})
+
+	_, err = builder.Build()
+	if err == nil {
+		t.Fatal("Expected compressed input to be rejected")
+	}
+	if !strings.Contains(err.Error(), "gunzip -c input.xml.gz > input.xml") {
+		t.Fatalf("Expected actionable decompression hint, got: %v", err)
+	}
+	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
+		t.Fatalf("Expected no output file, stat error: %v", statErr)
+	}
 }
 
 func TestBuilder_WriteToFile(t *testing.T) {
@@ -195,6 +239,51 @@ func TestBuilder_WriteToFile(t *testing.T) {
 	if loaded.Summary.TotalRecords != index.Summary.TotalRecords {
 		t.Errorf("TotalRecords mismatch: expected %d, got %d",
 			index.Summary.TotalRecords, loaded.Summary.TotalRecords)
+	}
+
+	if loaded.Source.OffsetKind != OffsetKindSourceBytes {
+		t.Errorf("Expected written offset kind %q, got %q", OffsetKindSourceBytes, loaded.Source.OffsetKind)
+	}
+}
+
+func TestBuilder_WriteToFile_EmitsCurrentVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "legacy-input-index.json")
+
+	index := &RecordIndex{
+		Version: LegacySchemaVersion,
+		Source: SourceInfo{
+			Path:              "/test/file.xml",
+			SizeBytes:         1024,
+			SHA256:            "abc123",
+			Compressed:        false,
+			CompressionFormat: "none",
+		},
+		Selector: SelectorInfo{
+			XPath:       "//Record",
+			ElementName: "Record",
+		},
+		Records: []RecordMetadata{},
+		Summary: SummaryStats{},
+		Metadata: IndexMetadata{
+			Generator: "test",
+		},
+	}
+
+	builder := NewBuilder(BuildOptions{})
+	if err := builder.WriteToFile(index, outputPath); err != nil {
+		t.Fatalf("Failed to write index: %v", err)
+	}
+
+	loaded, err := LoadIndex(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to load written index: %v", err)
+	}
+	if loaded.Version != SchemaVersion {
+		t.Fatalf("Expected written version %q, got %q", SchemaVersion, loaded.Version)
+	}
+	if loaded.Source.OffsetKind != OffsetKindSourceBytes {
+		t.Fatalf("Expected written offset kind %q, got %q", OffsetKindSourceBytes, loaded.Source.OffsetKind)
 	}
 }
 

@@ -31,7 +31,7 @@ Memory usage remains constant because:
 
 #### RecordIndex
 
-Complete index structure conforming to `record-index/v0.1.0` schema:
+Complete index structure conforming to `record-index/v0.1.1` schema:
 
 ```go
 type RecordIndex struct {
@@ -213,7 +213,7 @@ Detects compression based on file extension:
 - `.xz` → xz
 - Other → none
 
-Note: Compressed files record logical offsets (decompressed positions), not physical byte offsets in the compressed stream.
+Note: JSON record indexes require source-byte offsets. Compressed source paths are rejected before hashing or scanning; decompress first with a pattern such as `gunzip -c input.xml.gz > input.xml`, then build the index from the uncompressed XML file.
 
 ## Testing
 
@@ -241,7 +241,7 @@ go test -v ./internal/index/... -run TestBuilder_Build_SmallXML
 
 ## References
 
-- **Schema**: `schemas/index/v0.1.0/record-index.schema.json`
+- **Schema**: `schemas/index/v0.1.1/record-index.schema.json`
 - **Examples**: `examples/index/clinvar-sample.recordindex.json`
 - **ADR-0005**: Hybrid Streaming XML Architecture
 - **Design summary**: Record indexes persist byte ranges, hashes, and record
@@ -251,7 +251,7 @@ go test -v ./internal/index/... -run TestBuilder_Build_SmallXML
 
 ## Future Enhancements (Phase 3)
 
-- Chunk-based seeking for compressed files
+- Explicit chunk-based source semantics for compressed inputs
 - Parallel index building (multi-threaded record hashing)
 - Index-driven parallel extraction
 - Progressive index writing (streaming JSON output)

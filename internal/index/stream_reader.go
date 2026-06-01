@@ -59,6 +59,7 @@ func OpenRecordIndexStream(path string) (*RecordIndexStream, error) {
 // fields encountered before "records".
 func (s *RecordIndexStream) Header() (*RecordIndex, error) {
 	if s.objectDone || s.inRecords {
+		NormalizeRecordIndex(&s.header)
 		return &s.header, nil
 	}
 
@@ -66,6 +67,7 @@ func (s *RecordIndexStream) Header() (*RecordIndex, error) {
 		return nil, err
 	}
 
+	NormalizeRecordIndex(&s.header)
 	return &s.header, nil
 }
 

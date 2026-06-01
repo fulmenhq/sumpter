@@ -48,25 +48,17 @@ func isSeekableZstdIndex(indexPath string) bool {
 	return strings.HasSuffix(indexPath, ".recordindex.header.json")
 }
 
-// VerifyIntegrity performs SHA256 verification and compression checks
+// VerifyIntegrity performs SHA256 verification and source offset semantic checks.
 func (sv *SafetyVerifier) VerifyIntegrity() error {
 	sv.logger.Info("Starting integrity verification",
 		zap.String("source", sv.sourcePath),
 		zap.String("index_version", sv.idx.Version))
 
-	// Check compression - parallel extraction requires uncompressed or chunk-indexed files
-	if sv.idx.Source.Compressed {
-		return fmt.Errorf(
-			"parallel extraction requires uncompressed files (source is %s compressed)\n"+
-				"Hint: Decompress the file first, then rebuild the index:\n"+
-				"  gunzip %s\n"+
-				"  sumpter index build %s --selector %s\n"+
-				"  sumpter extract files --record-index <index>",
-			sv.idx.Source.CompressionFormat,
-			sv.sourcePath,
-			strings.TrimSuffix(sv.sourcePath, ".gz"),
-			sv.idx.Selector.XPath,
-		)
+	if err := index.ValidateSourceByteOffsets(sv.idx, sv.sourcePath); err != nil {
+		return err
+	}
+	if err := index.ValidateRecordIndexHeaderVersion(sv.idx.Version); err != nil {
+		return err
 	}
 
 	// For seekable-zstd indexes (.header.json), use header-based verification

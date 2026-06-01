@@ -1,11 +1,12 @@
 {
-  "version": "record-index/v0.1.0",
+  "version": "record-index/v0.1.1",
   "source": {
     "path": "/data/genomics/clinvar_vcv_2024.xml",
     "size_bytes": 53687091200,
     "sha256": "a7b3c9e2f8d4e6b9c1a5d7e3f2b8c4d6e9f1a3b5c7d9e2f4a6b8c1d3e5f7a9b2",
     "compressed": false,
     "compression_format": "none",
+    "offset_kind": "source_bytes",
     "created_at": "2025-01-15T10:30:45Z",
     "encoding": "UTF-8"
   },

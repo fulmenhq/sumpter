@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
+	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"go.uber.org/zap"
@@ -67,6 +68,14 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 		zap.String("version", header.Version),
 		zap.Int("total_records", header.Summary.TotalRecords),
 		zap.String("selector", header.Selector.XPath))
+
+	if err := index.ValidateRecordIndexHeaderVersion(header.Version); err != nil {
+		return nil, fmt.Errorf("unsupported record index header: %w", err)
+	}
+
+	if err := index.ValidateSourceByteOffsets(header, pe.opts.SourcePath); err != nil {
+		return nil, fmt.Errorf("record index is not safe for parallel extraction: %w", err)
+	}
 
 	// Safety verification (if enabled)
 	if pe.opts.VerifyIndex {

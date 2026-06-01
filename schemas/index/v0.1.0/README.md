@@ -108,11 +108,9 @@ Verification compares:
 
 ## Compression Handling
 
-- **Uncompressed files**: Offsets are true byte positions, enabling direct seeking
-- **Compressed files** (.gz, .bz2): Offsets represent logical positions in decompressed stream
-  - Seeking may require decompression from beginning (slower)
-  - Index includes `compressed: true` flag and compression format
-  - Phase 3 will support chunk-based seeking for compressed files
+- **Uncompressed files**: Offsets are source-byte positions, enabling direct seeking
+- **Compressed files** (.gz, .bz2): v0.1.0 could represent ambiguous decompressed-stream offsets. Current Sumpter treats missing `offset_kind` as `source_bytes` for backward compatibility, and rejects indexes marked compressed for seekable verification and parallel extraction.
+- For gzip archives, decompress first with `gunzip -c input.xml.gz > input.xml`, then rebuild the index from the uncompressed XML file.
 
 ## Performance Characteristics
 
