@@ -1,6 +1,6 @@
 # ADR-0009: RecordSink Contract for Output Streaming
 
-**Status:** Proposed (SUM-027 PR-A; entarch sign-off required)
+**Status:** Proposed
 **Date:** 2026-06-01
 **Decision Makers:** @3leapsdave, India devlead/devrev, entarch review
 
@@ -8,8 +8,8 @@
 
 Sumpter's extract paths now preserve source-document emission order and
 `_runtime.record_num` semantics across regular DOM, streaming, and indexed
-parallel extraction. That SUM-034 contract is part of the public emitted-record
-surface:
+parallel extraction. That document-order emission contract is part of the public
+emitted-record surface:
 
 - records are emitted in source-document order for single record-boundary
   selectors;
@@ -23,7 +23,7 @@ memory before writing JSONL, manifests, and optional Parquet output. In the
 parallel path, workers produce ordered results through an aggregator, and the
 orchestrator still returns a full slice to the command layer.
 
-SUM-027 changes that architecture. This ADR is PR-A: it defines the
+The record-sink streaming work changes that architecture. This ADR defines the
 `RecordSink` contract before implementation touches the extractor, command
 writer, parallel aggregator, manifests, or Parquet adapter.
 
@@ -80,7 +80,7 @@ including extraction errors and sink errors.
 
 ### Ordering and `record_num`
 
-The sink contract preserves SUM-034:
+The sink contract preserves the document-order emission contract:
 
 - single-selector extraction emits records in source-document order;
 - `_runtime.record_num` is a 1-based source position assigned before filters;
@@ -150,7 +150,8 @@ in the manifest.
 
 ### Parquet
 
-JSONL/NDJSON is the primary SUM-027 bounded-memory target.
+JSONL/NDJSON is the primary bounded-memory target for the record-sink
+implementation.
 
 Parquet is an explicit exception unless an implementation PR adds true
 incremental Parquet row-group writing. If Parquet remains buffered, public
@@ -160,10 +161,9 @@ and that Parquet may buffer projection rows.
 Parquet output continues to project `extract.data` only; it does not carry the
 full emitted envelope.
 
-### Relationship to SUM-032
+### Relationship to streaming index writing
 
-`RecordSink` and SUM-032's planned index-writer contract should use compatible
-patterns:
+`RecordSink` and the streaming index-writer contract use compatible patterns:
 
 - immutable event/envelope input;
 - bounded backpressure;
@@ -216,9 +216,9 @@ index-output abstractions is out of scope.
 
 ## References
 
-- SUM-027: RecordSink / output streaming
-- SUM-034: document-order emission and `_runtime.record_num`
-- SUM-032: streaming index writing and integrity
+- RecordSink / output streaming contract
+- Document-order emission and `_runtime.record_num`
+- Streaming index writing and integrity
 - ADR-0005: Hybrid Streaming XML Architecture for Large File Processing
 - ADR-0006: Extraction Provenance
 - ADR-0007: Empty Output Files Are the Zero-Record Extract Contract

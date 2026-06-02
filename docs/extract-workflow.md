@@ -1,6 +1,6 @@
 # Sumpter Extract Workflow
 
-The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. Extracted records are currently buffered per file before output; the SUM-027 record-sink streaming refactor defines the v0.1.7 contract for bounded JSONL/NDJSON output streaming. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
+The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. Extracted records are currently buffered per file before output; v0.1.7 defines the record-sink streaming contract and sequential sink primitives, while bounded JSONL/NDJSON output streaming remains roadmap work. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
 
 ## Output Formats
 
@@ -228,11 +228,11 @@ one JSON object per line. JSONL remains the canonical extract output because it
 contains the full record envelope, including `_runtime`, `_validation`, and
 `extract.summary`.
 
-### RecordSink Streaming Contract (SUM-027)
+### RecordSink Streaming Contract
 
-ADR-0009 defines the proposed v0.1.7 `RecordSink` contract for replacing
-full-result buffering with writer callbacks. The contract requires sinks to
-receive already-enriched emitted envelopes in final output order, preserve
+ADR-0009 defines the v0.1.7 `RecordSink` contract for replacing full-result
+buffering with writer callbacks. The contract requires sinks to receive
+already-enriched emitted envelopes in final output order, preserve
 `_runtime.record_num` gaps, provide bounded backpressure, and treat sink write
 or finalize failures as fatal output failures.
 

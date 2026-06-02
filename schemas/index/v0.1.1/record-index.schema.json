@@ -214,7 +214,7 @@
           "type": "string",
           "description": "Tool and version that generated this index",
           "examples": [
-            "sumpter index build v0.1.6"
+            "sumpter index build v0.1.7"
           ]
         },
         "build_duration_ms": {

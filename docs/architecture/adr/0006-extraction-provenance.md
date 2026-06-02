@@ -41,10 +41,10 @@ downstream pipeline actually needs:
 - Who authored the recipe (when that matters for trust/audit)?
 - Can the manifest be verified, or sealed for a specific recipient?
 
-The v0.1.3 release scope and the engagement validation work both require a
-trustworthy provenance story before the next round of analytics handoffs and
-the chain-month corpus sweep. This ADR records the v0.1.3 increment and
-reserves the schema surface for v0.1.4+ attestation work.
+The v0.1.3 release scope and large-corpus validation work both require a
+trustworthy provenance story before the next round of analytics handoffs. This
+ADR records the v0.1.3 increment and reserves the schema surface for v0.1.4+
+attestation work.
 
 ### What we deliberately do **not** want
 
@@ -517,8 +517,8 @@ migrate` helper handles bulk stamping and the v0.1.4 schema-version bump.
 - v0.1.4: same condition becomes a **hard error**. Manifest schema bumps
   to `recipe/v0.2.0` with `content_version` required. Sumpter detects
   `recipe/v0.1.0` manifests and instructs the user to migrate.
-- Workspace-local recipes (the ones living in private engagement
-  workspaces outside this repo) need `content_version` added before the
+- Workspace-local recipes (the ones living in private workspaces outside this
+  repo) need `content_version` added before the
   v0.1.4 cutover. A `sumpter recipes migrate` helper lands alongside the
   v0.1.3 implementation to bulk-stamp `content_version: "0.0.1"` on
   opt-in, and the same helper handles the v0.1.4 schema-version bump.
@@ -558,9 +558,7 @@ Standing constraints regardless of sequencing:
 
 ## References
 
-- v0.1.3 strategic themes: `.plans/active/v0.1.3/00-strategic-themes.md`
-- Provenance design starter (this ADR's source): `.plans/active/v0.1.3/01-provenance-design-starter.md`
-- Backlog: `.plans/active/v0.1.3/02-backlog-prioritization.md`
+- v0.1.3 private planning notes for provenance scope and sequencing.
 - Agentic attribution standard: `docs/standards/agentic-attribution.md`
 - ADR-0001: Schema-first outputs (sets the precedent for JSON Schema as
   the recipe-output contract that provenance projects into Parquet).
@@ -573,10 +571,9 @@ Standing constraints regardless of sequencing:
 
 ## Decision log
 
-- **2026-05-10** — Strategic themes seeded after engagement-scale validation
-  run (`00-strategic-themes.md`).
+- **2026-05-10** — Strategic themes seeded after large-corpus validation.
 - **2026-05-11 AM** — Provenance design starter authored with six open
-  questions (`01-provenance-design-starter.md`).
+  questions.
 - **2026-05-11 PM** — @3leapsdave confirmed all six original recommendations
   with refinements on Q1 (sidecar co-location) and Q3 (defer-but-track).
 - **2026-05-11 PM (continued)** — Refinements landed: `authors` field
@@ -600,7 +597,7 @@ Standing constraints regardless of sequencing:
   optional-with-warning; v0.1.4 bumps to `recipe/v0.2.0` with it required.
 - **2026-05-11** — ADR-0006 v3 accepted (this document). Branch
   `feat/provenance-recipe-schema` opened; PR-A work begins.
-- **2026-06-01** — SUM-034 addendum: per-record `_runtime` now always carries
+- **2026-06-01** — Document-order emission addendum: per-record `_runtime` now always carries
   `record_num`, the 1-based pre-filter source-document position among
   record-boundary selector matches. This refines the original "run-level
   identity only" wording without adding field-level provenance. Document-order
