@@ -434,16 +434,57 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		return result
 	}
 
+	emittedRecords := 0
+	perSelectorCounts := make(map[int]int)
+	boundaryDisposition := DispositionApplied
+	boundaryReason := DispositionReason("")
+	boundaryDetail := ""
+	var scanner *streaming.RecordScanner
+
+	markBoundaryFailure := func(reason DispositionReason) {
+		boundaryDisposition = DispositionFailed
+		boundaryReason = reason
+		if result.Error != nil {
+			boundaryDetail = result.Error.Error()
+		}
+	}
+
+	finish := func() ExtractResult {
+		if scanner != nil {
+			perSelectorCounts[0] = scanner.RecordCount()
+			result.PerSelectorCounts = perSelectorCounts
+			result.PerSelectorCountsComplete = len(extCfg.MatchSelectors) == 1
+		}
+
+		summary := FileEmissionSummary{
+			SourceFile:        filePath,
+			RecordType:        extCfg.RecordType,
+			RecordCount:       emittedRecords,
+			Disposition:       boundaryDisposition,
+			DispositionReason: boundaryReason,
+			DispositionDetail: boundaryDetail,
+		}
+		if err := sink.OnFileBoundary(ctx, summary); err != nil {
+			logger.Error("Failed to emit file boundary", zap.Error(err))
+			if result.Error == nil {
+				result.Error = fmt.Errorf("failed to emit file boundary: %w", err)
+			}
+		}
+		return result
+	}
+
 	// Get the record selector from the first match selector
 	if len(extCfg.MatchSelectors) == 0 {
 		result.Error = fmt.Errorf("no match selectors defined in extract config")
-		return result
+		markBoundaryFailure(DispositionReasonInternalError)
+		return finish()
 	}
 	recordSelector := extCfg.MatchSelectors[0].XPath
 	parsedSelector, err := streaming.ParseRecordSelector(recordSelector)
 	if err != nil {
 		result.Error = err
-		return result
+		markBoundaryFailure(DispositionReasonInternalError)
+		return finish()
 	}
 
 	logger.Info("Initializing record scanner",
@@ -453,7 +494,8 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	if err := prepareExtractConfig(streamingCfg); err != nil {
 		logger.Error("Failed to prepare streaming extract config", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to prepare streaming extract config: %w", err)
-		return result
+		markBoundaryFailure(DispositionReasonInternalError)
+		return finish()
 	}
 
 	// Open file stream
@@ -461,7 +503,8 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	if err != nil {
 		logger.Error("Failed to open file stream", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to open file stream: %w", err)
-		return result
+		markBoundaryFailure(DispositionReasonInternalError)
+		return finish()
 	}
 	defer func() {
 		if closeErr := stream.Close(); closeErr != nil {
@@ -470,13 +513,10 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	}()
 
 	// Create record scanner
-	scanner := streaming.NewRecordScanner(stream, recordSelector)
+	scanner = streaming.NewRecordScanner(stream, recordSelector)
 	defer func() {
 		_ = scanner.Close() // Scanner close is best-effort, errors are not critical
 	}()
-
-	emittedRecords := 0
-	perSelectorCounts := make(map[int]int)
 
 	// Note: In streaming mode, signature checking is skipped because we don't have access
 	// to the full document structure. Signature checking should be done before calling
@@ -492,7 +532,8 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		if err != nil {
 			logger.Error("Failed to scan record", zap.Error(err))
 			result.Error = fmt.Errorf("failed to scan record: %w", err)
-			return result
+			markBoundaryFailure(DispositionReasonParseError)
+			return finish()
 		}
 
 		// Log progress every 100 records
@@ -509,7 +550,8 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 				zap.Int("record_num", recordBuffer.RecordNum),
 				zap.Error(err))
 			result.Error = fmt.Errorf("failed to parse record %d: %w", recordBuffer.RecordNum, err)
-			return result
+			markBoundaryFailure(DispositionReasonParseError)
+			return finish()
 		}
 
 		// Extract records from this mini-DOM using a cloned config whose match
@@ -520,7 +562,8 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 				zap.Int("record_num", recordBuffer.RecordNum),
 				zap.Error(err))
 			result.Error = fmt.Errorf("failed to extract from record %d: %w", recordBuffer.RecordNum, err)
-			return result
+			markBoundaryFailure(DispositionReasonInternalError)
+			return finish()
 		}
 
 		recordNums := make([]int, len(records))
@@ -532,7 +575,8 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 				zap.Int("record_num", recordBuffer.RecordNum),
 				zap.Error(err))
 			result.Error = err
-			return result
+			markBoundaryFailure(DispositionReasonInternalError)
+			return finish()
 		}
 		for _, record := range records {
 			if err := sink.OnRecord(ctx, NewEmittedRecord(record)); err != nil {
@@ -540,12 +584,12 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 					zap.Int("record_num", recordBuffer.RecordNum),
 					zap.Error(err))
 				result.Error = fmt.Errorf("failed to emit record %d: %w", recordBuffer.RecordNum, err)
-				return result
+				markBoundaryFailure(DispositionReasonInternalError)
+				return finish()
 			}
 			emittedRecords++
 		}
 	}
-	perSelectorCounts[0] = scanner.RecordCount()
 
 	logger.Info("Streaming extraction complete",
 		zap.String("file", filePath),
@@ -553,19 +597,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		zap.Int("total_records_extracted", emittedRecords),
 		zap.String("record_element", parsedSelector.ElementName))
 
-	if err := sink.OnFileBoundary(ctx, FileEmissionSummary{
-		SourceFile:  filePath,
-		RecordType:  streamingCfg.RecordType,
-		RecordCount: emittedRecords,
-	}); err != nil {
-		logger.Error("Failed to emit file boundary", zap.Error(err))
-		result.Error = fmt.Errorf("failed to emit file boundary: %w", err)
-		return result
-	}
-
-	result.PerSelectorCounts = perSelectorCounts
-	result.PerSelectorCountsComplete = len(extCfg.MatchSelectors) == 1
-	return result
+	return finish()
 }
 
 // ProcessFile processes a single file for extraction

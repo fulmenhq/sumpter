@@ -1521,6 +1521,120 @@ func TestProcessFileStreamingToSinkEmitsFinalEnvelopes(t *testing.T) {
 	assertRecordValuesAndNums(t, sink.records, []string{"A1", "A3"}, []int{1, 3})
 }
 
+func TestProcessFileStreamingToSinkEmitsFailedBoundaryAfterExtractionError(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "streaming-extract-error.xml")
+	xmlContent := `<Batch>
+  <Item><Value>1</Value></Item>
+  <Item><Value>not-an-integer</Value></Item>
+</Batch>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write xml fixture: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "batch-signature",
+		ConfidenceThreshold: 1.0,
+		MatchPatterns: []MatchPattern{
+			{PatternID: "root", Selector: "/Batch", Weight: 1.0},
+		},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "batch_item",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//Item"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "value", XPath: "Value", Type: "integer"},
+		},
+	}
+	sink := &trackingRecordSink{}
+
+	result := ProcessFileStreamingToSink(context.Background(), testFile, signature, extractCfg, nil, provenance.RuntimeOptions{}, sink)
+	if result.Error == nil {
+		t.Fatalf("ProcessFileStreamingToSink() succeeded, want extraction error")
+	}
+	if !strings.Contains(result.Error.Error(), "failed to extract from record 2") {
+		t.Fatalf("error = %v, want second-record extraction failure", result.Error)
+	}
+	if len(sink.records) != 1 {
+		t.Fatalf("sink records = %d, want 1", len(sink.records))
+	}
+	if len(sink.boundaries) != 1 {
+		t.Fatalf("sink boundaries = %d, want 1", len(sink.boundaries))
+	}
+	boundary := sink.boundaries[0]
+	if boundary.RecordCount != 1 {
+		t.Fatalf("boundary RecordCount = %d, want 1", boundary.RecordCount)
+	}
+	if boundary.Disposition != DispositionFailed {
+		t.Fatalf("boundary Disposition = %q, want %q", boundary.Disposition, DispositionFailed)
+	}
+	if boundary.DispositionReason != DispositionReasonInternalError {
+		t.Fatalf("boundary DispositionReason = %q, want %q", boundary.DispositionReason, DispositionReasonInternalError)
+	}
+	if !strings.Contains(boundary.DispositionDetail, "failed to extract from record 2") {
+		t.Fatalf("boundary detail = %q, want original error detail", boundary.DispositionDetail)
+	}
+}
+
+func TestProcessFileStreamingToSinkEmitsFailedBoundaryAfterSinkError(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "streaming-sink-error.xml")
+	xmlContent := `<Batch>
+  <Item><Value>A1</Value></Item>
+  <Item><Value>A2</Value></Item>
+</Batch>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write xml fixture: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "batch-signature",
+		ConfidenceThreshold: 1.0,
+		MatchPatterns: []MatchPattern{
+			{PatternID: "root", Selector: "/Batch", Weight: 1.0},
+		},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "batch_item",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//Item"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "value", XPath: "Value", Type: "string"},
+		},
+	}
+	sink := &trackingRecordSink{failOnRecord: 2}
+
+	result := ProcessFileStreamingToSink(context.Background(), testFile, signature, extractCfg, nil, provenance.RuntimeOptions{}, sink)
+	if result.Error == nil {
+		t.Fatalf("ProcessFileStreamingToSink() succeeded, want sink error")
+	}
+	if !strings.Contains(result.Error.Error(), "failed to emit record 2") {
+		t.Fatalf("error = %v, want second-record sink failure", result.Error)
+	}
+	if len(sink.records) != 1 {
+		t.Fatalf("sink records = %d, want 1", len(sink.records))
+	}
+	if len(sink.boundaries) != 1 {
+		t.Fatalf("sink boundaries = %d, want 1", len(sink.boundaries))
+	}
+	boundary := sink.boundaries[0]
+	if boundary.RecordCount != 1 {
+		t.Fatalf("boundary RecordCount = %d, want 1", boundary.RecordCount)
+	}
+	if boundary.Disposition != DispositionFailed {
+		t.Fatalf("boundary Disposition = %q, want %q", boundary.Disposition, DispositionFailed)
+	}
+	if boundary.DispositionReason != DispositionReasonInternalError {
+		t.Fatalf("boundary DispositionReason = %q, want %q", boundary.DispositionReason, DispositionReasonInternalError)
+	}
+	if !strings.Contains(boundary.DispositionDetail, "failed to emit record 2") {
+		t.Fatalf("boundary detail = %q, want original sink error detail", boundary.DispositionDetail)
+	}
+}
+
 func TestProcessFileStreaming_RejectsUnsupportedRecordSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "predicate-selector.xml")
@@ -1553,11 +1667,17 @@ func TestProcessFileStreaming_RejectsUnsupportedRecordSelector(t *testing.T) {
 }
 
 type trackingRecordSink struct {
-	records    []map[string]interface{}
-	boundaries []FileEmissionSummary
+	records      []map[string]interface{}
+	boundaries   []FileEmissionSummary
+	recordSeen   int
+	failOnRecord int
 }
 
 func (s *trackingRecordSink) OnRecord(_ context.Context, record EmittedRecord) error {
+	s.recordSeen++
+	if s.failOnRecord > 0 && s.recordSeen == s.failOnRecord {
+		return fmt.Errorf("sink record %d failed", s.recordSeen)
+	}
 	s.records = append(s.records, record.Envelope())
 	return nil
 }
