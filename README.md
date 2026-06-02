@@ -59,7 +59,7 @@ Sumpter is in **alpha** — for us that's about _interface stability_, not matur
 
 **Contributions are welcome** — issues, design discussion, and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md); for anything beyond a small fix, open an issue first so we can point you at in-flight work. The road to beta is about freezing the recipe/DSL/adapter contracts and raising coverage, not about whether the core works.
 
-**Memory contract:** XML input is tokenized incrementally, but extracted records are buffered per file before output. Bounded end-to-end memory across sequential and parallel paths is on the post-v0.1.6 roadmap — see [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md).
+**Memory contract:** XML input is tokenized incrementally, but extracted records are buffered per file before output. SUM-027 is defining the v0.1.7 record-sink contract for bounded JSONL/NDJSON output streaming; see [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md) and [ADR-0009](docs/architecture/adr/0009-record-sink-output-streaming-contract.md).
 
 Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
 
@@ -147,7 +147,7 @@ The public-data exemplars are deliberately drawn from **different verticals** to
 
 ## 🔑 Features
 
-- **Streaming input parsing**: Gigabyte-class XML inputs are tokenized incrementally without loading the document into memory. Extracted records are buffered per file before output; the record-sink streaming refactor that makes bounded end-to-end memory true across sequential and parallel paths is on the post-v0.1.6 roadmap.
+- **Streaming input parsing**: Gigabyte-class XML inputs are tokenized incrementally without loading the document into memory. Extracted records are buffered per file before output; SUM-027 defines the v0.1.7 record-sink contract for bounded JSONL/NDJSON output streaming.
 - **Record Indexing**: Build seekable indexes for parallel extraction of multi-GB XML files
 - **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors
