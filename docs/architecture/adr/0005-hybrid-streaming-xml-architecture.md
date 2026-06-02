@@ -51,10 +51,11 @@ and seekable indexed reads. XML input is tokenized incrementally and indexed
 record reads avoid loading predecessor records, but extracted records are still
 buffered per file before output in the sequential, parallel, and Parquet paths.
 
-The record-sink streaming refactor planned for the v0.1.6 cycle will replace
+The SUM-027 record-sink streaming refactor planned for v0.1.7 will replace
 that per-file buffering with writer callbacks so Sumpter can make a bounded
-end-to-end memory claim across extraction paths. Until that lands, public docs
-should describe the present contract as "streaming input parsing" rather than
+end-to-end memory claim for the JSONL/NDJSON output path. ADR-0009 defines the
+contract gate for that work. Until implementation lands, public docs should
+describe the present contract as "streaming input parsing" rather than
 "constant-memory extraction."
 
 ### Architecture Design
