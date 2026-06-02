@@ -122,7 +122,7 @@ fmt-docs: ## Format all documentation files (YAML, JSON, Markdown)
 fmt-yaml: ## Format YAML files using yamlfmt
 	@echo "  📄 Formatting YAML files..."
 	@if command -v yamlfmt >/dev/null 2>&1; then \
-		find . \( -name "*.yml" -o -name "*.yaml" \) | grep -v vendor/ | grep -v node_modules/ | grep -v .cache/ | while read file; do \
+		git ls-files --cached --others --exclude-standard | grep -E '\.(yml|yaml)$$' | while IFS= read -r file; do \
 			echo "    Formatting: $$file"; \
 			yamlfmt "$$file"; \
 		done; \
@@ -134,7 +134,7 @@ fmt-yaml: ## Format YAML files using yamlfmt
 fmt-json: ## Format JSON files using yq
 	@echo "  📄 Formatting JSON files..."
 	@if command -v yq >/dev/null 2>&1; then \
-		find . -name "*.json" | grep -v vendor/ | grep -v node_modules/ | grep -v .cache/ | while read file; do \
+		git ls-files --cached --others --exclude-standard | grep -E '\.json$$' | while IFS= read -r file; do \
 			echo "    Formatting: $$file"; \
 			yq eval '.' "$$file" --output-format=json --indent=2 > "$$file.tmp" && mv "$$file.tmp" "$$file" || rm -f "$$file.tmp"; \
 		done; \
@@ -145,7 +145,7 @@ fmt-json: ## Format JSON files using yq
 .PHONY: fmt-markdown
 fmt-markdown: ## Format Markdown files (trailing whitespace cleanup)
 	@echo "  📋 Formatting Markdown files..."
-	@find . -name "*.md" | grep -v vendor/ | grep -v node_modules/ | grep -v .cache/ | while read file; do \
+	@git ls-files --cached --others --exclude-standard | grep -E '\.md$$' | while IFS= read -r file; do \
 		echo "    Cleaning: $$file"; \
 		sed -i.bak 's/[[:space:]]*$$//' "$$file" && rm -f "$$file.bak"; \
 	done
@@ -153,9 +153,9 @@ fmt-markdown: ## Format Markdown files (trailing whitespace cleanup)
 .PHONY: fmt-whitespace
 fmt-whitespace: ## Fix end-of-file and trailing whitespace issues
 	@echo "  ✂️ Fixing whitespace and end-of-file issues..."
-	@find . -type f \( -name "*.go" -o -name "*.md" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.txt" -o -name "*.sh" -o -name "Makefile" -o -name "Dockerfile*" \) \
-		| grep -v vendor/ | grep -v node_modules/ | grep -v .git/ | grep -v dist/ | grep -v bin/ | grep -v .cache/ \
-		| while read file; do \
+	@git ls-files --cached --others --exclude-standard \
+		| grep -E '(\.(go|md|ya?ml|json|txt|sh)$$|(^|/)Makefile$$|(^|/)Dockerfile[^/]*$$)' \
+		| while IFS= read -r file; do \
 			sed -i.bak 's/[[:space:]]*$$//' "$$file" && rm -f "$$file.bak"; \
 			if [ -s "$$file" ]; then \
 				if [ "$$(tail -c1 "$$file" | wc -l)" -eq 0 ]; then \

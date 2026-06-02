@@ -36,6 +36,7 @@ lint:
       - "**/*.orig"
       - "**/testdata/**"
       - ".plans/**"
+      - ".scratchpad/**"
       - ".cache/**"
   github_actions:
     actionlint:
@@ -73,6 +74,7 @@ format:
       - "**/*.md"
     ignore:
       - ".plans/**"
+      - ".scratchpad/**"
       - ".cache/**"
       - "**/vendor/**"
       - "**/node_modules/**"
@@ -83,6 +85,7 @@ format:
     ignore:
       - "go.sum"
       - ".plans/**"
+      - ".scratchpad/**"
       - ".cache/**"
       - "**/vendor/**"
       - "**/node_modules/**"
@@ -93,6 +96,7 @@ format:
       - "**/*.yml"
     ignore:
       - ".plans/**"
+      - ".scratchpad/**"
       - ".cache/**"
       - "**/vendor/**"
       - "**/node_modules/**"
