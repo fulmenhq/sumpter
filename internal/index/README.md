@@ -6,9 +6,9 @@ Package `index` provides streaming XML record index building and verification wi
 
 This package implements Phase 2 of the High-Scale XML Processing MVP, enabling:
 
-- **Streaming index building** with constant memory usage (<100MB regardless of file size)
+- **Streaming index building** with bounded default memory usage
 - **SHA-256 integrity verification** at both file and per-record levels
-- **Statistical analysis** (min/max/avg/percentiles) of record sizes
+- **Statistical analysis** (min/max/avg, with exact percentiles as opt-in) of record sizes
 - **Tamper detection** through hash verification
 
 ## Architecture
@@ -18,14 +18,17 @@ This package implements Phase 2 of the High-Scale XML Processing MVP, enabling:
 The builder uses a **two-pass streaming architecture**:
 
 1. **First Pass**: Compute source file SHA-256 hash
-2. **Second Pass**: Stream through records, collect metadata, compute per-record hashes
+2. **Second Pass**: Stream through records, emit metadata, compute per-record hashes
 
-Memory usage remains constant because:
+Default memory usage remains bounded because:
 
 - Records are scanned using `streaming.RecordScannerSizeOnly` (no XML buffering)
-- Per-record hashes are computed by seeking to byte ranges (no full record buffering)
+- Per-record hashes are computed from original source byte ranges using a single open handle (no full record buffering)
 - Statistics are calculated incrementally
 - Index is written progressively to disk
+
+Exact percentile flags retain record sizes so they can sort and calculate exact
+values. Leave them disabled for the bounded default path.
 
 ### Key Types
 
@@ -52,17 +55,14 @@ Streaming index builder:
 builder := index.NewBuilder(index.BuildOptions{
     InputPath:      "/path/to/file.xml",
     Selector:       "//VariationArchive",
-    IncludeP95:     true,
-    IncludeP99:     true,
     SumpterVersion: "0.1.2",
 })
 
-idx, err := builder.Build()
+writer := index.NewJSONIndexWriter("/path/to/output.recordindex.json")
+idx, err := builder.BuildTo(writer)
 if err != nil {
     return err
 }
-
-err = builder.WriteToFile(idx, "/path/to/output.recordindex.json")
 ```
 
 The index builder uses the same record boundary grammar as streaming
@@ -100,21 +100,13 @@ if !result.Valid {
 opts := index.BuildOptions{
     InputPath:      "clinvar.xml",
     Selector:       "//VariationArchive",
-    IncludeP50:     true,
-    IncludeP95:     true,
-    IncludeP99:     true,
     SumpterVersion: "0.1.2",
 }
 
 builder := index.NewBuilder(opts)
-idx, err := builder.Build()
+idx, err := builder.BuildTo(index.NewJSONIndexWriter("clinvar.recordindex.json"))
 if err != nil {
     return fmt.Errorf("build failed: %w", err)
-}
-
-err = builder.WriteToFile(idx, "clinvar.recordindex.json")
-if err != nil {
-    return fmt.Errorf("write failed: %w", err)
 }
 
 fmt.Printf("Indexed %d records in %dms\n",
@@ -165,14 +157,15 @@ fmt.Printf("Average record size: %.2f KB\n",
 
 ### Build Performance
 
-Measured on streaming architecture with constant memory:
+Measured on the bounded default streaming-writer path:
 
 - **1k records** (~25MB): <5 seconds
 - **10k records** (~250MB): <30 seconds
 - **100k records** (~2.5GB): <5 minutes
 - **1M records** (~25GB): <15 minutes
 
-Memory usage: <100MB regardless of file size
+Default memory usage is bounded by parser state and writer buffering. Exact
+percentile flags retain one record size per record.
 
 ### Verification Performance
 
@@ -195,9 +188,10 @@ Memory usage: <100MB regardless of file size
 - Computes SHA-256 of that range
 - No buffering of full record in memory
 
-### Percentile Calculation
+### Exact Percentile Calculation
 
-Uses **linear interpolation** between sorted values:
+When percentile flags are enabled, Sumpter retains record sizes and uses
+**linear interpolation** between sorted values:
 
 ```go
 index = p * (len(sizes) - 1)

@@ -7,11 +7,13 @@ package store
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fulmenhq/sumpter/internal/index"
 )
@@ -71,15 +73,111 @@ func WriteSeekableIndex(basePath string, idx *index.RecordIndex) error {
 	normalized := *idx
 	index.NormalizeRecordIndex(&normalized)
 
-	headerPath := basePath + ".recordindex.header.json"
-	recordsPath := basePath + ".recordindex.records.szst"
+	writer := NewSeekableIndexWriter(basePath)
+	if err := writer.Start(&normalized); err != nil {
+		return err
+	}
+	defer func() { _ = writer.Close() }()
 
-	// Write binary records first (so we can fail early if encoder unavailable)
-	if err := writeBinaryRecords(recordsPath, normalized.Records); err != nil {
-		return fmt.Errorf("failed to write binary records: %w", err)
+	for i := range normalized.Records {
+		if err := writer.AppendRecord(normalized.Records[i]); err != nil {
+			return err
+		}
 	}
 
-	// Create header
+	if err := writer.Finalize(&normalized); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// SeekableIndexWriter writes seekable-zstd record indexes progressively.
+type SeekableIndexWriter struct {
+	basePath      string
+	headerPath    string
+	recordsPath   string
+	headerTmp     string
+	recordsTmp    string
+	headerBackup  string
+	recordsBackup string
+	stream        binaryRecordStream
+	recordCount   int
+	started       bool
+	prepared      bool
+	committed     bool
+	completed     bool
+	finalized     bool
+	closed        bool
+}
+
+// NewSeekableIndexWriter returns a progressive seekable-zstd index writer.
+func NewSeekableIndexWriter(basePath string) *SeekableIndexWriter {
+	return &SeekableIndexWriter{basePath: basePath}
+}
+
+func (w *SeekableIndexWriter) Start(_ *index.RecordIndex) error {
+	if w.started {
+		return fmt.Errorf("seekable index writer already started")
+	}
+
+	w.headerPath, w.recordsPath = DeriveSeekablePaths(w.basePath)
+	if err := os.MkdirAll(filepath.Dir(w.recordsPath), 0o750); err != nil {
+		return fmt.Errorf("failed to create records directory: %w", err)
+	}
+	tmpPath, err := tempSiblingPath(w.recordsPath)
+	if err != nil {
+		return fmt.Errorf("failed to create temporary records path: %w", err)
+	}
+	w.recordsTmp = tmpPath
+
+	stream, err := newBinaryRecordStream(w.recordsTmp)
+	if err != nil {
+		_ = os.Remove(w.recordsTmp)
+		w.recordsTmp = ""
+		return fmt.Errorf("failed to create binary record stream: %w", err)
+	}
+
+	w.stream = stream
+	w.started = true
+	return nil
+}
+
+func (w *SeekableIndexWriter) AppendRecord(record index.RecordMetadata) error {
+	if !w.started {
+		return fmt.Errorf("seekable index writer not started")
+	}
+	if w.finalized {
+		return fmt.Errorf("seekable index writer already finalized")
+	}
+	if err := w.stream.AppendRecord(&record); err != nil {
+		return fmt.Errorf("failed to write binary record %d: %w", record.RecordNum, err)
+	}
+	w.recordCount++
+	return nil
+}
+
+func (w *SeekableIndexWriter) Prepare(idx *index.RecordIndex) error {
+	if idx == nil {
+		return fmt.Errorf("record index summary is required")
+	}
+	if !w.started {
+		return fmt.Errorf("seekable index writer not started")
+	}
+	if w.prepared {
+		return nil
+	}
+
+	if w.stream != nil {
+		if err := w.stream.Close(); err != nil {
+			return fmt.Errorf("failed to finish binary records: %w", err)
+		}
+		w.stream = nil
+	}
+
+	normalized := *idx
+	index.NormalizeRecordIndex(&normalized)
+
 	header := SzstIndexHeader{
 		Version:  SzstStoreVersion,
 		Source:   normalized.Source,
@@ -87,22 +185,120 @@ func WriteSeekableIndex(basePath string, idx *index.RecordIndex) error {
 		Summary:  normalized.Summary,
 		Metadata: normalized.Metadata,
 		Records: SzstRecordsMetadata{
-			RecordCount:      len(normalized.Records),
+			RecordCount:      w.recordCount,
 			RecordWidthBytes: BinaryRecordWidth,
 			SHAEncoding:      "raw32",
 			Endianness:       "little",
-			RecordsFile:      filepath.Base(recordsPath),
+			RecordsFile:      filepath.Base(w.recordsPath),
 		},
 	}
 
-	// Write header JSON
-	if err := writeHeaderJSON(headerPath, &header); err != nil {
-		// Clean up records file on header write failure
-		_ = os.Remove(recordsPath)
+	headerTmp, err := tempSiblingPath(w.headerPath)
+	if err != nil {
+		_ = os.Remove(w.recordsTmp)
+		w.recordsTmp = ""
+		return fmt.Errorf("failed to create temporary header path: %w", err)
+	}
+	w.headerTmp = headerTmp
+
+	if err := writeHeaderJSON(w.headerTmp, &header); err != nil {
+		_ = os.Remove(w.headerTmp)
+		_ = os.Remove(w.recordsTmp)
+		w.headerTmp = ""
+		w.recordsTmp = ""
 		return fmt.Errorf("failed to write header: %w", err)
 	}
 
+	w.prepared = true
 	return nil
+}
+
+func (w *SeekableIndexWriter) Commit() error {
+	if !w.prepared {
+		return fmt.Errorf("seekable index writer not prepared")
+	}
+	if w.committed {
+		return nil
+	}
+
+	recordsBackup, headerBackup, err := publishSeekablePair(w.recordsTmp, w.recordsPath, w.headerTmp, w.headerPath)
+	if err != nil {
+		return err
+	}
+	w.recordsBackup = recordsBackup
+	w.headerBackup = headerBackup
+	w.recordsTmp = ""
+	w.headerTmp = ""
+	w.committed = true
+	return nil
+}
+
+func (w *SeekableIndexWriter) Complete() error {
+	if !w.committed && w.prepared {
+		return fmt.Errorf("seekable index writer not committed")
+	}
+	if w.completed {
+		return nil
+	}
+	w.completed = true
+	w.finalized = true
+	if w.recordsBackup != "" {
+		if err := os.Remove(w.recordsBackup); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove seekable records backup: %w", err)
+		}
+		w.recordsBackup = ""
+	}
+	if w.headerBackup != "" {
+		if err := os.Remove(w.headerBackup); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove seekable header backup: %w", err)
+		}
+		w.headerBackup = ""
+	}
+	return nil
+}
+
+func (w *SeekableIndexWriter) Finalize(idx *index.RecordIndex) error {
+	if err := w.Prepare(idx); err != nil {
+		return err
+	}
+	if err := w.Commit(); err != nil {
+		return err
+	}
+	return w.Complete()
+}
+
+func (w *SeekableIndexWriter) Close() error {
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	var err error
+	if w.stream != nil {
+		err = w.stream.Close()
+		w.stream = nil
+	}
+	if !w.completed {
+		if w.committed {
+			err = errors.Join(err,
+				os.Remove(w.recordsPath),
+				os.Remove(w.headerPath),
+				restoreIfStaged(w.recordsBackup, w.recordsPath),
+				restoreIfStaged(w.headerBackup, w.headerPath),
+			)
+			w.recordsBackup = ""
+			w.headerBackup = ""
+			w.committed = false
+		}
+		if w.headerTmp != "" {
+			err = errors.Join(err, os.Remove(w.headerTmp))
+			w.headerTmp = ""
+		}
+		if w.recordsTmp != "" {
+			err = errors.Join(err, os.Remove(w.recordsTmp))
+			w.recordsTmp = ""
+		}
+	}
+	return err
 }
 
 // writeHeaderJSON writes the header to a JSON file.
@@ -124,10 +320,100 @@ func writeHeaderJSON(path string, header *SzstIndexHeader) error {
 	return encoder.Encode(header)
 }
 
-// writeBinaryRecords writes records to a seekable-zstd compressed file.
-// This requires CGO and the seekablezstd build tag.
-func writeBinaryRecords(path string, records []index.RecordMetadata) error {
-	return writeBinaryRecordsImpl(path, records)
+func tempSiblingPath(finalPath string) (string, error) {
+	dir := filepath.Dir(finalPath)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("failed to create output directory: %w", err)
+	}
+	file, err := os.CreateTemp(dir, filepath.Base(finalPath)+".tmp-*") // #nosec G304 - output directory is derived from user-provided path
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	closeErr := file.Close()
+	removeErr := os.Remove(path)
+	return path, errors.Join(closeErr, removeErr)
+}
+
+func publishSeekablePair(recordsTmp, recordsFinal, headerTmp, headerFinal string) (string, string, error) {
+	recordsBackup := backupPath(recordsFinal)
+	headerBackup := backupPath(headerFinal)
+	recordsBackedUp := false
+	headerBackedUp := false
+
+	if err := renameIfExists(recordsFinal, recordsBackup); err != nil {
+		return "", "", fmt.Errorf("failed to stage existing records for replacement: %w", err)
+	} else if err == nil && fileExists(recordsBackup) {
+		recordsBackedUp = true
+	}
+
+	if err := renameIfExists(headerFinal, headerBackup); err != nil {
+		if recordsBackedUp {
+			_ = os.Rename(recordsBackup, recordsFinal)
+		}
+		return "", "", fmt.Errorf("failed to stage existing header for replacement: %w", err)
+	} else if err == nil && fileExists(headerBackup) {
+		headerBackedUp = true
+	}
+
+	if err := os.Rename(recordsTmp, recordsFinal); err != nil {
+		restoreSeekableBackups(recordsBackedUp, recordsBackup, recordsFinal, headerBackedUp, headerBackup, headerFinal)
+		return "", "", fmt.Errorf("failed to publish seekable records: %w", err)
+	}
+	if err := os.Rename(headerTmp, headerFinal); err != nil {
+		_ = os.Remove(recordsFinal)
+		restoreSeekableBackups(recordsBackedUp, recordsBackup, recordsFinal, headerBackedUp, headerBackup, headerFinal)
+		return "", "", fmt.Errorf("failed to publish seekable header: %w", err)
+	}
+
+	if !recordsBackedUp {
+		recordsBackup = ""
+	}
+	if !headerBackedUp {
+		headerBackup = ""
+	}
+	return recordsBackup, headerBackup, nil
+}
+
+func backupPath(path string) string {
+	return fmt.Sprintf("%s.bak-%d-%d", path, os.Getpid(), time.Now().UnixNano())
+}
+
+func renameIfExists(oldPath, newPath string) error {
+	err := os.Rename(oldPath, newPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func restoreSeekableBackups(recordsBackedUp bool, recordsBackup, recordsFinal string, headerBackedUp bool, headerBackup, headerFinal string) {
+	if recordsBackedUp {
+		_ = os.Rename(recordsBackup, recordsFinal)
+	}
+	if headerBackedUp {
+		_ = os.Rename(headerBackup, headerFinal)
+	}
+}
+
+func restoreIfStaged(backupPath, finalPath string) error {
+	if backupPath == "" {
+		return nil
+	}
+	if err := os.Rename(backupPath, finalPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+type binaryRecordStream interface {
+	AppendRecord(record *index.RecordMetadata) error
+	Close() error
 }
 
 // EncodeBinaryRecord encodes a single record to a fixed-width binary buffer.

@@ -4,7 +4,7 @@ Guide to building and using record indexes for seekable extraction and parallel 
 
 ## Overview
 
-Record indexes map the byte boundaries of repeating XML elements in your source files. Sumpter builds these indexes with constant memory usage, allowing you to work with files that are too large to load into RAM. Once indexed, you can:
+Record indexes map the byte boundaries of repeating XML elements in your source files. Sumpter's default index build path uses a streaming writer with memory bounded by parser state and writer buffering, allowing you to work with files that are too large to load into RAM. Once indexed, you can:
 
 - Extract specific records by position without parsing the entire file
 - Run parallel extraction with worker pools that seek to different file offsets
@@ -101,6 +101,12 @@ sumpter index build large-file.xml \
   --output indexes/large-file.recordindex.json \
   --progress
 
+# Include exact percentiles when needed (retains record sizes during build)
+sumpter index build large-file.xml \
+  --selector "//Record" \
+  --output indexes/large-file.recordindex.json \
+  --p50 --p95 --p99
+
 # Build with seekable-zstd format (v0.1.2+, requires CGO)
 sumpter index build large-file.xml \
   --selector "//Record" \
@@ -114,12 +120,13 @@ sumpter index build large-file.xml \
 1. First pass: Compute SHA-256 hash of entire source file
 2. Second pass: Stream through file to detect record boundaries
 3. For each record: Capture start/end byte offsets and size
-4. Third pass: Compute SHA-256 hash for each record's byte range
-5. Write index file with metadata and record map
+4. For each record: Compute SHA-256 over the original source byte range using the open source handle
+5. Append each record to the selected index writer and finalize summary metadata
 
 **Memory Usage:**
 
-- Constant regardless of source file size
+- Default path is bounded by XML parser state and writer buffering
+- Exact percentile flags (`--p50`, `--p95`, `--p99`) retain record sizes to calculate exact values
 - Tested with 59 GB XML file using <100 MB RAM
 - Index size: ~25-35 bytes per record in JSON format
 
@@ -312,10 +319,7 @@ Sumpter supports two index formats:
     "total_bytes": 3081472,
     "avg_record_size_bytes": 5238.7,
     "min_record_size_bytes": 2568,
-    "max_record_size_bytes": 17345,
-    "p50_record_size_bytes": 4912,
-    "p95_record_size_bytes": 8234,
-    "p99_record_size_bytes": 12456
+    "max_record_size_bytes": 17345
   },
   "metadata": {
     "generator": "sumpter index build v0.1.2",
@@ -346,7 +350,7 @@ Sumpter supports two index formats:
 **summary**: Statistical overview
 
 - Helps estimate extraction performance
-- Percentiles show data distribution
+- Exact percentiles show data distribution when explicitly requested
 - Useful for capacity planning
 
 ## Seekable-Zstd Format (v0.1.2+)

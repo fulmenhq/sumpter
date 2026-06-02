@@ -2,6 +2,8 @@ package index
 
 import (
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -135,6 +137,172 @@ func TestBuilder_Build_SmallXML(t *testing.T) {
 	}
 }
 
+func TestBuilder_BuildTo_StreamsWithoutCollectingRecords(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "test.xml")
+	outputPath := filepath.Join(tmpDir, "test.recordindex.json")
+	xmlContent := `<?xml version="1.0"?><root><Record>one</Record><Record>two</Record><Record>three</Record></root>`
+
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("Failed to create test XML: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{
+		InputPath:      xmlPath,
+		Selector:       "//Record",
+		SumpterVersion: "0.1.7-test",
+	})
+
+	idx, err := builder.BuildTo(NewJSONIndexWriter(outputPath))
+	if err != nil {
+		t.Fatalf("BuildTo() failed: %v", err)
+	}
+	if len(idx.Records) != 0 {
+		t.Fatalf("BuildTo returned %d retained records, want 0", len(idx.Records))
+	}
+	if idx.Summary.TotalRecords != 3 {
+		t.Fatalf("summary records = %d, want 3", idx.Summary.TotalRecords)
+	}
+
+	loaded, err := LoadIndex(outputPath)
+	if err != nil {
+		t.Fatalf("LoadIndex(progressive JSON) failed: %v", err)
+	}
+	if len(loaded.Records) != 3 {
+		t.Fatalf("written records = %d, want 3", len(loaded.Records))
+	}
+	if loaded.Summary.TotalRecords != 3 {
+		t.Fatalf("written summary records = %d, want 3", loaded.Summary.TotalRecords)
+	}
+	if loaded.Summary.P50RecordSizeBytes != 0 {
+		t.Fatalf("default BuildTo should not retain exact percentile stats, got p50=%d", loaded.Summary.P50RecordSizeBytes)
+	}
+}
+
+func TestBuilder_BuildTo_RecordHashUsesOriginalSourceBytes(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "test.xml")
+	recordXML := `<Record b="2" a="1">
+	<Value> raw spacing </Value>
+</Record>`
+	xmlContent := `<?xml version="1.0"?><root>` + recordXML + `</root>`
+
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("Failed to create test XML: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{
+		InputPath:      xmlPath,
+		Selector:       "//Record",
+		SumpterVersion: "0.1.7-test",
+	})
+	idx, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	if len(idx.Records) != 1 {
+		t.Fatalf("records = %d, want 1", len(idx.Records))
+	}
+
+	rec := idx.Records[0]
+	sourceBytes, err := os.ReadFile(xmlPath)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	rawWindow := sourceBytes[rec.StartOffset:rec.EndOffset]
+	expectedSum := sha256.Sum256(rawWindow)
+	expectedHash := hex.EncodeToString(expectedSum[:])
+	if rec.SHA256 != expectedHash {
+		t.Fatalf("record hash = %s, want original byte window hash %s over %q", rec.SHA256, expectedHash, string(rawWindow))
+	}
+	if string(rawWindow) != recordXML {
+		t.Fatalf("record byte window = %q, want exact source record %q", string(rawWindow), recordXML)
+	}
+}
+
+func TestBuilder_BuildTo_ParseFailureDoesNotPublishJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "malformed.xml")
+	outputPath := filepath.Join(tmpDir, "malformed.recordindex.json")
+	xmlContent := `<?xml version="1.0"?><root><Record>one</Record><Record>two</root>`
+
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("Failed to create malformed XML: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{
+		InputPath:      xmlPath,
+		Selector:       "//Record",
+		SumpterVersion: "0.1.7-test",
+	})
+	if _, err := builder.BuildTo(NewJSONIndexWriter(outputPath)); err == nil {
+		t.Fatal("BuildTo() succeeded for malformed XML, want error")
+	}
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+		t.Fatalf("final JSON artifact exists after failed build, stat error: %v", err)
+	}
+}
+
+func TestBuilder_BuildTo_LaterWriterStartFailurePreservesExistingJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "test.xml")
+	outputPath := filepath.Join(tmpDir, "test.recordindex.json")
+	previous := []byte(`{"version":"previous"}`)
+
+	if err := os.WriteFile(xmlPath, []byte(`<root><Record>one</Record></root>`), 0o600); err != nil {
+		t.Fatalf("Failed to create XML: %v", err)
+	}
+	if err := os.WriteFile(outputPath, previous, 0o600); err != nil {
+		t.Fatalf("Failed to create existing JSON artifact: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{
+		InputPath:      xmlPath,
+		Selector:       "//Record",
+		SumpterVersion: "0.1.7-test",
+	})
+	if _, err := builder.BuildTo(NewJSONIndexWriter(outputPath), failingStartIndexWriter{}); err == nil {
+		t.Fatal("BuildTo() succeeded with failing writer, want error")
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to read existing JSON artifact: %v", err)
+	}
+	if string(got) != string(previous) {
+		t.Fatalf("existing JSON artifact was modified: got %q, want %q", string(got), string(previous))
+	}
+}
+
+func TestBuilder_BuildTo_LaterWriterCommitFailureRollsBackJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	xmlPath := filepath.Join(tmpDir, "test.xml")
+	outputPath := filepath.Join(tmpDir, "test.recordindex.json")
+	previous := []byte(`{"version":"previous"}`)
+
+	if err := os.WriteFile(xmlPath, []byte(`<root><Record>one</Record></root>`), 0o600); err != nil {
+		t.Fatalf("Failed to create XML: %v", err)
+	}
+	if err := os.WriteFile(outputPath, previous, 0o600); err != nil {
+		t.Fatalf("Failed to create existing JSON artifact: %v", err)
+	}
+
+	builder := NewBuilder(BuildOptions{
+		InputPath:      xmlPath,
+		Selector:       "//Record",
+		SumpterVersion: "0.1.7-test",
+	})
+	if _, err := builder.BuildTo(NewJSONIndexWriter(outputPath), failingCommitIndexWriter{}); err == nil {
+		t.Fatal("BuildTo() succeeded with failing commit writer, want error")
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to read existing JSON artifact: %v", err)
+	}
+	if string(got) != string(previous) {
+		t.Fatalf("existing JSON artifact was modified after later commit failure: got %q, want %q", string(got), string(previous))
+	}
+}
+
 func TestBuilder_Build_RejectsCompressedInputBeforeOutput(t *testing.T) {
 	tmpDir := t.TempDir()
 	gzipPath := filepath.Join(tmpDir, "test.xml.gz")
@@ -171,6 +339,62 @@ func TestBuilder_Build_RejectsCompressedInputBeforeOutput(t *testing.T) {
 	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
 		t.Fatalf("Expected no output file, stat error: %v", statErr)
 	}
+}
+
+type failingStartIndexWriter struct{}
+
+func (failingStartIndexWriter) Start(_ *RecordIndex) error {
+	return os.ErrPermission
+}
+
+func (failingStartIndexWriter) AppendRecord(RecordMetadata) error {
+	return nil
+}
+
+func (failingStartIndexWriter) Finalize(*RecordIndex) error {
+	return nil
+}
+
+func (failingStartIndexWriter) Prepare(*RecordIndex) error {
+	return nil
+}
+
+func (failingStartIndexWriter) Commit() error {
+	return nil
+}
+
+func (failingStartIndexWriter) Complete() error {
+	return nil
+}
+
+func (failingStartIndexWriter) Close() error {
+	return nil
+}
+
+type failingCommitIndexWriter struct{}
+
+func (failingCommitIndexWriter) Start(_ *RecordIndex) error {
+	return nil
+}
+
+func (failingCommitIndexWriter) AppendRecord(RecordMetadata) error {
+	return nil
+}
+
+func (failingCommitIndexWriter) Prepare(*RecordIndex) error {
+	return nil
+}
+
+func (failingCommitIndexWriter) Commit() error {
+	return os.ErrPermission
+}
+
+func (failingCommitIndexWriter) Complete() error {
+	return nil
+}
+
+func (failingCommitIndexWriter) Close() error {
+	return nil
 }
 
 func TestBuilder_WriteToFile(t *testing.T) {
