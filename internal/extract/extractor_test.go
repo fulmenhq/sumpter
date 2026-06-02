@@ -1,6 +1,7 @@
 package extract
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1466,6 +1467,60 @@ func TestProcessFileStreamingRecordNumDocumentOrderAndFilterGaps(t *testing.T) {
 	assertRecordValuesAndNums(t, result.Records, []string{"A1", "A3"}, []int{1, 3})
 }
 
+func TestProcessFileStreamingToSinkEmitsFinalEnvelopes(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "streaming-sink.xml")
+	xmlContent := `<Batch>
+  <Item status="normal"><Value>A1</Value></Item>
+  <Item status="cancel"><Value>A2</Value></Item>
+  <Item status="normal"><Value>A3</Value></Item>
+</Batch>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write xml fixture: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "batch-signature",
+		ConfidenceThreshold: 1.0,
+		MatchPatterns: []MatchPattern{
+			{PatternID: "root", Selector: "/Batch", Weight: 1.0},
+		},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType: "batch_item",
+		MatchSelectors: []MatchSelector{
+			{XPath: "//Item"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "status", XPath: "@status", Type: "string"},
+			{OutputField: "value", XPath: "Value", Type: "string"},
+		},
+		Filters: map[string]interface{}{
+			"status": "> cancel",
+		},
+	}
+	sink := &trackingRecordSink{}
+
+	result := ProcessFileStreamingToSink(context.Background(), testFile, signature, extractCfg, nil, provenance.RuntimeOptions{}, sink)
+	if result.Error != nil {
+		t.Fatalf("ProcessFileStreamingToSink() error = %v", result.Error)
+	}
+	if len(result.Records) != 0 {
+		t.Fatalf("sink streaming should not populate ExtractResult.Records, got %d", len(result.Records))
+	}
+	if result.PerSelectorCounts[0] != 3 {
+		t.Fatalf("PerSelectorCounts[0] = %d, want 3", result.PerSelectorCounts[0])
+	}
+	if len(sink.boundaries) != 1 {
+		t.Fatalf("sink boundaries = %d, want 1", len(sink.boundaries))
+	}
+	if got := sink.boundaries[0].RecordCount; got != 2 {
+		t.Fatalf("boundary RecordCount = %d, want 2", got)
+	}
+
+	assertRecordValuesAndNums(t, sink.records, []string{"A1", "A3"}, []int{1, 3})
+}
+
 func TestProcessFileStreaming_RejectsUnsupportedRecordSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "predicate-selector.xml")
@@ -1495,6 +1550,25 @@ func TestProcessFileStreaming_RejectsUnsupportedRecordSelector(t *testing.T) {
 	if strings.Contains(strings.ToLower(result.Error.Error()), "non-streaming") {
 		t.Fatalf("error should not steer users to non-streaming mode: %v", result.Error)
 	}
+}
+
+type trackingRecordSink struct {
+	records    []map[string]interface{}
+	boundaries []FileEmissionSummary
+}
+
+func (s *trackingRecordSink) OnRecord(_ context.Context, record EmittedRecord) error {
+	s.records = append(s.records, record.Envelope())
+	return nil
+}
+
+func (s *trackingRecordSink) OnFileBoundary(_ context.Context, summary FileEmissionSummary) error {
+	s.boundaries = append(s.boundaries, summary)
+	return nil
+}
+
+func (s *trackingRecordSink) Close(context.Context) error {
+	return nil
 }
 
 func TestProcessFileStreaming_DoesNotMutatePreparedConfig(t *testing.T) {

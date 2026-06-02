@@ -3,6 +3,7 @@ package extract
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -396,12 +397,33 @@ func ProcessFileStreaming(filePath string, sigCfg *FileSignature, extCfg *Extrac
 // ProcessFileStreamingWithProvenance processes a large file using streaming to
 // minimize memory usage and enriches each record with runtime provenance.
 func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
+	collector := &recordCollectingSink{}
+	result := ProcessFileStreamingToSink(context.Background(), filePath, sigCfg, extCfg, externalFields, runtimeProvenance, collector)
+	if result.Error == nil {
+		result.Records = collector.Records()
+	}
+	return result
+}
+
+// ProcessFileStreamingToSink processes a large file using streaming and emits
+// already-enriched records to sink without accumulating them in ExtractResult.
+// The caller owns the sink lifecycle and must call Close after all intended
+// file emissions are complete.
+func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) ExtractResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	logger := logging.GetLogger()
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
 	result := ExtractResult{File: filePath, SignatureMatchStatus: SignatureMatchUnknown}
+	if sink == nil {
+		result.Error = fmt.Errorf("record sink is nil")
+		return result
+	}
 
 	logger.Info("Starting streaming extraction",
 		zap.String("file", filePath),
@@ -453,8 +475,7 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 		_ = scanner.Close() // Scanner close is best-effort, errors are not critical
 	}()
 
-	var allRecords []map[string]interface{}
-	var allRecordNums []int
+	emittedRecords := 0
 	perSelectorCounts := make(map[int]int)
 
 	// Note: In streaming mode, signature checking is skipped because we don't have access
@@ -502,9 +523,26 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 			return result
 		}
 
-		allRecords = append(allRecords, records...)
-		for range records {
-			allRecordNums = append(allRecordNums, recordBuffer.RecordNum)
+		recordNums := make([]int, len(records))
+		for i := range records {
+			recordNums[i] = recordBuffer.RecordNum
+		}
+		if err := enrichRecordsWithRecordNums(records, recordNums, filePath, sigCfg, streamingCfg, runtimeProvenance); err != nil {
+			logger.Error("Failed to enrich records",
+				zap.Int("record_num", recordBuffer.RecordNum),
+				zap.Error(err))
+			result.Error = err
+			return result
+		}
+		for _, record := range records {
+			if err := sink.OnRecord(ctx, NewEmittedRecord(record)); err != nil {
+				logger.Error("Failed to emit record",
+					zap.Int("record_num", recordBuffer.RecordNum),
+					zap.Error(err))
+				result.Error = fmt.Errorf("failed to emit record %d: %w", recordBuffer.RecordNum, err)
+				return result
+			}
+			emittedRecords++
 		}
 	}
 	perSelectorCounts[0] = scanner.RecordCount()
@@ -512,17 +550,19 @@ func ProcessFileStreamingWithProvenance(filePath string, sigCfg *FileSignature, 
 	logger.Info("Streaming extraction complete",
 		zap.String("file", filePath),
 		zap.Int("total_records_scanned", scanner.RecordCount()),
-		zap.Int("total_records_extracted", len(allRecords)),
+		zap.Int("total_records_extracted", emittedRecords),
 		zap.String("record_element", parsedSelector.ElementName))
 
-	// Enrich records with metadata
-	if err := enrichRecordsWithRecordNums(allRecords, allRecordNums, filePath, sigCfg, streamingCfg, runtimeProvenance); err != nil {
-		logger.Error("Failed to enrich records", zap.Error(err))
-		result.Error = err
+	if err := sink.OnFileBoundary(ctx, FileEmissionSummary{
+		SourceFile:  filePath,
+		RecordType:  streamingCfg.RecordType,
+		RecordCount: emittedRecords,
+	}); err != nil {
+		logger.Error("Failed to emit file boundary", zap.Error(err))
+		result.Error = fmt.Errorf("failed to emit file boundary: %w", err)
 		return result
 	}
 
-	result.Records = allRecords
 	result.PerSelectorCounts = perSelectorCounts
 	result.PerSelectorCountsComplete = len(extCfg.MatchSelectors) == 1
 	return result
