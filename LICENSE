@@ -173,7 +173,7 @@ END OF TERMS AND CONDITIONS
 
 ---
 
-Copyright 2025 3 Leaps, contributors to the FulmenHQ ecosystem
+Copyright 2026 3 Leaps, contributors to the FulmenHQ ecosystem
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -192,12 +192,15 @@ limitations under the License.
 
 ## Trademark Notices
 
+The Apache License 2.0 above does not grant permission to use the trade names,
+trademarks, service marks, or product names of 3 Leaps, LLC (see Section 6).
 
-"3 Leaps®" is a registered trademark of 3 Leaps, LLC, a Florida LLC with offices in South Carolina. "Fulmen™" is a trademark of 3 Leaps, LLC, claimed through use in commerce, with plans for USPTO registration. "Lanyte™" and "LanyteHQ™" are trademarks of 3 Leaps, LLC, claimed through use in commerce. "Fulmens" and "FulmenHQ" are trademarks of 3 Leaps, LLC.
+"3 Leaps®" is a registered trademark of 3 Leaps, LLC. 3 Leaps, LLC also holds
+trademarks across the FulmenHQ ecosystem. The authoritative and current list of
+marks, permissible uses, attribution requirements, and "rename your derivative"
+guidance is the canonical 3 Leaps Trademark Policy:
 
-
-While code and documentation are open under the Apache License 2.0, usage of these trademarks is reserved for official implementations to prevent confusion and benefit the ecosystem. Use of these marks in derivative works does not imply endorsement by 3 Leaps, LLC. For the benefit of the community, please rename your project folder and configurations to avoid using "3leaps", "fulmen", "fulmens", "fulmenhq", "lanyte", or "lanytehq" in derivative works.
-
+   https://github.com/3leaps/oss-policies/blob/main/TRADEMARK-POLICY.md
 
 For questions regarding trademark usage, contact legal@3leaps.net.
 
