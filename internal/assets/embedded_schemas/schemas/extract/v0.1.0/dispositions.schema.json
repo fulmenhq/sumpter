@@ -37,7 +37,10 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["file", "disposition"],
+        "required": [
+          "file",
+          "disposition"
+        ],
         "properties": {
           "file": {
             "type": "string",
@@ -45,11 +48,22 @@
           },
           "disposition": {
             "type": "string",
-            "enum": ["applied", "not_applicable", "failed"]
+            "enum": [
+              "applied",
+              "not_applicable",
+              "failed"
+            ]
           },
           "disposition_reason": {
             "type": "string",
-            "enum": ["applicability_predicate_false", "signature_mismatch", "min_occurrences_violation", "parse_error", "validation_error", "internal_error"]
+            "enum": [
+              "applicability_predicate_false",
+              "signature_mismatch",
+              "min_occurrences_violation",
+              "parse_error",
+              "validation_error",
+              "internal_error"
+            ]
           },
           "disposition_detail": {
             "type": "string"

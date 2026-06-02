@@ -5,7 +5,13 @@
   "description": "Machine-readable per-input failure summary emitted by extract runs using continue-on-error.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "cohort_size", "applied", "failed", "failures"],
+  "required": [
+    "schema_version",
+    "cohort_size",
+    "applied",
+    "failed",
+    "failures"
+  ],
   "properties": {
     "schema_version": {
       "type": "string",
@@ -29,7 +35,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["file", "disposition", "reason", "detail"],
+        "required": [
+          "file",
+          "disposition",
+          "reason",
+          "detail"
+        ],
         "properties": {
           "file": {
             "type": "string",
@@ -41,7 +52,13 @@
           },
           "reason": {
             "type": "string",
-            "enum": ["parse_error", "signature_mismatch", "min_occurrences_violation", "validation_error", "internal_error"]
+            "enum": [
+              "parse_error",
+              "signature_mismatch",
+              "min_occurrences_violation",
+              "validation_error",
+              "internal_error"
+            ]
           },
           "detail": {
             "type": "string"
