@@ -2,6 +2,8 @@ package store
 
 import (
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/index"
@@ -254,5 +256,50 @@ func TestBinaryRecordWidth(t *testing.T) {
 	expected := 8 + 8 + 8 + 4 + 4 + 32
 	if BinaryRecordWidth != expected {
 		t.Errorf("BinaryRecordWidth mismatch: got %d, want %d", BinaryRecordWidth, expected)
+	}
+}
+
+func TestPublishSeekablePairRestoresExistingPairWhenRecordsPublishFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	headerFinal := filepath.Join(tmpDir, "sample.recordindex.header.json")
+	recordsFinal := filepath.Join(tmpDir, "sample.recordindex.records.szst")
+	headerTmp := filepath.Join(tmpDir, "sample.recordindex.header.json.tmp")
+	missingRecordsTmp := filepath.Join(tmpDir, "missing.recordindex.records.szst.tmp")
+
+	oldHeader := []byte(`{"version":"old"}`)
+	oldRecords := []byte("old-records")
+	newHeader := []byte(`{"version":"new"}`)
+
+	if err := os.WriteFile(headerFinal, oldHeader, 0o600); err != nil {
+		t.Fatalf("write old header: %v", err)
+	}
+	if err := os.WriteFile(recordsFinal, oldRecords, 0o600); err != nil {
+		t.Fatalf("write old records: %v", err)
+	}
+	if err := os.WriteFile(headerTmp, newHeader, 0o600); err != nil {
+		t.Fatalf("write temp header: %v", err)
+	}
+
+	if _, _, err := publishSeekablePair(missingRecordsTmp, recordsFinal, headerTmp, headerFinal); err == nil {
+		t.Fatal("publishSeekablePair succeeded with missing records temp, want error")
+	}
+
+	assertFileContent(t, headerFinal, oldHeader)
+	assertFileContent(t, recordsFinal, oldRecords)
+	if matches, err := filepath.Glob(filepath.Join(tmpDir, "*.bak-*")); err != nil {
+		t.Fatalf("glob backups: %v", err)
+	} else if len(matches) != 0 {
+		t.Fatalf("backup artifacts were not restored/removed: %v", matches)
+	}
+}
+
+func assertFileContent(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("%s content = %q, want %q", path, string(got), string(want))
 	}
 }

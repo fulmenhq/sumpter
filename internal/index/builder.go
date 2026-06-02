@@ -14,8 +14,8 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 )
 
-// Builder creates XML record indexes with streaming architecture
-// to maintain constant memory usage regardless of source file size.
+// Builder creates XML record indexes with a streaming scanner. The BuildTo
+// writer path keeps default memory bounded by parser state and writer buffering.
 type Builder struct {
 	opts BuildOptions
 }
@@ -25,14 +25,33 @@ func NewBuilder(opts BuildOptions) *Builder {
 	return &Builder{opts: opts}
 }
 
-// Build creates a record index by streaming through the XML file.
-// This function maintains constant memory usage by:
-// 1. Streaming file for SHA256 computation (first pass)
-// 2. Streaming for record boundary detection (second pass)
-// 3. Computing statistics incrementally
-// 4. Writing index to disk progressively
+// Build creates a record index by streaming through the XML file and collecting
+// records in memory for compatibility with callers that need a complete
+// RecordIndex value. Use BuildTo for bounded-memory artifact writing.
 func (b *Builder) Build() (*RecordIndex, error) {
+	collector := &collectingIndexWriter{}
+	index, err := b.BuildTo(collector)
+	if err != nil {
+		return nil, err
+	}
+	index.Records = collector.records
+	return index, nil
+}
+
+// BuildTo creates a record index by streaming through the XML file and appends
+// each discovered record to the supplied writers. Default memory usage is
+// bounded by parser state, writer buffering, and optional exact-percentile
+// retention; it does not retain RecordMetadata for the full file.
+func (b *Builder) BuildTo(writers ...IndexWriter) (result *RecordIndex, err error) {
 	startTime := time.Now()
+	startedWriters := make([]IndexWriter, 0, len(writers))
+	defer func() {
+		for i := len(startedWriters) - 1; i >= 0; i-- {
+			if closeErr := startedWriters[i].Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("failed to close index writer: %w", closeErr)
+			}
+		}
+	}()
 
 	// Validate input file exists
 	fileInfo, err := os.Stat(b.opts.InputPath)
@@ -57,7 +76,39 @@ func (b *Builder) Build() (*RecordIndex, error) {
 		return nil, fmt.Errorf("failed to compute source file hash: %w", err)
 	}
 
-	// Open file for record scanning (second pass)
+	header := &RecordIndex{
+		Version: SchemaVersion,
+		Source: SourceInfo{
+			Path:              b.opts.InputPath,
+			SizeBytes:         fileInfo.Size(),
+			SHA256:            sourceHash,
+			Compressed:        compressed,
+			CompressionFormat: compressionFormat,
+			OffsetKind:        OffsetKindSourceBytes,
+			CreatedAt:         time.Now().UTC(),
+		},
+		Selector: SelectorInfo{
+			XPath:       recordSelector.Raw,
+			ElementName: recordSelector.ElementName,
+		},
+		Metadata: IndexMetadata{
+			Generator:      fmt.Sprintf("sumpter index build %s", b.opts.SumpterVersion),
+			SumpterVersion: b.opts.SumpterVersion,
+		},
+	}
+	NormalizeRecordIndex(header)
+
+	for _, writer := range writers {
+		if writer == nil {
+			return nil, fmt.Errorf("index writer is required")
+		}
+		if err := writer.Start(header); err != nil {
+			return nil, fmt.Errorf("failed to start index writer: %w", err)
+		}
+		startedWriters = append(startedWriters, writer)
+	}
+
+	// Open file for record scanning and range hashing (second pass)
 	file, err := os.Open(b.opts.InputPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open input file: %w", err)
@@ -70,12 +121,14 @@ func (b *Builder) Build() (*RecordIndex, error) {
 	scanner := streaming.NewRecordScannerSizeOnly(reader, recordSelector.Raw)
 	defer func() { _ = scanner.Close() }()
 
-	// Collect records with incremental statistics
-	records := make([]RecordMetadata, 0, 1024) // Pre-allocate with reasonable capacity
+	// Emit records while updating statistics incrementally.
 	var totalBytes int64
 	var minSize int64 = -1
 	var maxSize int64
-	sizes := make([]int64, 0, 1024) // For percentile calculation
+	var sizes []int64
+	if b.opts.IncludeP50 || b.opts.IncludeP95 || b.opts.IncludeP99 {
+		sizes = make([]int64, 0, 1024)
+	}
 
 	recordNum := 0
 	for {
@@ -89,9 +142,10 @@ func (b *Builder) Build() (*RecordIndex, error) {
 
 		recordNum++
 
-		// Compute record SHA256 by re-reading the specific byte range
-		// This is more efficient than buffering entire records in memory
-		recordHash, err := computeRangeHashSHA256(b.opts.InputPath, rec.StartOffset, rec.EndOffset)
+		// Compute record SHA256 over the original source bytes. ReadAt avoids
+		// disturbing the scanner's sequential file offset and avoids an
+		// open/seek/close cycle per record.
+		recordHash, err := computeRangeHashSHA256FromReader(file, rec.StartOffset, rec.EndOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compute hash for record %d: %w", recordNum, err)
 		}
@@ -106,7 +160,12 @@ func (b *Builder) Build() (*RecordIndex, error) {
 			ElementName: rec.ElementName,
 			Depth:       rec.Depth,
 		}
-		records = append(records, metadata)
+
+		for _, writer := range writers {
+			if err := writer.AppendRecord(metadata); err != nil {
+				return nil, fmt.Errorf("failed to append record %d: %w", recordNum, err)
+			}
+		}
 
 		// Update statistics incrementally
 		totalBytes += rec.SizeBytes
@@ -156,32 +215,28 @@ func (b *Builder) Build() (*RecordIndex, error) {
 		}
 	}
 
-	// Build index structure
-	index := &RecordIndex{
-		Version: SchemaVersion,
-		Source: SourceInfo{
-			Path:              b.opts.InputPath,
-			SizeBytes:         fileInfo.Size(),
-			SHA256:            sourceHash,
-			Compressed:        compressed,
-			CompressionFormat: compressionFormat,
-			OffsetKind:        OffsetKindSourceBytes,
-			CreatedAt:         time.Now().UTC(),
-		},
-		Selector: SelectorInfo{
-			XPath:       recordSelector.Raw,
-			ElementName: recordSelector.ElementName,
-		},
-		Records: records,
-		Summary: summary,
-		Metadata: IndexMetadata{
-			Generator:       fmt.Sprintf("sumpter index build %s", b.opts.SumpterVersion),
-			BuildDurationMs: time.Since(startTime).Milliseconds(),
-			SumpterVersion:  b.opts.SumpterVersion,
-		},
+	index := *header
+	index.Summary = summary
+	index.Metadata.BuildDurationMs = time.Since(startTime).Milliseconds()
+	NormalizeRecordIndex(&index)
+
+	for _, writer := range writers {
+		if err := writer.Prepare(&index); err != nil {
+			return nil, fmt.Errorf("failed to prepare index writer: %w", err)
+		}
+	}
+	for _, writer := range writers {
+		if err := writer.Commit(); err != nil {
+			return nil, fmt.Errorf("failed to commit index writer: %w", err)
+		}
+	}
+	for _, writer := range writers {
+		if err := writer.Complete(); err != nil {
+			return nil, fmt.Errorf("failed to complete index writer: %w", err)
+		}
 	}
 
-	return index, nil
+	return &index, nil
 }
 
 // WriteToFile writes the record index to a JSON file
@@ -240,15 +295,17 @@ func computeRangeHashSHA256(path string, start, end int64) (string, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	// Seek to start position
-	if _, err := file.Seek(start, io.SeekStart); err != nil {
-		return "", err
+	return computeRangeHashSHA256FromReader(file, start, end)
+}
+
+func computeRangeHashSHA256FromReader(reader io.ReaderAt, start, end int64) (string, error) {
+	if end < start {
+		return "", fmt.Errorf("invalid byte range: start %d after end %d", start, end)
 	}
 
-	// Read only the specified range
 	hash := sha256.New()
-	limitedReader := io.LimitReader(file, end-start)
-	if _, err := io.Copy(hash, limitedReader); err != nil {
+	section := io.NewSectionReader(reader, start, end-start)
+	if _, err := io.Copy(hash, section); err != nil {
 		return "", err
 	}
 

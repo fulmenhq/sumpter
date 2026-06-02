@@ -62,7 +62,7 @@ func newIndexBuildCommand() *cobra.Command {
 		Long: `Build a record index by streaming through an XML file and capturing:
   • Record boundary byte offsets (start/end positions)
   • Record sizes and SHA-256 checksums
-  • Aggregate statistics (min/max/avg/percentiles)
+  • Aggregate statistics (min/max/avg; exact percentiles are opt-in)
   • Source file integrity metadata (SHA-256 hash)
 
 Output formats:
@@ -70,7 +70,8 @@ Output formats:
   • Seekable-zstd: *.recordindex.header.json + *.recordindex.records.szst
     (requires CGO build with seekablezstd tag)
 
-Memory usage: <100MB regardless of source file size (streaming architecture).
+Default memory usage is bounded by parser state and writer buffering. Exact
+percentile flags retain record sizes to calculate exact percentiles.
 
 Example:
   sumpter index build clinvar.xml --selector "//VariationArchive" --output clinvar.recordindex.json
@@ -157,30 +158,30 @@ Example:
 
 			builder := index.NewBuilder(buildOpts)
 
+			writers := make([]index.IndexWriter, 0, 2)
+			if emitJSON {
+				writers = append(writers, index.NewJSONIndexWriter(jsonOutputPath))
+			}
+			if emitSzst {
+				writers = append(writers, store.NewSeekableIndexWriter(basePath))
+			}
+
 			if progress {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Building index for %s...\n", filepath.Base(absPath))
 			}
 
 			startTime := time.Now()
-			idx, err := builder.Build()
+			idx, err := builder.BuildTo(writers...)
 			if err != nil {
 				return fmt.Errorf("failed to build index: %w", err)
 			}
 			buildDuration := time.Since(startTime)
 
-			// Write JSON format if enabled
 			if emitJSON {
-				if err := builder.WriteToFile(idx, jsonOutputPath); err != nil {
-					return fmt.Errorf("failed to write JSON index: %w", err)
-				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ JSON index created: %s\n", jsonOutputPath)
 			}
 
-			// Write seekable-zstd format if enabled
 			if emitSzst {
-				if err := store.WriteSeekableIndex(basePath, idx); err != nil {
-					return fmt.Errorf("failed to write seekable-zstd index: %w", err)
-				}
 				headerPath, recordsPath := store.DeriveSeekablePaths(basePath)
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Seekable-zstd index created:\n")
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Header:  %s\n", headerPath)
@@ -211,9 +212,9 @@ Example:
 
 	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "Output base path for index files (default: $SUMPTER_HOME/indexes/<input-basename>)")
 	cmd.Flags().StringVarP(&selector, "selector", "s", "", "XPath selector for record boundaries (required, e.g., '//Record')")
-	cmd.Flags().BoolVar(&includeP50, "p50", true, "Include p50 (median) in summary statistics")
-	cmd.Flags().BoolVar(&includeP95, "p95", true, "Include p95 in summary statistics")
-	cmd.Flags().BoolVar(&includeP99, "p99", true, "Include p99 in summary statistics")
+	cmd.Flags().BoolVar(&includeP50, "p50", false, "Include exact p50 (median) in summary statistics (retains record sizes)")
+	cmd.Flags().BoolVar(&includeP95, "p95", false, "Include exact p95 in summary statistics (retains record sizes)")
+	cmd.Flags().BoolVar(&includeP99, "p99", false, "Include exact p99 in summary statistics (retains record sizes)")
 	cmd.Flags().BoolVarP(&progress, "progress", "p", true, "Show progress messages")
 	cmd.Flags().BoolVar(&emitJSON, "emit-json", true, "Emit JSON format (*.recordindex.json)")
 	cmd.Flags().BoolVar(&emitSzst, "emit-szst", false, "Emit seekable-zstd format (requires CGO build)")

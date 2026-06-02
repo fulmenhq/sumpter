@@ -9,31 +9,39 @@ import (
 	"github.com/fulmenhq/sumpter/internal/index"
 )
 
-// writeBinaryRecordsImpl writes records to a seekable-zstd compressed file.
-// This implementation uses CGO and requires the seekablezstd build tag.
-func writeBinaryRecordsImpl(path string, records []index.RecordMetadata) error {
-	// Create encoder with default frame size (256KB)
+type seekableBinaryRecordStream struct {
+	encoder *seekable.Encoder
+	closed  bool
+}
+
+func newBinaryRecordStream(path string) (binaryRecordStream, error) {
 	encoder, err := seekable.NewEncoder(path, 0)
 	if err != nil {
-		return fmt.Errorf("failed to create seekable encoder: %w", err)
+		return nil, fmt.Errorf("failed to create seekable encoder: %w", err)
 	}
+	return &seekableBinaryRecordStream{encoder: encoder}, nil
+}
 
-	// Write each record as fixed-width binary
+func (s *seekableBinaryRecordStream) AppendRecord(record *index.RecordMetadata) error {
+	if s.closed {
+		return fmt.Errorf("seekable encoder already closed")
+	}
 	buf := make([]byte, BinaryRecordWidth)
-	for i := range records {
-		if err := EncodeBinaryRecord(buf, &records[i]); err != nil {
-			_ = encoder.Close() // Abort on error
-			return fmt.Errorf("failed to encode record %d: %w", i, err)
-		}
-
-		if _, err := encoder.Write(buf); err != nil {
-			_ = encoder.Close()
-			return fmt.Errorf("failed to write record %d: %w", i, err)
-		}
+	if err := EncodeBinaryRecord(buf, record); err != nil {
+		return err
 	}
+	if _, err := s.encoder.Write(buf); err != nil {
+		return err
+	}
+	return nil
+}
 
-	// Finish and write seek table
-	compressedSize, err := encoder.Finish()
+func (s *seekableBinaryRecordStream) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	compressedSize, err := s.encoder.Finish()
 	if err != nil {
 		return fmt.Errorf("failed to finish encoder: %w", err)
 	}
