@@ -55,7 +55,7 @@ covering decompress → hash → record-index → parallel extract.
 
 Recipes for proprietary or vendor-specific formats (POS journal
 dialects, vertical-specific trade-XML, billing-system exports, etc.)
-live outside this repo, in private engagement workspaces. Sumpter is
+live outside this repo, in private workspaces. Sumpter is
 **designed** to be format-agnostic; if you want to use it against a
 non-public format, author your own recipe in your own workspace using
 these examples as the starting template.

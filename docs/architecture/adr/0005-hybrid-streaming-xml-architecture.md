@@ -43,7 +43,7 @@ If we can process ClinVar efficiently, we can handle **any** record-based XML at
 
 We will implement a **Hybrid Streaming Architecture** that combines SAX-style streaming for record discovery with DOM parsing for individual records.
 
-## Current contract (as of v0.1.5)
+## Current contract (as of v0.1.7)
 
 The accepted architecture describes the intended bounded-memory extraction
 model, but the current implementation only guarantees streaming input parsing
@@ -51,12 +51,12 @@ and seekable indexed reads. XML input is tokenized incrementally and indexed
 record reads avoid loading predecessor records, but extracted records are still
 buffered per file before output in the sequential, parallel, and Parquet paths.
 
-The SUM-027 record-sink streaming refactor planned for v0.1.7 will replace
-that per-file buffering with writer callbacks so Sumpter can make a bounded
-end-to-end memory claim for the JSONL/NDJSON output path. ADR-0009 defines the
-contract gate for that work. Until implementation lands, public docs should
-describe the present contract as "streaming input parsing" rather than
-"constant-memory extraction."
+The v0.1.7 record-sink streaming contract defines the writer-callback shape
+needed to replace per-file buffering, and the release includes sequential sink
+primitives as groundwork. Until the output paths stop collecting extracted
+records before writing, public docs should describe the present contract as
+"streaming input parsing" rather than "constant-memory extraction." Bounded
+end-to-end JSONL/NDJSON output streaming remains roadmap work.
 
 ### Architecture Design
 

@@ -55,7 +55,7 @@ echo "✅ Basic dependency license check completed"
 # Optional: Check for license headers in Go files
 echo "🔍 Checking for license headers in Go files..."
 
-GO_FILES=$(find . -name "*.go" -not -path "./vendor/*" | head -10)
+GO_FILES=$(git ls-files --cached --others --exclude-standard '*.go' | head -10)
 MISSING_HEADERS=0
 
 for file in $GO_FILES; do

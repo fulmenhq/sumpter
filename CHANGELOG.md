@@ -8,6 +8,40 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-06-02
+
+**Public-flip release: document-order semantics, streaming groundwork, index-scale hardening, and DX cleanup.**
+
+See [`docs/releases/v0.1.7.md`](docs/releases/v0.1.7.md) for the full release narrative.
+
+### Added
+
+- **Document-order emission contract** - single-selector regular DOM, streaming, and indexed parallel extraction now preserve source-document output order and emit stable `_runtime.record_num` values assigned before filters run (PR #58).
+- **Record-sink streaming contract** - ADR-0009 defines the emitted-envelope sink contract, ordering rules, backpressure requirements, fatal output-error behavior, and Parquet buffering exception for future bounded-output work (PR #59).
+- **Sequential record-sink primitives** - sequential extraction gained the internal sink interfaces and groundwork needed to move JSONL/NDJSON output away from full-result slices in later implementation work (PR #60).
+- **Streaming index writers** - `index build` can stream JSON record-index output and seekable-zstd index stores during the build path instead of retaining every record metadata row before writing (PR #61).
+
+### Changed
+
+- **Public-surface genericization** - internal coordination identifiers and non-public reference wording were scrubbed from the public docs and examples surface (PR #57).
+- **Formatter scope** - `make fmt-docs` now formats tracked and non-ignored files according to Git's exclude rules, keeping ignored local scratchpads and planning notes out of formatter scope (PR #62).
+- **VERSION bumped to `0.1.7`** for this release.
+
+### Fixed
+
+- **Record-index artifact integrity** - streaming index writers publish through transactional temp/prepare/commit/complete steps so parse, start, or commit failures do not leave corrupt final artifacts or clobber existing outputs (PR #61).
+- **Raw-byte record hashing** - index record hashes are computed from source byte ranges so integrity checks remain stable across writer implementations (PR #61).
+- **Formatter noise** - ignored `.scratchpad/` content no longer produces YAML-format warnings during local docs formatting (PR #62).
+
+### Security
+
+- **Public-flip confidentiality posture** - the release keeps repository-facing examples, docs, release notes, and PR messaging generic and leaves private data, local settings, and specialized recipes outside the repository tree (PR #57/#62).
+
+### Deferred
+
+- **Bounded end-to-end JSONL/NDJSON output streaming** remains roadmap work. v0.1.7 ships the contract and sequential primitives, but command paths still buffer extracted records per source file before output.
+- **Parallel sink integration and incremental Parquet writing** remain future work. Parquet is still a projection path and may buffer rows.
+
 ## [0.1.6] - 2026-06-01
 
 **Public-readiness, capability honesty, and streaming/index correctness.**

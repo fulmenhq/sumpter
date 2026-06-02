@@ -21,7 +21,7 @@ Traditional DOM parsers crash on size. Heavy ETL tools require weeks of configur
 
 Sumpter is a **Go-based XML extraction engine** designed for:
 
-- **Streaming input parsing**: token-by-token XML reads without loading whole documents; extracted records are buffered per file before output until the SUM-027 record-sink refactor lands.
+- **Streaming input parsing**: token-by-token XML reads without loading whole documents; extracted records are still buffered per file before output. v0.1.7 defines the record-sink streaming contract and sequential sink primitives, while bounded end-to-end output streaming remains roadmap work.
 - **Resilience**: UTF-8 normalization, BOM handling, and explicit fail-fast behavior for malformed inputs.
 - **Config-driven extraction**: YAML-first configs validated against JSON Schema.
 - **Inspection and diagnostics**: structure reports, encoding detection, and environment diagnostics.

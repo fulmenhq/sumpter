@@ -105,7 +105,7 @@ fmt: ## Format Go code only
 .PHONY: fmt-strict
 fmt-strict: ## Strictly check Go code formatting, fails if issues found
 	@echo "$(BLUE)Checking code formatting...$(NC)"
-	@if find . -name "*.go" -not -path "./vendor/*" -not -path "./.plans/*" -not -path "./.cache/*" | xargs gofmt -l | grep .; then \
+	@if git ls-files --cached --others --exclude-standard '*.go' | xargs gofmt -l | grep .; then \
 		echo "$(RED)❌ Formatting issues found. Run 'make fmt' to fix.$(NC)"; \
 		exit 1; \
 	fi
