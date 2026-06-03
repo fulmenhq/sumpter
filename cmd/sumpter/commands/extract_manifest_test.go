@@ -1,7 +1,10 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +132,64 @@ func TestSequentialJSONStreamingRouteSelection(t *testing.T) {
 	}
 	if shouldUseSequentialJSONStreaming(&ExtractOptions{}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
 		t.Fatal("min_occurrences recipes stay buffered so output is not published before floor enforcement")
+	}
+}
+
+func TestSequentialJSONOutputFailureClassificationUsesSentinel(t *testing.T) {
+	if !isSequentialJSONOutputFailure(fmt.Errorf("renamed wrapper: %w", errSequentialJSONOutput)) {
+		t.Fatal("sentinel-wrapped output failure was not classified as output failure")
+	}
+	if isSequentialJSONOutputFailure(errors.New("failed to emit record 1: text-only legacy wording")) {
+		t.Fatal("text-only error wording must not drive output failure classification")
+	}
+}
+
+func TestSequentialJSONOutputTargetMatchesBufferedJSONLBytes(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+
+	records := []map[string]interface{}{
+		{"_runtime": map[string]interface{}{"record_num": 1}, "extract": map[string]interface{}{"data": map[string]interface{}{"name": "A"}}},
+		{"_runtime": map[string]interface{}{"record_num": 2}, "extract": map[string]interface{}{"data": map[string]interface{}{"name": "B"}}},
+	}
+	expectedFile := filepath.Join(dir, "expected.json")
+	if err := writeRecordsToFile(expectedFile, records); err != nil {
+		t.Fatalf("writeRecordsToFile: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		OutputPath:    outputDir,
+		OutputPattern: "extract-{}.json",
+	}
+	target, err := newSequentialJSONOutputTarget(opts, filepath.Join(dir, "input.xml"))
+	if err != nil {
+		t.Fatalf("newSequentialJSONOutputTarget: %v", err)
+	}
+	for _, record := range records {
+		if err := target.OnRecord(context.Background(), extract.NewEmittedRecord(record)); err != nil {
+			t.Fatalf("OnRecord: %v", err)
+		}
+	}
+	if err := target.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := target.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	expected, err := os.ReadFile(expectedFile)
+	if err != nil {
+		t.Fatalf("ReadFile expected: %v", err)
+	}
+	actual, err := os.ReadFile(filepath.Join(outputDir, "extract-input.xml.json"))
+	if err != nil {
+		t.Fatalf("ReadFile actual: %v", err)
+	}
+	if string(actual) != string(expected) {
+		t.Fatalf("streaming JSONL bytes = %q, want %q", string(actual), string(expected))
 	}
 }
 
@@ -439,6 +500,9 @@ func TestRunExtractContinueOnErrorOutputAndFailureManifestWritesAreTerminal(t *t
 		err := runExtract(opts)
 		if err == nil || !strings.Contains(err.Error(), "failed to write output") {
 			t.Fatalf("error = %v, want terminal output write failure", err)
+		}
+		if !errors.Is(err, errSequentialJSONOutput) {
+			t.Fatalf("error = %v, want sequential JSON output sentinel", err)
 		}
 		if strings.Contains(err.Error(), "partial extraction failure") {
 			t.Fatalf("error = %v, output failure must not be recoverable partial failure", err)

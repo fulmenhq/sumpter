@@ -26,6 +26,8 @@ import (
 
 const runIDEnvVar = "SUMPTER_RUN_ID"
 
+var errSequentialJSONOutput = errors.New("sequential json output failure")
+
 type ExtractOptions struct {
 	Files                    string
 	InputPath                string
@@ -736,11 +738,7 @@ func shouldUseSequentialJSONStreaming(opts *ExtractOptions, extCfg *extract.Extr
 }
 
 func isSequentialJSONOutputFailure(err error) bool {
-	if err == nil {
-		return false
-	}
-	text := err.Error()
-	return strings.Contains(text, "failed to emit record") || strings.Contains(text, "failed to emit file boundary")
+	return errors.Is(err, errSequentialJSONOutput)
 }
 
 func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
@@ -947,14 +945,17 @@ func newSequentialJSONOutputTarget(opts *ExtractOptions, inputFile string) (*seq
 
 func (t *sequentialJSONOutputTarget) OnRecord(ctx context.Context, record extract.EmittedRecord) error {
 	if err := t.ensureOpen(); err != nil {
-		return err
+		return wrapSequentialJSONOutputError("open output", err)
 	}
-	return t.sink.OnRecord(ctx, record)
+	if err := t.sink.OnRecord(ctx, record); err != nil {
+		return wrapSequentialJSONOutputError("write output record", err)
+	}
+	return nil
 }
 
 func (t *sequentialJSONOutputTarget) OnFileBoundary(ctx context.Context, summary extract.FileEmissionSummary) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return wrapSequentialJSONOutputError("check output boundary context", err)
 	}
 	if summary.Disposition == extract.DispositionFailed {
 		return nil
@@ -962,7 +963,10 @@ func (t *sequentialJSONOutputTarget) OnFileBoundary(ctx context.Context, summary
 	if t.stdout {
 		return nil
 	}
-	return t.ensureOpen()
+	if err := t.ensureOpen(); err != nil {
+		return wrapSequentialJSONOutputError("open output at file boundary", err)
+	}
+	return nil
 }
 
 func (t *sequentialJSONOutputTarget) ensureOpen() error {
@@ -995,12 +999,12 @@ func (t *sequentialJSONOutputTarget) Close(ctx context.Context) error {
 	t.closed = true
 	if t.sink != nil {
 		if err := t.sink.Close(ctx); err != nil {
-			return err
+			return wrapSequentialJSONOutputError("close output sink", err)
 		}
 	}
 	if t.file != nil {
 		if err := t.file.Close(); err != nil {
-			return err
+			return wrapSequentialJSONOutputError("close output file", err)
 		}
 	}
 	return nil
@@ -1012,7 +1016,7 @@ func (t *sequentialJSONOutputTarget) Commit() error {
 	}
 	if t.sink == nil {
 		if err := t.ensureOpen(); err != nil {
-			return err
+			return wrapSequentialJSONOutputError("open output before commit", err)
 		}
 	}
 	if !t.closed {
@@ -1023,7 +1027,7 @@ func (t *sequentialJSONOutputTarget) Commit() error {
 	}
 	if err := os.Rename(t.tempFile, t.outputFile); err != nil {
 		_ = os.Remove(t.tempFile)
-		return fmt.Errorf("commit output %s: %w", t.outputFile, err)
+		return wrapSequentialJSONOutputError(fmt.Sprintf("commit output %s", t.outputFile), err)
 	}
 	return nil
 }
@@ -1043,6 +1047,13 @@ func (t *sequentialJSONOutputTarget) Count() int {
 		return 0
 	}
 	return t.sink.Count()
+}
+
+func wrapSequentialJSONOutputError(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %s: %w", errSequentialJSONOutput, message, err)
 }
 
 func buildExtractRuntimeProvenance(opts *ExtractOptions) (provenance.RuntimeOptions, error) {
