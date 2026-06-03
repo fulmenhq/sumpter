@@ -51,6 +51,7 @@ func TestEvaluateReconciliationsGroupByGeneratesComponents(t *testing.T) {
 
 	if runtime == nil {
 		t.Fatalf("expected runtime to be populated")
+		return
 	}
 
 	if len(runtime.ReconciliationResults) != 1 {
@@ -480,6 +481,7 @@ func TestEvaluateReconciliationsGroupByCapsAtBase(t *testing.T) {
 
 	if runtime == nil {
 		t.Fatalf("expected runtime to be populated")
+		return
 	}
 
 	if len(runtime.ReconciliationResults) != 1 {
@@ -695,6 +697,7 @@ func TestEvaluateReconciliationsGroupByFinancialFacts(t *testing.T) {
 
 	if runtime == nil {
 		t.Fatalf("expected runtime to be populated")
+		return
 	}
 
 	if len(runtime.ReconciliationResults) != 1 {

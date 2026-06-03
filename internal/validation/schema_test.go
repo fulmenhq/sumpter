@@ -155,6 +155,7 @@ assets:
 	}
 	if result == nil {
 		t.Fatal("ValidateRecipeManifest returned nil result")
+		return
 	}
 	if !result.Valid {
 		t.Fatalf("expected manifest to be valid, got errors: %+v", result.Errors)
