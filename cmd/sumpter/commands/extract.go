@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,8 @@ import (
 )
 
 const runIDEnvVar = "SUMPTER_RUN_ID"
+
+var errSequentialJSONOutput = errors.New("sequential json output failure")
 
 type ExtractOptions struct {
 	Files                    string
@@ -303,6 +306,10 @@ func runExtract(opts *ExtractOptions) error {
 			zap.Int("file_count", len(files)),
 			zap.String("signature", sigCfg.SignatureID),
 			zap.String("record_type", extCfg.RecordType))
+	}
+
+	if shouldUseSequentialJSONStreaming(opts, extCfg, outputFormats) {
+		return runSequentialJSONStreamingExtraction(opts, sigCfg, extCfg, files, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 
 	// Process files
@@ -713,6 +720,340 @@ func validateApplicabilityMode(opts *ExtractOptions, files []string) error {
 		}
 	}
 	return nil
+}
+
+func shouldUseSequentialJSONStreaming(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, outputFormats []string) bool {
+	if opts == nil || extCfg == nil {
+		return false
+	}
+	if opts.RecordIndex != "" || len(outputFormats) != 1 || outputFormats[0] != recipesmanifest.OutputFormatJSON {
+		return false
+	}
+	for _, selector := range extCfg.MatchSelectors {
+		if selector.MinOccurrences > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func isSequentialJSONOutputFailure(err error) bool {
+	return errors.Is(err, errSequentialJSONOutput)
+}
+
+func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
+	logger := logging.GetLogger()
+	ctx := context.Background()
+	manifestEnabled := shouldWriteManifest(opts)
+	manifestInputs := make([]provenance.Input, 0, len(files))
+	manifestOutputs := make([]provenance.Output, 0, len(files))
+	countsByRecordType := make(map[string]int)
+	sanitizeRoots := manifestSanitizeRoots(opts)
+	manifestPath := ""
+	if manifestEnabled {
+		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+	}
+	dispositionSummary := newDispositionSummary(len(files))
+	failureManifest := newExtractFailureManifest(len(files))
+	var dispositionFailure error
+
+	for _, file := range files {
+		externalFields, err := buildExternalFieldsForFile(file, opts, fieldPlan, warnLimiter)
+		if err != nil {
+			if !opts.ContinueOnError {
+				return fmt.Errorf("failed to build external fields for file %s: %w", file, err)
+			}
+			result := recoverableFailureResult(file, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
+			if err := recordFailedSequentialResult(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, manifestEnabled, logger); err != nil {
+				return err
+			}
+			continue
+		}
+
+		target, err := newSequentialJSONOutputTarget(opts, file)
+		if err != nil {
+			return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, file), err)
+		}
+		result := extract.ProcessFileWithApplicabilityToSink(ctx, file, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, runtimeProvenance, target)
+		closeErr := target.Close(ctx)
+
+		if result.Error != nil || result.Disposition == extract.DispositionFailed {
+			originalDisposition := result.Disposition
+			target.Abort()
+			if closeErr != nil && result.Error == nil {
+				result.Error = closeErr
+				result.Disposition = extract.DispositionFailed
+				result.DispositionReason = extract.DispositionReasonInternalError
+				result.DispositionDetail = closeErr.Error()
+			}
+			if isSequentialJSONOutputFailure(result.Error) {
+				return fmt.Errorf("failed to write output %s: %w", target.outputFile, result.Error)
+			}
+			if result.Error != nil {
+				logger.Error("Failed to process file",
+					zap.String("file", result.File),
+					zap.Error(result.Error))
+			}
+			if !opts.ContinueOnError && originalDisposition != extract.DispositionFailed && result.Error != nil {
+				return fmt.Errorf("failed to process file %s: %w", result.File, result.Error)
+			}
+			failureErr := recordFailedSequentialResult(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, manifestEnabled, logger)
+			if !opts.ContinueOnError && dispositionFailure == nil {
+				dispositionFailure = failureErr
+				break
+			}
+			continue
+		}
+		if closeErr != nil {
+			target.Abort()
+			return fmt.Errorf("failed to close output %s: %w", target.outputFile, closeErr)
+		}
+		if err := target.Commit(); err != nil {
+			return err
+		}
+
+		if result.Disposition != "" {
+			dispositionSummary.add(result, sanitizeRoots)
+		}
+		if manifestEnabled {
+			input, err := provenance.BuildInputLedger(result.File, sanitizeRoots...)
+			if err != nil {
+				return err
+			}
+			input.RecordType = extCfg.RecordType
+			applyInputDisposition(&input, result, sanitizeRoots)
+			manifestInputs = append(manifestInputs, input)
+		}
+
+		recordCount := target.Count()
+		if recordCount == 0 {
+			if opts.Progress {
+				logger.Info("No matching records found; emitting empty output",
+					zap.String("file", result.File))
+			}
+		} else if opts.Progress {
+			logger.Info("Extracted records",
+				zap.String("file", result.File),
+				zap.Int("record_count", recordCount))
+		}
+		countsByRecordType[extCfg.RecordType] += recordCount
+		if manifestEnabled {
+			manifestOutputs = append(manifestOutputs, provenanceOutput(target.outputFile, recipesmanifest.OutputFormatJSON, recordCount, opts, sanitizeRoots...))
+		}
+		failureManifest.addApplied()
+	}
+
+	if opts.ContinueOnError && failureManifest.Failed > 0 {
+		failuresPath := filepath.Join(opts.OutputPath, "failures.json")
+		if err := writeExtractFailureManifest(failuresPath, failureManifest); err != nil {
+			return err
+		}
+	}
+
+	if opts.ApplicabilityConfig != nil && opts.OutputPath != "" {
+		if err := writeDispositionSummary(filepath.Join(opts.OutputPath, "dispositions.json"), dispositionSummary); err != nil {
+			return err
+		}
+	}
+
+	if manifestEnabled {
+		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
+		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+			return err
+		}
+		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+	} else if opts.OutputPath == "" && !opts.NoManifest {
+		logger.Warn("Skipping provenance manifest because --output-path is not set")
+	}
+
+	if dispositionFailure != nil {
+		return dispositionFailure
+	}
+	if opts.ContinueOnError && failureManifest.Failed > 0 {
+		return fmt.Errorf("partial extraction failure: applied=%d failed=%d failures=%s", failureManifest.Applied, failureManifest.Failed, filepath.Join(opts.OutputPath, "failures.json"))
+	}
+	return nil
+}
+
+func recordFailedSequentialResult(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, manifestEnabled bool, logger *zap.Logger) error {
+	if result.Disposition == "" {
+		result.Disposition = extract.DispositionFailed
+	}
+	if result.DispositionReason == "" {
+		result.DispositionReason = failureReasonForError(result.Error)
+	}
+	if result.DispositionReason == "" {
+		result.DispositionReason = extract.DispositionReasonInternalError
+	}
+	if result.DispositionDetail == "" && result.Error != nil {
+		result.DispositionDetail = result.Error.Error()
+	}
+
+	dispositionSummary.add(result, sanitizeRoots)
+	failureErr := failureErrorForResult(result, sanitizeRoots)
+	if opts.ContinueOnError {
+		failureManifest.add(result.File, result.DispositionReason, result.DispositionDetail, sanitizeRoots)
+	}
+	if manifestEnabled {
+		input, err := provenance.BuildInputLedger(result.File, sanitizeRoots...)
+		if err != nil {
+			if opts.ContinueOnError {
+				logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.File), zap.Error(err))
+			} else {
+				return err
+			}
+		} else {
+			input.RecordType = extCfg.RecordType
+			applyInputDisposition(&input, result, sanitizeRoots)
+			*manifestInputs = append(*manifestInputs, input)
+		}
+	}
+	if opts.ContinueOnError {
+		return nil
+	}
+	return failureErr
+}
+
+type sequentialJSONOutputTarget struct {
+	opts       *ExtractOptions
+	inputFile  string
+	outputFile string
+	tempFile   string
+	file       *os.File
+	sink       *extract.JSONLRecordSink
+	stdout     bool
+	closed     bool
+}
+
+func newSequentialJSONOutputTarget(opts *ExtractOptions, inputFile string) (*sequentialJSONOutputTarget, error) {
+	if opts.OutputPath == "" {
+		return &sequentialJSONOutputTarget{
+			opts:      opts,
+			inputFile: inputFile,
+			sink:      extract.NewJSONLRecordSink(os.Stdout),
+			stdout:    true,
+		}, nil
+	}
+
+	outputFile := outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, inputFile)
+	return &sequentialJSONOutputTarget{
+		opts:       opts,
+		inputFile:  inputFile,
+		outputFile: outputFile,
+	}, nil
+}
+
+func (t *sequentialJSONOutputTarget) OnRecord(ctx context.Context, record extract.EmittedRecord) error {
+	if err := t.ensureOpen(); err != nil {
+		return wrapSequentialJSONOutputError("open output", err)
+	}
+	if err := t.sink.OnRecord(ctx, record); err != nil {
+		return wrapSequentialJSONOutputError("write output record", err)
+	}
+	return nil
+}
+
+func (t *sequentialJSONOutputTarget) OnFileBoundary(ctx context.Context, summary extract.FileEmissionSummary) error {
+	if err := ctx.Err(); err != nil {
+		return wrapSequentialJSONOutputError("check output boundary context", err)
+	}
+	if summary.Disposition == extract.DispositionFailed {
+		return nil
+	}
+	if t.stdout {
+		return nil
+	}
+	if err := t.ensureOpen(); err != nil {
+		return wrapSequentialJSONOutputError("open output at file boundary", err)
+	}
+	return nil
+}
+
+func (t *sequentialJSONOutputTarget) ensureOpen() error {
+	if t == nil {
+		return fmt.Errorf("json output target is nil")
+	}
+	if t.sink != nil {
+		return nil
+	}
+
+	outputDir := filepath.Dir(t.outputFile)
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		return fmt.Errorf("create output directory %s: %w", outputDir, err)
+	}
+	tempFile, err := os.CreateTemp(outputDir, "."+filepath.Base(t.outputFile)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary output for %s: %w", t.outputFile, err)
+	}
+
+	t.tempFile = tempFile.Name()
+	t.file = tempFile
+	t.sink = extract.NewJSONLRecordSink(tempFile)
+	return nil
+}
+
+func (t *sequentialJSONOutputTarget) Close(ctx context.Context) error {
+	if t == nil || t.closed {
+		return nil
+	}
+	t.closed = true
+	if t.sink != nil {
+		if err := t.sink.Close(ctx); err != nil {
+			return wrapSequentialJSONOutputError("close output sink", err)
+		}
+	}
+	if t.file != nil {
+		if err := t.file.Close(); err != nil {
+			return wrapSequentialJSONOutputError("close output file", err)
+		}
+	}
+	return nil
+}
+
+func (t *sequentialJSONOutputTarget) Commit() error {
+	if t == nil || t.stdout {
+		return nil
+	}
+	if t.sink == nil {
+		if err := t.ensureOpen(); err != nil {
+			return wrapSequentialJSONOutputError("open output before commit", err)
+		}
+	}
+	if !t.closed {
+		if err := t.Close(context.Background()); err != nil {
+			_ = os.Remove(t.tempFile)
+			return err
+		}
+	}
+	if err := os.Rename(t.tempFile, t.outputFile); err != nil {
+		_ = os.Remove(t.tempFile)
+		return wrapSequentialJSONOutputError(fmt.Sprintf("commit output %s", t.outputFile), err)
+	}
+	return nil
+}
+
+func (t *sequentialJSONOutputTarget) Abort() {
+	if t == nil || t.stdout {
+		return
+	}
+	_ = t.Close(context.Background())
+	if t.tempFile != "" {
+		_ = os.Remove(t.tempFile)
+	}
+}
+
+func (t *sequentialJSONOutputTarget) Count() int {
+	if t == nil || t.sink == nil {
+		return 0
+	}
+	return t.sink.Count()
+}
+
+func wrapSequentialJSONOutputError(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %s: %w", errSequentialJSONOutput, message, err)
 }
 
 func buildExtractRuntimeProvenance(opts *ExtractOptions) (provenance.RuntimeOptions, error) {

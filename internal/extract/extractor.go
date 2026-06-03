@@ -607,16 +607,26 @@ func ProcessFile(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMa
 
 // ProcessFileWithApplicability processes a file with an optional recipe applicability gate.
 func ProcessFileWithApplicability(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
-	return processFileWithProvenance(filePath, sigCfg, extCfg, appCfg, externalFields, allowLargeFiles, runtimeProvenance)
+	return processFileWithProvenance(context.Background(), filePath, sigCfg, extCfg, appCfg, externalFields, allowLargeFiles, runtimeProvenance, nil)
+}
+
+// ProcessFileWithApplicabilityToSink processes a file and emits already-enriched
+// records to sink without populating ExtractResult.Records. The caller owns the
+// sink lifecycle and must call Close after all intended emissions complete.
+func ProcessFileWithApplicabilityToSink(ctx context.Context, filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) ExtractResult {
+	return processFileWithProvenance(ctx, filePath, sigCfg, extCfg, appCfg, externalFields, allowLargeFiles, runtimeProvenance, sink)
 }
 
 // ProcessFileWithProvenance processes a single file for extraction and enriches
 // each record with runtime provenance.
 func ProcessFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
-	return processFileWithProvenance(filePath, sigCfg, extCfg, nil, externalFields, allowLargeFiles, runtimeProvenance)
+	return processFileWithProvenance(context.Background(), filePath, sigCfg, extCfg, nil, externalFields, allowLargeFiles, runtimeProvenance, nil)
 }
 
-func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions) ExtractResult {
+func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, allowLargeFiles bool, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) ExtractResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	logger := logging.GetLogger()
 	if logger == nil {
 		logger = zap.NewNop()
@@ -624,6 +634,10 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	logger.Debug("Starting file processing", zap.String("file", filePath))
 
 	result := ExtractResult{File: filePath, SignatureMatchStatus: SignatureMatchUnknown}
+	emittedRecords := 0
+	boundaryDisposition := DispositionApplied
+	boundaryReason := DispositionReason("")
+	boundaryDetail := ""
 	markFailed := func(reason DispositionReason, detail string) {
 		if appCfg == nil {
 			return
@@ -631,6 +645,38 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 		result.Disposition = DispositionFailed
 		result.DispositionReason = reason
 		result.DispositionDetail = detail
+	}
+	markBoundaryFailure := func(reason DispositionReason, detail string) {
+		boundaryDisposition = DispositionFailed
+		boundaryReason = reason
+		boundaryDetail = detail
+	}
+	emitBoundary := func() {
+		if sink == nil {
+			return
+		}
+		switch result.Disposition {
+		case DispositionFailed:
+			boundaryDisposition = DispositionFailed
+			boundaryReason = result.DispositionReason
+			boundaryDetail = result.DispositionDetail
+		case DispositionNotApplicable:
+			boundaryDisposition = DispositionNotApplicable
+			boundaryReason = result.DispositionReason
+			boundaryDetail = result.DispositionDetail
+		}
+		summary := FileEmissionSummary{
+			SourceFile:        filePath,
+			RecordType:        extCfg.RecordType,
+			RecordCount:       emittedRecords,
+			Disposition:       boundaryDisposition,
+			DispositionReason: boundaryReason,
+			DispositionDetail: boundaryDetail,
+		}
+		if err := sink.OnFileBoundary(ctx, summary); err != nil && result.Error == nil {
+			result.Error = fmt.Errorf("failed to emit file boundary: %w", err)
+			markFailed(DispositionReasonInternalError, result.Error.Error())
+		}
 	}
 
 	// Check if we should use streaming mode for large files
@@ -651,12 +697,17 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 				if appCfg != nil {
 					result.Error = fmt.Errorf("applicability declared but not supported in streaming mode")
 					markFailed(DispositionReasonInternalError, result.Error.Error())
+					markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
+					emitBoundary()
 					return result
 				}
 				logger.Info("Using streaming mode for large file",
 					zap.String("file", filePath),
 					zap.Int64("estimated_size_mb", estimatedSize/(1024*1024)),
 					zap.Bool("compressed", isCompressed))
+				if sink != nil {
+					return ProcessFileStreamingToSink(ctx, filePath, sigCfg, extCfg, externalFields, runtimeProvenance, sink)
+				}
 				return ProcessFileStreamingWithProvenance(filePath, sigCfg, extCfg, externalFields, runtimeProvenance)
 			}
 		}
@@ -669,6 +720,8 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 		logger.Error("Failed to read file", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to read file: %w", err)
 		markFailed(DispositionReasonInternalError, result.Error.Error())
+		markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
+		emitBoundary()
 		return result
 	}
 	isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
@@ -685,6 +738,8 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 		logger.Error("Failed to parse XML", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to parse XML: %w", err)
 		markFailed(DispositionReasonParseError, result.Error.Error())
+		markBoundaryFailure(DispositionReasonParseError, result.Error.Error())
+		emitBoundary()
 		return result
 	}
 	logger.Debug("XML parsed successfully", zap.String("file", filePath))
@@ -695,6 +750,8 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 			logger.Error("Failed to evaluate applicability", zap.String("file", filePath), zap.Error(err))
 			result.Error = fmt.Errorf("failed to evaluate applicability: %w", err)
 			markFailed(DispositionReasonValidationError, result.Error.Error())
+			markBoundaryFailure(DispositionReasonValidationError, result.Error.Error())
+			emitBoundary()
 			return result
 		}
 		if !applies {
@@ -704,6 +761,7 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 			result.DispositionDetail = "applicability predicate evaluated false"
 			result.PerSelectorCounts = zeroSelectorCounts(extCfg)
 			result.PerSelectorCountsComplete = true
+			emitBoundary()
 			return result
 		}
 	}
@@ -716,6 +774,8 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 		logger.Error("Failed to check signature", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to check signature: %w", err)
 		markFailed(DispositionReasonInternalError, result.Error.Error())
+		markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
+		emitBoundary()
 		return result
 	}
 	logger.Debug("Signature check complete", zap.String("file", filePath), zap.Bool("matches", matches), zap.Float64("confidence", confidence))
@@ -731,6 +791,7 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 			result.DispositionReason = DispositionReasonSignatureMismatch
 			result.DispositionDetail = "signature predicate did not match"
 		}
+		emitBoundary()
 		return result
 	}
 
@@ -739,11 +800,34 @@ func processFileWithProvenance(filePath string, sigCfg *FileSignature, extCfg *E
 	if err := prepareExtractConfig(extCfg); err != nil {
 		logger.Error("Failed to prepare extract config", zap.String("file", filePath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to prepare extract config: %w", err)
+		markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
+		emitBoundary()
 		return result
 	}
 
 	// Extract records
 	logger.Debug("Starting record extraction", zap.String("file", filePath), zap.String("record_type", extCfg.RecordType))
+	if sink != nil {
+		perSelectorCounts, count, err := extractRecordsWithCountsAndRecordNumsToSink(ctx, doc, extCfg, externalFields, filePath, sigCfg, runtimeProvenance, sink)
+		if err != nil {
+			logger.Error("Failed to extract records to sink", zap.String("file", filePath), zap.Error(err))
+			result.Error = fmt.Errorf("failed to extract records: %w", err)
+			markFailed(DispositionReasonInternalError, result.Error.Error())
+			markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
+			emitBoundary()
+			return result
+		}
+		if appCfg != nil {
+			result.Disposition = DispositionApplied
+		}
+		emittedRecords = count
+		result.PerSelectorCounts = perSelectorCounts
+		result.PerSelectorCountsComplete = true
+		emitBoundary()
+		logger.Debug("Record sink extraction complete", zap.String("file", filePath), zap.Int("record_count", emittedRecords))
+		return result
+	}
+
 	extractedRecords, perSelectorCounts, err := extractRecordsWithCountsAndRecordNums(doc, extCfg, externalFields)
 	if err != nil {
 		logger.Error("Failed to extract records", zap.String("file", filePath), zap.Error(err))
@@ -956,6 +1040,97 @@ func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecor
 	}
 
 	return extractedRecords, perSelectorCounts, nil
+}
+
+func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}, sourceFile string, sigCfg *FileSignature, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) (map[int]int, int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if sink == nil {
+		return nil, 0, fmt.Errorf("record sink is nil")
+	}
+
+	perSelectorCounts := make(map[int]int, len(cfg.MatchSelectors))
+	recordNum := 0
+	emittedRecords := 0
+
+	for i := range cfg.MatchSelectors {
+		selector := &cfg.MatchSelectors[i]
+		nodes, err := evaluateNodeSet(doc, selector.CompiledXPath, selector.XPath)
+		if err != nil {
+			return nil, emittedRecords, fmt.Errorf("failed to evaluate XPath %s: %w", selector.XPath, err)
+		}
+		perSelectorCounts[i] = len(nodes)
+		if len(nodes) == 0 {
+			continue
+		}
+
+		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return nil, emittedRecords, err
+			}
+			recordNum++
+			record := make(map[string]interface{})
+
+			for j := range cfg.FieldMappings {
+				mapping := &cfg.FieldMappings[j]
+				if strings.TrimSpace(mapping.Expression) != "" {
+					continue
+				}
+				value, err := extractValue(node, mapping)
+				if err != nil {
+					return nil, emittedRecords, fmt.Errorf("failed to extract value for field %s: %w", mapping.OutputField, err)
+				}
+				if value != nil {
+					record[mapping.OutputField] = value
+				}
+			}
+
+			for j := range cfg.FieldMappings {
+				mapping := &cfg.FieldMappings[j]
+				if strings.TrimSpace(mapping.Expression) == "" {
+					continue
+				}
+				value, err := extractExpressionValue(mapping, record, externalFields)
+				if err != nil {
+					return nil, emittedRecords, err
+				}
+				if value != nil {
+					record[mapping.OutputField] = value
+				}
+			}
+
+			for key, value := range externalFields {
+				if _, exists := record[key]; exists {
+					return nil, emittedRecords, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
+				}
+				record[key] = value
+			}
+			applyUniformSchema(record, cfg)
+
+			if !passesFilters(record, cfg.Filters) {
+				continue
+			}
+			if cfg.OutputValidator != nil {
+				res, err := cfg.OutputValidator.Validate(record)
+				if err != nil {
+					return nil, emittedRecords, fmt.Errorf("output schema validation failed: %w", err)
+				}
+				if !res.Valid {
+					return nil, emittedRecords, fmt.Errorf("output schema validation failed:\n%s", formatValidationErrors(res.Errors))
+				}
+			}
+			if err := EnrichRecordWithRecordNum(record, sourceFile, sigCfg, cfg, runtimeProvenance, recordNum); err != nil {
+				return nil, emittedRecords, err
+			}
+			if err := sink.OnRecord(ctx, NewEmittedRecord(record)); err != nil {
+				return nil, emittedRecords, fmt.Errorf("failed to emit record %d: %w", recordNum, err)
+			}
+			emittedRecords++
+		}
+	}
+
+	return perSelectorCounts, emittedRecords, nil
 }
 
 func splitExtractedRecords(extractedRecords []extractedRecord) ([]map[string]interface{}, []int) {

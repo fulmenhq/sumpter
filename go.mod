@@ -2,7 +2,7 @@ module github.com/fulmenhq/sumpter
 
 go 1.26.0
 
-toolchain go1.26.3
+toolchain go1.26.4
 
 require (
 	github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251229210330-c1deba15f3cb

@@ -1691,6 +1691,91 @@ func (s *trackingRecordSink) Close(context.Context) error {
 	return nil
 }
 
+func TestProcessFileWithApplicabilityToSinkEmitsDOMRecordsWithoutResultSlice(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "dom-sink.xml")
+	xmlContent := `<Envelope><Item><Name>A</Name></Item><Item><Name>B</Name></Item></Envelope>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType:     "item",
+		MatchSelectors: []MatchSelector{{XPath: "//Item"}},
+		FieldMappings:  []FieldMapping{{OutputField: "name", XPath: "Name", Type: "string"}},
+	}
+	sink := &trackingRecordSink{}
+
+	result := ProcessFileWithApplicabilityToSink(context.Background(), testFile, signature, extractCfg, nil, nil, false, provenance.RuntimeOptions{}, sink)
+	if result.Error != nil {
+		t.Fatalf("ProcessFileWithApplicabilityToSink() error = %v", result.Error)
+	}
+	if len(result.Records) != 0 {
+		t.Fatalf("sink path populated ExtractResult.Records with %d records", len(result.Records))
+	}
+	if len(sink.records) != 2 {
+		t.Fatalf("sink records = %d, want 2", len(sink.records))
+	}
+	if len(sink.boundaries) != 1 {
+		t.Fatalf("sink boundaries = %d, want 1", len(sink.boundaries))
+	}
+	if sink.boundaries[0].RecordCount != 2 {
+		t.Fatalf("boundary RecordCount = %d, want 2", sink.boundaries[0].RecordCount)
+	}
+	for i, record := range sink.records {
+		runtimeBlock := record["_runtime"].(map[string]interface{})
+		if got := runtimeBlock["record_num"]; got != i+1 {
+			t.Fatalf("record %d _runtime.record_num = %#v, want %d", i, got, i+1)
+		}
+	}
+}
+
+func TestProcessFileWithApplicabilityToSinkEmitsFailedBoundaryAfterParseError(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "dom-sink-parse-error.xml")
+	if err := os.WriteFile(testFile, []byte(`<Envelope><Item><Name>A</Name>`), 0o600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType:     "item",
+		MatchSelectors: []MatchSelector{{XPath: "//Item"}},
+		FieldMappings:  []FieldMapping{{OutputField: "name", XPath: "Name", Type: "string"}},
+	}
+	sink := &trackingRecordSink{}
+
+	result := ProcessFileWithApplicabilityToSink(context.Background(), testFile, signature, extractCfg, nil, nil, false, provenance.RuntimeOptions{}, sink)
+	if result.Error == nil {
+		t.Fatal("ProcessFileWithApplicabilityToSink() succeeded, want parse error")
+	}
+	if len(sink.records) != 0 {
+		t.Fatalf("sink records = %d, want 0", len(sink.records))
+	}
+	if len(sink.boundaries) != 1 {
+		t.Fatalf("sink boundaries = %d, want 1", len(sink.boundaries))
+	}
+	boundary := sink.boundaries[0]
+	if boundary.RecordCount != 0 {
+		t.Fatalf("boundary RecordCount = %d, want 0", boundary.RecordCount)
+	}
+	if boundary.Disposition != DispositionFailed {
+		t.Fatalf("boundary Disposition = %q, want %q", boundary.Disposition, DispositionFailed)
+	}
+	if boundary.DispositionReason != DispositionReasonParseError {
+		t.Fatalf("boundary DispositionReason = %q, want %q", boundary.DispositionReason, DispositionReasonParseError)
+	}
+}
+
 func TestProcessFileStreaming_DoesNotMutatePreparedConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "reuse.xml")
