@@ -38,6 +38,7 @@ func TestNewPIIDetector(t *testing.T) {
 
 			if detector == nil {
 				t.Fatal("NewPIIDetector returned nil")
+				return
 			}
 
 			if detector.mode != tt.expectedMode {
@@ -356,6 +357,7 @@ func TestPIIPatterns(t *testing.T) {
 
 			if foundPattern == nil {
 				t.Fatalf("Pattern %s not found", tt.pattern)
+				return
 			}
 
 			matches := foundPattern.Pattern.MatchString(tt.input)

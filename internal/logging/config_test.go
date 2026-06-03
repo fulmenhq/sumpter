@@ -233,6 +233,7 @@ func TestPIIFromYAML(t *testing.T) {
 
 			if detector == nil {
 				t.Fatal("PIIFromYAML returned nil detector")
+				return
 			}
 
 			if detector.mode != tt.expectedMode {
