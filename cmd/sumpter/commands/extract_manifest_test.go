@@ -105,6 +105,33 @@ func TestRunExtractManifestRecordsEffectiveSequentialFormat(t *testing.T) {
 	}
 }
 
+func TestSequentialJSONStreamingRouteSelection(t *testing.T) {
+	cfg := &extract.ExtractRecordMatch{
+		RecordType:     "sample_record",
+		MatchSelectors: []extract.MatchSelector{{XPath: "//item"}},
+	}
+	if !shouldUseSequentialJSONStreaming(&ExtractOptions{}, cfg, []string{recipesmanifest.OutputFormatJSON}) {
+		t.Fatal("plain sequential JSON output should use the streaming sink path")
+	}
+	if shouldUseSequentialJSONStreaming(&ExtractOptions{}, cfg, []string{recipesmanifest.OutputFormatParquet}) {
+		t.Fatal("parquet output must stay on the buffered path in this slice")
+	}
+	if shouldUseSequentialJSONStreaming(&ExtractOptions{}, cfg, []string{recipesmanifest.OutputFormatJSON, recipesmanifest.OutputFormatParquet}) {
+		t.Fatal("mixed JSON+parquet output must stay on the buffered path")
+	}
+	if shouldUseSequentialJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfg, []string{recipesmanifest.OutputFormatJSON}) {
+		t.Fatal("record-index parallel output is handled by a later SUM-035 slice")
+	}
+
+	cfgWithFloor := &extract.ExtractRecordMatch{
+		RecordType:     "sample_record",
+		MatchSelectors: []extract.MatchSelector{{XPath: "//item", MinOccurrences: 1}},
+	}
+	if shouldUseSequentialJSONStreaming(&ExtractOptions{}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
+		t.Fatal("min_occurrences recipes stay buffered so output is not published before floor enforcement")
+	}
+}
+
 func TestRunExtractRejectsUnknownParquetWithholdColumn(t *testing.T) {
 	dir := createExtractManifestFixture(t)
 	outputDir := filepath.Join(dir, "outputs")
