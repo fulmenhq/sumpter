@@ -10,6 +10,7 @@ func TestNewTransformRegistry(t *testing.T) {
 
 	if registry == nil {
 		t.Fatal("expected registry, got nil")
+		return
 	}
 
 	if registry.RegistryVersion != "v0.1.0" {

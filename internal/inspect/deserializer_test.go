@@ -147,6 +147,7 @@ dialects:
 
 	if registry == nil {
 		t.Fatal("Registry is nil")
+		return
 	}
 
 	if len(registry.Dialects) != 1 {
