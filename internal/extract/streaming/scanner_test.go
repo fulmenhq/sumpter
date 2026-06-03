@@ -95,6 +95,7 @@ func TestRecordScanner_BasicScan(t *testing.T) {
 	}
 	if record == nil {
 		t.Fatal("expected record, got nil")
+		return
 	}
 	if record.RecordNum != 1 {
 		t.Errorf("first record number = %d, want 1", record.RecordNum)
