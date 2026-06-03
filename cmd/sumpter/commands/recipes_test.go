@@ -18,6 +18,7 @@ func TestRecipesCommand(t *testing.T) {
 
 	if cmd == nil {
 		t.Fatal("expected recipes command, got nil")
+		return
 	}
 
 	if cmd.Use != "recipes" {

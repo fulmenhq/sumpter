@@ -13,6 +13,7 @@ func TestDoctorCommand(t *testing.T) {
 
 	if cmd == nil {
 		t.Fatal("expected doctor command, got nil")
+		return
 	}
 
 	if cmd.Use != "doctor" {
