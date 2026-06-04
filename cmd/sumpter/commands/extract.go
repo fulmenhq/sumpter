@@ -737,6 +737,21 @@ func shouldUseSequentialJSONStreaming(opts *ExtractOptions, extCfg *extract.Extr
 	return true
 }
 
+func shouldUseParallelJSONStreaming(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, outputFormats []string) bool {
+	if opts == nil || extCfg == nil {
+		return false
+	}
+	if opts.RecordIndex == "" || len(outputFormats) != 1 || outputFormats[0] != recipesmanifest.OutputFormatJSON {
+		return false
+	}
+	for _, selector := range extCfg.MatchSelectors {
+		if selector.MinOccurrences > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func isSequentialJSONOutputFailure(err error) bool {
 	return errors.Is(err, errSequentialJSONOutput)
 }
@@ -1110,6 +1125,14 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		ShowProgress:      opts.Progress,
 	}
 
+	outputFormats, err := effectiveOutputFormats(opts)
+	if err != nil {
+		return err
+	}
+	if shouldUseParallelJSONStreaming(opts, extCfg, outputFormats) {
+		return runParallelJSONStreamingExtraction(opts, extCfg, parallelOpts, header.Source.Path, runtimeProvenance, startedAt)
+	}
+
 	// Create parallel extractor
 	extractor := parallel.NewParallelExtractor(parallelOpts)
 
@@ -1131,10 +1154,6 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	// Output records (same as sequential path)
 	manifestEnabled := shouldWriteManifest(opts)
 	sanitizeRoots := manifestSanitizeRoots(opts)
-	outputFormats, err := effectiveOutputFormats(opts)
-	if err != nil {
-		return err
-	}
 	manifestPath := ""
 	if manifestEnabled {
 		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
@@ -1183,6 +1202,74 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
+	}
+
+	return nil
+}
+
+func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, parallelOpts parallel.ExtractionOptions, sourcePath string, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
+	logger := logging.GetLogger()
+	ctx := context.Background()
+	manifestEnabled := shouldWriteManifest(opts)
+	sanitizeRoots := manifestSanitizeRoots(opts)
+	manifestPath := ""
+	if manifestEnabled {
+		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+	}
+
+	target, err := newSequentialJSONOutputTarget(opts, "parallel")
+	if err != nil {
+		return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, "parallel"), err)
+	}
+
+	extractor := parallel.NewParallelExtractor(parallelOpts)
+	summary, extractErr := extractor.ExtractToSink(ctx, target)
+	closeErr := target.Close(ctx)
+	if extractErr != nil {
+		target.Abort()
+		if closeErr != nil && !errors.Is(extractErr, errSequentialJSONOutput) {
+			extractErr = fmt.Errorf("%w; failed to close output: %v", extractErr, closeErr)
+		}
+		if isSequentialJSONOutputFailure(extractErr) {
+			return fmt.Errorf("failed to write output %s: %w", target.outputFile, extractErr)
+		}
+		return fmt.Errorf("parallel extraction failed: %w", extractErr)
+	}
+	if closeErr != nil {
+		target.Abort()
+		return fmt.Errorf("failed to close output %s: %w", target.outputFile, closeErr)
+	}
+	if err := target.Commit(); err != nil {
+		return err
+	}
+
+	recordCount := target.Count()
+	logger.Info("Parallel extraction complete", zap.Int("record_count", recordCount))
+
+	if manifestEnabled {
+		input, err := provenance.BuildInputLedger(sourcePath, sanitizeRoots...)
+		if err != nil {
+			return err
+		}
+		input.RecordType = extCfg.RecordType
+		manifestInputs := []provenance.Input{input}
+		manifestOutputs := []provenance.Output{
+			provenanceOutput(target.outputFile, recipesmanifest.OutputFormatJSON, recordCount, opts, sanitizeRoots...),
+		}
+		countsByRecordType := map[string]int{extCfg.RecordType: recordCount}
+		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
+		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+			return err
+		}
+		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+	} else if opts.OutputPath == "" && !opts.NoManifest {
+		logger.Warn("Skipping provenance manifest because --output-path is not set")
+	}
+
+	if summary.RecordCount != recordCount {
+		logger.Warn("Parallel sink summary count differed from output target count",
+			zap.Int("summary_count", summary.RecordCount),
+			zap.Int("target_count", recordCount))
 	}
 
 	return nil

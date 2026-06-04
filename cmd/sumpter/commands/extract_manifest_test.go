@@ -123,7 +123,13 @@ func TestSequentialJSONStreamingRouteSelection(t *testing.T) {
 		t.Fatal("mixed JSON+parquet output must stay on the buffered path")
 	}
 	if shouldUseSequentialJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfg, []string{recipesmanifest.OutputFormatJSON}) {
-		t.Fatal("record-index parallel output is handled by a later SUM-035 slice")
+		t.Fatal("record-index parallel output must use the parallel streaming route")
+	}
+	if !shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfg, []string{recipesmanifest.OutputFormatJSON}) {
+		t.Fatal("record-index parallel JSON output should use the parallel streaming sink path")
+	}
+	if shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfg, []string{recipesmanifest.OutputFormatParquet}) {
+		t.Fatal("parallel parquet output must stay on the buffered path")
 	}
 
 	cfgWithFloor := &extract.ExtractRecordMatch{
@@ -132,6 +138,9 @@ func TestSequentialJSONStreamingRouteSelection(t *testing.T) {
 	}
 	if shouldUseSequentialJSONStreaming(&ExtractOptions{}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
 		t.Fatal("min_occurrences recipes stay buffered so output is not published before floor enforcement")
+	}
+	if shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
+		t.Fatal("parallel min_occurrences recipes stay buffered so floor enforcement runs before output publication")
 	}
 }
 

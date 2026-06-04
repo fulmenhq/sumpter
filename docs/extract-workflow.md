@@ -1,13 +1,13 @@
 # Sumpter Extract Workflow
 
-The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. Sequential JSON/NDJSON file output uses the record-sink path and streams records as they are produced instead of retaining the full output slice for that format. Parquet, mixed JSON+Parquet, record-index/parallel output, and `min_occurrences` recipes remain buffered in v0.1.8 while their bounded policies are completed. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
+The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. JSON/NDJSON file output uses the record-sink path for sequential runs and record-index parallel runs, streaming records as they are produced instead of retaining the full output slice for that format. Parquet, mixed JSON+Parquet, and `min_occurrences` recipes remain buffered in v0.1.8 while their bounded policies and memory-regression proof are completed. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
 
 ## Output Formats
 
 | Mode                 | Description                                                       | When to use                                                      |
 | -------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Structured (default) | A single JSON object containing metadata and recipe-authored data | Interactive runs, debugging, consumers that expect a single file |
-| NDJSON               | Records emitted as newline-delimited JSON with sidecar manifests; sequential file output streams through `RecordSink` | Pipeline ingestion and append-friendly record processing         |
+| NDJSON               | Records emitted as newline-delimited JSON with sidecar manifests; sequential and record-index parallel file output stream through `RecordSink` | Pipeline ingestion and append-friendly record processing         |
 | Parquet              | Buffered secondary columnar projection declared by recipe output settings | Analytics engines and columnar downstream storage                |
 
 NDJSON is the default durable record output for recipe examples. Parquet is a secondary output path, still requires recipe configuration for the projected columns, and remains buffered in v0.1.8. A run that requests both JSON/NDJSON and Parquet stays on the buffered path so both outputs are produced from the same completed record set.

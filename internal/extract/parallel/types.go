@@ -22,6 +22,7 @@ type WorkResult struct {
 	RecordNum int
 	Data      map[string]interface{}
 	Error     error
+	Skipped   bool
 }
 
 // ExtractionOptions configures parallel extraction behavior
@@ -45,6 +46,10 @@ type ExtractionOptions struct {
 
 	// Progress reporting
 	ShowProgress bool
+
+	// ReorderWindow bounds scheduled-but-not-emitted records. A zero value uses
+	// a worker-proportional default.
+	ReorderWindow int
 
 	// Extract configuration (from existing extractor)
 	ExtractConfig   interface{} // Will be *extract.ExtractRecordMatch
@@ -100,6 +105,7 @@ type WorkScheduler struct {
 	opts           ExtractionOptions
 	workChan       chan WorkItem
 	resultChan     chan WorkResult
+	windowSlots    chan struct{}
 	stats          *ExtractionStats
 	skippedRecords []int // Record numbers of skipped records
 	mu             sync.Mutex
@@ -111,5 +117,6 @@ type ResultAggregator struct {
 	nextExpected int
 	outputChan   chan WorkResult
 	doneChan     chan struct{}
+	releaseSlot  func()
 	mu           sync.Mutex
 }

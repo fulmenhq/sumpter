@@ -8,11 +8,18 @@ import (
 // NewResultAggregator creates a new result aggregator
 // totalRecords is the expected number of results (used for completion detection)
 func NewResultAggregator(totalRecords int) *ResultAggregator {
+	return NewResultAggregatorWithRelease(totalRecords, nil)
+}
+
+// NewResultAggregatorWithRelease creates a result aggregator that calls
+// releaseSlot after each record number advances through ordered output.
+func NewResultAggregatorWithRelease(totalRecords int, releaseSlot func()) *ResultAggregator {
 	return &ResultAggregator{
 		results:      make(map[int]WorkResult),
 		nextExpected: 1, // Record numbers start at 1
-		outputChan:   make(chan WorkResult, 100),
+		outputChan:   make(chan WorkResult),
 		doneChan:     make(chan struct{}),
+		releaseSlot:  releaseSlot,
 	}
 }
 
@@ -38,6 +45,7 @@ func (ra *ResultAggregator) Add(result WorkResult) {
 				zap.Int("record_num", ra.nextExpected))
 
 			ra.outputChan <- res
+			ra.release()
 			delete(ra.results, ra.nextExpected)
 			ra.nextExpected++
 		} else {
@@ -80,6 +88,7 @@ func (ra *ResultAggregator) Collect(resultChan <-chan WorkResult, skippedRecords
 				// Skip this record number
 				logger.Debug("Aggregator skipping record",
 					zap.Int("record_num", ra.nextExpected))
+				ra.release()
 				ra.nextExpected++
 				continue
 			}
@@ -88,6 +97,7 @@ func (ra *ResultAggregator) Collect(resultChan <-chan WorkResult, skippedRecords
 				logger.Debug("Aggregator emitting final buffered result",
 					zap.Int("record_num", ra.nextExpected))
 				ra.outputChan <- res
+				ra.release()
 				delete(ra.results, ra.nextExpected)
 				ra.nextExpected++
 			} else {
@@ -109,6 +119,12 @@ func (ra *ResultAggregator) Collect(resultChan <-chan WorkResult, skippedRecords
 		logger.Info("Aggregator complete",
 			zap.Int("last_emitted", ra.nextExpected-1))
 	}()
+}
+
+func (ra *ResultAggregator) release() {
+	if ra.releaseSlot != nil {
+		ra.releaseSlot()
+	}
 }
 
 // GetOutputChannel returns the channel that emits results in order

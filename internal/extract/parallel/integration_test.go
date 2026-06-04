@@ -1,6 +1,8 @@
 package parallel
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -148,6 +150,145 @@ func TestParallelExtraction_EndToEnd(t *testing.T) {
 	t.Logf("Successfully extracted %d records in parallel", len(records))
 }
 
+func TestParallelExtraction_ToSinkEmitsOrderedRecords(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+
+	xmlPath := filepath.Join(tmpDir, "test-sink.xml")
+	xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <record id="1"><name>Alice</name></record>
+  <record id="2"><name>Bob</name></record>
+  <record id="3"><name>Charlie</name></record>
+  <record id="4"><name>Diana</name></record>
+</root>`
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0600); err != nil {
+		t.Fatalf("Failed to create test XML: %v", err)
+	}
+
+	indexPath := filepath.Join(tmpDir, "test.recordindex.json")
+	if err := buildTestIndex(t, xmlPath, indexPath, "//record"); err != nil {
+		t.Fatalf("Failed to build index: %v", err)
+	}
+
+	extCfg := &extract.ExtractRecordMatch{
+		RecordType: "sample_record",
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "id", XPath: "//@id", Type: "string"},
+			{OutputField: "name", XPath: "//name", Type: "string"},
+		},
+	}
+	opts := ExtractionOptions{
+		IndexPath:        indexPath,
+		SourcePath:       xmlPath,
+		Workers:          2,
+		MaxRecordSizeMB:  10,
+		SkipLargeRecords: false,
+		VerifyIndex:      false,
+		ExtractConfig:    extCfg,
+		SignatureConfig:  &extract.FileSignature{},
+		ShowProgress:     false,
+		ReorderWindow:    2,
+	}
+
+	sink := &recordingSink{}
+	summary, err := NewParallelExtractor(opts).ExtractToSink(context.Background(), sink)
+	if err != nil {
+		t.Fatalf("ExtractToSink failed: %v", err)
+	}
+
+	if summary.SourceFile != xmlPath {
+		t.Fatalf("summary source = %q, want %q", summary.SourceFile, xmlPath)
+	}
+	if summary.RecordType != "sample_record" {
+		t.Fatalf("summary record type = %q, want sample_record", summary.RecordType)
+	}
+	if summary.RecordCount != 4 {
+		t.Fatalf("summary count = %d, want 4", summary.RecordCount)
+	}
+	if sink.boundaries != 1 {
+		t.Fatalf("file boundaries = %d, want 1", sink.boundaries)
+	}
+	if len(sink.records) != 4 {
+		t.Fatalf("sink records = %d, want 4", len(sink.records))
+	}
+	for i, record := range sink.records {
+		runtimeBlock, ok := record["_runtime"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("record %d missing _runtime block: %#v", i, record["_runtime"])
+		}
+		if runtimeBlock["record_num"] != i+1 {
+			t.Fatalf("record %d _runtime.record_num = %#v, want %d", i, runtimeBlock["record_num"], i+1)
+		}
+	}
+}
+
+func TestParallelExtraction_ToSinkPropagatesSinkFailure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+
+	xmlPath := filepath.Join(tmpDir, "test-sink-failure.xml")
+	xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <record id="1"><name>Alice</name></record>
+  <record id="2"><name>Bob</name></record>
+  <record id="3"><name>Charlie</name></record>
+</root>`
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0600); err != nil {
+		t.Fatalf("Failed to create test XML: %v", err)
+	}
+
+	indexPath := filepath.Join(tmpDir, "test.recordindex.json")
+	if err := buildTestIndex(t, xmlPath, indexPath, "//record"); err != nil {
+		t.Fatalf("Failed to build index: %v", err)
+	}
+
+	extCfg := &extract.ExtractRecordMatch{
+		RecordType: "sample_record",
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "id", XPath: "//@id", Type: "string"},
+			{OutputField: "name", XPath: "//name", Type: "string"},
+		},
+	}
+	opts := ExtractionOptions{
+		IndexPath:        indexPath,
+		SourcePath:       xmlPath,
+		Workers:          2,
+		MaxRecordSizeMB:  10,
+		SkipLargeRecords: false,
+		VerifyIndex:      false,
+		ExtractConfig:    extCfg,
+		SignatureConfig:  &extract.FileSignature{},
+		ShowProgress:     false,
+		ReorderWindow:    2,
+	}
+
+	wantErr := errors.New("sink failed")
+	sink := &recordingSink{failOnRecord: 2, failErr: wantErr}
+	summary, err := NewParallelExtractor(opts).ExtractToSink(context.Background(), sink)
+	if err == nil {
+		t.Fatal("ExtractToSink succeeded, want sink error")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want wrapped sink failure", err)
+	}
+	if summary.RecordCount != 1 {
+		t.Fatalf("summary count = %d, want only records emitted before sink failure", summary.RecordCount)
+	}
+	if summary.Disposition != extract.DispositionFailed {
+		t.Fatalf("summary disposition = %q, want failed", summary.Disposition)
+	}
+	if sink.boundaries != 1 {
+		t.Fatalf("file boundaries = %d, want 1", sink.boundaries)
+	}
+}
+
 // buildTestIndex creates a real record index using the index builder
 func buildTestIndex(t *testing.T, xmlPath, indexPath, selector string) error {
 	t.Helper()
@@ -167,6 +308,30 @@ func buildTestIndex(t *testing.T, xmlPath, indexPath, selector string) error {
 
 	// Write index to file
 	return builder.WriteToFile(idx, indexPath)
+}
+
+type recordingSink struct {
+	records      []map[string]interface{}
+	boundaries   int
+	failOnRecord int
+	failErr      error
+}
+
+func (s *recordingSink) OnRecord(_ context.Context, record extract.EmittedRecord) error {
+	if s.failOnRecord > 0 && len(s.records)+1 == s.failOnRecord {
+		return s.failErr
+	}
+	s.records = append(s.records, record.Envelope())
+	return nil
+}
+
+func (s *recordingSink) OnFileBoundary(_ context.Context, _ extract.FileEmissionSummary) error {
+	s.boundaries++
+	return nil
+}
+
+func (s *recordingSink) Close(context.Context) error {
+	return nil
 }
 
 // TestParallelExtraction_LargeRecordSkipping tests skip-large-records functionality

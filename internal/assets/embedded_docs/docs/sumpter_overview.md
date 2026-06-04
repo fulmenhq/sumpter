@@ -21,7 +21,7 @@ Traditional DOM parsers crash on size. Heavy ETL tools require weeks of configur
 
 Sumpter is a **Go-based XML extraction engine** designed for:
 
-- **Streaming input parsing and JSONL output**: token-by-token XML reads where the streaming path applies; sequential JSON/NDJSON file output streams records through the record-sink path. Parquet, mixed-output, record-index/parallel, and `min_occurrences` extraction paths remain buffered in v0.1.8.
+- **Streaming input parsing and JSONL output**: token-by-token XML reads where the streaming path applies; JSON/NDJSON file output streams records through the record-sink path for sequential runs and record-index parallel runs. Parquet, mixed-output, and `min_occurrences` extraction paths remain buffered in v0.1.8.
 - **Resilience**: UTF-8 normalization, BOM handling, and explicit fail-fast behavior for malformed inputs.
 - **Config-driven extraction**: YAML-first configs validated against JSON Schema.
 - **Inspection and diagnostics**: structure reports, encoding detection, and environment diagnostics.
@@ -93,7 +93,7 @@ This ensures reproducibility, privacy, and performance validation.
 
 ## 6. Roadmap
 
-- **Record-sink streaming**: extend bounded output streaming from sequential JSON/NDJSON to parallel output paths, then restore public bounded-memory claims with memory evidence.
+- **Record-sink streaming**: add memory-regression evidence for sequential and parallel JSON/NDJSON output streaming, then restore public bounded-memory claims with proof.
 - **Additional analytics targets**: DuckDB, Arrow, and service integrations.
 - **Operational integrations**: metrics, health endpoints, and richer runtime diagnostics.
 
