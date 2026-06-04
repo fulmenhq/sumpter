@@ -22,6 +22,7 @@ func TestNewSeekableExtractor(t *testing.T) {
 
 	if extractor == nil {
 		t.Fatal("Expected non-nil extractor")
+		return
 	}
 	if extractor.filePath != "/tmp/test.xml" {
 		t.Errorf("Expected filePath=/tmp/test.xml, got %s", extractor.filePath)

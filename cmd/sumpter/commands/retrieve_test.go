@@ -14,6 +14,7 @@ func TestNewRetrieveCommand(t *testing.T) {
 
 	if cmd == nil {
 		t.Fatal("expected retrieve command, got nil")
+		return
 	}
 
 	if cmd.Use != "retrieve" {

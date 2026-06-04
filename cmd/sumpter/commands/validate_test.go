@@ -69,6 +69,7 @@ func TestOutputJSONResults(t *testing.T) {
 	cmd := validateCmd
 	if cmd == nil {
 		t.Fatal("validateCmd is nil")
+		return
 	}
 
 	// Verify function exists by checking if RunE is set

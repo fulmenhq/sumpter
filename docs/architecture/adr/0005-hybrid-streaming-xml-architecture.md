@@ -43,20 +43,22 @@ If we can process ClinVar efficiently, we can handle **any** record-based XML at
 
 We will implement a **Hybrid Streaming Architecture** that combines SAX-style streaming for record discovery with DOM parsing for individual records.
 
-## Current contract (as of v0.1.7)
+## Current contract (v0.1.8 development line)
 
 The accepted architecture describes the intended bounded-memory extraction
-model, but the current implementation only guarantees streaming input parsing
-and seekable indexed reads. XML input is tokenized incrementally and indexed
-record reads avoid loading predecessor records, but extracted records are still
-buffered per file before output in the sequential, parallel, and Parquet paths.
+model, but the current implementation does not yet make every extract mode
+bounded end-to-end. XML input is tokenized incrementally where the streaming
+path applies, seekable indexed reads avoid loading predecessor records, and
+sequential JSON/NDJSON file output writes through the record-sink path instead
+of retaining the full output slice for that format.
 
-The v0.1.7 record-sink streaming contract defines the writer-callback shape
-needed to replace per-file buffering, and the release includes sequential sink
-primitives as groundwork. Until the output paths stop collecting extracted
-records before writing, public docs should describe the present contract as
-"streaming input parsing" rather than "constant-memory extraction." Bounded
-end-to-end JSONL/NDJSON output streaming remains roadmap work.
+The bounded claim is still intentionally narrow. DOM/non-streaming extraction
+can load a whole document, and Parquet, mixed JSON+Parquet, record-index/
+parallel output, and `min_occurrences` recipes remain buffered in v0.1.8.
+Public docs should therefore describe the present contract as "streaming input
+parsing plus sequential JSON/NDJSON output streaming" rather than
+"constant-memory extraction" until the parallel bounded reorder/backpressure
+policy and memory-regression fixture land.
 
 ### Architecture Design
 

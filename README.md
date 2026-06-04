@@ -59,7 +59,7 @@ Sumpter is in **alpha** — for us that's about _interface stability_, not matur
 
 **Contributions are welcome** — issues, design discussion, and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md); for anything beyond a small fix, open an issue first so we can point you at in-flight work. The road to beta is about freezing the recipe/DSL/adapter contracts and raising coverage, not about whether the core works.
 
-**Memory contract:** XML input is tokenized incrementally, but extracted records are still buffered per file before output. v0.1.7 defines the record-sink streaming contract and lands sequential sink primitives; bounded end-to-end JSONL/NDJSON output streaming remains roadmap work. See [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md) and [ADR-0009](docs/architecture/adr/0009-record-sink-output-streaming-contract.md).
+**Memory contract:** XML input is tokenized incrementally, and sequential JSON/NDJSON file output now streams records through the record-sink path instead of retaining the full output slice for that format. This does not yet make every extract mode bounded end-to-end: DOM/non-streaming input can still load a document, and Parquet, mixed JSON+Parquet, record-index/parallel output, and `min_occurrences` recipes intentionally remain buffered while their bounded policies are completed. See [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md) and [ADR-0009](docs/architecture/adr/0009-record-sink-output-streaming-contract.md).
 
 Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
 
@@ -147,7 +147,7 @@ The public-data exemplars are deliberately drawn from **different verticals** to
 
 ## 🔑 Features
 
-- **Streaming input parsing**: Gigabyte-class XML inputs are tokenized incrementally without loading the document into memory. Extracted records are still buffered per file before output; v0.1.7 defines the record-sink streaming contract and sequential sink primitives, while bounded end-to-end JSONL/NDJSON output streaming remains roadmap work.
+- **Streaming input parsing and JSONL output**: Gigabyte-class XML inputs are tokenized incrementally where the streaming path applies, and sequential JSON/NDJSON file output streams records through the record-sink path. Parquet, mixed-output, record-index/parallel, and `min_occurrences` paths remain buffered in v0.1.8.
 - **Record Indexing**: Build seekable indexes for parallel extraction of multi-GB XML files
 - **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors
@@ -182,8 +182,8 @@ Available today:
 - ✅ Seekable-zstd compressed indexes (10-20x smaller, CGO/source builds)
 - ✅ Parallel extraction with worker pools
 - ✅ Streaming mode for very large XML files
-- ✅ NDJSON output with sidecar manifests
-- ✅ Parquet secondary output
+- ✅ Sequential NDJSON output with sidecar manifests and record-sink streaming
+- ✅ Parquet secondary output (buffered in v0.1.8)
 - ✅ Recipe applicability gates and schema-backed dispositions
 - ✅ Multi-file continue-on-error failure manifests
 - ✅ Document-order `_runtime.record_num` semantics for single-selector extraction

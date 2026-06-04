@@ -147,6 +147,7 @@ func TestGenerateArrayItemMapping(t *testing.T) {
 	}
 	if lines == nil {
 		t.Fatalf("expected order_line array mapping, got %+v", cfg.FieldMappings)
+		return
 	}
 	if lines.Type != "array" {
 		t.Fatalf("order_line type = %q, want array", lines.Type)

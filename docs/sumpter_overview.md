@@ -21,7 +21,7 @@ Traditional DOM parsers crash on size. Heavy ETL tools require weeks of configur
 
 Sumpter is a **Go-based XML extraction engine** designed for:
 
-- **Streaming input parsing**: token-by-token XML reads without loading whole documents; extracted records are still buffered per file before output. v0.1.7 defines the record-sink streaming contract and sequential sink primitives, while bounded end-to-end output streaming remains roadmap work.
+- **Streaming input parsing and JSONL output**: token-by-token XML reads where the streaming path applies; sequential JSON/NDJSON file output streams records through the record-sink path. Parquet, mixed-output, record-index/parallel, and `min_occurrences` extraction paths remain buffered in v0.1.8.
 - **Resilience**: UTF-8 normalization, BOM handling, and explicit fail-fast behavior for malformed inputs.
 - **Config-driven extraction**: YAML-first configs validated against JSON Schema.
 - **Inspection and diagnostics**: structure reports, encoding detection, and environment diagnostics.
@@ -31,7 +31,8 @@ Sumpter is a **Go-based XML extraction engine** designed for:
 This combination enables teams to move from raw XML to queryable tables **in minutes, not weeks**.
 
 Roadmap items such as DuckDB output, service health endpoints, Prometheus metrics,
-adaptive backpressure, repair modes, and end-to-end output streaming are tracked
+adaptive backpressure, repair modes, bounded parallel output streaming, and
+incremental Parquet writing are tracked
 separately from the current public capability surface.
 
 ---
@@ -92,7 +93,7 @@ This ensures reproducibility, privacy, and performance validation.
 
 ## 6. Roadmap
 
-- **Record-sink streaming**: reduce output buffering and clarify end-to-end memory bounds.
+- **Record-sink streaming**: extend bounded output streaming from sequential JSON/NDJSON to parallel output paths, then restore public bounded-memory claims with memory evidence.
 - **Additional analytics targets**: DuckDB, Arrow, and service integrations.
 - **Operational integrations**: metrics, health endpoints, and richer runtime diagnostics.
 
