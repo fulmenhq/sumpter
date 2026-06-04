@@ -88,6 +88,70 @@ func TestResultAggregator_ReleasesWindowSlotsInOutputOrder(t *testing.T) {
 	}
 }
 
+func TestResultAggregator_BlocksSchedulingWhenEarlyRecordMissingUntilOrderedAdvance(t *testing.T) {
+	windowSlots := make(chan struct{}, 2)
+	windowSlots <- struct{}{}
+	windowSlots <- struct{}{}
+	releases := 0
+	agg := NewResultAggregatorWithRelease(3, func() {
+		<-windowSlots
+		releases++
+	})
+
+	inputChan := make(chan WorkResult, 3)
+	agg.Collect(inputChan, nil, 3)
+
+	inputChan <- WorkResult{RecordNum: 2, Data: map[string]interface{}{"id": 2}}
+	inputChan <- WorkResult{RecordNum: 3, Data: map[string]interface{}{"id": 3}}
+
+	acquired := make(chan struct{})
+	go func() {
+		windowSlots <- struct{}{}
+		close(acquired)
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("scheduler acquired another window slot before the missing first record advanced")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	gotCh := make(chan []int, 1)
+	go func() {
+		gotCh <- collectOutputRecordNums(agg)
+	}()
+
+	inputChan <- WorkResult{RecordNum: 1, Data: map[string]interface{}{"id": 1}}
+	close(inputChan)
+
+	select {
+	case <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not acquire a window slot after ordered output advanced")
+	}
+
+	var got []int
+	select {
+	case got = <-gotCh:
+	case <-time.After(time.Second):
+		t.Fatal("aggregator did not emit records after missing first record arrived")
+	}
+	agg.Wait()
+
+	want := []int{1, 2, 3}
+	if len(got) != len(want) {
+		t.Fatalf("output record nums = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("output record nums = %v, want %v", got, want)
+		}
+	}
+	if releases != 3 {
+		t.Fatalf("release count = %d, want 3", releases)
+	}
+}
+
 func TestWorkScheduler_WindowSlotsBackpressure(t *testing.T) {
 	ws := &WorkScheduler{
 		ctx:         context.Background(),

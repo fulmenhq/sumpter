@@ -236,11 +236,14 @@ already-enriched emitted envelopes in final output order, preserve
 `_runtime.record_num` gaps, provide bounded backpressure, and treat sink write
 or finalize failures as fatal output failures.
 
-Until that implementation lands, the current CLI behavior still buffers
-extracted records per source file before writing JSONL and optional Parquet
-outputs. Parquet remains a secondary projection of `extract.data` and is not
-part of any bounded-memory claim unless a future implementation adds true
-incremental Parquet writing.
+Sequential JSON/NDJSON file output and record-index parallel JSON/NDJSON file
+output now stream emitted records through `RecordSink` instead of materializing
+the full source-file result before writing. The record-index path uses a
+bounded reorder window so later worker results cannot grow without limit while
+an earlier record is still pending. Parquet, mixed JSON+Parquet output, and
+recipes with `min_occurrences` still use the buffered path. Parquet remains a
+secondary projection of `extract.data` and is not part of any bounded-memory
+claim unless a future implementation adds true incremental Parquet writing.
 
 ### Empty-output contract and `min_occurrences`
 
