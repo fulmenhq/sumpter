@@ -1,6 +1,6 @@
 # ADR-0009: RecordSink Contract for Output Streaming
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-01
 **Decision Makers:** @3leapsdave, India devlead/devrev, entarch review
 
@@ -31,6 +31,11 @@ writer, parallel aggregator, manifests, or Parquet adapter.
 
 Introduce an extraction output streaming contract centered on a `RecordSink`.
 Implementation PRs must conform to this contract.
+
+Implementation note: v0.1.8 implements this contract for sequential
+JSON/NDJSON file output and record-index parallel JSON/NDJSON file output.
+The memory-regression fixture exercises both routes with synthetic many-record
+input and verifies that the sink APIs do not populate full-result slices.
 
 ### Emitted Record Envelope
 
@@ -186,11 +191,11 @@ index-output abstractions is out of scope.
 
 ### Negative / Tradeoffs
 
-- The command layer needs a larger refactor because writing, manifest
-  accounting, and disposition summaries are currently coupled to
-  `ExtractResult.Records`.
-- Parallel extraction needs a bounded ordering policy rather than the current
-  unbounded map plus final slice collection.
+- The command layer had to split JSON/NDJSON file output from buffered
+  multi-format output so manifest accounting can use incremental counters for
+  the streaming routes.
+- Parallel extraction now maintains a bounded ordering policy, which adds
+  coordination complexity around skipped, failed, and delayed records.
 - Parquet either needs its own incremental writer work or must remain a clearly
   documented buffered exception.
 
@@ -210,8 +215,8 @@ index-output abstractions is out of scope.
 - Tests assert final emitted envelopes for sequential, streaming, and indexed
   parallel paths, including ordering, filter gaps, skipped/failed early records,
   `record_num`, sink error propagation, and finalize behavior.
-- A many-record fixture or benchmark demonstrates JSONL/NDJSON memory behavior
-  without making RSS-gating mandatory in regular CI.
+- A many-record fixture demonstrates JSONL/NDJSON memory behavior without
+  making RSS-gating mandatory in regular CI.
 - Public docs scope bounded-memory claims to formats actually implemented.
 
 ## References

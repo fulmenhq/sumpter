@@ -1,6 +1,6 @@
 # Sumpter Extract Workflow
 
-The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. JSON/NDJSON file output uses the record-sink path for sequential runs and record-index parallel runs, streaming records as they are produced instead of retaining the full output slice for that format. Parquet, mixed JSON+Parquet, and `min_occurrences` recipes remain buffered in v0.1.8 while their bounded policies and memory-regression proof are completed. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
+The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. JSON/NDJSON file output uses the record-sink path for sequential runs and record-index parallel runs, streaming records as they are produced instead of retaining the full output slice for that format. Memory for those routes is bounded with respect to emitted result count by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Parquet, mixed JSON+Parquet, and `min_occurrences` recipes remain buffered in v0.1.8. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
 
 ## Output Formats
 
@@ -244,6 +244,9 @@ an earlier record is still pending. Parquet, mixed JSON+Parquet output, and
 recipes with `min_occurrences` still use the buffered path. Parquet remains a
 secondary projection of `extract.data` and is not part of any bounded-memory
 claim unless a future implementation adds true incremental Parquet writing.
+The in-tree memory-regression fixture exercises both sequential and
+record-index parallel JSON/NDJSON sink routes with synthetic many-record input
+and verifies that the streaming APIs do not populate `ExtractResult.Records`.
 
 Record-index streaming JSON/NDJSON output is transactional for the indexed
 source: if any indexed record fails to read or extract, Sumpter emits a failed
