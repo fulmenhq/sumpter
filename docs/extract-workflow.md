@@ -245,6 +245,13 @@ recipes with `min_occurrences` still use the buffered path. Parquet remains a
 secondary projection of `extract.data` and is not part of any bounded-memory
 claim unless a future implementation adds true incremental Parquet writing.
 
+Record-index streaming JSON/NDJSON output is transactional for the indexed
+source: if any indexed record fails to read or extract, Sumpter emits a failed
+file boundary, aborts the temporary JSONL target, and returns a terminal error.
+`--continue-on-error` remains a multi-source buffered-run recovery control; it
+does not publish partial record-index streaming output after a per-record
+failure.
+
 ### Empty-output contract and `min_occurrences`
 
 A successful extract run writes the requested output artifact even when a

@@ -44,6 +44,9 @@ func (ra *ResultAggregator) Add(result WorkResult) {
 			logger.Debug("Aggregator emitting result",
 				zap.Int("record_num", ra.nextExpected))
 
+			// This send intentionally happens while holding ra.mu. Collect is
+			// the single writer, and blocking here is the backpressure point
+			// that prevents later results from advancing ahead of ordered output.
 			ra.outputChan <- res
 			ra.release()
 			delete(ra.results, ra.nextExpected)
@@ -96,6 +99,8 @@ func (ra *ResultAggregator) Collect(resultChan <-chan WorkResult, skippedRecords
 			if res, exists := ra.results[ra.nextExpected]; exists {
 				logger.Debug("Aggregator emitting final buffered result",
 					zap.Int("record_num", ra.nextExpected))
+				// Keep final-drain emission under the same single-writer
+				// backpressure invariant as Add.
 				ra.outputChan <- res
 				ra.release()
 				delete(ra.results, ra.nextExpected)

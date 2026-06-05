@@ -3,12 +3,16 @@ package parallel
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/index"
+	"github.com/fulmenhq/sumpter/internal/index/store"
 )
 
 // TestParallelExtraction_EndToEnd tests the complete parallel extraction flow
@@ -289,6 +293,88 @@ func TestParallelExtraction_ToSinkPropagatesSinkFailure(t *testing.T) {
 	}
 }
 
+func TestParallelExtraction_ToSinkReturnsOnIteratorReadError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+
+	xmlPath := filepath.Join(tmpDir, "test-index-read-error.xml")
+	xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <record id="1"><name>Alice</name></record>
+  <record id="2"><name>Bob</name></record>
+  <record id="3"><name>Charlie</name></record>
+  <record id="4"><name>Diana</name></record>
+</root>`
+	if err := os.WriteFile(xmlPath, []byte(xmlContent), 0600); err != nil {
+		t.Fatalf("Failed to create test XML: %v", err)
+	}
+
+	builder := index.NewBuilder(index.BuildOptions{
+		InputPath: xmlPath,
+		Selector:  "//record",
+	})
+	idx, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build index: %v", err)
+	}
+
+	wantErr := errors.New("simulated index read failure")
+	extCfg := &extract.ExtractRecordMatch{
+		RecordType: "sample_record",
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "id", XPath: "//@id", Type: "string"},
+			{OutputField: "name", XPath: "//name", Type: "string"},
+		},
+	}
+	opts := ExtractionOptions{
+		IndexPath:        "fake.recordindex.json",
+		SourcePath:       xmlPath,
+		IndexStore:       &failingIndexStore{header: idx, records: idx.Records, failAt: 2, err: wantErr},
+		Workers:          2,
+		MaxRecordSizeMB:  10,
+		SkipLargeRecords: false,
+		VerifyIndex:      false,
+		ExtractConfig:    extCfg,
+		SignatureConfig:  &extract.FileSignature{},
+		ShowProgress:     false,
+		ReorderWindow:    1,
+	}
+
+	type extractionResult struct {
+		summary extract.FileEmissionSummary
+		err     error
+	}
+	done := make(chan extractionResult, 1)
+	sink := &recordingSink{}
+	go func() {
+		summary, err := NewParallelExtractor(opts).ExtractToSink(context.Background(), sink)
+		done <- extractionResult{summary: summary, err: err}
+	}()
+
+	var result extractionResult
+	select {
+	case result = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ExtractToSink hung after iterator read error with a bounded reorder window")
+	}
+
+	if result.err == nil {
+		t.Fatal("ExtractToSink succeeded, want iterator read failure")
+	}
+	if !strings.Contains(result.summary.DispositionDetail, wantErr.Error()) {
+		t.Fatalf("summary disposition detail = %q, want iterator error %q", result.summary.DispositionDetail, wantErr.Error())
+	}
+	if result.summary.Disposition != extract.DispositionFailed {
+		t.Fatalf("summary disposition = %q, want failed", result.summary.Disposition)
+	}
+	if sink.boundaries != 1 {
+		t.Fatalf("file boundaries = %d, want 1", sink.boundaries)
+	}
+}
+
 // buildTestIndex creates a real record index using the index builder
 func buildTestIndex(t *testing.T, xmlPath, indexPath, selector string) error {
 	t.Helper()
@@ -331,6 +417,48 @@ func (s *recordingSink) OnFileBoundary(_ context.Context, _ extract.FileEmission
 }
 
 func (s *recordingSink) Close(context.Context) error {
+	return nil
+}
+
+type failingIndexStore struct {
+	header  *index.RecordIndex
+	records []index.RecordMetadata
+	failAt  int
+	err     error
+}
+
+func (s *failingIndexStore) Header() (*index.RecordIndex, error) {
+	return s.header, nil
+}
+
+func (s *failingIndexStore) Records(context.Context) (store.RecordIterator, error) {
+	return &failingRecordIterator{records: s.records, failAt: s.failAt, err: s.err}, nil
+}
+
+func (s *failingIndexStore) Close() error {
+	return nil
+}
+
+type failingRecordIterator struct {
+	records []index.RecordMetadata
+	next    int
+	failAt  int
+	err     error
+}
+
+func (it *failingRecordIterator) Next() (*index.RecordMetadata, error) {
+	it.next++
+	if it.failAt > 0 && it.next == it.failAt {
+		return nil, it.err
+	}
+	recordIndex := it.next - 1
+	if recordIndex >= len(it.records) {
+		return nil, io.EOF
+	}
+	return &it.records[recordIndex], nil
+}
+
+func (it *failingRecordIterator) Close() error {
 	return nil
 }
 

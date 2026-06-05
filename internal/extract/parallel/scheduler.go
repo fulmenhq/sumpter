@@ -182,7 +182,19 @@ func (ws *WorkScheduler) scheduleWorkStreaming() error {
 			}
 			localCounter++
 			if err != nil {
+				readErr := fmt.Errorf("failed to read record %d from index: %w", localCounter, err)
 				logger.Error("Failed to read record", zap.Int("local_counter", localCounter), zap.Error(err))
+				if !ws.acquireWindowSlot() {
+					logger.Info("Scheduling cancelled before read-error result send", zap.Error(ws.ctx.Err()))
+					return
+				}
+				select {
+				case ws.resultChan <- WorkResult{RecordNum: localCounter, Error: readErr}:
+				case <-ws.ctx.Done():
+					ws.releaseWindowSlot()
+					logger.Info("Scheduling cancelled during read-error result send", zap.Error(ws.ctx.Err()))
+					return
+				}
 				ws.stats.IncrementFailed()
 				continue
 			}
