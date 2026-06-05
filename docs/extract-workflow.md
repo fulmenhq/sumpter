@@ -1,13 +1,13 @@
 # Sumpter Extract Workflow
 
-The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. Sequential JSON/NDJSON file output uses the record-sink path and streams records as they are produced instead of retaining the full output slice for that format. Parquet, mixed JSON+Parquet, record-index/parallel output, and `min_occurrences` recipes remain buffered in v0.1.8 while their bounded policies are completed. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
+The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. JSON/NDJSON file output uses the record-sink path for sequential runs and record-index parallel runs, streaming records as they are produced instead of retaining the full output slice for that format. Parquet, mixed JSON+Parquet, and `min_occurrences` recipes remain buffered in v0.1.8 while their bounded policies and memory-regression proof are completed. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
 
 ## Output Formats
 
 | Mode                 | Description                                                       | When to use                                                      |
 | -------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Structured (default) | A single JSON object containing metadata and recipe-authored data | Interactive runs, debugging, consumers that expect a single file |
-| NDJSON               | Records emitted as newline-delimited JSON with sidecar manifests; sequential file output streams through `RecordSink` | Pipeline ingestion and append-friendly record processing         |
+| NDJSON               | Records emitted as newline-delimited JSON with sidecar manifests; sequential and record-index parallel file output stream through `RecordSink` | Pipeline ingestion and append-friendly record processing         |
 | Parquet              | Buffered secondary columnar projection declared by recipe output settings | Analytics engines and columnar downstream storage                |
 
 NDJSON is the default durable record output for recipe examples. Parquet is a secondary output path, still requires recipe configuration for the projected columns, and remains buffered in v0.1.8. A run that requests both JSON/NDJSON and Parquet stays on the buffered path so both outputs are produced from the same completed record set.
@@ -236,11 +236,21 @@ already-enriched emitted envelopes in final output order, preserve
 `_runtime.record_num` gaps, provide bounded backpressure, and treat sink write
 or finalize failures as fatal output failures.
 
-Until that implementation lands, the current CLI behavior still buffers
-extracted records per source file before writing JSONL and optional Parquet
-outputs. Parquet remains a secondary projection of `extract.data` and is not
-part of any bounded-memory claim unless a future implementation adds true
-incremental Parquet writing.
+Sequential JSON/NDJSON file output and record-index parallel JSON/NDJSON file
+output now stream emitted records through `RecordSink` instead of materializing
+the full source-file result before writing. The record-index path uses a
+bounded reorder window so later worker results cannot grow without limit while
+an earlier record is still pending. Parquet, mixed JSON+Parquet output, and
+recipes with `min_occurrences` still use the buffered path. Parquet remains a
+secondary projection of `extract.data` and is not part of any bounded-memory
+claim unless a future implementation adds true incremental Parquet writing.
+
+Record-index streaming JSON/NDJSON output is transactional for the indexed
+source: if any indexed record fails to read or extract, Sumpter emits a failed
+file boundary, aborts the temporary JSONL target, and returns a terminal error.
+`--continue-on-error` remains a multi-source buffered-run recovery control; it
+does not publish partial record-index streaming output after a per-record
+failure.
 
 ### Empty-output contract and `min_occurrences`
 

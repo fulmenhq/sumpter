@@ -123,7 +123,13 @@ func TestSequentialJSONStreamingRouteSelection(t *testing.T) {
 		t.Fatal("mixed JSON+parquet output must stay on the buffered path")
 	}
 	if shouldUseSequentialJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfg, []string{recipesmanifest.OutputFormatJSON}) {
-		t.Fatal("record-index parallel output is handled by a later SUM-035 slice")
+		t.Fatal("record-index parallel output must use the parallel streaming route")
+	}
+	if !shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfg, []string{recipesmanifest.OutputFormatJSON}) {
+		t.Fatal("record-index parallel JSON output should use the parallel streaming sink path")
+	}
+	if shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfg, []string{recipesmanifest.OutputFormatParquet}) {
+		t.Fatal("parallel parquet output must stay on the buffered path")
 	}
 
 	cfgWithFloor := &extract.ExtractRecordMatch{
@@ -133,18 +139,21 @@ func TestSequentialJSONStreamingRouteSelection(t *testing.T) {
 	if shouldUseSequentialJSONStreaming(&ExtractOptions{}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
 		t.Fatal("min_occurrences recipes stay buffered so output is not published before floor enforcement")
 	}
+	if shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
+		t.Fatal("parallel min_occurrences recipes stay buffered so floor enforcement runs before output publication")
+	}
 }
 
-func TestSequentialJSONOutputFailureClassificationUsesSentinel(t *testing.T) {
-	if !isSequentialJSONOutputFailure(fmt.Errorf("renamed wrapper: %w", errSequentialJSONOutput)) {
+func TestJSONOutputFailureClassificationUsesSentinel(t *testing.T) {
+	if !isJSONOutputFailure(fmt.Errorf("renamed wrapper: %w", errJSONOutput)) {
 		t.Fatal("sentinel-wrapped output failure was not classified as output failure")
 	}
-	if isSequentialJSONOutputFailure(errors.New("failed to emit record 1: text-only legacy wording")) {
+	if isJSONOutputFailure(errors.New("failed to emit record 1: text-only legacy wording")) {
 		t.Fatal("text-only error wording must not drive output failure classification")
 	}
 }
 
-func TestSequentialJSONOutputTargetMatchesBufferedJSONLBytes(t *testing.T) {
+func TestJSONOutputTargetMatchesBufferedJSONLBytes(t *testing.T) {
 	dir := createExtractManifestFixture(t)
 	outputDir := filepath.Join(dir, "outputs")
 	if err := os.MkdirAll(outputDir, 0o750); err != nil {
@@ -164,9 +173,9 @@ func TestSequentialJSONOutputTargetMatchesBufferedJSONLBytes(t *testing.T) {
 		OutputPath:    outputDir,
 		OutputPattern: "extract-{}.json",
 	}
-	target, err := newSequentialJSONOutputTarget(opts, filepath.Join(dir, "input.xml"))
+	target, err := newJSONOutputTarget(opts, filepath.Join(dir, "input.xml"))
 	if err != nil {
-		t.Fatalf("newSequentialJSONOutputTarget: %v", err)
+		t.Fatalf("newJSONOutputTarget: %v", err)
 	}
 	for _, record := range records {
 		if err := target.OnRecord(context.Background(), extract.NewEmittedRecord(record)); err != nil {
@@ -501,8 +510,8 @@ func TestRunExtractContinueOnErrorOutputAndFailureManifestWritesAreTerminal(t *t
 		if err == nil || !strings.Contains(err.Error(), "failed to write output") {
 			t.Fatalf("error = %v, want terminal output write failure", err)
 		}
-		if !errors.Is(err, errSequentialJSONOutput) {
-			t.Fatalf("error = %v, want sequential JSON output sentinel", err)
+		if !errors.Is(err, errJSONOutput) {
+			t.Fatalf("error = %v, want JSON output sentinel", err)
 		}
 		if strings.Contains(err.Error(), "partial extraction failure") {
 			t.Fatalf("error = %v, output failure must not be recoverable partial failure", err)

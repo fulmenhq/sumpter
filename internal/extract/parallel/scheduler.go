@@ -27,6 +27,7 @@ func NewWorkScheduler(idx *index.RecordIndex, opts ExtractionOptions) (*WorkSche
 
 	workers := capWorkerCount(opts.Workers)
 	opts.Workers = workers
+	reorderWindow := capReorderWindow(opts.ReorderWindow, workers)
 
 	stats := &ExtractionStats{
 		TotalRecords: len(idx.Records),
@@ -39,6 +40,7 @@ func NewWorkScheduler(idx *index.RecordIndex, opts ExtractionOptions) (*WorkSche
 		opts:           opts,
 		workChan:       make(chan WorkItem, workers*2),
 		resultChan:     make(chan WorkResult, workers*2),
+		windowSlots:    make(chan struct{}, reorderWindow),
 		stats:          stats,
 		skippedRecords: make([]int, 0),
 	}, nil
@@ -62,6 +64,7 @@ func NewWorkSchedulerFromStore(ctx context.Context, indexStore store.IndexStore,
 
 	workers := capWorkerCount(opts.Workers)
 	opts.Workers = workers
+	reorderWindow := capReorderWindow(opts.ReorderWindow, workers)
 
 	stats := &ExtractionStats{
 		TotalRecords: header.Summary.TotalRecords,
@@ -74,6 +77,7 @@ func NewWorkSchedulerFromStore(ctx context.Context, indexStore store.IndexStore,
 		opts:           opts,
 		workChan:       make(chan WorkItem, workers*2),
 		resultChan:     make(chan WorkResult, workers*2),
+		windowSlots:    make(chan struct{}, reorderWindow),
 		stats:          stats,
 		skippedRecords: make([]int, 0),
 	}, nil
@@ -94,6 +98,38 @@ func capWorkerCount(requested int) int {
 		workers = maxWorkers
 	}
 	return workers
+}
+
+func capReorderWindow(requested, workers int) int {
+	if requested > 0 {
+		return requested
+	}
+	if workers <= 0 {
+		workers = 1
+	}
+	return workers * 2
+}
+
+func (ws *WorkScheduler) acquireWindowSlot() bool {
+	if ws.windowSlots == nil {
+		return true
+	}
+	select {
+	case ws.windowSlots <- struct{}{}:
+		return true
+	case <-ws.ctx.Done():
+		return false
+	}
+}
+
+func (ws *WorkScheduler) releaseWindowSlot() {
+	if ws.windowSlots == nil {
+		return
+	}
+	select {
+	case <-ws.windowSlots:
+	default:
+	}
 }
 
 // ScheduleWork distributes record extraction tasks across workers.
@@ -146,7 +182,19 @@ func (ws *WorkScheduler) scheduleWorkStreaming() error {
 			}
 			localCounter++
 			if err != nil {
+				readErr := fmt.Errorf("failed to read record %d from index: %w", localCounter, err)
 				logger.Error("Failed to read record", zap.Int("local_counter", localCounter), zap.Error(err))
+				if !ws.acquireWindowSlot() {
+					logger.Info("Scheduling cancelled before read-error result send", zap.Error(ws.ctx.Err()))
+					return
+				}
+				select {
+				case ws.resultChan <- WorkResult{RecordNum: localCounter, Error: readErr}:
+				case <-ws.ctx.Done():
+					ws.releaseWindowSlot()
+					logger.Info("Scheduling cancelled during read-error result send", zap.Error(ws.ctx.Err()))
+					return
+				}
 				ws.stats.IncrementFailed()
 				continue
 			}
@@ -162,6 +210,10 @@ func (ws *WorkScheduler) scheduleWorkStreaming() error {
 
 			// Apply max record size filter if specified
 			if ws.opts.MaxRecordSizeMB > 0 && record.SizeBytes > maxRecordBytes {
+				if !ws.acquireWindowSlot() {
+					logger.Info("Scheduling cancelled before oversized record handling", zap.Error(ws.ctx.Err()))
+					return
+				}
 				if ws.opts.SkipLargeRecords {
 					logger.Debug("Skipping oversized record",
 						zap.Int("record_num", recordNum),
@@ -172,16 +224,29 @@ func (ws *WorkScheduler) scheduleWorkStreaming() error {
 					ws.skippedRecords = append(ws.skippedRecords, recordNum)
 					ws.mu.Unlock()
 					ws.stats.IncrementSkipped()
+					select {
+					case ws.resultChan <- WorkResult{RecordNum: recordNum, Skipped: true}:
+					case <-ws.ctx.Done():
+						ws.releaseWindowSlot()
+						logger.Info("Scheduling cancelled during skipped result send", zap.Error(ws.ctx.Err()))
+						return
+					}
 					continue
 				} else {
 					logger.Error("Record exceeds size limit",
 						zap.Int("record_num", recordNum),
 						zap.Int64("size_bytes", record.SizeBytes),
 						zap.Int("max_allowed_mb", ws.opts.MaxRecordSizeMB))
-					ws.resultChan <- WorkResult{
+					select {
+					case ws.resultChan <- WorkResult{
 						RecordNum: recordNum,
 						Error: fmt.Errorf("record %d size %d bytes exceeds limit %d MB",
 							recordNum, record.SizeBytes, ws.opts.MaxRecordSizeMB),
+					}:
+					case <-ws.ctx.Done():
+						ws.releaseWindowSlot()
+						logger.Info("Scheduling cancelled during oversized failure send", zap.Error(ws.ctx.Err()))
+						return
 					}
 					ws.stats.IncrementFailed()
 					continue
@@ -197,10 +262,15 @@ func (ws *WorkScheduler) scheduleWorkStreaming() error {
 			}
 
 			// Send to work channel (blocks if workers are busy)
+			if !ws.acquireWindowSlot() {
+				logger.Info("Scheduling cancelled before work send", zap.Error(ws.ctx.Err()))
+				return
+			}
 			select {
 			case ws.workChan <- workItem:
 				scheduled++
 			case <-ws.ctx.Done():
+				ws.releaseWindowSlot()
 				logger.Info("Scheduling cancelled during send", zap.Error(ws.ctx.Err()))
 				return
 			}
@@ -234,6 +304,10 @@ func (ws *WorkScheduler) scheduleWorkLegacy() error {
 		for _, record := range ws.index.Records {
 			// Apply max record size filter if specified
 			if ws.opts.MaxRecordSizeMB > 0 && record.SizeBytes > maxRecordBytes {
+				if !ws.acquireWindowSlot() {
+					logger.Info("Scheduling cancelled before oversized record handling", zap.Error(ws.ctx.Err()))
+					return
+				}
 				if ws.opts.SkipLargeRecords {
 					logger.Debug("Skipping oversized record",
 						zap.Int("record_num", record.RecordNum),
@@ -244,6 +318,7 @@ func (ws *WorkScheduler) scheduleWorkLegacy() error {
 					ws.skippedRecords = append(ws.skippedRecords, record.RecordNum)
 					ws.mu.Unlock()
 					ws.stats.IncrementSkipped()
+					ws.resultChan <- WorkResult{RecordNum: record.RecordNum, Skipped: true}
 					continue
 				} else {
 					logger.Error("Record exceeds size limit",
@@ -269,6 +344,10 @@ func (ws *WorkScheduler) scheduleWorkLegacy() error {
 			}
 
 			// Send to work channel (blocks if workers are busy)
+			if !ws.acquireWindowSlot() {
+				logger.Info("Scheduling cancelled before work send", zap.Error(ws.ctx.Err()))
+				return
+			}
 			ws.workChan <- workItem
 		}
 

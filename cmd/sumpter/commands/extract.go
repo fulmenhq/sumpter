@@ -26,7 +26,7 @@ import (
 
 const runIDEnvVar = "SUMPTER_RUN_ID"
 
-var errSequentialJSONOutput = errors.New("sequential json output failure")
+var errJSONOutput = errors.New("json output failure")
 
 type ExtractOptions struct {
 	Files                    string
@@ -737,8 +737,23 @@ func shouldUseSequentialJSONStreaming(opts *ExtractOptions, extCfg *extract.Extr
 	return true
 }
 
-func isSequentialJSONOutputFailure(err error) bool {
-	return errors.Is(err, errSequentialJSONOutput)
+func shouldUseParallelJSONStreaming(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, outputFormats []string) bool {
+	if opts == nil || extCfg == nil {
+		return false
+	}
+	if opts.RecordIndex == "" || len(outputFormats) != 1 || outputFormats[0] != recipesmanifest.OutputFormatJSON {
+		return false
+	}
+	for _, selector := range extCfg.MatchSelectors {
+		if selector.MinOccurrences > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func isJSONOutputFailure(err error) bool {
+	return errors.Is(err, errJSONOutput)
 }
 
 func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
@@ -770,7 +785,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 			continue
 		}
 
-		target, err := newSequentialJSONOutputTarget(opts, file)
+		target, err := newJSONOutputTarget(opts, file)
 		if err != nil {
 			return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, file), err)
 		}
@@ -786,7 +801,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 				result.DispositionReason = extract.DispositionReasonInternalError
 				result.DispositionDetail = closeErr.Error()
 			}
-			if isSequentialJSONOutputFailure(result.Error) {
+			if isJSONOutputFailure(result.Error) {
 				return fmt.Errorf("failed to write output %s: %w", target.outputFile, result.Error)
 			}
 			if result.Error != nil {
@@ -914,7 +929,7 @@ func recordFailedSequentialResult(result extract.ExtractResult, opts *ExtractOpt
 	return failureErr
 }
 
-type sequentialJSONOutputTarget struct {
+type jsonOutputTarget struct {
 	opts       *ExtractOptions
 	inputFile  string
 	outputFile string
@@ -925,9 +940,9 @@ type sequentialJSONOutputTarget struct {
 	closed     bool
 }
 
-func newSequentialJSONOutputTarget(opts *ExtractOptions, inputFile string) (*sequentialJSONOutputTarget, error) {
+func newJSONOutputTarget(opts *ExtractOptions, inputFile string) (*jsonOutputTarget, error) {
 	if opts.OutputPath == "" {
-		return &sequentialJSONOutputTarget{
+		return &jsonOutputTarget{
 			opts:      opts,
 			inputFile: inputFile,
 			sink:      extract.NewJSONLRecordSink(os.Stdout),
@@ -936,26 +951,26 @@ func newSequentialJSONOutputTarget(opts *ExtractOptions, inputFile string) (*seq
 	}
 
 	outputFile := outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, inputFile)
-	return &sequentialJSONOutputTarget{
+	return &jsonOutputTarget{
 		opts:       opts,
 		inputFile:  inputFile,
 		outputFile: outputFile,
 	}, nil
 }
 
-func (t *sequentialJSONOutputTarget) OnRecord(ctx context.Context, record extract.EmittedRecord) error {
+func (t *jsonOutputTarget) OnRecord(ctx context.Context, record extract.EmittedRecord) error {
 	if err := t.ensureOpen(); err != nil {
-		return wrapSequentialJSONOutputError("open output", err)
+		return wrapJSONOutputError("open output", err)
 	}
 	if err := t.sink.OnRecord(ctx, record); err != nil {
-		return wrapSequentialJSONOutputError("write output record", err)
+		return wrapJSONOutputError("write output record", err)
 	}
 	return nil
 }
 
-func (t *sequentialJSONOutputTarget) OnFileBoundary(ctx context.Context, summary extract.FileEmissionSummary) error {
+func (t *jsonOutputTarget) OnFileBoundary(ctx context.Context, summary extract.FileEmissionSummary) error {
 	if err := ctx.Err(); err != nil {
-		return wrapSequentialJSONOutputError("check output boundary context", err)
+		return wrapJSONOutputError("check output boundary context", err)
 	}
 	if summary.Disposition == extract.DispositionFailed {
 		return nil
@@ -964,12 +979,12 @@ func (t *sequentialJSONOutputTarget) OnFileBoundary(ctx context.Context, summary
 		return nil
 	}
 	if err := t.ensureOpen(); err != nil {
-		return wrapSequentialJSONOutputError("open output at file boundary", err)
+		return wrapJSONOutputError("open output at file boundary", err)
 	}
 	return nil
 }
 
-func (t *sequentialJSONOutputTarget) ensureOpen() error {
+func (t *jsonOutputTarget) ensureOpen() error {
 	if t == nil {
 		return fmt.Errorf("json output target is nil")
 	}
@@ -992,31 +1007,31 @@ func (t *sequentialJSONOutputTarget) ensureOpen() error {
 	return nil
 }
 
-func (t *sequentialJSONOutputTarget) Close(ctx context.Context) error {
+func (t *jsonOutputTarget) Close(ctx context.Context) error {
 	if t == nil || t.closed {
 		return nil
 	}
 	t.closed = true
 	if t.sink != nil {
 		if err := t.sink.Close(ctx); err != nil {
-			return wrapSequentialJSONOutputError("close output sink", err)
+			return wrapJSONOutputError("close output sink", err)
 		}
 	}
 	if t.file != nil {
 		if err := t.file.Close(); err != nil {
-			return wrapSequentialJSONOutputError("close output file", err)
+			return wrapJSONOutputError("close output file", err)
 		}
 	}
 	return nil
 }
 
-func (t *sequentialJSONOutputTarget) Commit() error {
+func (t *jsonOutputTarget) Commit() error {
 	if t == nil || t.stdout {
 		return nil
 	}
 	if t.sink == nil {
 		if err := t.ensureOpen(); err != nil {
-			return wrapSequentialJSONOutputError("open output before commit", err)
+			return wrapJSONOutputError("open output before commit", err)
 		}
 	}
 	if !t.closed {
@@ -1027,12 +1042,12 @@ func (t *sequentialJSONOutputTarget) Commit() error {
 	}
 	if err := os.Rename(t.tempFile, t.outputFile); err != nil {
 		_ = os.Remove(t.tempFile)
-		return wrapSequentialJSONOutputError(fmt.Sprintf("commit output %s", t.outputFile), err)
+		return wrapJSONOutputError(fmt.Sprintf("commit output %s", t.outputFile), err)
 	}
 	return nil
 }
 
-func (t *sequentialJSONOutputTarget) Abort() {
+func (t *jsonOutputTarget) Abort() {
 	if t == nil || t.stdout {
 		return
 	}
@@ -1042,18 +1057,18 @@ func (t *sequentialJSONOutputTarget) Abort() {
 	}
 }
 
-func (t *sequentialJSONOutputTarget) Count() int {
+func (t *jsonOutputTarget) Count() int {
 	if t == nil || t.sink == nil {
 		return 0
 	}
 	return t.sink.Count()
 }
 
-func wrapSequentialJSONOutputError(message string, err error) error {
+func wrapJSONOutputError(message string, err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%w: %s: %w", errSequentialJSONOutput, message, err)
+	return fmt.Errorf("%w: %s: %w", errJSONOutput, message, err)
 }
 
 func buildExtractRuntimeProvenance(opts *ExtractOptions) (provenance.RuntimeOptions, error) {
@@ -1110,6 +1125,14 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		ShowProgress:      opts.Progress,
 	}
 
+	outputFormats, err := effectiveOutputFormats(opts)
+	if err != nil {
+		return err
+	}
+	if shouldUseParallelJSONStreaming(opts, extCfg, outputFormats) {
+		return runParallelJSONStreamingExtraction(opts, extCfg, parallelOpts, header.Source.Path, runtimeProvenance, startedAt)
+	}
+
 	// Create parallel extractor
 	extractor := parallel.NewParallelExtractor(parallelOpts)
 
@@ -1131,10 +1154,6 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	// Output records (same as sequential path)
 	manifestEnabled := shouldWriteManifest(opts)
 	sanitizeRoots := manifestSanitizeRoots(opts)
-	outputFormats, err := effectiveOutputFormats(opts)
-	if err != nil {
-		return err
-	}
 	manifestPath := ""
 	if manifestEnabled {
 		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
@@ -1183,6 +1202,74 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
+	}
+
+	return nil
+}
+
+func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, parallelOpts parallel.ExtractionOptions, sourcePath string, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
+	logger := logging.GetLogger()
+	ctx := context.Background()
+	manifestEnabled := shouldWriteManifest(opts)
+	sanitizeRoots := manifestSanitizeRoots(opts)
+	manifestPath := ""
+	if manifestEnabled {
+		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+	}
+
+	target, err := newJSONOutputTarget(opts, "parallel")
+	if err != nil {
+		return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, "parallel"), err)
+	}
+
+	extractor := parallel.NewParallelExtractor(parallelOpts)
+	summary, extractErr := extractor.ExtractToSink(ctx, target)
+	closeErr := target.Close(ctx)
+	if extractErr != nil {
+		target.Abort()
+		if closeErr != nil && !errors.Is(extractErr, errJSONOutput) {
+			extractErr = fmt.Errorf("%w; failed to close output: %v", extractErr, closeErr)
+		}
+		if isJSONOutputFailure(extractErr) {
+			return fmt.Errorf("failed to write output %s: %w", target.outputFile, extractErr)
+		}
+		return fmt.Errorf("parallel extraction failed: %w", extractErr)
+	}
+	if closeErr != nil {
+		target.Abort()
+		return fmt.Errorf("failed to close output %s: %w", target.outputFile, closeErr)
+	}
+	if err := target.Commit(); err != nil {
+		return err
+	}
+
+	recordCount := target.Count()
+	logger.Info("Parallel extraction complete", zap.Int("record_count", recordCount))
+
+	if manifestEnabled {
+		input, err := provenance.BuildInputLedger(sourcePath, sanitizeRoots...)
+		if err != nil {
+			return err
+		}
+		input.RecordType = extCfg.RecordType
+		manifestInputs := []provenance.Input{input}
+		manifestOutputs := []provenance.Output{
+			provenanceOutput(target.outputFile, recipesmanifest.OutputFormatJSON, recordCount, opts, sanitizeRoots...),
+		}
+		countsByRecordType := map[string]int{extCfg.RecordType: recordCount}
+		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
+		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+			return err
+		}
+		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+	} else if opts.OutputPath == "" && !opts.NoManifest {
+		logger.Warn("Skipping provenance manifest because --output-path is not set")
+	}
+
+	if summary.RecordCount != recordCount {
+		logger.Warn("Parallel sink summary count differed from output target count",
+			zap.Int("summary_count", summary.RecordCount),
+			zap.Int("target_count", recordCount))
 	}
 
 	return nil
