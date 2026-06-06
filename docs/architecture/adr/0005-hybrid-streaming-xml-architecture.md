@@ -59,12 +59,14 @@ JSON/NDJSON output and asserts that the sink routes do not populate
 The bounded claim is intentionally narrow: JSON/NDJSON streaming output is
 bounded with respect to emitted result count by parser state, active record
 work, writer buffers, and the configured reorder window for parallel runs.
-DOM/non-streaming extraction can load a whole document, and Parquet, mixed JSON+Parquet,
-record-index parallel runs that request buffered formats, and
-`min_occurrences` recipes remain buffered in v0.1.8. Public docs should
-therefore describe the present contract as "streaming input parsing plus
-bounded JSON/NDJSON output streaming" rather than unqualified
-"constant-memory extraction."
+Unambiguous record-index parallel `min_occurrences` floors are enforced from
+index counts before opening output, so those runs can keep the streaming path.
+DOM/non-streaming extraction can load a whole document, and Parquet, mixed
+JSON+Parquet, sequential `min_occurrences`, ambiguous indexed floors, and
+record-index parallel runs that request buffered formats remain buffered in
+v0.1.8. Public docs should therefore describe the present contract as
+"streaming input parsing plus bounded JSON/NDJSON output streaming" rather
+than unqualified "constant-memory extraction."
 
 ### Architecture Design
 

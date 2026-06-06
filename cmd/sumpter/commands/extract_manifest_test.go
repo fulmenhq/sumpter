@@ -139,8 +139,8 @@ func TestSequentialJSONStreamingRouteSelection(t *testing.T) {
 	if shouldUseSequentialJSONStreaming(&ExtractOptions{}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
 		t.Fatal("min_occurrences recipes stay buffered so output is not published before floor enforcement")
 	}
-	if shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
-		t.Fatal("parallel min_occurrences recipes stay buffered so floor enforcement runs before output publication")
+	if !shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
+		t.Fatal("parallel min_occurrences recipes can stream because indexed counts are enforced before output publication")
 	}
 }
 
@@ -900,6 +900,71 @@ output_schema:
 	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
 	if manifest.Outputs[0].RecordCount != 1 {
 		t.Fatalf("record_count = %d, want 1 emitted record", manifest.Outputs[0].RecordCount)
+	}
+}
+
+func TestRunExtractParallelMinOccurrencesViolationFailsBeforeOutput(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+
+	xmlPath := filepath.Join(dir, "input.xml")
+	mustWriteFile(t, filepath.Join(dir, "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+    min_occurrences: 3
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+
+	indexPath := filepath.Join(dir, "input.recordindex.json")
+	builder := index.NewBuilder(index.BuildOptions{
+		InputPath:  xmlPath,
+		OutputPath: indexPath,
+		Selector:   "//item",
+	})
+	recordIndex, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build index: %v", err)
+	}
+	if recordIndex.Summary.TotalRecords != 2 {
+		t.Fatalf("index total_records = %d, want 2", recordIndex.Summary.TotalRecords)
+	}
+	if err := builder.WriteToFile(recordIndex, indexPath); err != nil {
+		t.Fatalf("WriteToFile index: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:           xmlPath,
+		Format:          "json",
+		OutputPath:      outputDir,
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		RecordIndex:     indexPath,
+		Workers:         2,
+	}
+
+	err = runExtract(opts)
+	if err == nil {
+		t.Fatal("expected min_occurrences violation")
+	}
+	if !strings.Contains(err.Error(), "min_occurrences violation") {
+		t.Fatalf("error = %v, want min_occurrences violation", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "extract-parallel.json")); !os.IsNotExist(err) {
+		t.Fatalf("output stat error = %v, want not exists", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, provenance.ManifestFileName)); !os.IsNotExist(err) {
+		t.Fatalf("manifest stat error = %v, want not exists", err)
 	}
 }
 

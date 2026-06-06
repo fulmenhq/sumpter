@@ -1735,6 +1735,44 @@ func TestProcessFileWithApplicabilityToSinkEmitsDOMRecordsWithoutResultSlice(t *
 	}
 }
 
+func TestLargeFileStreamingDecisionAllowsSinkWithoutAllowLargeFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "large-sink.xml")
+	file, err := os.Create(testFile)
+	if err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	if _, err := file.Seek(1100*1024*1024, 0); err != nil {
+		_ = file.Close()
+		t.Fatalf("failed to make sparse test file: %v", err)
+	}
+	if _, err := file.WriteString(`x`); err != nil {
+		_ = file.Close()
+		t.Fatalf("failed to write sparse test sentinel: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close test file: %v", err)
+	}
+
+	sink := &trackingRecordSink{}
+	shouldStream, estimatedSize, _ := shouldUseLargeFileStreaming(testFile, false, sink, nil, 100*1024*1024)
+	if !shouldStream {
+		t.Fatalf("sink-backed large file should stream without allowLargeFiles; estimatedSize=%d", estimatedSize)
+	}
+	shouldStream, _, _ = shouldUseLargeFileStreaming(testFile, false, nil, nil, 100*1024*1024)
+	if shouldStream {
+		t.Fatal("large file without sink or allowLargeFiles should stay on the buffered/guarded route")
+	}
+	shouldStream, _, _ = shouldUseLargeFileStreaming(testFile, false, sink, &ApplicabilityConfig{}, 100*1024*1024)
+	if shouldStream {
+		t.Fatal("large file with applicability should stay on the DOM/applicability route unless allowLargeFiles explicitly requests streaming")
+	}
+	shouldStream, _, _ = shouldUseLargeFileStreaming(testFile, true, nil, nil, 100*1024*1024)
+	if !shouldStream {
+		t.Fatal("allowLargeFiles should still enable streaming for non-sink large files")
+	}
+}
+
 func TestProcessFileWithApplicabilityToSinkEmitsFailedBoundaryAfterParseError(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "dom-sink-parse-error.xml")

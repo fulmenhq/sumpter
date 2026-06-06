@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -744,11 +745,6 @@ func shouldUseParallelJSONStreaming(opts *ExtractOptions, extCfg *extract.Extrac
 	if opts.RecordIndex == "" || len(outputFormats) != 1 || outputFormats[0] != recipesmanifest.OutputFormatJSON {
 		return false
 	}
-	for _, selector := range extCfg.MatchSelectors {
-		if selector.MinOccurrences > 0 {
-			return false
-		}
-	}
 	return true
 }
 
@@ -1130,6 +1126,19 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		return err
 	}
 	if shouldUseParallelJSONStreaming(opts, extCfg, outputFormats) {
+		if hasDeclaredMinOccurrences(extCfg) {
+			indexedCount, err := countIndexedRecords(opts.RecordIndex)
+			if err != nil {
+				return err
+			}
+			perSelectorCounts, err := perSelectorCountsForIndexedExtraction(header.Selector.XPath, extCfg, indexedCount)
+			if err != nil {
+				return err
+			}
+			if err := enforceMinOccurrences(opts, extCfg, sigCfg, header.Source.Path, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
+				return err
+			}
+		}
 		return runParallelJSONStreamingExtraction(opts, extCfg, parallelOpts, header.Source.Path, runtimeProvenance, startedAt)
 	}
 
@@ -1312,14 +1321,7 @@ func enforceMinOccurrences(opts *ExtractOptions, extCfg *extract.ExtractRecordMa
 		return nil
 	}
 	recipeID := recipeIdentifier(opts)
-	hasDeclaredFloor := false
-	for _, selector := range extCfg.MatchSelectors {
-		if selector.MinOccurrences > 0 {
-			hasDeclaredFloor = true
-			break
-		}
-	}
-	if signatureMatchStatus == extract.SignatureMatchMismatched && hasDeclaredFloor {
+	if signatureMatchStatus == extract.SignatureMatchMismatched && hasDeclaredMinOccurrences(extCfg) {
 		threshold := 0.0
 		if sigCfg != nil {
 			threshold = sigCfg.ConfidenceThreshold
@@ -1352,6 +1354,18 @@ func enforceMinOccurrences(opts *ExtractOptions, extCfg *extract.ExtractRecordMa
 	return nil
 }
 
+func hasDeclaredMinOccurrences(extCfg *extract.ExtractRecordMatch) bool {
+	if extCfg == nil {
+		return false
+	}
+	for _, selector := range extCfg.MatchSelectors {
+		if selector.MinOccurrences > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func recipeIdentifier(opts *ExtractOptions) string {
 	if opts == nil {
 		return "direct extract"
@@ -1363,6 +1377,32 @@ func recipeIdentifier(opts *ExtractOptions) string {
 		return opts.ExtractConfig
 	}
 	return "direct extract"
+}
+
+func countIndexedRecords(indexPath string) (int, error) {
+	indexStore, err := store.Open(indexPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open record index for min_occurrences preflight: %w", err)
+	}
+	defer func() { _ = indexStore.Close() }()
+
+	iter, err := indexStore.Records(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("failed to read record index for min_occurrences preflight: %w", err)
+	}
+	defer func() { _ = iter.Close() }()
+
+	count := 0
+	for {
+		if _, err := iter.Next(); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return 0, fmt.Errorf("failed to count record index entries for min_occurrences preflight: %w", err)
+		}
+		count++
+	}
+	return count, nil
 }
 
 func perSelectorCountsForIndexedExtraction(indexSelector string, extCfg *extract.ExtractRecordMatch, recordCount int) (map[int]int, error) {
