@@ -46,19 +46,25 @@ We will implement a **Hybrid Streaming Architecture** that combines SAX-style st
 ## Current contract (v0.1.8 development line)
 
 The accepted architecture describes the intended bounded-memory extraction
-model, but the current implementation does not yet make every extract mode
+model, while the current implementation still does not make every extract mode
 bounded end-to-end. XML input is tokenized incrementally where the streaming
 path applies, seekable indexed reads avoid loading predecessor records, and
 JSON/NDJSON file output writes through the record-sink path for sequential runs
 and record-index parallel runs with bounded reorder/backpressure instead of
-retaining the full output slice for that format.
+retaining the full output slice for that format. The in-tree memory-regression
+fixture covers synthetic many-record sequential and record-index parallel
+JSON/NDJSON output and asserts that the sink routes do not populate
+`ExtractResult.Records`.
 
-The bounded claim is still intentionally narrow. DOM/non-streaming extraction
-can load a whole document, and Parquet, mixed JSON+Parquet, record-index
-parallel runs that request buffered formats, and `min_occurrences` recipes
-remain buffered in v0.1.8. Public docs should therefore describe the present
-contract as "streaming input parsing plus JSON/NDJSON output streaming" rather
-than "constant-memory extraction" until the memory-regression fixture lands.
+The bounded claim is intentionally narrow: JSON/NDJSON streaming output is
+bounded with respect to emitted result count by parser state, active record
+work, writer buffers, and the configured reorder window for parallel runs.
+DOM/non-streaming extraction can load a whole document, and Parquet, mixed JSON+Parquet,
+record-index parallel runs that request buffered formats, and
+`min_occurrences` recipes remain buffered in v0.1.8. Public docs should
+therefore describe the present contract as "streaming input parsing plus
+bounded JSON/NDJSON output streaming" rather than unqualified
+"constant-memory extraction."
 
 ### Architecture Design
 

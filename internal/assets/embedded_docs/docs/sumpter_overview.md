@@ -21,7 +21,7 @@ Traditional DOM parsers crash on size. Heavy ETL tools require weeks of configur
 
 Sumpter is a **Go-based XML extraction engine** designed for:
 
-- **Streaming input parsing and JSONL output**: token-by-token XML reads where the streaming path applies; JSON/NDJSON file output streams records through the record-sink path for sequential runs and record-index parallel runs. Parquet, mixed-output, and `min_occurrences` extraction paths remain buffered in v0.1.8.
+- **Streaming input parsing and JSONL output**: token-by-token XML reads where the streaming path applies; JSON/NDJSON file output streams records through the record-sink path for sequential runs and record-index parallel runs with memory bounded by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Parquet, mixed-output, and `min_occurrences` extraction paths remain buffered in v0.1.8.
 - **Resilience**: UTF-8 normalization, BOM handling, and explicit fail-fast behavior for malformed inputs.
 - **Config-driven extraction**: YAML-first configs validated against JSON Schema.
 - **Inspection and diagnostics**: structure reports, encoding detection, and environment diagnostics.
@@ -31,8 +31,7 @@ Sumpter is a **Go-based XML extraction engine** designed for:
 This combination enables teams to move from raw XML to queryable tables **in minutes, not weeks**.
 
 Roadmap items such as DuckDB output, service health endpoints, Prometheus metrics,
-adaptive backpressure, repair modes, bounded parallel output streaming, and
-incremental Parquet writing are tracked
+adaptive backpressure, repair modes, and incremental Parquet writing are tracked
 separately from the current public capability surface.
 
 ---
@@ -93,7 +92,7 @@ This ensures reproducibility, privacy, and performance validation.
 
 ## 6. Roadmap
 
-- **Record-sink streaming**: add memory-regression evidence for sequential and parallel JSON/NDJSON output streaming, then restore public bounded-memory claims with proof.
+- **Streaming proof expansion**: extend large-corpus evidence for JSON/NDJSON output streaming and add incremental policies for buffered formats.
 - **Additional analytics targets**: DuckDB, Arrow, and service integrations.
 - **Operational integrations**: metrics, health endpoints, and richer runtime diagnostics.
 
