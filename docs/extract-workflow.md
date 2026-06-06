@@ -1,6 +1,6 @@
 # Sumpter Extract Workflow
 
-The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. JSON/NDJSON file output uses the record-sink path for sequential runs and record-index parallel runs, streaming records as they are produced instead of retaining the full output slice for that format. Memory for those routes is bounded with respect to emitted result count by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Parquet, mixed JSON+Parquet, and `min_occurrences` recipes remain buffered in v0.1.8. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
+The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. JSON/NDJSON file output uses the record-sink path for sequential runs and record-index parallel runs, streaming records as they are produced instead of retaining the full output slice for that format. Memory for those routes is bounded with respect to emitted result count by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Unambiguous record-index parallel runs enforce `min_occurrences` from index counts before publishing output and can still use the streaming route. Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed-floor recipes remain buffered in v0.1.8. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
 
 ## Output Formats
 
@@ -240,10 +240,13 @@ Sequential JSON/NDJSON file output and record-index parallel JSON/NDJSON file
 output now stream emitted records through `RecordSink` instead of materializing
 the full source-file result before writing. The record-index path uses a
 bounded reorder window so later worker results cannot grow without limit while
-an earlier record is still pending. Parquet, mixed JSON+Parquet output, and
-recipes with `min_occurrences` still use the buffered path. Parquet remains a
-secondary projection of `extract.data` and is not part of any bounded-memory
-claim unless a future implementation adds true incremental Parquet writing.
+an earlier record is still pending. Record-index parallel runs with
+unambiguous `min_occurrences` floors preflight those floors from the index
+count before opening output and still use the streaming path. Parquet, mixed
+JSON+Parquet output, sequential `min_occurrences`, and ambiguous indexed-floor
+recipes still use the buffered path. Parquet remains a secondary projection of
+`extract.data` and is not part of any bounded-memory claim unless a future
+implementation adds true incremental Parquet writing.
 The in-tree memory-regression fixture exercises both sequential and
 record-index parallel JSON/NDJSON sink routes with synthetic many-record input
 and verifies that the streaming APIs do not populate `ExtractResult.Records`.
@@ -270,6 +273,11 @@ records are extracted. A selector with `min_occurrences: N` where `N > 0`
 opts into fail-loud enforcement: if that selector yields fewer than `N`
 matches for a source file, the command exits non-zero and names the recipe,
 selector index, selector XPath, declared floor, actual count, and source file.
+For record-index parallel JSON/NDJSON runs where the index selector maps
+unambiguously to the declared floor selector, Sumpter checks the floor against
+the index count before opening output so the run can keep the streaming
+transactional output path. Sequential runs and ambiguous indexed floors remain
+buffered so the floor can be enforced before publishing output.
 No payload output or `manifest.json` is written for that failing source.
 
 The check is per selector, not aggregate across a polymorphic recipe. If a
@@ -284,12 +292,12 @@ successful zero-record runs, `manifest.json` includes an `outputs[]` entry with
 `RecordCount: 0`, and `counts_by_record_type` includes the processed record
 type with value `0`.
 
-`--allow-large-files` streaming mode currently tracks selector counts for the
-streaming record selector. The streaming/index record boundary grammar is a
-single local element name with exact case-sensitive matching: `Record` and
-`//Record` are supported. Predicate selectors, multi-segment paths, and
-namespace-prefixed forms are not yet supported for streaming/index mode and
-fail before scanning so they cannot silently over-match. Multi-selector
+Streaming mode currently tracks selector counts for the streaming record
+selector. The streaming/index record boundary grammar is a single local
+element name with exact case-sensitive matching: `Record` and `//Record` are
+supported. Predicate selectors, multi-segment paths, and namespace-prefixed
+forms are not yet supported for streaming/index mode and fail before scanning
+so they cannot silently over-match. Multi-selector
 streaming recipes may return sparse per-selector counts, so per-selector floor
 enforcement can be relaxed for selectors the streaming scanner did not count.
 

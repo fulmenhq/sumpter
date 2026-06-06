@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -311,6 +312,7 @@ func runExtract(opts *ExtractOptions) error {
 	if shouldUseSequentialJSONStreaming(opts, extCfg, outputFormats) {
 		return runSequentialJSONStreamingExtraction(opts, sigCfg, extCfg, files, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
+	warnSequentialMinOccurrencesBufferedFallback(logger, opts, extCfg, outputFormats)
 
 	// Process files
 	results := make(chan extract.ExtractResult, len(files))
@@ -744,12 +746,24 @@ func shouldUseParallelJSONStreaming(opts *ExtractOptions, extCfg *extract.Extrac
 	if opts.RecordIndex == "" || len(outputFormats) != 1 || outputFormats[0] != recipesmanifest.OutputFormatJSON {
 		return false
 	}
-	for _, selector := range extCfg.MatchSelectors {
-		if selector.MinOccurrences > 0 {
-			return false
-		}
-	}
 	return true
+}
+
+func warnSequentialMinOccurrencesBufferedFallback(logger *zap.Logger, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, outputFormats []string) {
+	if logger == nil || opts == nil || extCfg == nil {
+		return
+	}
+	if opts.RecordIndex != "" || len(outputFormats) != 1 || outputFormats[0] != recipesmanifest.OutputFormatJSON {
+		return
+	}
+	if !hasDeclaredMinOccurrences(extCfg) {
+		return
+	}
+	logger.Warn("Sequential JSON/NDJSON min_occurrences uses buffered extraction path",
+		zap.String("record_type", extCfg.RecordType),
+		zap.String("recipe", recipeIdentifier(opts)),
+		zap.String("reason", "min_occurrences floors must be enforced before publishing sequential output"),
+		zap.String("bounded_alternative", "build a record index and use --record-index for bounded JSON/NDJSON streaming with unambiguous floors"))
 }
 
 func isJSONOutputFailure(err error) bool {
@@ -1130,6 +1144,19 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		return err
 	}
 	if shouldUseParallelJSONStreaming(opts, extCfg, outputFormats) {
+		if hasDeclaredMinOccurrences(extCfg) {
+			indexedCount, err := countIndexedRecords(opts.RecordIndex)
+			if err != nil {
+				return err
+			}
+			perSelectorCounts, err := perSelectorCountsForIndexedExtraction(header.Selector.XPath, extCfg, indexedCount)
+			if err != nil {
+				return err
+			}
+			if err := enforceMinOccurrences(opts, extCfg, sigCfg, header.Source.Path, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
+				return err
+			}
+		}
 		return runParallelJSONStreamingExtraction(opts, extCfg, parallelOpts, header.Source.Path, runtimeProvenance, startedAt)
 	}
 
@@ -1312,14 +1339,7 @@ func enforceMinOccurrences(opts *ExtractOptions, extCfg *extract.ExtractRecordMa
 		return nil
 	}
 	recipeID := recipeIdentifier(opts)
-	hasDeclaredFloor := false
-	for _, selector := range extCfg.MatchSelectors {
-		if selector.MinOccurrences > 0 {
-			hasDeclaredFloor = true
-			break
-		}
-	}
-	if signatureMatchStatus == extract.SignatureMatchMismatched && hasDeclaredFloor {
+	if signatureMatchStatus == extract.SignatureMatchMismatched && hasDeclaredMinOccurrences(extCfg) {
 		threshold := 0.0
 		if sigCfg != nil {
 			threshold = sigCfg.ConfidenceThreshold
@@ -1352,6 +1372,18 @@ func enforceMinOccurrences(opts *ExtractOptions, extCfg *extract.ExtractRecordMa
 	return nil
 }
 
+func hasDeclaredMinOccurrences(extCfg *extract.ExtractRecordMatch) bool {
+	if extCfg == nil {
+		return false
+	}
+	for _, selector := range extCfg.MatchSelectors {
+		if selector.MinOccurrences > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func recipeIdentifier(opts *ExtractOptions) string {
 	if opts == nil {
 		return "direct extract"
@@ -1363,6 +1395,32 @@ func recipeIdentifier(opts *ExtractOptions) string {
 		return opts.ExtractConfig
 	}
 	return "direct extract"
+}
+
+func countIndexedRecords(indexPath string) (int, error) {
+	indexStore, err := store.Open(indexPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open record index for min_occurrences preflight: %w", err)
+	}
+	defer func() { _ = indexStore.Close() }()
+
+	iter, err := indexStore.Records(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("failed to read record index for min_occurrences preflight: %w", err)
+	}
+	defer func() { _ = iter.Close() }()
+
+	count := 0
+	for {
+		if _, err := iter.Next(); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return 0, fmt.Errorf("failed to count record index entries for min_occurrences preflight: %w", err)
+		}
+		count++
+	}
+	return count, nil
 }
 
 func perSelectorCountsForIndexedExtraction(indexSelector string, extCfg *extract.ExtractRecordMatch, recordCount int) (map[int]int, error) {

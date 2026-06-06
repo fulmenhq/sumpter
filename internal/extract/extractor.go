@@ -683,34 +683,25 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	// Streaming mode threshold: 100MB uncompressed (or 10MB compressed with 10x ratio estimate)
 	const streamingThreshold = 100 * 1024 * 1024 // 100MB
 
-	if allowLargeFiles {
-		fileInfo, err := os.Stat(filePath)
-		if err == nil {
-			isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
-			estimatedSize := fileInfo.Size()
-			if isCompressed {
-				estimatedSize = fileInfo.Size() * 10 // Conservative 10x decompression ratio
-			}
-
-			// Use streaming mode for files > 100MB
-			if estimatedSize > streamingThreshold {
-				if appCfg != nil {
-					result.Error = fmt.Errorf("applicability declared but not supported in streaming mode")
-					markFailed(DispositionReasonInternalError, result.Error.Error())
-					markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
-					emitBoundary()
-					return result
-				}
-				logger.Info("Using streaming mode for large file",
-					zap.String("file", filePath),
-					zap.Int64("estimated_size_mb", estimatedSize/(1024*1024)),
-					zap.Bool("compressed", isCompressed))
-				if sink != nil {
-					return ProcessFileStreamingToSink(ctx, filePath, sigCfg, extCfg, externalFields, runtimeProvenance, sink)
-				}
-				return ProcessFileStreamingWithProvenance(filePath, sigCfg, extCfg, externalFields, runtimeProvenance)
-			}
+	shouldStream, estimatedSize, streamCompressed := shouldUseLargeFileStreaming(filePath, allowLargeFiles, sink, appCfg, streamingThreshold)
+	if shouldStream {
+		if appCfg != nil {
+			result.Error = fmt.Errorf("applicability declared but not supported in streaming mode")
+			markFailed(DispositionReasonInternalError, result.Error.Error())
+			markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
+			emitBoundary()
+			return result
 		}
+		logger.Info("Using streaming mode for large file",
+			zap.String("file", filePath),
+			zap.Int64("estimated_size_mb", estimatedSize/(1024*1024)),
+			zap.Bool("compressed", streamCompressed),
+			zap.Bool("allow_large_files", allowLargeFiles),
+			zap.Bool("sink", sink != nil))
+		if sink != nil {
+			return ProcessFileStreamingToSink(ctx, filePath, sigCfg, extCfg, externalFields, runtimeProvenance, sink)
+		}
+		return ProcessFileStreamingWithProvenance(filePath, sigCfg, extCfg, externalFields, runtimeProvenance)
 	}
 
 	// Read file content (with transparent .gz decompression if needed)
@@ -852,6 +843,19 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	result.PerSelectorCounts = perSelectorCounts
 	result.PerSelectorCountsComplete = true
 	return result
+}
+
+func shouldUseLargeFileStreaming(filePath string, allowLargeFiles bool, sink RecordSink, appCfg *ApplicabilityConfig, streamingThreshold int64) (bool, int64, bool) {
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return false, 0, false
+	}
+	isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
+	estimatedSize := fileInfo.Size()
+	if isCompressed {
+		estimatedSize = fileInfo.Size() * 10 // Conservative 10x decompression ratio
+	}
+	return estimatedSize > streamingThreshold && (allowLargeFiles || (sink != nil && appCfg == nil)), estimatedSize, isCompressed
 }
 
 func evaluateApplicability(doc *xmlquery.Node, cfg *ApplicabilityConfig) (bool, error) {
