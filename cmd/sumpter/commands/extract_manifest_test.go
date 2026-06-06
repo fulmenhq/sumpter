@@ -16,6 +16,9 @@ import (
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/validation"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestRunExtractWritesDirectProvenanceManifest(t *testing.T) {
@@ -141,6 +144,42 @@ func TestSequentialJSONStreamingRouteSelection(t *testing.T) {
 	}
 	if !shouldUseParallelJSONStreaming(&ExtractOptions{RecordIndex: "records.index"}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON}) {
 		t.Fatal("parallel min_occurrences recipes can stream because indexed counts are enforced before output publication")
+	}
+}
+
+func TestWarnSequentialMinOccurrencesBufferedFallback(t *testing.T) {
+	core, logs := observer.New(zapcore.WarnLevel)
+	logger := zap.New(core)
+	cfgWithFloor := &extract.ExtractRecordMatch{
+		RecordType:     "sample_record",
+		MatchSelectors: []extract.MatchSelector{{XPath: "//item", MinOccurrences: 1}},
+	}
+	opts := &ExtractOptions{
+		ExtractConfig: "extract.yaml",
+	}
+
+	warnSequentialMinOccurrencesBufferedFallback(logger, opts, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON})
+
+	entries := logs.All()
+	if len(entries) != 1 {
+		t.Fatalf("warning count = %d, want 1", len(entries))
+	}
+	if got := entries[0].Message; got != "Sequential JSON/NDJSON min_occurrences uses buffered extraction path" {
+		t.Fatalf("warning message = %q", got)
+	}
+	fields := entries[0].ContextMap()
+	if got := fields["record_type"]; got != "sample_record" {
+		t.Fatalf("record_type field = %#v, want sample_record", got)
+	}
+	if got := fields["bounded_alternative"]; got == "" {
+		t.Fatalf("bounded_alternative field missing: %#v", fields)
+	}
+
+	warnSequentialMinOccurrencesBufferedFallback(logger, &ExtractOptions{RecordIndex: "records.index"}, cfgWithFloor, []string{recipesmanifest.OutputFormatJSON})
+	warnSequentialMinOccurrencesBufferedFallback(logger, opts, cfgWithFloor, []string{recipesmanifest.OutputFormatParquet})
+	warnSequentialMinOccurrencesBufferedFallback(logger, opts, &extract.ExtractRecordMatch{MatchSelectors: []extract.MatchSelector{{XPath: "//item"}}}, []string{recipesmanifest.OutputFormatJSON})
+	if len(logs.All()) != 1 {
+		t.Fatalf("non-fallback cases emitted extra warnings: %d", len(logs.All()))
 	}
 }
 

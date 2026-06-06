@@ -312,6 +312,7 @@ func runExtract(opts *ExtractOptions) error {
 	if shouldUseSequentialJSONStreaming(opts, extCfg, outputFormats) {
 		return runSequentialJSONStreamingExtraction(opts, sigCfg, extCfg, files, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
+	warnSequentialMinOccurrencesBufferedFallback(logger, opts, extCfg, outputFormats)
 
 	// Process files
 	results := make(chan extract.ExtractResult, len(files))
@@ -746,6 +747,23 @@ func shouldUseParallelJSONStreaming(opts *ExtractOptions, extCfg *extract.Extrac
 		return false
 	}
 	return true
+}
+
+func warnSequentialMinOccurrencesBufferedFallback(logger *zap.Logger, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, outputFormats []string) {
+	if logger == nil || opts == nil || extCfg == nil {
+		return
+	}
+	if opts.RecordIndex != "" || len(outputFormats) != 1 || outputFormats[0] != recipesmanifest.OutputFormatJSON {
+		return
+	}
+	if !hasDeclaredMinOccurrences(extCfg) {
+		return
+	}
+	logger.Warn("Sequential JSON/NDJSON min_occurrences uses buffered extraction path",
+		zap.String("record_type", extCfg.RecordType),
+		zap.String("recipe", recipeIdentifier(opts)),
+		zap.String("reason", "min_occurrences floors must be enforced before publishing sequential output"),
+		zap.String("bounded_alternative", "build a record index and use --record-index for bounded JSON/NDJSON streaming with unambiguous floors"))
 }
 
 func isJSONOutputFailure(err error) bool {
