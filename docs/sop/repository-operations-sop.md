@@ -304,6 +304,13 @@ notes as a directory of dated documents.
 Anything that needs to be shared, versioned, or evergreen belongs in `docs/`
 and goes through the normal PR flow.
 
+### Local Toolchain Contract
+
+`make lint` and `make check-all` enforce the same Go and golangci-lint contract
+as CI before static analysis runs. See
+[Toolchain Contract](../standards/toolchain-contract.md) for the pinned
+versions, remediation commands, and the staticcheck `SA5011` regression probe.
+
 ## Lifecycle Phase Awareness
 
 ### Phase-Specific Requirements

@@ -38,6 +38,13 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Load toolchain contract
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          source config/toolchain.env
+          echo "go-version=${SUMPTER_GO_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Prepare Go directories
         # Pre-create the writable workspace-relative GOPATH so actions/setup-go
         # does not fail with EACCES under the non-root runner user.
@@ -45,7 +52,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.4"
+          go-version: ${{ steps.toolchain.outputs.go-version }}
       - name: Validate VERSION matches tag
         shell: bash
         run: |
@@ -64,8 +71,13 @@ jobs:
         run: |
           set -euo pipefail
           goneat --version
-          go version
+          ./scripts/toolchain-contract.sh check-go
           go mod download
+      - name: Install pinned golangci-lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/toolchain-contract.sh install-golangci-lint
       - name: Lint
         shell: bash
         run: |

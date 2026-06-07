@@ -44,6 +44,13 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Load toolchain contract
+        id: toolchain
+        run: |
+          set -euo pipefail
+          source config/toolchain.env
+          echo "go-version=${SUMPTER_GO_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "golangci-lint-version=${SUMPTER_GOLANGCI_LINT_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Prepare Go directories
         # Pre-create the writable workspace-relative GOPATH so actions/setup-go
         # does not fail with EACCES under the non-root runner user.
@@ -51,24 +58,21 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.4"
+          go-version: ${{ steps.toolchain.outputs.go-version }}
       - name: Verify toolchain
         run: |
           set -euo pipefail
           goneat --version
-          go version
+          ./scripts/toolchain-contract.sh check-go
           go mod download
-      - name: Install golangci-lint
-        # goneat-tools-runner does not ship golangci-lint; install via the
-        # canonical action so sumpter's `make lint` finds it in PATH.
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.11.2
-          args: --help
-      - name: Verify golangci-lint
+      - name: Install pinned golangci-lint
         run: |
           set -euo pipefail
-          golangci-lint --version
+          ./scripts/toolchain-contract.sh install-golangci-lint
+      - name: Verify linter contract
+        run: |
+          set -euo pipefail
+          ./scripts/toolchain-contract.sh check
       - name: Quality gates (fmt-strict + vet + lint + safety + schema)
         run: |
           set -euo pipefail
@@ -118,17 +122,23 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Load toolchain contract
+        id: toolchain
+        run: |
+          set -euo pipefail
+          source config/toolchain.env
+          echo "go-version=${SUMPTER_GO_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Prepare Go directories
         run: mkdir -p "$GOPATH/bin" "$GOPATH/pkg"
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.4"
+          go-version: ${{ steps.toolchain.outputs.go-version }}
       - name: Verify toolchain
         run: |
           set -euo pipefail
           goneat --version
-          go version
+          ./scripts/toolchain-contract.sh check-go
           go mod download
       - name: Release build (cross-compile all platforms + checksums)
         run: |

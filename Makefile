@@ -35,6 +35,8 @@ CMD_DIR := cmd/sumpter
 INSTALL_DIR ?= $(HOME)/.local/bin
 export GOCACHE ?= $(CURDIR)/.cache/go-build
 export GOMODCACHE ?= $(CURDIR)/.cache/go-mod
+TOOLCHAIN_CONTRACT := config/toolchain.env
+include $(TOOLCHAIN_CONTRACT)
 
 # Go related variables
 GOCMD := go
@@ -175,11 +177,22 @@ vet: ## Run go vet
 	@echo "$(BLUE)Running go vet...$(NC)"
 	$(GOVET) ./...
 
+.PHONY: toolchain-check
+toolchain-check: ## Verify local Go/linter versions match CI contract
+	@./scripts/toolchain-contract.sh check
+
+.PHONY: install-golangci-lint
+install-golangci-lint: ## Install CI-pinned golangci-lint version
+	@./scripts/toolchain-contract.sh install-golangci-lint
+
+.PHONY: lint-staticcheck-probe
+lint-staticcheck-probe: ## Verify pinned staticcheck catches SUM-035 false-green class
+	@./scripts/toolchain-contract.sh staticcheck-probe
+
 .PHONY: lint
-lint: ## Run golangci-lint (install if needed)
+lint: ## Run CI-pinned golangci-lint (install if needed)
 	@echo "$(BLUE)Running linter...$(NC)"
-	@if ! command -v golangci-lint >/dev/null 2>&1; then echo "$(YELLOW)Installing golangci-lint...$(NC)"; curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$((go env GOPATH))/bin; fi
-	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run; else $$(go env GOPATH)/bin/golangci-lint run; fi
+	@./scripts/toolchain-contract.sh lint
 
 # Testing
 .PHONY: test
@@ -630,12 +643,7 @@ install-dev-tools: ## Install development and security tools
 	else \
 		echo "$(GREEN)✅ govulncheck already installed$(NC)"; \
 	fi
-	@if ! command -v golangci-lint >/dev/null; then \
-		echo "Installing golangci-lint..."; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$$((go env GOPATH))/bin"; \
-	else \
-		echo "$(GREEN)✅ golangci-lint already installed$(NC)"; \
-	fi
+	@$(MAKE) install-golangci-lint
 	@echo "$(BLUE)Installing document formatting tools...$(NC)"
 	@if ! command -v yamlfmt >/dev/null; then \
 		echo "Installing yamlfmt..."; \
