@@ -35,12 +35,12 @@ jobs:
     env:
       FULMEN_WORKSPACE_ROOT: ${{ github.workspace }}
       # Workspace-relative GOPATH: goneat-tools-runner runs as non-root and
-      # /opt/gopath/bin is not writable by that user. actions/setup-go@v5
+      # /opt/gopath/bin is not writable by that user. actions/setup-go@v6
       # expects $GOPATH/bin to be writable.
       GOPATH: ${{ github.workspace }}/../_go
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -56,7 +56,7 @@ jobs:
         # does not fail with EACCES under the non-root runner user.
         run: mkdir -p "$GOPATH/bin" "$GOPATH/pkg"
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ steps.toolchain.outputs.go-version }}
       - name: Verify toolchain
@@ -118,7 +118,7 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -131,7 +131,7 @@ jobs:
       - name: Prepare Go directories
         run: mkdir -p "$GOPATH/bin" "$GOPATH/pkg"
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ steps.toolchain.outputs.go-version }}
       - name: Verify toolchain

@@ -39,7 +39,7 @@ jobs:
       image: golang:1.26-bookworm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install build dependencies
         run: |
           apt-get update
@@ -100,7 +100,7 @@ jobs:
       image: golang:1.26-alpine
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install build dependencies
         run: |
           apk add --no-cache build-base git
