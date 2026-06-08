@@ -1,0 +1,347 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<q:quakeml xmlns="http://quakeml.org/xmlns/bed/1.2" xmlns:anss="http://anss.org/xmlns/event/0.1" xmlns:catalog="http://anss.org/xmlns/catalog/0.1" xmlns:q="http://quakeml.org/xmlns/quakeml/1.2">
+ <eventParameters publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?format=quakeml&amp;starttime=2024-01-01&amp;endtime=2024-01-08&amp;minmagnitude=5">
+  <event catalog:datasource="us" catalog:eventsource="us" catalog:eventid="6000m2di" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=us6000m2di&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>77 km ESE of Fangale’ounga, Tonga</text>
+   </description>
+   <origin catalog:datasource="us" catalog:dataid="us6000m2di" catalog:eventsource="us" catalog:eventid="6000m2di" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2di/us/1710020403040">
+    <time>
+     <value>2024-01-07T21:41:05.926Z</value>
+    </time>
+    <longitude>
+     <value>-173.6129</value>
+    </longitude>
+    <latitude>
+     <value>-19.936</value>
+    </latitude>
+    <depth>
+     <value>10000</value>
+     <uncertainty>1756</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>7460</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>153</usedPhaseCount>
+     <usedStationCount>150</usedStationCount>
+     <standardError>0.75</standardError>
+     <azimuthalGap>44</azimuthalGap>
+     <minimumDistance>1.332</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:40:03.040Z</creationTime>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="us" catalog:dataid="us6000m2di" catalog:eventsource="us" catalog:eventid="6000m2di" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2di/us/1710020403040#magnitude">
+    <mag>
+     <value>5.1</value>
+     <uncertainty>0.098</uncertainty>
+    </mag>
+    <type>mww</type>
+    <stationCount>10</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/us6000m2di/us/1710020403040</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:40:03.040Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/us6000m2di/us/1710020403040</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/us6000m2di/us/1710020403040#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>us</agencyID>
+    <creationTime>2024-03-09T21:40:03.040Z</creationTime>
+   </creationInfo>
+  </event><event catalog:datasource="us" catalog:eventsource="us" catalog:eventid="6000m2d7" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=us6000m2d7&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>Balleny Islands region</text>
+   </description>
+   <origin catalog:datasource="us" catalog:dataid="us6000m2d7" catalog:eventsource="us" catalog:eventid="6000m2d7" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2d7/us/1710020402040">
+    <time>
+     <value>2024-01-07T20:00:07.311Z</value>
+    </time>
+    <longitude>
+     <value>165.3253</value>
+    </longitude>
+    <latitude>
+     <value>-62.3294</value>
+    </latitude>
+    <depth>
+     <value>10000</value>
+     <uncertainty>1893</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>11980</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>34</usedPhaseCount>
+     <usedStationCount>34</usedStationCount>
+     <standardError>0.5</standardError>
+     <azimuthalGap>120</azimuthalGap>
+     <minimumDistance>8.533</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:40:02.040Z</creationTime>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="us" catalog:dataid="us6000m2d7" catalog:eventsource="us" catalog:eventid="6000m2d7" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2d7/us/1710020402040#magnitude">
+    <mag>
+     <value>5.5</value>
+     <uncertainty>0.066</uncertainty>
+    </mag>
+    <type>mww</type>
+    <stationCount>22</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/us6000m2d7/us/1710020402040</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:40:02.040Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/us6000m2d7/us/1710020402040</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/us6000m2d7/us/1710020402040#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>us</agencyID>
+    <creationTime>2024-03-09T21:40:02.040Z</creationTime>
+   </creationInfo>
+  </event><event catalog:datasource="us" catalog:eventsource="us" catalog:eventid="6000m2cv" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=us6000m2cv&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>Balleny Islands region</text>
+   </description>
+   <origin catalog:datasource="us" catalog:dataid="us6000m2cv" catalog:eventsource="us" catalog:eventid="6000m2cv" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2cv/us/1710020400040">
+    <time>
+     <value>2024-01-07T18:06:11.273Z</value>
+    </time>
+    <longitude>
+     <value>165.5051</value>
+    </longitude>
+    <latitude>
+     <value>-62.2113</value>
+    </latitude>
+    <depth>
+     <value>10000</value>
+     <uncertainty>1905</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>12450</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>31</usedPhaseCount>
+     <usedStationCount>31</usedStationCount>
+     <standardError>0.43</standardError>
+     <azimuthalGap>122</azimuthalGap>
+     <minimumDistance>8.465</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:40:00.040Z</creationTime>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="us" catalog:dataid="us6000m2cv" catalog:eventsource="us" catalog:eventid="6000m2cv" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2cv/us/1710020400040#magnitude">
+    <mag>
+     <value>5.6</value>
+     <uncertainty>0.078</uncertainty>
+    </mag>
+    <type>mww</type>
+    <stationCount>16</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/us6000m2cv/us/1710020400040</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:40:00.040Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/us6000m2cv/us/1710020400040</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/us6000m2cv/us/1710020400040#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>us</agencyID>
+    <creationTime>2024-03-09T21:40:00.040Z</creationTime>
+   </creationInfo>
+  </event><event catalog:datasource="us" catalog:eventsource="us" catalog:eventid="6000m2bf" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=us6000m2bf&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>84 km WSW of Curahuara de Carangas, Bolivia</text>
+   </description>
+   <origin catalog:datasource="us" catalog:dataid="us6000m2bf" catalog:eventsource="us" catalog:eventid="6000m2bf" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2bf/us/1710020395040">
+    <time>
+     <value>2024-01-07T08:35:32.422Z</value>
+    </time>
+    <longitude>
+     <value>-69.1267</value>
+    </longitude>
+    <latitude>
+     <value>-18.2465</value>
+    </latitude>
+    <depth>
+     <value>142520</value>
+     <uncertainty>4434</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>6450</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>139</usedPhaseCount>
+     <usedStationCount>137</usedStationCount>
+     <standardError>0.54</standardError>
+     <azimuthalGap>58</azimuthalGap>
+     <minimumDistance>0.735</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:39:55.040Z</creationTime>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="us" catalog:dataid="us6000m2bf" catalog:eventsource="us" catalog:eventid="6000m2bf" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2bf/us/1710020395040#magnitude">
+    <mag>
+     <value>5.3</value>
+     <uncertainty>0.05</uncertainty>
+    </mag>
+    <type>mww</type>
+    <stationCount>39</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/us6000m2bf/us/1710020395040</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:39:55.040Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/us6000m2bf/us/1710020395040</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/us6000m2bf/us/1710020395040#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>us</agencyID>
+    <creationTime>2024-03-09T21:39:55.040Z</creationTime>
+   </creationInfo>
+  </event><event catalog:datasource="us" catalog:eventsource="us" catalog:eventid="6000m2b9" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=us6000m2b9&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>211 km SW of Merizo Village, Guam</text>
+   </description>
+   <origin catalog:datasource="us" catalog:dataid="us6000m2b9" catalog:eventsource="us" catalog:eventid="6000m2b9" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2b9/us/1710020394040">
+    <time>
+     <value>2024-01-07T06:58:16.209Z</value>
+    </time>
+    <longitude>
+     <value>143.2291</value>
+    </longitude>
+    <latitude>
+     <value>11.9785</value>
+    </latitude>
+    <depth>
+     <value>10000</value>
+     <uncertainty>1868</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>9730</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>69</usedPhaseCount>
+     <usedStationCount>68</usedStationCount>
+     <standardError>0.49</standardError>
+     <azimuthalGap>70</azimuthalGap>
+     <minimumDistance>2.263</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:39:54.040Z</creationTime>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="us" catalog:dataid="us6000m2b9" catalog:eventsource="us" catalog:eventid="6000m2b9" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m2b9/us/1710020394040#magnitude">
+    <mag>
+     <value>5</value>
+     <uncertainty>0.051</uncertainty>
+    </mag>
+    <type>mb</type>
+    <stationCount>128</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/us6000m2b9/us/1710020394040</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:39:54.040Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/us6000m2b9/us/1710020394040</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/us6000m2b9/us/1710020394040#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>us</agencyID>
+    <creationTime>2025-12-22T20:54:41.519Z</creationTime>
+   </creationInfo>
+  </event><event catalog:datasource="us" catalog:eventsource="us" catalog:eventid="6000m27f" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=us6000m27f&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>southern East Pacific Rise</text>
+   </description>
+   <origin catalog:datasource="us" catalog:dataid="us6000m27f" catalog:eventsource="us" catalog:eventid="6000m27f" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m27f/us/1710020385040">
+    <time>
+     <value>2024-01-06T12:33:02.528Z</value>
+    </time>
+    <longitude>
+     <value>-116.0254</value>
+    </longitude>
+    <latitude>
+     <value>-24.4019</value>
+    </latitude>
+    <depth>
+     <value>10000</value>
+     <uncertainty>1802</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>11850</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>106</usedPhaseCount>
+     <usedStationCount>104</usedStationCount>
+     <standardError>0.53</standardError>
+     <azimuthalGap>65</azimuthalGap>
+     <minimumDistance>6.614</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:39:45.040Z</creationTime>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="us" catalog:dataid="us6000m27f" catalog:eventsource="us" catalog:eventid="6000m27f" publicID="quakeml:earthquake.usgs.gov/product/origin/us6000m27f/us/1710020385040#magnitude">
+    <mag>
+     <value>5.5</value>
+     <uncertainty>0.103</uncertainty>
+    </mag>
+    <type>mwb</type>
+    <stationCount>9</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/us6000m27f/us/1710020385040</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>us</agencyID>
+     <creationTime>2024-03-09T21:39:45.040Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/us6000m27f/us/1710020385040</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/us6000m27f/us/1710020385040#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>us</agencyID>
+    <creationTime>2024-03-09T21:39:45.040Z</creationTime>
+   </creationInfo>
+  </event></eventParameters>
+</q:quakeml>

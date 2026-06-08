@@ -1,0 +1,34 @@
+# USGS QuakeML File Signature Configuration
+# Matches QuakeML 1.2 seismic event catalogs from the USGS FDSN event web service.
+signature_id: "usgs-quakeml"
+name: "USGS QuakeML Seismic Event Catalog"
+description: "Matches QuakeML 1.2 event-parameter documents from the USGS / ANSS FDSN event web service (public-domain seismology data)."
+status: "active"
+priority: "high"
+realm: "scientific"
+match_patterns:
+  - pattern_id: "quakeml-root"
+    name: "QuakeML Document Root"
+    selector: "/q:quakeml"
+    weight: 1.0
+    ecosystem: "fdsn"
+  - pattern_id: "quakeml-event-parameters"
+    name: "QuakeML Event Parameters"
+    selector: "/q:quakeml/eventParameters"
+    weight: 0.9
+    ecosystem: "fdsn"
+confidence_threshold: 0.8
+format_type: "xml"
+tags:
+  - "quakeml"
+  - "usgs"
+  - "anss"
+  - "fdsn"
+  - "seismology"
+  - "earthquake"
+  - "scientific"
+use_cases:
+  - "Extract seismic event parameters from QuakeML catalogs"
+  - "Tabulate magnitude, depth, and origin location for analysis"
+  - "Analyze solution quality metrics (azimuthal gap, phase counts)"
+  - "Build downstream geophysical event tables"

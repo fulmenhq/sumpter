@@ -1,0 +1,35 @@
+# GovInfo USLM Bill File Signature Configuration
+# Matches United States Legislative Markup (USLM) bill documents published by
+# the US Government Publishing Office on govinfo (public-domain, 17 USC 105).
+signature_id: "govinfo-uslm-bill"
+name: "GovInfo USLM Bill"
+description: "Matches USLM-schema legislative bill documents (enrolled bills, public/private laws) from the US GPO govinfo service."
+status: "active"
+priority: "high"
+realm: "government"
+match_patterns:
+  - pattern_id: "uslm-bill-root"
+    name: "USLM Bill Root"
+    selector: "/bill"
+    weight: 1.0
+    ecosystem: "uslm"
+  - pattern_id: "uslm-bill-main"
+    name: "USLM Bill Main Body"
+    selector: "/bill/main"
+    weight: 0.9
+    ecosystem: "uslm"
+confidence_threshold: 0.8
+format_type: "xml"
+tags:
+  - "uslm"
+  - "govinfo"
+  - "gpo"
+  - "legislation"
+  - "bill"
+  - "government"
+  - "regulatory"
+use_cases:
+  - "Extract section-level structure from federal bills"
+  - "Tabulate section numbers, headings, and stable USLM identifiers"
+  - "Index legislative provisions for downstream search"
+  - "Compare bill structure across Congresses"
