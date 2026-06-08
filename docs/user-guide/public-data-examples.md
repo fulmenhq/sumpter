@@ -51,6 +51,119 @@ End-to-end staging and parallel extraction is documented in the
 [ClinVar Parallel Extraction Runbook](../runbooks/clinvar-parallel.md),
 covering decompress → hash → record-index → parallel extract.
 
+## USGS QuakeML seismic event catalogs — scientific / research
+
+**Vertical**: scientific / geophysics. **Format**: QuakeML 1.2 (an XML
+representation of seismological data) with the ANSS catalog extension
+namespace. **Record types**: `event` records, each nesting a preferred
+`origin` (location, time, depth), a preferred `magnitude`, and a solution
+`quality` block.
+
+QuakeML is a useful genericity test because the record is a _scientific
+measurement_: leaf values arrive as value/uncertainty pairs and the document
+carries an extension namespace on its attributes. The recipe pair lives in
+[`examples/config/extract/`](../../examples/config/extract/):
+
+- [`usgs-quakeml-signature.yaml`](../../examples/config/extract/usgs-quakeml-signature.yaml) —
+  matches the `q:quakeml` document root and the `eventParameters` wrapper
+- [`usgs-quakeml-event-extract.yaml`](../../examples/config/extract/usgs-quakeml-event-extract.yaml) —
+  extracts one record per `event`, flattening the preferred origin's
+  latitude/longitude/depth and time, the preferred magnitude, and origin
+  quality metrics (azimuthal gap, used phase/station counts)
+
+A sliced public-domain sample ships at
+[`examples/data/public-data/usgs-quakeml-sample.xml`](../../examples/data/public-data/usgs-quakeml-sample.xml)
+(see [PROVENANCE.md](../../examples/data/public-data/PROVENANCE.md)). Run it
+end-to-end:
+
+```bash
+sumpter extract files \
+  --files examples/data/public-data/usgs-quakeml-sample.xml \
+  --signature-config-path examples/config/extract/usgs-quakeml-signature.yaml \
+  --extract-config-path examples/config/extract/usgs-quakeml-event-extract.yaml \
+  --output-path out/
+```
+
+USGS earthquake data are served by the FDSN `event` web service; QuakeML is
+the default response format. USGS information products are in the U.S. public
+domain, so a small sample ships with the repo for local testing.
+
+## NWS CAP public alerts — geospatial
+
+**Vertical**: geospatial / public-safety. **Format**: Atom 1.0 feed wrapping
+OASIS Common Alerting Protocol (CAP) v1.2 payloads. **Record types**: Atom
+`entry` records, each carrying a CAP alert with a geospatial `polygon`, an
+affected-area description, and the severity/urgency/certainty triad.
+
+This exemplar exercises **cross-namespace field mapping**: the record boundary
+is an Atom element while the alert payload lives under the `cap:` namespace in
+the same record. It also treats a packed geospatial coordinate string as a
+first-class extracted field. The recipe pair lives in
+[`examples/config/extract/`](../../examples/config/extract/):
+
+- [`nws-cap-alerts-signature.yaml`](../../examples/config/extract/nws-cap-alerts-signature.yaml) —
+  matches the Atom `feed` root and the CAP alert payload
+- [`nws-cap-alert-extract.yaml`](../../examples/config/extract/nws-cap-alert-extract.yaml) —
+  extracts one record per `entry`, mapping Atom identifiers and titles
+  alongside `cap:event`, `cap:severity`, `cap:areaDesc`, and the geospatial
+  `cap:polygon` geometry
+
+A sliced public-domain sample ships at
+[`examples/data/public-data/nws-cap-alerts-sample.xml`](../../examples/data/public-data/nws-cap-alerts-sample.xml)
+(see [PROVENANCE.md](../../examples/data/public-data/PROVENANCE.md)). Run it
+end-to-end:
+
+```bash
+sumpter extract files \
+  --files examples/data/public-data/nws-cap-alerts-sample.xml \
+  --signature-config-path examples/config/extract/nws-cap-alerts-signature.yaml \
+  --extract-config-path examples/config/extract/nws-cap-alert-extract.yaml \
+  --output-path out/
+```
+
+National Weather Service web content is in the public domain, so a small
+point-in-time capture of active alerts ships with the repo. Alert content is
+time-sensitive; the sample reflects alerts active at capture time, while the
+record structure is stable.
+
+## GovInfo USLM legislative bills — government / regulatory
+
+**Vertical**: government / regulatory open data. **Format**: United States
+Legislative Markup (USLM), an XML schema derived from the Akoma Ntoso /
+LegalDocML standard, with Dublin Core metadata. **Record types**: `section`
+divisions within a bill, above further `subsection` / `paragraph` /
+`subparagraph` / `clause` nesting.
+
+USLM is a recursive legal-document grammar: the natural record is a structural
+division that carries both attributes (a stable `identifier` path) and
+mixed-content prose. Handling it with the same signature → match →
+field-mapping → validation pattern as a flat measurement record is the point.
+The recipe pair lives in
+[`examples/config/extract/`](../../examples/config/extract/):
+
+- [`govinfo-uslm-bill-signature.yaml`](../../examples/config/extract/govinfo-uslm-bill-signature.yaml) —
+  matches the USLM `bill` root and its `main` body
+- [`govinfo-uslm-section-extract.yaml`](../../examples/config/extract/govinfo-uslm-section-extract.yaml) —
+  extracts one record per top-level `section`, capturing its number, heading,
+  stable USLM `identifier` path, and immediate content
+
+A public-domain sample ships at
+[`examples/data/public-data/govinfo-uslm-bill-sample.xml`](../../examples/data/public-data/govinfo-uslm-bill-sample.xml)
+(see [PROVENANCE.md](../../examples/data/public-data/PROVENANCE.md)). Run it
+end-to-end:
+
+```bash
+sumpter extract files \
+  --files examples/data/public-data/govinfo-uslm-bill-sample.xml \
+  --signature-config-path examples/config/extract/govinfo-uslm-bill-signature.yaml \
+  --extract-config-path examples/config/extract/govinfo-uslm-section-extract.yaml \
+  --output-path out/
+```
+
+US federal bills and laws are not subject to copyright (17 U.S.C. 105); the
+GovInfo USLM files state this in-band in their Dublin Core `rights` metadata.
+A small enrolled-bill sample ships with the repo.
+
 ## What's deliberately not in this repo
 
 Recipes for proprietary or vendor-specific formats (POS journal

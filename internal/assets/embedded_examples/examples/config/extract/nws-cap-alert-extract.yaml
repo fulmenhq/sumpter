@@ -1,0 +1,84 @@
+# NWS CAP Alert Extraction Configuration
+# Extracts one record per Atom <entry>, flattening the CAP alert payload:
+# event type, severity triad, timing, the geospatial <cap:polygon> coordinate
+# string, and the human-readable affected-area description. Demonstrates
+# extraction across two XML namespaces (Atom default + cap:) and capture of a
+# geospatial geometry literal as a record field.
+record_type: "weather_alert"
+match_selectors:
+  - xpath: "//entry"
+    min_occurrences: 1
+field_mappings:
+  - output_field: "alert_id"
+    xpath: "id"
+    type: "string"
+  - output_field: "title"
+    xpath: "title"
+    type: "string"
+  - output_field: "event"
+    xpath: "cap:event"
+    type: "string"
+  - output_field: "severity"
+    xpath: "cap:severity"
+    type: "string"
+  - output_field: "urgency"
+    xpath: "cap:urgency"
+    type: "string"
+  - output_field: "certainty"
+    xpath: "cap:certainty"
+    type: "string"
+  - output_field: "category"
+    xpath: "cap:category"
+    type: "string"
+  - output_field: "effective"
+    xpath: "cap:effective"
+    type: "string"
+  - output_field: "expires"
+    xpath: "cap:expires"
+    type: "string"
+  - output_field: "area_desc"
+    xpath: "cap:areaDesc"
+    type: "string"
+  - output_field: "polygon"
+    xpath: "cap:polygon"
+    type: "string"
+output_schema:
+  type: "object"
+  properties:
+    alert_id:
+      type: "string"
+      description: "Atom entry identifier (CAP message URN)"
+    title:
+      type: "string"
+      description: "Human-readable alert title"
+    event:
+      type: "string"
+      description: "CAP event type (e.g. Special Marine Warning)"
+    severity:
+      type: "string"
+      description: "CAP severity (Extreme/Severe/Moderate/Minor/Unknown)"
+    urgency:
+      type: "string"
+      description: "CAP urgency (Immediate/Expected/Future/Past/Unknown)"
+    certainty:
+      type: "string"
+      description: "CAP certainty (Observed/Likely/Possible/Unlikely/Unknown)"
+    category:
+      type: "string"
+      description: "CAP category (e.g. Met, Geo, Safety)"
+    effective:
+      type: "string"
+      description: "Effective time of the alert"
+    expires:
+      type: "string"
+      description: "Expiry time of the alert"
+    area_desc:
+      type: "string"
+      description: "Free-text description of the affected area"
+    polygon:
+      type: "string"
+      description: "CAP geospatial polygon as lat,lon coordinate pairs"
+  required:
+    - "alert_id"
+    - "event"
+    - "severity"

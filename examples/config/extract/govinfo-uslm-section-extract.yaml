@@ -1,0 +1,47 @@
+# GovInfo USLM Section Extraction Configuration
+# Extracts one record per top-level legislative <section>, capturing the
+# section number, heading, stable USLM identifier path, and immediate content.
+# Demonstrates extraction from a deeply nested legislative-document tree where
+# the record is a structural division carrying both attributes and mixed-content
+# children -- a record shape distinct from tabular financial or variant data.
+record_type: "bill_section"
+match_selectors:
+  - xpath: "//section"
+    min_occurrences: 1
+field_mappings:
+  - output_field: "section_identifier"
+    xpath: "@identifier"
+    type: "string"
+  - output_field: "element_id"
+    xpath: "@id"
+    type: "string"
+  - output_field: "num"
+    xpath: "num"
+    type: "string"
+  - output_field: "heading"
+    xpath: "heading"
+    type: "string"
+  - output_field: "content"
+    xpath: "content"
+    type: "string"
+output_schema:
+  type: "object"
+  properties:
+    section_identifier:
+      type: "string"
+      description: "Stable USLM identifier path (e.g. /us/bill/118/hr/9566/s1)"
+    element_id:
+      type: "string"
+      description: "Document-local element id"
+    num:
+      type: "string"
+      description: "Section designation (e.g. SECTION 1., SEC. 2.)"
+    heading:
+      type: "string"
+      description: "Section heading text"
+    content:
+      type: "string"
+      description: "Immediate section content text, when present"
+  required:
+    - "section_identifier"
+    - "num"

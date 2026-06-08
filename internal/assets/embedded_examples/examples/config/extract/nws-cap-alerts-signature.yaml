@@ -1,0 +1,35 @@
+# NWS CAP Alerts File Signature Configuration
+# Matches Atom-wrapped Common Alerting Protocol (CAP v1.2) feeds from the
+# US National Weather Service public alerts API (public-domain government data).
+signature_id: "nws-cap-alerts"
+name: "NWS CAP Alerts (Atom/CAP v1.2)"
+description: "Matches Atom feeds carrying OASIS CAP v1.2 public alerts from the US National Weather Service api.weather.gov endpoint."
+status: "active"
+priority: "high"
+realm: "geospatial"
+match_patterns:
+  - pattern_id: "atom-feed-root"
+    name: "Atom Feed Root"
+    selector: "/feed"
+    weight: 1.0
+    ecosystem: "cap"
+  - pattern_id: "cap-alert-entry"
+    name: "CAP Alert Entry"
+    selector: "/feed/entry/cap:event"
+    weight: 0.9
+    ecosystem: "cap"
+confidence_threshold: 0.8
+format_type: "xml"
+tags:
+  - "cap"
+  - "atom"
+  - "nws"
+  - "noaa"
+  - "weather"
+  - "geospatial"
+  - "alerts"
+use_cases:
+  - "Extract geospatial alert polygons and affected-area descriptions"
+  - "Tabulate severity/urgency/certainty for active warnings"
+  - "Feed downstream geospatial visualization of public warnings"
+  - "Analyze event-code and area-geocode coverage"

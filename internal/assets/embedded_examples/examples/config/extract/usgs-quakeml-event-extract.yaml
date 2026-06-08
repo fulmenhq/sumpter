@@ -1,0 +1,90 @@
+# USGS QuakeML Seismic Event Extraction Configuration
+# Extracts one record per seismic <event>, flattening the preferred
+# origin (location/time/depth) and preferred magnitude plus solution
+# quality metrics. Demonstrates extraction from deeply nested scientific
+# measurement records with leaf-level value/uncertainty pairs.
+record_type: "seismic_event"
+match_selectors:
+  - xpath: "//event"
+    min_occurrences: 1
+field_mappings:
+  - output_field: "event_id"
+    xpath: "@catalog:eventid"
+    type: "string"
+  - output_field: "event_type"
+    xpath: "type"
+    type: "string"
+  - output_field: "description"
+    xpath: "description/text"
+    type: "string"
+  - output_field: "origin_time"
+    xpath: "origin/time/value"
+    type: "string"
+  - output_field: "latitude"
+    xpath: "origin/latitude/value"
+    type: "number"
+  - output_field: "longitude"
+    xpath: "origin/longitude/value"
+    type: "number"
+  - output_field: "depth_m"
+    xpath: "origin/depth/value"
+    type: "number"
+  - output_field: "magnitude"
+    xpath: "magnitude/mag/value"
+    type: "number"
+  - output_field: "magnitude_type"
+    xpath: "magnitude/type"
+    type: "string"
+  - output_field: "azimuthal_gap"
+    xpath: "origin/quality/azimuthalGap"
+    type: "number"
+  - output_field: "used_phase_count"
+    xpath: "origin/quality/usedPhaseCount"
+    type: "integer"
+  - output_field: "used_station_count"
+    xpath: "origin/quality/usedStationCount"
+    type: "integer"
+output_schema:
+  type: "object"
+  properties:
+    event_id:
+      type: "string"
+      description: "ANSS event identifier"
+    event_type:
+      type: "string"
+      description: "Event type classification (e.g. earthquake)"
+    description:
+      type: "string"
+      description: "Human-readable region/place description"
+    origin_time:
+      type: "string"
+      description: "UTC origin time of the preferred solution"
+    latitude:
+      type: "number"
+      description: "Hypocenter latitude in decimal degrees"
+    longitude:
+      type: "number"
+      description: "Hypocenter longitude in decimal degrees"
+    depth_m:
+      type: "number"
+      description: "Hypocenter depth in meters"
+    magnitude:
+      type: "number"
+      description: "Preferred magnitude value"
+    magnitude_type:
+      type: "string"
+      description: "Magnitude scale (e.g. mww, mb)"
+    azimuthal_gap:
+      type: "number"
+      description: "Largest azimuthal gap between stations, degrees"
+    used_phase_count:
+      type: "integer"
+      description: "Phases used in the location solution"
+    used_station_count:
+      type: "integer"
+      description: "Stations used in the location solution"
+  required:
+    - "event_id"
+    - "origin_time"
+    - "latitude"
+    - "longitude"
