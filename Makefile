@@ -382,6 +382,9 @@ build-all: ## Build for all platforms
 	@echo "Building for Windows x64..."
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./$(CMD_DIR)
 
+	@echo "Building for Windows ARM64..."
+	GOOS=windows GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe ./$(CMD_DIR)
+
 	@echo "$(GREEN)✅ Multi-platform build completed:$(NC)"
 	@ls -la $(BUILD_DIR)/$(BINARY_NAME)-*
 
@@ -798,6 +801,7 @@ release-build: embed-assets release-clean ## Build release artifacts (multi-plat
 	@GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-darwin-amd64"  ./$(CMD_DIR)
 	@GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-darwin-arm64"  ./$(CMD_DIR)
 	@GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-windows-amd64.exe" ./$(CMD_DIR)
+	@GOOS=windows GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-windows-arm64.exe" ./$(CMD_DIR)
 	@$(MAKE) release-checksums
 	@echo "$(GREEN)✅ Release build complete$(NC)"
 

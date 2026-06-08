@@ -8,6 +8,21 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-06-08
+
+**Complete the release artifact matrix — `windows-arm64` now shipped.**
+
+See [`docs/releases/v0.1.9.md`](docs/releases/v0.1.9.md) for the full release narrative.
+
+### Added
+
+- **`sumpter-windows-arm64.exe` release binary** - the release artifact matrix now ships all six raw binaries (linux/darwin/windows × amd64/arm64), completing arch parity with the dimlox/refbolt convention. `release-checksums`, signing, and the `release.yml` upload all glob over `dist/release/*`, so the new binary flows through with no other tooling change (SUM-038).
+
+### Changed
+
+- **GitHub Actions runtimes bumped to Node 24** - `actions/checkout` (v4→v6), `actions/setup-go` (v5→v6), and `softprops/action-gh-release` (v2→v3) moved to their current Node-24 majors across all four workflows, clearing the GitHub Actions Node-20 runtime deprecation (PR #73).
+- **VERSION bumped to `0.1.9`** for this release.
+
 ## [0.1.8] - 2026-06-08
 
 **Bounded-memory JSON/NDJSON output streaming, CI/local toolchain parity, and public-data corpus expansion.**
