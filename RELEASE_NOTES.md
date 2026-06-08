@@ -6,6 +6,45 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.1.8 (2026-06-08)
+
+**Bounded-memory JSON/NDJSON output streaming, CI/local toolchain parity, and public-data corpus expansion.**
+
+v0.1.8 delivers the bounded end-to-end output streaming that v0.1.7 deferred. JSON and NDJSON file output now streams through the record-sink path for both sequential and record-index parallel runs, so extraction memory stays bounded instead of buffering every record per source file before writing.
+
+The bound is precise: it covers JSON/NDJSON sequential and record-index parallel output. Parquet, mixed-output runs (JSON/NDJSON and Parquet together), sequential `min_occurrences` paths, and ambiguous indexed-floor paths remain buffered in v0.1.8 by design.
+
+### What's new (summary)
+
+- **Bounded JSON/NDJSON output streaming** - sequential and record-index parallel extraction emit records through the record-sink path; parallel runs preserve document order through a bounded reorder window. Memory is bounded by parser state, active record work, writer buffers, and (parallel) the reorder window.
+- **Streaming memory-regression proof** - a fixture and test assert heap stays flat at scale so future changes cannot silently reintroduce full-result buffering.
+- **Streaming eligibility gating** - `min_occurrences` handling and a large-file gate decide when the bounded route applies; a sequential run that falls back to the buffered floor now warns.
+- **CI/local toolchain parity** - `config/toolchain.env` pins the Go and golangci-lint versions; `make toolchain-check` fails before linting on drift, and a pinned-staticcheck probe asserts `SA5011` is reported.
+- **Public-data corpus expansion** - USGS QuakeML, NWS CAP, and GovInfo USLM exemplars (recipes + runnable public-domain samples) widen the worked-example corpus across three new verticals.
+
+### Behavior changes (please review before upgrading)
+
+- **JSON/NDJSON output is bounded for sequential and record-index parallel runs.** Capacity planning for these paths can assume bounded output memory.
+- **Parquet, mixed-output, sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered.**
+- **Sequential buffered fallback now warns** so the behavior is observable.
+- **Local lint can fail before linting on toolchain drift** via `make toolchain-check` (run by `make lint` / `make check-all`).
+
+### Deferred
+
+- **Incremental Parquet writing, bounded mixed-output runs, and bounded sequential `min_occurrences` / ambiguous indexed-floor paths** remain future work.
+- **Cloud URI read/write (S3 and S3-compatible) I/O** is the next major capability thread, tracked separately.
+- **DuckDB, Arrow, service health endpoints, Prometheus metrics, adaptive backpressure, and repair modes** remain roadmap items.
+
+### Release notes
+
+- `VERSION` is `0.1.8`. Binaries from this tag emit `v0.1.8` via `sumpter version`.
+- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.8` is the intended tag/version sanity check.
+- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
+
+See [`docs/releases/v0.1.8.md`](docs/releases/v0.1.8.md) for the full release narrative.
+
+---
+
 ## v0.1.7 (2026-06-02)
 
 **Public flip, document-order semantics, streaming groundwork, and index-scale hardening.**
@@ -82,46 +121,3 @@ The release keeps the memory contract explicit: XML input is tokenized increment
 - `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.6` is the intended tag/version sanity check.
 
 See [`docs/releases/v0.1.6.md`](docs/releases/v0.1.6.md) for the full release narrative.
-
----
-
-## v0.1.5 (2026-05-26)
-
-**Release readiness, recipe applicability gates, and resilient multi-file extraction.**
-
-v0.1.5 is a focused hardening release after v0.1.4. It proves the signed-release path introduced in v0.1.4, adds PR-time release validation so tag-time surprises are caught earlier, and delivers two extraction workflow improvements for mixed input cohorts: applicability gates and continue-on-error failure manifests.
-
-The release is intentionally narrow. It does not broaden cloud URI support; instead it makes the current recipe and release surfaces more predictable before the next feature cycle.
-
-### What's new (summary)
-
-- **Recipe applicability gates** - recipes can point `assets.applicability` at a YAML predicate file. The predicate runs before signature matching; false inputs are reported as `not_applicable`, produce no records, and do not count as extraction failures.
-- **Disposition summaries** - applicability-aware runs add per-input provenance dispositions and write `dispositions.json` at the output root, validated by `schemas/extract/v0.1.0/dispositions.schema.json`.
-- **Continue-on-error extraction** - multi-file `extract files` and `recipes run extract` runs may opt into `--continue-on-error`. Successful inputs still write normal outputs; recoverable per-input failures are captured in `failures.json`.
-- **Failure manifest schema** - `schemas/extract/v0.1.0/failures.schema.json` defines the closed failure-reason set used by `failures.json`.
-- **Release hardening** - tag-triggered GitHub Releases are draft-by-default until the operator signing ceremony attaches checksum manifests, signatures, public keys, and notes.
-- **PR-time release dry run** - CI now validates `make release-build` in the release container before merge.
-- **Toolchain alignment** - CI and release workflows use Go `1.26.3`; CI installs `golangci-lint` `v2.11.2` to analyze Go 1.26 source.
-
-### Behavior changes (please review before upgrading)
-
-- **`--continue-on-error` is opt-in and still exits non-zero when any input fails.** The non-zero exit tells schedulers the cohort was not fully clean; `failures.json` carries the per-input details.
-- **`--continue-on-error` requires `--output-path` in v0.** Sumpter needs a durable output root for the failure manifest and successful sibling outputs.
-- **Output-write and manifest-write failures remain terminal.** The flag isolates recoverable per-input parse/signature/validation failures; it does not mask durability failures.
-- **Applicability gates run before signature matching.** Inputs that evaluate false are not treated as signature failures. Inputs that evaluate true still proceed through normal signature and extraction checks.
-- **Applicability is currently limited to supported file-run modes.** Unsupported combinations fail loud rather than silently skipping the predicate.
-- **Signature mismatch diagnostics are clearer.** Signature misses that previously surfaced through downstream `min_occurrences` paths now report `signature_mismatch` with confidence and threshold details.
-
-### Deferred
-
-- **Cloud URI I/O** remains deferred to a future cycle; v0.1.5 keeps scope on release hardening and local/multi-file extraction resilience.
-- **Shell shfmt baseline cleanup** remains a separate housekeeping item.
-
-### Release and operator notes
-
-- `VERSION` is `0.1.5`. Binaries from this tag emit `v0.1.5` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.5` is the intended tag/version sanity check.
-- The release ceremony remains manifest-only for provenance: CI builds binaries, the operator verifies checksums, signs checksum manifests with minisign and optional PGP, exports public keys, uploads provenance assets, then promotes the draft release.
-- The known release-script shfmt baseline remains deferred to a separate housekeeping PR. It is visible as nine medium goneat lint findings and is non-blocking under the current hook policy.
-
-See [`docs/releases/v0.1.5.md`](docs/releases/v0.1.5.md) for the full release narrative.

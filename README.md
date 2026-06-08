@@ -47,7 +47,7 @@ $ jq .extract.data out/records.jsonl
 }
 ```
 
-<sub>Recorded with Sumpter v0.1.7 (alpha) against the bundled synthetic corpus. Pass <code>--log-level error</code> to silence startup logs as shown.</sub>
+<sub>Recorded with Sumpter v0.1.8 (alpha) against the bundled synthetic corpus. Pass <code>--log-level error</code> to silence startup logs as shown.</sub>
 
 ---
 
