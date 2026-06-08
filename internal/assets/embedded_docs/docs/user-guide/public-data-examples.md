@@ -10,13 +10,15 @@ ship with the repo. Use these when you want to:
 
 - See sumpter end-to-end against real, openly available data
 - Understand the recipe pattern (signature → match → field-mapping →
-  validation) without needing access to private corpora
+  validation) on data you can download and run yourself
 - Author a new recipe against your own data, starting from a working
   reference
 
 These examples are deliberately drawn from different verticals and
 record shapes so the engine's genericity is demonstrable by example
-rather than only described in prose.
+rather than only described in prose. They use public-domain sources so
+every example here is runnable by anyone — the same engine is equally at
+home on private or proprietary formats.
 
 ## SEC EDGAR XBRL — financial filings
 
@@ -164,14 +166,14 @@ US federal bills and laws are not subject to copyright (17 U.S.C. 105); the
 GovInfo USLM files state this in-band in their Dublin Core `rights` metadata.
 A small enrolled-bill sample ships with the repo.
 
-## What's deliberately not in this repo
+## Using sumpter on your own formats
 
-Recipes for proprietary or vendor-specific formats (POS journal
-dialects, vertical-specific trade-XML, billing-system exports, etc.)
-live outside this repo, in private workspaces. Sumpter is
-**designed** to be format-agnostic; if you want to use it against a
-non-public format, author your own recipe in your own workspace using
-these examples as the starting template.
+Sumpter is format-agnostic by design: it bakes in no vertical's schema,
+so the same signature → match → field-mapping → validation pattern shown
+above works on any XML — public or proprietary. Recipes for formats that
+aren't openly redistributable (vendor dialects, internal exports, and the
+like) naturally live wherever that data lives, rather than in this repo;
+author your own using these exemplars as a working starting point.
 
 The [recipe schema](../../schemas/recipes/v0.1.0/recipe.schema.yaml)
 and the [recipes init template](../../templates/commands/recipe/) are
