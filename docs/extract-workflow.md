@@ -4,11 +4,11 @@ The extract command tokenizes XML inputs incrementally through recipe-driven fie
 
 ## Output Formats
 
-| Mode                 | Description                                                       | When to use                                                      |
-| -------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Structured (default) | A single JSON object containing metadata and recipe-authored data | Interactive runs, debugging, consumers that expect a single file |
+| Mode                 | Description                                                                                                                                    | When to use                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Structured (default) | A single JSON object containing metadata and recipe-authored data                                                                              | Interactive runs, debugging, consumers that expect a single file |
 | NDJSON               | Records emitted as newline-delimited JSON with sidecar manifests; sequential and record-index parallel file output stream through `RecordSink` | Pipeline ingestion and append-friendly record processing         |
-| Parquet              | Buffered secondary columnar projection declared by recipe output settings | Analytics engines and columnar downstream storage                |
+| Parquet              | Buffered secondary columnar projection declared by recipe output settings                                                                      | Analytics engines and columnar downstream storage                |
 
 NDJSON is the default durable record output for recipe examples. Parquet is a secondary output path, still requires recipe configuration for the projected columns, and remains buffered in v0.1.8. A run that requests both JSON/NDJSON and Parquet stays on the buffered path so both outputs are produced from the same completed record set.
 
