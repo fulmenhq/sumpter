@@ -35,7 +35,7 @@ jobs:
     name: scripts/verify-embeds.sh
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Confirm rsync is present
         run: rsync --version | head -1
       - name: Run verify-embeds

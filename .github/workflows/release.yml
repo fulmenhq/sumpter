@@ -18,7 +18,7 @@ jobs:
       FULMEN_WORKSPACE_ROOT: ${{ github.workspace }}
       # GOPATH points to a workspace-relative path because goneat-tools-runner
       # v0.3+ runs as non-root (UID 1001) and /opt/gopath/bin is not writable
-      # by that user. actions/setup-go@v5 expects $GOPATH/bin to be writable.
+      # by that user. actions/setup-go@v6 expects $GOPATH/bin to be writable.
       GOPATH: ${{ github.workspace }}/../_go
       # Release artifacts ship CGO-free. The goneat-tools-runner-glibc image
       # sets CGO_ENABLED=1 image-wide, which cascades into the GOOS=darwin
@@ -34,7 +34,7 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -50,7 +50,7 @@ jobs:
         # does not fail with EACCES under the non-root runner user.
         run: mkdir -p "$GOPATH/bin" "$GOPATH/pkg"
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ steps.toolchain.outputs.go-version }}
       - name: Validate VERSION matches tag
@@ -98,7 +98,7 @@ jobs:
         # before consumers see an unsigned release window. Operator promotes via
         # `make release-publish RELEASE_TAG=v<version>` (or `SUMPTER_RELEASE_TAG=`)
         # as the final step of the ceremony in RELEASE_CHECKLIST.md.
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           draft: true
