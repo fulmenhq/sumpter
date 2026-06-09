@@ -6,6 +6,38 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.1.10 (2026-06-09)
+
+**Homebrew + Scoop distribution; Intel-Mac (`darwin-amd64`) prebuilt retired.**
+
+v0.1.10 makes Sumpter installable through Homebrew and Scoop, and trims the release matrix to the platforms worth shipping prebuilt. It is a distribution-ergonomics release — no product-code changes.
+
+### What's new (summary)
+
+- **Homebrew + Scoop install paths** - `brew install fulmenhq/tap/sumpter` and `scoop install fulmenhq/sumpter` install from the FulmenHQ tap/bucket using the raw-binary convention (no archives), building on v0.1.9's arch-complete matrix. Two thin delegation targets (`make update-homebrew-formula` / `make update-scoop-manifest`) refresh the sibling tap/bucket repos; RELEASE_CHECKLIST.md § Distribution documents the post-release housekeeping.
+- **README install sections** - dedicated Homebrew + Scoop quick-start sections above the direct-download block.
+
+### Behavior changes (please review before upgrading)
+
+- **`darwin-amd64` (Intel-Mac) prebuilt retired.** The release matrix is now five raw binaries: linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source (a source build on an Intel Mac produces a native `darwin-amd64`). Ecosystem-wide move off Intel-Mac prebuilts; not a CI-cost change (single-runner pure-Go cross-compile).
+- **`brew`/`scoop` are now first-class install paths** alongside direct download and `go install`.
+- **No product-code, output-format, or CLI changes.**
+
+### Deferred
+
+- **Cloud URI read/write (S3 and S3-compatible) I/O** remains the next major capability thread, tracked separately.
+- **DuckDB, Arrow, service health endpoints, Prometheus metrics, adaptive backpressure, and repair modes** remain roadmap items.
+
+### Release notes
+
+- `VERSION` is `0.1.10`. Binaries from this tag emit `v0.1.10` via `sumpter version`.
+- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.10` is the intended tag/version sanity check.
+- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication. Homebrew/Scoop PRs land as post-release housekeeping.
+
+See [`docs/releases/v0.1.10.md`](docs/releases/v0.1.10.md) for the full release narrative.
+
+---
+
 ## v0.1.9 (2026-06-09)
 
 **Complete the release artifact matrix — `windows-arm64` now shipped.**
@@ -75,44 +107,3 @@ The bound is precise: it covers JSON/NDJSON sequential and record-index parallel
 - The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
 
 See [`docs/releases/v0.1.8.md`](docs/releases/v0.1.8.md) for the full release narrative.
-
----
-
-## v0.1.7 (2026-06-02)
-
-**Public flip, document-order semantics, streaming groundwork, and index-scale hardening.**
-
-v0.1.7 closes the final public-surface and developer-experience cleanup after v0.1.6 while landing the next layer of streaming architecture. It gives consumers a stable document-order record contract, defines the record-sink output-streaming contract, adds sequential sink primitives, and makes index builds stream index metadata instead of retaining every record row before writing.
-
-The release is intentionally precise about memory behavior: XML input tokenization is incremental, but extracted records are still buffered per source file before JSONL/NDJSON and optional Parquet output. v0.1.7 ships the contract and groundwork for bounded output streaming, not the final bounded end-to-end output implementation.
-
-### What's new (summary)
-
-- **Document-order record semantics** - single-selector regular DOM, streaming, and indexed parallel extraction preserve source-document order and emit `_runtime.record_num` before filters run.
-- **Record-sink streaming contract** - ADR-0009 defines emitted-envelope sinks, ordering, backpressure, close/finalize behavior, and fatal output-error semantics.
-- **Sequential sink primitives** - internal groundwork is in place for moving JSONL/NDJSON paths away from full-result slices in later implementation work.
-- **Streaming index writers** - `index build` streams JSON and seekable-zstd index artifacts, with transactional publish behavior that preserves existing outputs on failure.
-- **Public-surface cleanup** - repository-facing docs and examples keep generic language and avoid internal coordination identifiers.
-- **Formatter-scope cleanup** - `make fmt-docs` now respects Git ignore rules, keeping ignored scratchpads and local planning notes out of formatter scans.
-
-### Behavior changes (please review before upgrading)
-
-- **Single-selector output order is contracted.** Consumers can rely on source-document order and `_runtime.record_num` for single-selector extraction paths.
-- **Filtered records leave `record_num` gaps.** Surviving records are not renumbered after filters or skips.
-- **Multi-selector recipes remain selector-major.** Do not treat their `record_num` values as a global document-order contract across selectors.
-- **Index build writes incrementally.** JSON and seekable-zstd index outputs are streamed and published transactionally.
-- **Docs formatting excludes ignored local-only files.** Ignored scratchpads should no longer produce local formatter warnings.
-
-### Deferred
-
-- **Bounded end-to-end JSONL/NDJSON output streaming** remains future work.
-- **Parallel sink integration and incremental Parquet writing** remain future work.
-- **DuckDB, Arrow, service health endpoints, Prometheus metrics, adaptive backpressure, and repair modes** remain roadmap items.
-
-### Release notes
-
-- `VERSION` is `0.1.7`. Binaries from this tag emit `v0.1.7` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.7` is the intended tag/version sanity check.
-- The public-surface/confidentiality check remains an out-of-band pre-flip gate before tagging and publication.
-
-See [`docs/releases/v0.1.7.md`](docs/releases/v0.1.7.md) for the full release narrative.

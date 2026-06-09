@@ -8,6 +8,22 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-06-09
+
+**Homebrew + Scoop distribution; Intel-Mac (`darwin-amd64`) prebuilt retired.**
+
+See [`docs/releases/v0.1.10.md`](docs/releases/v0.1.10.md) for the full release narrative.
+
+### Added
+
+- **Homebrew + Scoop install paths** - `brew install fulmenhq/tap/sumpter` and `scoop install fulmenhq/sumpter` distribute sumpter from the fulmenhq tap/bucket using the raw-binary convention. `make update-homebrew-formula` / `make update-scoop-manifest` refresh the sibling formula/manifest from a published tag; RELEASE_CHECKLIST.md § Distribution documents the post-release housekeeping (SUM-039).
+- **README install sections** - dedicated Homebrew and Scoop quick-start sections above the direct-download block.
+
+### Changed
+
+- **Supported-platform matrix: `darwin-amd64` (Intel-Mac) prebuilt retired.** The release matrix is now five raw binaries: linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source (a source build on an Intel Mac produces a native `darwin-amd64`). Rationale: ecosystem-wide move off Intel-Mac prebuilts (most acute for CGO=1 projects).
+- **VERSION bumped to `0.1.10`** for this release.
+
 ## [0.1.9] - 2026-06-09
 
 **Complete the release artifact matrix — `windows-arm64` now shipped.**
