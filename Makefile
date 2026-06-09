@@ -373,9 +373,6 @@ build-all: ## Build for all platforms
 	@echo "Building for Linux ARM64..."
 	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
 
-	@echo "Building for macOS x64..."
-	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./$(CMD_DIR)
-
 	@echo "Building for macOS ARM64..."
 	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./$(CMD_DIR)
 
@@ -749,8 +746,9 @@ version-set: ## Set explicit version (usage: make version-set VERSION_NEW=1.2.3)
 #        make release-notes
 #        make release-upload
 #        make release-publish   # final: promote draft → public
-#   4. agent runs post-release housekeeping (homebrew/scoop in public repos;
-#      sumpter is still private — skip until publicization)
+#   4. agent runs post-release housekeeping: `make update-homebrew-formula` and
+#      `make update-scoop-manifest` against the published tag, then opens the
+#      tap/bucket PRs (see RELEASE_CHECKLIST.md § Distribution)
 #
 # Tag-resolution policy:
 #   - Prefer the product-namespaced env var SUMPTER_RELEASE_TAG (safer when
@@ -798,7 +796,6 @@ release-build: embed-assets release-clean ## Build release artifacts (multi-plat
 	@mkdir -p "$(DIST_RELEASE)"
 	@GOOS=linux  GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-linux-amd64"   ./$(CMD_DIR)
 	@GOOS=linux  GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-linux-arm64"   ./$(CMD_DIR)
-	@GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-darwin-amd64"  ./$(CMD_DIR)
 	@GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-darwin-arm64"  ./$(CMD_DIR)
 	@GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-windows-amd64.exe" ./$(CMD_DIR)
 	@GOOS=windows GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o "$(DIST_RELEASE)/$(BINARY_NAME)-windows-arm64.exe" ./$(CMD_DIR)
@@ -893,6 +890,47 @@ release-publish: release-guard-tag-version ## Flip draft release → published (
 	@gh release edit "$(RELEASE_TAG)" --draft=false
 	@echo "$(GREEN)✅ $(RELEASE_TAG) is now publicly visible$(NC)"
 	@echo "   View: https://github.com/fulmenhq/$(BINARY_NAME)/releases/tag/$(RELEASE_TAG)"
+
+# --- Package-manager distribution (post-release housekeeping) ----------------
+# These delegate to the sibling tap/bucket repos' own update-<product> targets,
+# which carry the raw-binary-vs-archive specifics. Run AFTER a tag is published
+# (the formula/manifest pin the published asset checksums). See RELEASE_CHECKLIST.md.
+
+.PHONY: update-homebrew-formula
+update-homebrew-formula: ## Update Homebrew formula with new version and checksums (requires ../homebrew-tap)
+	@echo "$(BLUE)→ Updating Homebrew formula for $(BINARY_NAME) $(VERSION)...$(NC)"
+	@if [ ! -d "../homebrew-tap" ]; then \
+		echo "$(RED)❌ ../homebrew-tap not found$(NC)"; \
+		echo "   Clone it as a sibling: cd .. && git clone https://github.com/fulmenhq/homebrew-tap.git"; \
+		exit 1; \
+	fi
+	@if [ ! -f "../homebrew-tap/Formula/$(BINARY_NAME).rb" ]; then \
+		echo "$(RED)❌ Formula not found: ../homebrew-tap/Formula/$(BINARY_NAME).rb$(NC)"; \
+		echo "   Create it first (SUM-039 Section B) before running this target."; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Sibling repository found: ../homebrew-tap$(NC)"
+	@cd ../homebrew-tap && $(MAKE) update-$(BINARY_NAME) VERSION=$(VERSION)
+	@echo "$(GREEN)✅ Homebrew formula updated$(NC)"
+	@echo "   Next: cd ../homebrew-tap && git diff Formula/$(BINARY_NAME).rb && git add -A && git commit && git push"
+
+.PHONY: update-scoop-manifest
+update-scoop-manifest: ## Update Scoop manifest with new version and checksums (requires ../scoop-bucket)
+	@echo "$(BLUE)→ Updating Scoop manifest for $(BINARY_NAME) $(VERSION)...$(NC)"
+	@if [ ! -d "../scoop-bucket" ]; then \
+		echo "$(RED)❌ ../scoop-bucket not found$(NC)"; \
+		echo "   Clone it as a sibling: cd .. && git clone https://github.com/fulmenhq/scoop-bucket.git"; \
+		exit 1; \
+	elif [ ! -f "../scoop-bucket/bucket/$(BINARY_NAME).json" ]; then \
+		echo "$(RED)❌ Manifest not found: ../scoop-bucket/bucket/$(BINARY_NAME).json$(NC)"; \
+		echo "   Create it first (SUM-039 Section C) before running this target."; \
+		exit 1; \
+	else \
+		echo "$(GREEN)✅ Sibling repository found: ../scoop-bucket$(NC)"; \
+		cd ../scoop-bucket && $(MAKE) update-$(BINARY_NAME) VERSION=$(VERSION); \
+		echo "$(GREEN)✅ Scoop manifest updated$(NC)"; \
+		echo "   Next: cd ../scoop-bucket && git diff bucket/$(BINARY_NAME).json && git add -A && git commit && git push"; \
+	fi
 
 .PHONY: all
 all: build ## Build default target

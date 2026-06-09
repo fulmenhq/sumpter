@@ -67,14 +67,27 @@ Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.m
 
 ## 🚀 Quickstart
 
+**Homebrew** (macOS arm64, Linux)
+
+```bash
+brew install fulmenhq/tap/sumpter
+```
+
+**Scoop** (Windows)
+
+```bash
+scoop bucket add fulmenhq https://github.com/fulmenhq/scoop-bucket
+scoop install fulmenhq/sumpter
+```
+
 **Prebuilt binaries**
 
-Every release publishes raw binaries for six OS/arch targets — each with `SHA256SUMS`/`SHA512SUMS` checksums plus GPG and minisign signatures — on the [releases page](https://github.com/fulmenhq/sumpter/releases/latest):
+Every release publishes raw binaries for five OS/arch targets — each with `SHA256SUMS`/`SHA512SUMS` checksums plus GPG and minisign signatures — on the [releases page](https://github.com/fulmenhq/sumpter/releases/latest):
 
 | OS      | amd64                       | arm64                       |
 | ------- | --------------------------- | --------------------------- |
 | Linux   | `sumpter-linux-amd64`       | `sumpter-linux-arm64`       |
-| macOS   | `sumpter-darwin-amd64`      | `sumpter-darwin-arm64`      |
+| macOS   | —                           | `sumpter-darwin-arm64`      |
 | Windows | `sumpter-windows-amd64.exe` | `sumpter-windows-arm64.exe` |
 
 Download the binary for your platform, verify it against the published checksums, and put it on your `PATH`. Or install the latest tagged version with Go:
@@ -83,7 +96,7 @@ Download the binary for your platform, verify it against the published checksums
 go install github.com/fulmenhq/sumpter/cmd/sumpter@latest
 ```
 
-The prebuilt binaries are CGO-free (the seekable-zstd compressed-index path needs a source build with `CGO_ENABLED=1 -tags seekablezstd`).
+Intel Macs: build from source — `go install github.com/fulmenhq/sumpter/cmd/sumpter@latest` (or `make build`) produces a native `darwin-amd64` binary. The `darwin-amd64` prebuilt and the Homebrew formula were retired/scoped to arm64 in v0.1.10. The prebuilt binaries are CGO-free (the seekable-zstd compressed-index path needs a source build with `CGO_ENABLED=1 -tags seekablezstd`).
 
 **Requirements**
 

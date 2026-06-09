@@ -131,6 +131,15 @@ For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<versi
 - [ ] Verify `go install github.com/fulmenhq/sumpter/cmd/sumpter@v<version>` works
 - [ ] Test CLI commands work correctly
 
+**Package managers (Homebrew + Scoop)** — run after the release is published; the
+formula `sha256` and Scoop `hash` fields pin the published asset checksums, so the
+release must exist first. Requires the sibling repos `../homebrew-tap` and
+`../scoop-bucket` cloned alongside this repo.
+
+- [ ] `make update-homebrew-formula` — refreshes `../homebrew-tap/Formula/sumpter.rb` to the current `VERSION` with per-binary `sha256`; review `cd ../homebrew-tap && git diff`, then commit and open a tap PR
+- [ ] `make update-scoop-manifest` — refreshes `../scoop-bucket/bucket/sumpter.json` (64bit + arm64) with new `hash`; review `cd ../scoop-bucket && git diff`, then commit and open a bucket PR
+- [ ] After both PRs merge, confirm `brew install fulmenhq/tap/sumpter` and `scoop install fulmenhq/sumpter` resolve the new version (macOS arm64 + Linux for brew; Windows amd64/arm64 for scoop)
+
 ## Post-Release
 
 ### Communication
