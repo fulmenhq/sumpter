@@ -67,6 +67,24 @@ Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.m
 
 ## 🚀 Quickstart
 
+**Prebuilt binaries**
+
+Every release publishes raw binaries for six OS/arch targets — each with `SHA256SUMS`/`SHA512SUMS` checksums plus GPG and minisign signatures — on the [releases page](https://github.com/fulmenhq/sumpter/releases/latest):
+
+| OS      | amd64                       | arm64                       |
+| ------- | --------------------------- | --------------------------- |
+| Linux   | `sumpter-linux-amd64`       | `sumpter-linux-arm64`       |
+| macOS   | `sumpter-darwin-amd64`      | `sumpter-darwin-arm64`      |
+| Windows | `sumpter-windows-amd64.exe` | `sumpter-windows-arm64.exe` |
+
+Download the binary for your platform, verify it against the published checksums, and put it on your `PATH`. Or install the latest tagged version with Go:
+
+```bash
+go install github.com/fulmenhq/sumpter/cmd/sumpter@latest
+```
+
+The prebuilt binaries are CGO-free (the seekable-zstd compressed-index path needs a source build with `CGO_ENABLED=1 -tags seekablezstd`).
+
 **Requirements**
 
 - Go 1.26+

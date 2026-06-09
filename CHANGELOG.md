@@ -8,7 +8,7 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
-## [0.1.9] - 2026-06-08
+## [0.1.9] - 2026-06-09
 
 **Complete the release artifact matrix — `windows-arm64` now shipped.**
 

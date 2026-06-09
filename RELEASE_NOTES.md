@@ -6,6 +6,39 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.1.9 (2026-06-09)
+
+**Complete the release artifact matrix — `windows-arm64` now shipped.**
+
+v0.1.9 is a small, front-loaded distribution patch. It closes the one gap in Sumpter's published binary matrix: the release now ships `sumpter-windows-arm64.exe`, so all six raw binaries (linux/darwin/windows × amd64/arm64) are present and arch-complete. There are no product-code changes.
+
+This release deliberately precedes the Homebrew + Scoop wiring (next cycle): the package-manager formula and manifest reference these published assets by URL, so the full matrix must exist and be published first.
+
+### What's new (summary)
+
+- **`windows-arm64` release binary** - `make release-build` / `make build-all` now emit `sumpter-windows-arm64.exe` alongside the existing five targets, completing arch parity with the dimlox/refbolt convention. The binary cross-compiles on the pure-Go path (`CGO_ENABLED=0`); checksums, signatures, and the release upload all glob over the release directory, so the new binary is covered with no other tooling change.
+- **GitHub Actions runtimes on Node 24** - `actions/checkout` (v4→v6), `actions/setup-go` (v5→v6), and `softprops/action-gh-release` (v2→v3) moved to their current Node-24 majors across all four workflows, clearing the GitHub Actions Node-20 runtime deprecation.
+
+### Behavior changes (please review before upgrading)
+
+- **Windows-on-ARM is now a published target.** Windows/ARM64 users get a native binary directly from the release instead of relying on emulation of the amd64 build.
+- **No product-code or output-format changes.** Extraction, indexing, and CLI behavior are identical to v0.1.8.
+
+### Deferred
+
+- **Homebrew + Scoop wiring** is the next cycle (v0.1.10) and depends on these published assets.
+- **Cloud URI read/write (S3 and S3-compatible) I/O** remains the next major capability thread, tracked separately.
+
+### Release notes
+
+- `VERSION` is `0.1.9`. Binaries from this tag emit `v0.1.9` via `sumpter version`.
+- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.9` is the intended tag/version sanity check.
+- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
+
+See [`docs/releases/v0.1.9.md`](docs/releases/v0.1.9.md) for the full release narrative.
+
+---
+
 ## v0.1.8 (2026-06-08)
 
 **Bounded-memory JSON/NDJSON output streaming, CI/local toolchain parity, and public-data corpus expansion.**
@@ -83,41 +116,3 @@ The release is intentionally precise about memory behavior: XML input tokenizati
 - The public-surface/confidentiality check remains an out-of-band pre-flip gate before tagging and publication.
 
 See [`docs/releases/v0.1.7.md`](docs/releases/v0.1.7.md) for the full release narrative.
-
----
-
-## v0.1.6 (2026-06-01)
-
-**Public-readiness, capability honesty, and streaming/index correctness.**
-
-v0.1.6 is the final release-prep step before the public repository transition. It tightens Sumpter's public capability surface, hardens selector and index behavior, adds uniform per-record schema output, and documents the confidentiality posture expected for the open-source repository.
-
-The release keeps the memory contract explicit: XML input is tokenized incrementally, while extracted records are still buffered per file before output.
-
-### What's new (summary)
-
-- **Honest public capability surface** - README, overview, schemas, and command outputs distinguish shipped outputs from planned sinks and integrations.
-- **Uniform per-record schema** - recipes can emit declared-but-absent properties as explicit `null` values for stable downstream table shapes.
-- **Safer record indexes** - compressed-source indexes no longer imply unsafe byte seeking for parallel extraction.
-- **Restricted streaming/index selector grammar** - streaming extraction and `index build --selector` reject unsupported XPath forms instead of silently over-matching.
-- **Release and confidentiality gates** - `make pr-final`, refreshed OSS metadata, and ADR-0008 align the public-readiness path.
-
-### Behavior changes (please review before upgrading)
-
-- **Go 1.26 is the minimum supported Go version.**
-- **Streaming/index selectors are intentionally narrower.** Use `Name` or `//Name`; predicates, multi-segment paths, prefixes, and other XPath forms fail loud in streaming/index mode.
-- **XML local-name matching in streaming/index mode is case-sensitive.**
-- **Compressed-source indexes are not advertised as seekable extraction inputs.**
-- **Planned sinks and service integrations are described as roadmap items.**
-
-### Deferred
-
-- **Record-sink output streaming and index streaming follow-up work** were deferred to v0.1.7 or later.
-- **DuckDB, Arrow, service health endpoints, Prometheus metrics, adaptive backpressure, and repair modes** remain roadmap items.
-
-### Release and operator notes
-
-- `VERSION` is `0.1.6`. Binaries from this tag emit `v0.1.6` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.6` is the intended tag/version sanity check.
-
-See [`docs/releases/v0.1.6.md`](docs/releases/v0.1.6.md) for the full release narrative.
