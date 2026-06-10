@@ -1,6 +1,6 @@
 # ADR 0010: CLI Meta-Command Invocation Conventions
 
-Status: Proposed
+Status: Accepted
 Date: 2026-06-10
 
 ## Context
@@ -90,8 +90,8 @@ Validation checklist:
 - [ ] Homebrew `Formula/sumpter.rb` `test` uses `system bin/"sumpter", "version"`.
 - [ ] Scoop manifest / install docs reference `sumpter version`.
 - [ ] README / quickstart show `sumpter version`.
-- [ ] Entarch pre-read before merge (cxotech-authored ADR; entarch consulted, per the
-      established Sumpter ADR workflow).
+- [x] Entarch pre-read complete (green, 2026-06-10; cxotech-authored ADR, entarch consulted
+      per the established Sumpter ADR workflow).
 
 ## References
 
