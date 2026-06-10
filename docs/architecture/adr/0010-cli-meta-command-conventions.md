@@ -33,7 +33,7 @@ Establish meta-command invocation conventions, extending ADR-0003.
 ### 1. Version reporting — the `version` subcommand is canonical
 
 - `sumpter version` is the canonical, documented form:
-  - `sumpter version` — concise human-readable version line;
+  - `sumpter version` — concise human-readable version output;
   - `sumpter version --extended` — build and git detail;
   - `sumpter version --json` — machine-readable output.
 - `sumpter --version` (the Cobra root flag) **remains supported** as a terse alias and is
@@ -54,9 +54,9 @@ This is consistent with ADR-0003's `--help` formatting note.
 
 ### 3. Naming rule for future meta-commands
 
-New meta/introspection commands (for example a future `completion`, `doctor`, or `env`)
-**should** be bare subcommands — not flags — when they produce structured or multi-line
-output. Reserve root flags for terse boolean or alias behavior.
+New meta/introspection commands (for example a future `completion` or `man`) **should** be
+bare subcommands — not flags — when they produce structured or multi-line output. Reserve
+root flags for terse boolean or alias behavior.
 
 ## Consequences
 
