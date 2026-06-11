@@ -21,6 +21,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -192,6 +193,40 @@ func newExtractTransformsDescribeCommand() *cobra.Command {
 	}
 }
 
+// guardUnsupportedCloudReferences rejects cloud (s3://) storage references with
+// an actionable error until the cloud read/write boundaries land. It is the edge
+// fast-fail counterpart to the per-site uriio routing: classifying input and
+// output references here means a cloud URI fails before any extraction work
+// begins, with one consistent message. Local paths and file:// URIs pass through
+// unchanged; genuinely unsupported schemes (e.g. gs://) surface a parse error.
+func guardUnsupportedCloudReferences(opts *ExtractOptions) error {
+	if opts.InputPath != "" {
+		if err := uriio.EnsureLocal("source input", opts.InputPath); err != nil {
+			return err
+		}
+	}
+	if opts.Files != "" {
+		for _, f := range strings.Split(opts.Files, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				if err := uriio.EnsureLocal("source input", f); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if opts.OutputPath != "" {
+		if err := uriio.EnsureLocal("result output", opts.OutputPath); err != nil {
+			return err
+		}
+	}
+	if opts.RecordIndex != "" {
+		if err := uriio.EnsureLocal("record index", opts.RecordIndex); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runExtract(opts *ExtractOptions) error {
 	logger := logging.GetLogger()
 	logger.Debug("Starting extract command")
@@ -213,6 +248,9 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	if opts.ContinueOnError && strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
 		return fmt.Errorf("--continue-on-error requires --output-path")
+	}
+	if err := guardUnsupportedCloudReferences(opts); err != nil {
+		return err
 	}
 	logger.Debug("Options validated")
 
@@ -283,6 +321,22 @@ func runExtract(opts *ExtractOptions) error {
 		}
 	}
 	logger.Debug("File discovery complete", zap.Int("file_count", len(files)))
+
+	// Resolve each input reference to a local working path through the uriio read
+	// boundary. For bare paths and file:// URIs this yields the local filesystem
+	// path (file:// is a verbose alias for its path, so this is byte-for-byte the
+	// bare-path behavior); cloud references are already rejected by the edge guard
+	// above. Resolving once here — at the edge — means every downstream consumer
+	// (extraction, the provenance input ledger, manifest identity) sees the local
+	// path. This is exactly where cloud acquire-and-stage will plug in later.
+	for i, f := range files {
+		src, acqErr := uriio.Acquire(context.Background(), uriio.AcquireRequest{Reference: f})
+		if acqErr != nil {
+			return fmt.Errorf("resolve input %s: %w", f, acqErr)
+		}
+		files[i] = src.LocalPath
+	}
+
 	if opts.ApplicabilityConfig != nil {
 		if strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
 			return fmt.Errorf("applicability declared but requires --output-path for dispositions output")
@@ -575,6 +629,11 @@ func writeExtractFailureManifest(path string, manifest *extractFailureManifestFi
 	if manifest == nil || manifest.Failed == 0 {
 		return nil
 	}
+	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: path})
+	if err != nil {
+		return err
+	}
+	path = tgt.LocalPath
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal extraction failures: %w", err)
@@ -586,7 +645,7 @@ func writeExtractFailureManifest(path string, manifest *extractFailureManifestFi
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write extraction failure manifest %s: %w", path, err)
 	}
-	return nil
+	return tgt.Publish(context.Background())
 }
 
 func recoverableFailureResult(file string, err error, reason extract.DispositionReason) extract.ExtractResult {
@@ -689,6 +748,11 @@ func writeDispositionSummary(path string, summary *dispositionSummaryFile) error
 	if summary == nil || len(summary.Files) == 0 {
 		return nil
 	}
+	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: path})
+	if err != nil {
+		return err
+	}
+	path = tgt.LocalPath
 	data, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal dispositions summary: %w", err)
@@ -700,7 +764,7 @@ func writeDispositionSummary(path string, summary *dispositionSummaryFile) error
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write dispositions summary %s: %w", path, err)
 	}
-	return nil
+	return tgt.Publish(context.Background())
 }
 
 func validateApplicabilityMode(opts *ExtractOptions, files []string) error {
@@ -950,6 +1014,7 @@ type jsonOutputTarget struct {
 	tempFile   string
 	file       *os.File
 	sink       *extract.JSONLRecordSink
+	output     *uriio.OutputTarget
 	stdout     bool
 	closed     bool
 }
@@ -965,10 +1030,19 @@ func newJSONOutputTarget(opts *ExtractOptions, inputFile string) (*jsonOutputTar
 	}
 
 	outputFile := outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, inputFile)
+	// Route the destination through the uriio seam up front so a cloud target
+	// fails fast (before any records are streamed). Local targets resolve to
+	// their own path and Publish (in Commit) is a no-op; the existing atomic
+	// temp-file + rename commit is unchanged for local output.
+	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: outputFile})
+	if err != nil {
+		return nil, err
+	}
 	return &jsonOutputTarget{
 		opts:       opts,
 		inputFile:  inputFile,
-		outputFile: outputFile,
+		outputFile: tgt.LocalPath,
+		output:     tgt,
 	}, nil
 }
 
@@ -1057,6 +1131,14 @@ func (t *jsonOutputTarget) Commit() error {
 	if err := os.Rename(t.tempFile, t.outputFile); err != nil {
 		_ = os.Remove(t.tempFile)
 		return wrapJSONOutputError(fmt.Sprintf("commit output %s", t.outputFile), err)
+	}
+	// Publish makes the committed artifact durable at the destination. No-op for
+	// local targets (the rename already finalized it); the cloud upload lands here
+	// in a later delivery.
+	if t.output != nil {
+		if err := t.output.Publish(context.Background()); err != nil {
+			return wrapJSONOutputError(fmt.Sprintf("publish output %s", t.outputFile), err)
+		}
 	}
 	return nil
 }
@@ -2048,6 +2130,16 @@ func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
 }
 
 func writeRecordsToFile(filename string, records []map[string]interface{}) error {
+	// Route the destination through the uriio seam. Local destinations resolve to
+	// their own path and Publish is a no-op; cloud destinations are rejected until
+	// the cloud write boundary lands. (Cloud publish — which must close-then-upload
+	// — is wired in a later delivery; for local the existing direct write stands.)
+	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: filename})
+	if err != nil {
+		return err
+	}
+	filename = tgt.LocalPath
+
 	if err := os.MkdirAll(filepath.Dir(filename), 0o750); err != nil {
 		return err
 	}
@@ -2065,7 +2157,7 @@ func writeRecordsToFile(filename string, records []map[string]interface{}) error
 		}
 	}
 
-	return nil
+	return tgt.Publish(context.Background())
 }
 
 func runExtractTransformsList() error {

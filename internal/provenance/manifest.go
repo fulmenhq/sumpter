@@ -1,6 +1,7 @@
 package provenance
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
 const (
@@ -98,6 +101,14 @@ func WriteManifest(path string, manifest Manifest) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("manifest path is required")
 	}
+	// Route the destination through the uriio seam: local sidecars resolve to
+	// their own path and Publish is a no-op; cloud sidecars are rejected until the
+	// cloud write boundary lands (the sidecar publishes alongside its output).
+	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: path})
+	if err != nil {
+		return err
+	}
+	path = tgt.LocalPath
 	manifest.SchemaVersion = ManifestSchemaVersion
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -110,7 +121,7 @@ func WriteManifest(path string, manifest Manifest) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write provenance manifest %s: %w", path, err)
 	}
-	return nil
+	return tgt.Publish(context.Background())
 }
 
 // BuildInputLedger hashes and stats a processed input path.
