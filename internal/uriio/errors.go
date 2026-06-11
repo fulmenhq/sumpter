@@ -19,22 +19,33 @@ var (
 	ErrSchemeNotImplemented = errors.New("uriio: scheme not yet implemented")
 )
 
-// EnsureLocal classifies ref and returns an actionable ErrSchemeNotImplemented
-// error if it targets a backend whose I/O is not yet wired (cloud). It is the
-// edge fast-fail counterpart to Acquire/OpenOutput: callers use it to reject a
-// cloud reference before any work begins, with one consistent message. Local and
-// file:// references return nil; genuinely unsupported schemes (e.g. gs://)
-// return the underlying classification error. op names the operation for the
-// message (e.g. "source input", "result output").
-func EnsureLocal(op, ref string) error {
+// LocalPath classifies ref and returns its local filesystem path. file:// URIs
+// resolve to their absolute local path; bare paths pass through unchanged. It is
+// how the edge normalizes a root reference (input path, output path, record
+// index) to a clean local path before that path is joined to child artifact
+// names or walked for discovery — losing the scheme to a path join would mangle
+// a file:// root. Cloud (s3://) references return an actionable
+// ErrSchemeNotImplemented error (op names the role for the message, e.g.
+// "source input"); genuinely unsupported schemes (e.g. gs://) return the
+// underlying classification error.
+func LocalPath(op, ref string) (string, error) {
 	classified, err := Classify(ref)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if classified.IsCloud() {
-		return notImplemented(op, classified)
+		return "", notImplemented(op, classified)
 	}
-	return nil
+	return classified.LocalPath, nil
+}
+
+// EnsureLocal is the validate-only form of LocalPath: it returns the same error
+// for cloud/unsupported references but discards the resolved path. Use it when a
+// reference is resolved to a local path elsewhere (e.g. per-file at the acquire
+// loop) and only its scheme needs guarding here.
+func EnsureLocal(op, ref string) error {
+	_, err := LocalPath(op, ref)
+	return err
 }
 
 // notImplemented builds an actionable error for a recognized-but-unwired scheme.

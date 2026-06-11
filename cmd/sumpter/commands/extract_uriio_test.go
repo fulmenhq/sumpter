@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/uriio"
@@ -156,9 +158,9 @@ func TestExtractRejectsCloudReferences(t *testing.T) {
 	}
 }
 
-// TestGuardUnsupportedCloudReferences exercises the edge guard directly across
+// TestResolveLocalReferences exercises the edge resolve/guard directly across
 // the local-pass / cloud-reject matrix.
-func TestGuardUnsupportedCloudReferences(t *testing.T) {
+func TestResolveLocalReferences(t *testing.T) {
 	cases := []struct {
 		name    string
 		opts    *ExtractOptions
@@ -174,10 +176,133 @@ func TestGuardUnsupportedCloudReferences(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := guardUnsupportedCloudReferences(tc.opts)
+			err := resolveLocalReferences(tc.opts)
 			if tc.wantErr != (err != nil) {
-				t.Fatalf("guardUnsupportedCloudReferences(%+v) err = %v, wantErr = %v", tc.opts, err, tc.wantErr)
+				t.Fatalf("resolveLocalReferences(%+v) err = %v, wantErr = %v", tc.opts, err, tc.wantErr)
 			}
 		})
 	}
+}
+
+// TestResolveLocalReferencesNormalizesFileURIRoots proves the edge rewrites
+// file:// directory/index roots to their local filesystem path in place, so
+// downstream path joins and traversal never see the scheme.
+func TestResolveLocalReferencesNormalizesFileURIRoots(t *testing.T) {
+	opts := &ExtractOptions{
+		InputPath:   "file:///abs/in",
+		OutputPath:  "file:///abs/out",
+		RecordIndex: "file:///abs/idx.bin",
+	}
+	if err := resolveLocalReferences(opts); err != nil {
+		t.Fatalf("resolveLocalReferences: %v", err)
+	}
+	if opts.InputPath != filepath.FromSlash("/abs/in") {
+		t.Errorf("InputPath = %q, want /abs/in", opts.InputPath)
+	}
+	if opts.OutputPath != filepath.FromSlash("/abs/out") {
+		t.Errorf("OutputPath = %q, want /abs/out", opts.OutputPath)
+	}
+	if opts.RecordIndex != filepath.FromSlash("/abs/idx.bin") {
+		t.Errorf("RecordIndex = %q, want /abs/idx.bin", opts.RecordIndex)
+	}
+}
+
+// fileURI builds the canonical file:// URI for a local path.
+func fileURI(t *testing.T, path string) string {
+	t.Helper()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "file://" + filepath.ToSlash(abs)
+}
+
+// TestExtractInputPathFileURIDirectoryMatchesBare proves zero-drift for a
+// file:// *directory* root driving discovery: --input-path file://<dir> produces
+// the same record output (and the same discovered file set) as the bare dir.
+func TestExtractInputPathFileURIDirectoryMatchesBare(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	inputs := filepath.Join(dir, "inputs")
+	mkXML(t, filepath.Join(inputs, "a.xml"))
+	mkXML(t, filepath.Join(inputs, "b.xml"))
+
+	run := func(inputRef, outDir string) {
+		if err := os.MkdirAll(outDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		opts := newMatrixExtractOptions(dir, "", outDir)
+		opts.Files = ""
+		opts.InputPath = inputRef
+		if err := runExtract(opts); err != nil {
+			t.Fatalf("runExtract(%s): %v", inputRef, err)
+		}
+	}
+
+	bareOut := filepath.Join(dir, "dir-out-bare")
+	run(inputs, bareOut)
+	fileOut := filepath.Join(dir, "dir-out-fileuri")
+	run(fileURI(t, inputs), fileOut)
+
+	if bare, file := dirRecordSet(t, bareOut), dirRecordSet(t, fileOut); bare != file {
+		t.Errorf("file:// dir input output differs from bare:\nbare:  %s\nfile:  %s", bare, file)
+	}
+}
+
+// TestExtractOutputPathFileURIDirectory proves a file:// *output* root resolves
+// to the real local destination: records and the provenance manifest land under
+// the actual directory, not a literal "file:" path.
+func TestExtractOutputPathFileURIDirectory(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	input := filepath.Join(dir, "input.xml")
+	realOut := filepath.Join(dir, "uri-out")
+
+	opts := newMatrixExtractOptions(dir, input, "")
+	opts.OutputPath = fileURI(t, realOut)
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract(output file://): %v", err)
+	}
+
+	// The provenance manifest must exist at the real local destination.
+	if _, err := os.Stat(filepath.Join(realOut, "manifest.json")); err != nil {
+		t.Fatalf("manifest not at real local output dir: %v", err)
+	}
+	// At least one record-output file must exist there too.
+	_ = readSoleRecordOutput(t, realOut)
+	// And nothing should have leaked into a literal "file:"-prefixed directory.
+	if _, err := os.Stat(filepath.Join(dir, "file:")); err == nil {
+		t.Errorf("output leaked into a literal file: path")
+	}
+}
+
+func mkXML(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`<root><item><name>A</name></item><item><name>B</name></item></root>`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dirRecordSet returns the normalized, order-independent set of record-output
+// file contents in dir (excluding the manifest), for cross-run comparison.
+func dirRecordSet(t *testing.T, dir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", dir, err)
+	}
+	var contents []string
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "manifest.json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents = append(contents, normalizeVolatile(data))
+	}
+	sort.Strings(contents)
+	return strings.Join(contents, "\n---\n")
 }

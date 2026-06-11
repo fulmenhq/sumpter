@@ -193,17 +193,26 @@ func newExtractTransformsDescribeCommand() *cobra.Command {
 	}
 }
 
-// guardUnsupportedCloudReferences rejects cloud (s3://) storage references with
-// an actionable error until the cloud read/write boundaries land. It is the edge
-// fast-fail counterpart to the per-site uriio routing: classifying input and
-// output references here means a cloud URI fails before any extraction work
-// begins, with one consistent message. Local paths and file:// URIs pass through
-// unchanged; genuinely unsupported schemes (e.g. gs://) surface a parse error.
-func guardUnsupportedCloudReferences(opts *ExtractOptions) error {
+// resolveLocalReferences validates and normalizes the extract command's storage
+// references through the uriio seam, at the edge before any work begins.
+//
+// Cloud (s3://) references are rejected with an actionable, role-specific error
+// until the cloud boundaries land; genuinely unsupported schemes (e.g. gs://)
+// surface a parse error. Root references that are joined to child artifact names
+// or walked for discovery before per-source acquisition — the input path, the
+// output path, and the record index — are rewritten in place from file:// URIs
+// to their local filesystem path, so downstream filepath.Join/filepath.Abs and
+// directory traversal operate on a clean local path (file:// is a verbose alias
+// for that path; a path join would otherwise mangle the scheme). Per-file
+// --files entries are validated here and resolved individually at the read-
+// boundary acquire loop. Bare local paths pass through unchanged.
+func resolveLocalReferences(opts *ExtractOptions) error {
 	if opts.InputPath != "" {
-		if err := uriio.EnsureLocal("source input", opts.InputPath); err != nil {
+		local, err := uriio.LocalPath("source input", opts.InputPath)
+		if err != nil {
 			return err
 		}
+		opts.InputPath = local
 	}
 	if opts.Files != "" {
 		for _, f := range strings.Split(opts.Files, ",") {
@@ -215,14 +224,18 @@ func guardUnsupportedCloudReferences(opts *ExtractOptions) error {
 		}
 	}
 	if opts.OutputPath != "" {
-		if err := uriio.EnsureLocal("result output", opts.OutputPath); err != nil {
+		local, err := uriio.LocalPath("result output", opts.OutputPath)
+		if err != nil {
 			return err
 		}
+		opts.OutputPath = local
 	}
 	if opts.RecordIndex != "" {
-		if err := uriio.EnsureLocal("record index", opts.RecordIndex); err != nil {
+		local, err := uriio.LocalPath("record index", opts.RecordIndex)
+		if err != nil {
 			return err
 		}
+		opts.RecordIndex = local
 	}
 	return nil
 }
@@ -249,7 +262,7 @@ func runExtract(opts *ExtractOptions) error {
 	if opts.ContinueOnError && strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
 		return fmt.Errorf("--continue-on-error requires --output-path")
 	}
-	if err := guardUnsupportedCloudReferences(opts); err != nil {
+	if err := resolveLocalReferences(opts); err != nil {
 		return err
 	}
 	logger.Debug("Options validated")
