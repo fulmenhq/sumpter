@@ -17,16 +17,17 @@ import (
 // logging, JSON, formatted output, and errors.
 const redactedMarker = "[redacted]"
 
-// Secret is a credential value (e.g. an S3 secret access key) that must never be
-// logged, formatted, serialized, or wrapped into an error in cleartext.
+// Secret is a credential value — an S3 access key id or secret access key — that
+// must never be logged, formatted, serialized, or wrapped into an error in
+// cleartext.
 //
-// It redacts itself across fmt verbs (%v/%s/%+v/%#v via String/GoString),
-// structured logging (slog.LogValuer), and JSON (MarshalJSON). The cleartext is
-// reachable only through Reveal, which callers invoke solely at the boundary
-// that hands the value to the provider SDK. Gonimbus's s3.Config carries the key
-// as a plain string with no redaction and does not zero it, so keeping the
-// cleartext inside this type until the s3.New call site is the embedder's
-// responsibility.
+// It redacts itself across every output surface: fmt verbs (%v/%s/%+v/%#v via
+// String/GoString), structured logging (slog.LogValuer), JSON (MarshalJSON), and
+// YAML (MarshalYAML). The cleartext is reachable only through Reveal, which
+// callers invoke solely at the boundary that hands the value to the provider
+// SDK. Gonimbus's s3.Config carries the key as a plain string with no redaction
+// and does not zero it, so keeping the cleartext inside this type until the
+// s3.New call site is the embedder's responsibility.
 type Secret string
 
 // String returns the redaction marker for a non-empty secret, or "" when unset.
@@ -43,8 +44,12 @@ func (s Secret) GoString() string { return s.String() }
 // LogValue redacts under structured logging.
 func (s Secret) LogValue() slog.Value { return slog.StringValue(s.String()) }
 
-// MarshalJSON redacts when serialized.
+// MarshalJSON redacts when serialized to JSON.
 func (s Secret) MarshalJSON() ([]byte, error) { return json.Marshal(s.String()) }
+
+// MarshalYAML redacts when serialized to YAML. Without this, the string-alias
+// underlying type would emit the cleartext value.
+func (s Secret) MarshalYAML() (interface{}, error) { return s.String(), nil }
 
 // Reveal returns the cleartext secret. Call this only at the provider
 // construction boundary; never pass the result to a logger, formatter, error, or
@@ -72,17 +77,18 @@ type HandleConfig struct {
 	// The connect-time enforcement lands with the cloud read boundary.
 	Insecure bool `yaml:"insecure,omitempty"`
 	// AccessKeyID is an explicit access key id. Permitted but discouraged; prefer
-	// a Profile handle. If set, SecretAccessKey must also be set.
-	AccessKeyID string `yaml:"access_key_id,omitempty"`
+	// a Profile handle. If set, SecretAccessKey must also be set. It is a Secret
+	// so the AKIA-style identifier never leaks through logs/JSON/YAML/format/errors.
+	AccessKeyID Secret `yaml:"access_key_id,omitempty"`
 	// SecretAccessKey is an explicit secret key. Permitted but discouraged. It is
-	// a Secret so it never leaks through logs/JSON/format/errors.
+	// a Secret so it never leaks through logs/JSON/YAML/format/errors.
 	SecretAccessKey Secret `yaml:"secret_access_key,omitempty"`
 }
 
 // HasLiteralKeys reports whether the handle carries inline credential material
 // (as opposed to a profile/default-chain reference).
 func (h HandleConfig) HasLiteralKeys() bool {
-	return h.AccessKeyID != "" || !h.SecretAccessKey.IsZero()
+	return !h.AccessKeyID.IsZero() || !h.SecretAccessKey.IsZero()
 }
 
 // CredentialsConfig is the parsed sumpter credentials file: a set of named
@@ -172,7 +178,7 @@ func (c *CredentialsConfig) validate() error {
 		if !validHandleName(name) {
 			return fmt.Errorf("uriio: invalid credentials handle name %q (allowed: %s)", name, handleNamePattern.String())
 		}
-		if (h.AccessKeyID != "") != !h.SecretAccessKey.IsZero() {
+		if !h.AccessKeyID.IsZero() != !h.SecretAccessKey.IsZero() {
 			return fmt.Errorf("uriio: credentials handle %q: access_key_id and secret_access_key must be set together", name)
 		}
 		if err := validateEndpointPosture(name, h); err != nil {

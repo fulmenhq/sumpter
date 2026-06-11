@@ -47,7 +47,7 @@ func TestResolverConfigHandle(t *testing.T) {
 
 func TestResolverCLIOverrideSupersedesLiteralKeys(t *testing.T) {
 	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
-		"src": {AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: uriio.Secret("literal-secret-value")},
+		"src": {AccessKeyID: uriio.Secret("AKIAIOSFODNN7EXAMPLE"), SecretAccessKey: uriio.Secret("literal-secret-value")},
 	}}
 	r := uriio.NewResolver(cfg, map[string]string{"src": "override-profile"})
 	hc, err := r.Resolve("src")
@@ -79,8 +79,8 @@ func TestResolverCLIOverrideDefinesUndeclaredHandle(t *testing.T) {
 // credentials so no network or shared AWS config is required.
 func TestProviderPoolPoolsPerHandleBucket(t *testing.T) {
 	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
-		"a": {Region: "us-east-1", AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: uriio.Secret("secret-a"), Endpoint: "https://s3.example.com", ForcePathStyle: true},
-		"b": {Region: "us-west-2", AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: uriio.Secret("secret-b"), Endpoint: "https://s3.other.com", ForcePathStyle: true},
+		"a": {Region: "us-east-1", AccessKeyID: uriio.Secret("AKIAIOSFODNN7EXAMPLE"), SecretAccessKey: uriio.Secret("secret-a"), Endpoint: "https://s3.example.com", ForcePathStyle: true},
+		"b": {Region: "us-west-2", AccessKeyID: uriio.Secret("AKIAIOSFODNN7EXAMPLE"), SecretAccessKey: uriio.Secret("secret-b"), Endpoint: "https://s3.other.com", ForcePathStyle: true},
 	}}
 	pool := uriio.NewProviderPool(uriio.NewResolver(cfg, nil))
 	t.Cleanup(func() { _ = pool.Close() })

@@ -39,7 +39,7 @@ func motoPool(t *testing.T) (*uriio.ProviderPool, string) {
 		"moto": {
 			Region:          region,
 			Endpoint:        endpoint,
-			AccessKeyID:     os.Getenv("SUMPTER_TEST_S3_KEY_ID"),
+			AccessKeyID:     uriio.Secret(os.Getenv("SUMPTER_TEST_S3_KEY_ID")),
 			SecretAccessKey: uriio.Secret(os.Getenv("SUMPTER_TEST_S3_SECRET")),
 			ForcePathStyle:  true,
 			Insecure:        true, // local moto/MinIO is typically http://

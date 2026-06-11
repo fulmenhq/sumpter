@@ -12,18 +12,23 @@ import (
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/uriio"
+	"gopkg.in/yaml.v3"
 )
 
-// theSecret is a recognizable literal used to prove it never escapes redaction.
-const theSecret = "wJalrXUtnFEMI-K7MDENG-bPxRfiCYEXAMPLEKEY"
+// Recognizable credential literals used to prove neither escapes redaction.
+const (
+	theSecret      = "wJalrXUtnFEMI-K7MDENG-bPxRfiCYEXAMPLEKEY"
+	theAccessKeyID = "AKIAIOSFODNN7EXAMPLE"
+)
 
-// TestSecretRedactionAcrossSurfaces asserts a secret never appears in cleartext
-// across fmt verbs, %#v, JSON, or structured logging.
+// TestSecretRedactionAcrossSurfaces asserts neither the secret access key nor the
+// access key id ever appears in cleartext across fmt verbs, %#v, error wrapping,
+// structured logging, JSON, or YAML.
 func TestSecretRedactionAcrossSurfaces(t *testing.T) {
 	hc := uriio.HandleConfig{
 		Profile:         "prod-readonly",
 		Region:          "us-east-1",
-		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     uriio.Secret(theAccessKeyID),
 		SecretAccessKey: uriio.Secret(theSecret),
 	}
 
@@ -32,13 +37,14 @@ func TestSecretRedactionAcrossSurfaces(t *testing.T) {
 		`fmt %+v`:          fmt.Sprintf("%+v", hc),
 		`fmt %#v`:          fmt.Sprintf("%#v", hc),
 		`fmt %s on secret`: fmt.Sprintf("secret=[%s]", hc.SecretAccessKey),
+		`fmt %s on key id`: fmt.Sprintf("keyid=[%s]", hc.AccessKeyID),
 		`error wrap`:       fmt.Errorf("constructing provider with %v: boom", hc).Error(),
 	}
 
 	// Structured logging surface.
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
-	logger.Info("provider", slog.Any("secret", hc.SecretAccessKey), slog.Any("handle", hc))
+	logger.Info("provider", slog.Any("key_id", hc.AccessKeyID), slog.Any("secret", hc.SecretAccessKey), slog.Any("handle", hc))
 	surfaces["slog"] = logBuf.String()
 
 	// JSON serialization surface.
@@ -48,9 +54,20 @@ func TestSecretRedactionAcrossSurfaces(t *testing.T) {
 	}
 	surfaces["json"] = string(jsonBytes)
 
+	// YAML serialization surface (the surface devrev flagged: a string alias
+	// would otherwise emit cleartext).
+	yamlBytes, err := yaml.Marshal(hc)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	surfaces["yaml"] = string(yamlBytes)
+
 	for name, out := range surfaces {
 		if strings.Contains(out, theSecret) {
-			t.Errorf("secret leaked through %s surface: %q", name, out)
+			t.Errorf("secret access key leaked through %s surface: %q", name, out)
+		}
+		if strings.Contains(out, theAccessKeyID) {
+			t.Errorf("access key id leaked through %s surface: %q", name, out)
 		}
 		if !strings.Contains(out, "[redacted]") {
 			t.Errorf("%s surface missing redaction marker: %q", name, out)
@@ -59,7 +76,10 @@ func TestSecretRedactionAcrossSurfaces(t *testing.T) {
 
 	// Reveal is the one cleartext path, used only at the provider boundary.
 	if hc.SecretAccessKey.Reveal() != theSecret {
-		t.Errorf("Reveal() = %q, want the cleartext secret", hc.SecretAccessKey.Reveal())
+		t.Errorf("SecretAccessKey.Reveal() = %q, want the cleartext secret", hc.SecretAccessKey.Reveal())
+	}
+	if hc.AccessKeyID.Reveal() != theAccessKeyID {
+		t.Errorf("AccessKeyID.Reveal() = %q, want the cleartext key id", hc.AccessKeyID.Reveal())
 	}
 }
 

@@ -91,7 +91,7 @@ func (r *Resolver) s3Config(handle, bucket string) (gonimbuss3.Config, error) {
 		Region:          hc.Region,
 		Endpoint:        hc.Endpoint,
 		Profile:         hc.Profile,
-		AccessKeyID:     hc.AccessKeyID,
+		AccessKeyID:     hc.AccessKeyID.Reveal(),     // cleartext lives only on this transient value
 		SecretAccessKey: hc.SecretAccessKey.Reveal(), // cleartext lives only on this transient value
 		ForcePathStyle:  hc.ForcePathStyle,
 	}, nil
