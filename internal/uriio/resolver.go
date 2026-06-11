@@ -86,6 +86,11 @@ func (r *Resolver) s3Config(handle, bucket string) (gonimbuss3.Config, error) {
 	if err != nil {
 		return gonimbuss3.Config{}, err
 	}
+	// Enforce the TLS allowlist at the connect boundary, covering handles defined
+	// via CLI override (which skip the config-load validation).
+	if err := validateEndpointPosture(handleLabel(handle), hc); err != nil {
+		return gonimbuss3.Config{}, err
+	}
 	return gonimbuss3.Config{
 		Bucket:          bucket,
 		Region:          hc.Region,
@@ -97,21 +102,29 @@ func (r *Resolver) s3Config(handle, bucket string) (gonimbuss3.Config, error) {
 	}, nil
 }
 
-// validateEndpointPosture enforces the static TLS guard: a custom endpoint must
-// be https:// unless the handle explicitly opts in with insecure: true. gonimbus
-// accepts http:// endpoints and exposes no verify knob, so a plaintext endpoint
-// would put credentials and data on the wire. The check is static (no I/O), so
-// it is safe to run at resolve time before any connection is attempted.
+// validateEndpointPosture enforces the TLS guard as an allowlist: a custom
+// endpoint must carry an explicit https:// scheme unless the handle opts in with
+// insecure: true. A bare http:// endpoint, or a scheme-less/ambiguous endpoint
+// such as "minio.local:9000" (whose on-the-wire scheme depends on AWS-SDK
+// BaseEndpoint coercion), is rejected so plaintext is impossible regardless of
+// SDK internals. gonimbus exposes no TLS-verify knob, so this is the control.
+//
+// The check is static (no I/O) but is enforced at provider construction (the
+// connect boundary) as well as config load, so it holds for handles defined via
+// CLI override too.
 func validateEndpointPosture(name string, hc HandleConfig) error {
 	endpoint := strings.TrimSpace(hc.Endpoint)
 	if endpoint == "" {
+		return nil // AWS S3 / default endpoint — TLS is the SDK default.
+	}
+	if hc.Insecure {
+		return nil // explicit, loud opt-in.
+	}
+	if strings.HasPrefix(strings.ToLower(endpoint), "https://") {
 		return nil
 	}
-	if strings.HasPrefix(strings.ToLower(endpoint), "http://") && !hc.Insecure {
-		return fmt.Errorf(
-			"uriio: credentials handle %q uses a non-TLS endpoint %q; "+
-				"custom endpoints must be https:// — set insecure: true to override (not recommended)",
-			name, endpoint)
-	}
-	return nil
+	return fmt.Errorf(
+		"uriio: credentials handle %q uses endpoint %q without an explicit https:// scheme; "+
+			"custom endpoints must be https:// — set insecure: true to override (not recommended)",
+		name, endpoint)
 }
