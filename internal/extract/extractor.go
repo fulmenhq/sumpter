@@ -271,7 +271,10 @@ func compileFieldMapping(mapping *FieldMapping) error {
 	return nil
 }
 
-// readFileContent reads file content with transparent .gz decompression support
+// readFileContent reads file content with transparent .gz decompression support.
+// The path is an already-resolved local source produced by the uriio read
+// boundary (see the extract command's input-reference resolution), so this
+// local-core consumer never sees a cloud or file:// URI.
 func readFileContent(filePath string, allowLargeFiles bool) ([]byte, error) {
 	const maxFileSizeWithoutFlag = 1 * 1024 * 1024 * 1024 // 1GB
 
@@ -339,7 +342,9 @@ func readFileContent(filePath string, allowLargeFiles bool) ([]byte, error) {
 	return data, nil
 }
 
-// openFileStream opens a file for streaming with transparent .gz decompression
+// openFileStream opens a file for streaming with transparent .gz decompression.
+// filePath is an already-resolved local source produced by the uriio read
+// boundary, so this local-core consumer never sees a cloud or file:// URI.
 func openFileStream(filePath string) (io.ReadCloser, error) {
 	file, err := os.Open(filePath) // #nosec G304 - path comes from user-provided file list
 	if err != nil {
