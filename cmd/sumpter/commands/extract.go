@@ -73,6 +73,12 @@ type ExtractOptions struct {
 	SkipLargeRecords  bool   // If true, skip oversized records; if false, fail
 	VerifyIndex       bool   // Run SHA verification before extraction
 	RuntimeProvenance provenance.RuntimeOptions
+	// Cloud credentials options. They declare credential handles indirectly — no
+	// secrets on the CLI or in recipe YAML. The cloud read/write boundaries that
+	// act on these land in later deliveries; this delivery validates them when
+	// supplied.
+	CredentialsPath     string   // Path to the credentials config (handles)
+	CredentialOverrides []string // Repeatable handle=profile CLI overrides
 }
 
 func NewExtractCommand() *cobra.Command {
@@ -150,6 +156,8 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().IntVar(&opts.MaxRecordSizeMB, "max-record-size-mb", 0, "Maximum record size in MB (0 = no limit)")
 	cmd.Flags().BoolVar(&opts.SkipLargeRecords, "skip-large-records", false, "Skip oversized records instead of failing")
 	cmd.Flags().BoolVar(&opts.VerifyIndex, "verify-index", false, "Verify index integrity with SHA-256 before extraction")
+	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
+	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
 
 	_ = cmd.MarkFlagRequired("signature-config-path")
 	_ = cmd.MarkFlagRequired("extract-config-path")
@@ -240,6 +248,29 @@ func resolveLocalReferences(opts *ExtractOptions) error {
 	return nil
 }
 
+// validateCredentialOptions validates the cloud credential options up front so a
+// malformed CLI override or a bad credentials config fails fast, before any
+// extraction work. The cloud read/write boundaries that consume these land in
+// later deliveries; this delivery proves the options are well-formed:
+//   - --credential handle=profile values parse and never carry a raw key (the
+//     profile is a reference, not a secret on the command line);
+//   - a supplied --credentials config loads under the fail-closed parser and the
+//     owner-only permission rule for literal keys.
+//
+// A run that passes no credential options does no credential work at all, so
+// zero-config local runs are unchanged.
+func validateCredentialOptions(opts *ExtractOptions) error {
+	if _, err := uriio.ParseCredentialOverrides(opts.CredentialOverrides); err != nil {
+		return err
+	}
+	if strings.TrimSpace(opts.CredentialsPath) != "" {
+		if _, err := uriio.LoadCredentialsConfig(opts.CredentialsPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runExtract(opts *ExtractOptions) error {
 	logger := logging.GetLogger()
 	logger.Debug("Starting extract command")
@@ -263,6 +294,9 @@ func runExtract(opts *ExtractOptions) error {
 		return fmt.Errorf("--continue-on-error requires --output-path")
 	}
 	if err := resolveLocalReferences(opts); err != nil {
+		return err
+	}
+	if err := validateCredentialOptions(opts); err != nil {
 		return err
 	}
 	logger.Debug("Options validated")
