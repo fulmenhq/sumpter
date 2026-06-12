@@ -290,6 +290,11 @@ test-seekablezstd: ## Run seekable-zstd integration tests (requires CGO)
 	@echo "$(YELLOW)⚠️  Requires CGO_ENABLED=1 and seekable-zstd library$(NC)"
 	CGO_ENABLED=1 $(GOTEST) -v -tags seekablezstd ./internal/index/store/...
 
+.PHONY: test-integration-s3
+test-integration-s3: ## Run S3 live-integration suite (BYO endpoint or self-provisioned moto); see docs/sop/cicd-and-local-gates.md
+	@echo "$(BLUE)Running S3 live-integration suite...$(NC)"
+	@bash scripts/integration-s3.sh
+
 .PHONY: benchmark
 benchmark: ## Run benchmarks
 	@echo "$(BLUE)Running benchmarks...$(NC)"
@@ -561,8 +566,13 @@ pr-final-drift-check: ## Verify final PR validation leaves tracked files unchang
 	@echo "$(GREEN)✅ Final PR drift check passed$(NC)"
 
 .PHONY: pr-final
-pr-final: prepush examples confidentiality-tree-check pr-final-drift-check ## Run final PR validation, including examples and drift checks
+pr-final: prepush examples confidentiality-tree-check test-integration-s3 pr-final-drift-check ## Run final PR validation, including examples, S3 live-integration, and drift checks
 	@echo "$(GREEN)✅ PR final validation passed!$(NC)"
+# pr-final is a LOCAL-ONLY gate (never invoked by remote CI/CD — see
+# docs/sop/cicd-and-local-gates.md), so it is safe to require the S3 live suite
+# here. test-integration-s3 self-provisions an ephemeral moto when no BYO
+# endpoint is set; set SUMPTER_SKIP_S3_INTEGRATION=1 to skip on an offline
+# machine with no endpoint.
 
 .PHONY: confidentiality-tree-check
 confidentiality-tree-check: ## Verify no local-data file lives in the repo tree (ADR-0008)

@@ -1,3 +1,10 @@
+//go:build s3integration
+
+// This file is part of the S3 live-integration class: it requires a live
+// S3-compatible endpoint and is excluded from the default/CI build. Build/run it
+// with `-tags s3integration` (see `make test-integration-s3` and
+// docs/sop/cicd-and-local-gates.md).
+
 package uriio_test
 
 import (
@@ -5,6 +12,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/uriio"
@@ -42,7 +50,9 @@ func motoPool(t *testing.T) (*uriio.ProviderPool, string) {
 			AccessKeyID:     uriio.Secret(os.Getenv("SUMPTER_TEST_S3_KEY_ID")),
 			SecretAccessKey: uriio.Secret(os.Getenv("SUMPTER_TEST_S3_SECRET")),
 			ForcePathStyle:  true,
-			Insecure:        true, // local moto/MinIO is typically http://
+			// Insecure only for an http:// endpoint (local moto/MinIO); a BYO
+			// https endpoint (e.g. Wasabi, R2) keeps TLS enforced.
+			Insecure: strings.HasPrefix(strings.ToLower(endpoint), "http://"),
 		},
 	}}
 	pool := uriio.NewProviderPool(uriio.NewResolver(cfg, nil))

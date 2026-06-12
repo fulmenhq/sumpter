@@ -1,3 +1,9 @@
+//go:build s3integration
+
+// S3 live-integration tests: require a live S3-compatible endpoint, excluded from
+// the default/CI build. Run with `-tags s3integration` (see
+// `make test-integration-s3` and docs/sop/cicd-and-local-gates.md).
+
 package commands
 
 import (
@@ -10,6 +16,12 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
+
+// motoInsecure reports whether the endpoint is plaintext http:// (local moto or
+// MinIO). A BYO https endpoint (Wasabi, R2, real S3) keeps TLS enforced.
+func motoInsecure(endpoint string) bool {
+	return strings.HasPrefix(strings.ToLower(endpoint), "http://")
+}
 
 // Cloud source-in integration tests (S3-compatible). These drive the extract
 // command end-to-end against a live moto/MinIO endpoint and assert the cloud
@@ -59,12 +71,16 @@ func motoEnvOrSkip(t *testing.T) motoEnv {
 func (m motoEnv) writeCredentialsConfig(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "credentials.yaml")
+	insecure := "false"
+	if motoInsecure(m.endpoint) {
+		insecure = "true"
+	}
 	body := "handles:\n" +
 		"  default:\n" +
 		"    region: " + m.region + "\n" +
 		"    endpoint: " + m.endpoint + "\n" +
 		"    force_path_style: true\n" +
-		"    insecure: true\n" +
+		"    insecure: " + insecure + "\n" +
 		"    access_key_id: " + m.keyID + "\n" +
 		"    secret_access_key: " + m.secret + "\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -81,7 +97,7 @@ func (m motoEnv) putObject(t *testing.T, key string, payload []byte) {
 			Region:          m.region,
 			Endpoint:        m.endpoint,
 			ForcePathStyle:  true,
-			Insecure:        true,
+			Insecure:        motoInsecure(m.endpoint),
 			AccessKeyID:     uriio.Secret(m.keyID),
 			SecretAccessKey: uriio.Secret(m.secret),
 		},
