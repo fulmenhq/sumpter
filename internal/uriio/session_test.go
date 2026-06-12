@@ -97,6 +97,20 @@ func TestEndpointPostureAllowlist(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Direct gate assertion: validateEndpointPosture is the control, and it
+			// is pure (no I/O), so for accepted postures we assert it returns nil
+			// rather than ignoring all errors at construction. This fails if a
+			// future change wrongly rejects https:// or an explicit insecure opt-in.
+			gateErr := validateEndpointPosture("h", tc.hc)
+			if tc.wantErr && gateErr == nil {
+				t.Fatalf("validateEndpointPosture(%+v) = nil, want rejection", tc.hc)
+			}
+			if !tc.wantErr && gateErr != nil {
+				t.Fatalf("validateEndpointPosture(%+v) = %v, want accepted", tc.hc, gateErr)
+			}
+
+			// End-to-end: the gate must also fire at provider construction (the
+			// connect boundary), covering handles defined via CLI override.
 			cfg := &CredentialsConfig{Handles: map[string]HandleConfig{"h": tc.hc}}
 			pool := NewProviderPool(NewResolver(cfg, nil))
 			t.Cleanup(func() { _ = pool.Close() })

@@ -134,6 +134,7 @@ const (
 // ExtractResult represents the result of processing a file
 type ExtractResult struct {
 	File                      string                   `json:"file"`
+	LogicalURI                string                   `json:"logical_uri,omitempty"`
 	Records                   []map[string]interface{} `json:"records"`
 	Error                     error                    `json:"error,omitempty"`
 	PerSelectorCounts         map[int]int              `json:"per_selector_counts,omitempty"`

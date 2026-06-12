@@ -240,7 +240,7 @@ func TestBuildInputLedger(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	input, err := BuildInputLedger(path, dir)
+	input, err := BuildInputLedger(path, path, dir)
 	if err != nil {
 		t.Fatalf("BuildInputLedger: %v", err)
 	}

@@ -271,8 +271,15 @@ func (o *objectURIRef) String() string { return "s3://" + o.bucket + "/" + o.key
 // SweepStaleStaging removes run staging directories older than maxAge under the
 // work directory. Cleanup on success/handled-failure removes the run dir, but a
 // SIGKILL/OOM/panic can leave staged cloud source data behind; this startup
-// sweep bounds that exposure. It is best-effort: individual removal failures are
-// ignored so a busy concurrent run is never disturbed.
+// sweep bounds that exposure.
+//
+// Concurrency contract: this is a STARTUP orphan sweep, not a periodic GC. Call
+// it once before a run begins staging, with a conservative maxAge (the caller
+// uses a full day). It keys off each run dir's mod time, so a still-live
+// concurrent run is safe only because maxAge far exceeds any real run's duration
+// — do NOT call it mid-run or shorten maxAge toward a plausible run length, or it
+// could delete another process's active staging. It is best-effort: individual
+// removal failures are ignored so a busy concurrent run is never disturbed.
 func SweepStaleStaging(workDir string, maxAge time.Duration, now time.Time) {
 	base := filepath.Join(workDir, stagingDirName)
 	entries, err := os.ReadDir(base)

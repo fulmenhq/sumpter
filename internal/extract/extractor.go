@@ -424,7 +424,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		logger = zap.NewNop()
 	}
 
-	result := ExtractResult{File: filePath, SignatureMatchStatus: SignatureMatchUnknown}
+	result := ExtractResult{File: filePath, LogicalURI: runtimeProvenance.SourceIdentity(filePath), SignatureMatchStatus: SignatureMatchUnknown}
 	if sink == nil {
 		result.Error = fmt.Errorf("record sink is nil")
 		return result
@@ -462,7 +462,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		}
 
 		summary := FileEmissionSummary{
-			SourceFile:        filePath,
+			SourceFile:        runtimeProvenance.SourceIdentity(filePath),
 			RecordType:        extCfg.RecordType,
 			RecordCount:       emittedRecords,
 			Disposition:       boundaryDisposition,
@@ -638,7 +638,7 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	}
 	logger.Debug("Starting file processing", zap.String("file", filePath))
 
-	result := ExtractResult{File: filePath, SignatureMatchStatus: SignatureMatchUnknown}
+	result := ExtractResult{File: filePath, LogicalURI: runtimeProvenance.SourceIdentity(filePath), SignatureMatchStatus: SignatureMatchUnknown}
 	emittedRecords := 0
 	boundaryDisposition := DispositionApplied
 	boundaryReason := DispositionReason("")
@@ -671,7 +671,7 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 			boundaryDetail = result.DispositionDetail
 		}
 		summary := FileEmissionSummary{
-			SourceFile:        filePath,
+			SourceFile:        runtimeProvenance.SourceIdentity(filePath),
 			RecordType:        extCfg.RecordType,
 			RecordCount:       emittedRecords,
 			Disposition:       boundaryDisposition,
@@ -1491,7 +1491,7 @@ func coerceToFloat(value interface{}) (float64, error) {
 func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtime *dsl.ValidationRuntime, summariesIncluded, validationIncluded bool, runtimeProvenance provenance.RuntimeOptions, recordNum int) map[string]interface{} {
 	metadata := map[string]interface{}{
 		"generated_at":        time.Now().UTC().Format(time.RFC3339),
-		"source_file":         sourceFile,
+		"source_file":         runtimeProvenance.SourceIdentity(sourceFile),
 		"record_type":         cfg.RecordType,
 		"summaries_included":  summariesIncluded,
 		"validation_included": validationIncluded,
