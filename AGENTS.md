@@ -105,6 +105,7 @@ PR flow.
 - **[Repository Operations SOP](docs/sop/repository-operations-sop.md)** - "Check-all, stage, pre-commit, commit"
 - **[Lifecycle Phase Acceptance](docs/sop/lifecycle-phase-acceptance-criteria.md)** - "Phase validation and transition procedures"
 - **[Dynamic Coverage Gating](config/coverage-thresholds.yaml)** - "Alpha: 50%, Beta: 70%, Production: 80%"
+- **[CI/CD and Local Gates SOP](docs/sop/cicd-and-local-gates.md)** - "What runs on remote CI vs local-only gates; on-demand cloud live-integration tests"
 
 **Usage**: Reference SOPs for consistent development practices across all Sumpter development tasks.
 

@@ -104,7 +104,7 @@ into the insecure posture.
 
 | Variable                   | Meaning                                                  | Required          |
 | -------------------------- | -------------------------------------------------------- | ----------------- |
-| `SUMPTER_TEST_S3_ENDPOINT` | Endpoint URI (e.g. `https://s3.us-east-1.wasabisys.com`) | yes               |
+| `SUMPTER_TEST_S3_ENDPOINT` | Endpoint URI (e.g. `https://s3.us-east-1.amazonaws.com`) | yes               |
 | `SUMPTER_TEST_S3_BUCKET`   | A pre-created bucket name                                | yes               |
 | `SUMPTER_TEST_S3_PROFILE`  | AWS shared-config profile (preferred — see below)        | profile _or_ keys |
 | `SUMPTER_TEST_S3_KEY_ID`   | Access key id (used only when no profile)                | profile _or_ keys |

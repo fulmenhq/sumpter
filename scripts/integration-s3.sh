@@ -9,7 +9,7 @@
 #      reference — and the suite runs against it (moto, MinIO, Wasabi, R2, real S3).
 #      https endpoints keep TLS enforced; http:// opts into insecure.
 #
-#        SUMPTER_TEST_S3_ENDPOINT   e.g. https://s3.us-east-1.wasabisys.com
+#        SUMPTER_TEST_S3_ENDPOINT   e.g. https://s3.us-east-1.amazonaws.com
 #        SUMPTER_TEST_S3_BUCKET     a pre-created bucket
 #        SUMPTER_TEST_S3_PROFILE    AWS profile (preferred; creds from ~/.aws, no
 #                                   secret in env) — OR the literal pair below
