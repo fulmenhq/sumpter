@@ -2133,6 +2133,17 @@ func cloudRelativeSourcePath(root string, fileRef uriio.Ref) (string, error) {
 	if !rootRef.IsCloud() || rootRef.Bucket != fileRef.Bucket {
 		return "", fmt.Errorf("source_extraction relative_path file %s escapes input root %s", fileRef.LogicalURI, root)
 	}
+	// A single-object root (not a prefix or glob) is the file itself: relative_path
+	// of a file against itself is ".", mirroring local filepath.Rel(file, file).
+	// Any other key under that root escapes.
+	if !rootRef.IsPrefix() && !rootRef.IsPattern() {
+		if fileRef.Key == rootRef.Key {
+			return ".", nil
+		}
+		return "", fmt.Errorf("source_extraction relative_path file %s escapes input root %s", fileRef.LogicalURI, root)
+	}
+	// Prefix/pattern root: return the object key relative to the prefix, with a
+	// path-component boundary so prefix/ does not match prefixsuffix/.
 	prefix := rootRef.Key
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"

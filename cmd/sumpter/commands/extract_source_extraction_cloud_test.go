@@ -105,6 +105,36 @@ func TestSourceExtractionRelativePathCloudEscape(t *testing.T) {
 	}
 }
 
+// TestSourceExtractionRelativePathCloudSingleObject proves a single-object cloud
+// --input-path root behaves like a local single-file root: relative_path of the
+// object against itself is ".", and any other object under that root escapes.
+func TestSourceExtractionRelativePathCloudSingleObject(t *testing.T) {
+	const root = "s3://bucket/prefix/a.xml"
+
+	got, err := sourceExtractionTarget(root, recipesmanifest.SourceExtractionRelativePath, recipesmanifest.InputDefaults{Path: root})
+	if err != nil {
+		t.Fatalf("relative_path(self) error = %v", err)
+	}
+	if got != "." {
+		t.Errorf("relative_path of object against itself = %q, want %q", got, ".")
+	}
+
+	escapes := []struct {
+		name string
+		file string
+	}{
+		{"sibling object", "s3://bucket/prefix/b.xml"},
+		{"object below the single-object root", "s3://bucket/prefix/a.xml/child.xml"},
+	}
+	for _, tc := range escapes {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := sourceExtractionTarget(tc.file, recipesmanifest.SourceExtractionRelativePath, recipesmanifest.InputDefaults{Path: root}); err == nil {
+				t.Errorf("expected escape for file %q under single-object root %q", tc.file, root)
+			}
+		})
+	}
+}
+
 // TestSourceExtractionTargetLocalUnchanged confirms local sources keep their
 // historical filesystem-path behavior (filename basename), so the cloud branch
 // does not perturb the local path.
