@@ -57,6 +57,15 @@ type Ref struct {
 // IsCloud reports whether the reference targets a cloud backend.
 func (r Ref) IsCloud() bool { return r.Scheme != SchemeLocal }
 
+// IsPattern reports whether the reference's key carried glob metacharacters.
+func (r Ref) IsPattern() bool { return r.Pattern != "" }
+
+// IsPrefix reports whether the reference denotes a listing prefix (a trailing
+// slash, or an empty key meaning the whole bucket) rather than a single object.
+func (r Ref) IsPrefix() bool {
+	return r.Scheme == SchemeS3 && (r.Key == "" || strings.HasSuffix(r.Key, "/"))
+}
+
 // Classify parses a storage reference into a scheme-tagged Ref.
 //
 // A reference containing "://" is parsed as a URI: file:// and s3:// are

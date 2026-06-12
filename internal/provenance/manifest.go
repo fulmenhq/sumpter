@@ -124,18 +124,22 @@ func WriteManifest(path string, manifest Manifest) error {
 	return tgt.Publish(context.Background())
 }
 
-// BuildInputLedger hashes and stats a processed input path.
-func BuildInputLedger(path string, roots ...string) (Input, error) {
-	info, err := os.Stat(path)
+// BuildInputLedger hashes and stats a processed input. localPath is the file the
+// bytes are read from — a staged working copy for cloud sources, the source file
+// itself for local ones. logicalURI is the canonical identity recorded in the
+// manifest (a bare path, file:// URI, or s3:// URI), so a staged working path
+// never leaks into a published artifact. For local sources the two coincide.
+func BuildInputLedger(localPath, logicalURI string, roots ...string) (Input, error) {
+	info, err := os.Stat(localPath)
 	if err != nil {
-		return Input{}, fmt.Errorf("stat input %s: %w", path, err)
+		return Input{}, fmt.Errorf("stat input %s: %w", logicalURI, err)
 	}
-	hash, err := fileSHA256(path)
+	hash, err := fileSHA256(localPath)
 	if err != nil {
 		return Input{}, err
 	}
 	return Input{
-		Path:      SanitizePath(path, roots...),
+		Path:      SanitizePath(logicalURI, roots...),
 		SHA256:    hash,
 		SizeBytes: info.Size(),
 	}, nil
@@ -163,6 +167,14 @@ func SanitizePath(candidate string, roots ...string) string {
 	candidate = strings.TrimSpace(candidate)
 	if candidate == "" {
 		return ""
+	}
+	// A scheme-qualified cloud URI (e.g. s3://bucket/key) is a logical identity,
+	// not a host-local path: it carries no local root to strip, and filepath.Clean
+	// would collapse the "//" in the scheme (s3://bucket -> s3:/bucket). Return it
+	// verbatim. file:// is excluded because it embeds a host-local path — but in
+	// practice it never reaches here, having been resolved to a local path upstream.
+	if strings.Contains(candidate, "://") && !strings.HasPrefix(candidate, "file://") {
+		return candidate
 	}
 	clean := filepath.Clean(candidate)
 	if !filepath.IsAbs(clean) {

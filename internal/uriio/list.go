@@ -38,6 +38,10 @@ type Listing struct {
 
 	// Entries are the enumerated objects, in a stable (sorted) order.
 	Entries []ListEntry
+
+	// FullBucketScan is true when a cloud listing had an empty prefix (the whole
+	// bucket). The caller can warn or gate this blast-radius case.
+	FullBucketScan bool
 }
 
 // List enumerates the objects under a reference.

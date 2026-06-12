@@ -1814,6 +1814,84 @@ func TestProcessFileWithApplicabilityToSinkEmitsFailedBoundaryAfterParseError(t 
 	}
 }
 
+// TestLogicalSourceIdentityNeverLeaksLocalPath proves the cloud read-boundary
+// contract: when RuntimeOptions.SourceURI is set (a staged cloud source), the
+// extraction core reads bytes from the local staged path but stamps the LOGICAL
+// URI into every identity surface — ExtractResult.LogicalURI, the records'
+// _runtime.source_file, and the sink file-boundary summary. The staged local path
+// must appear nowhere in those surfaces. ExtractResult.File stays the local read
+// path (it is what the caller hashes for the input ledger).
+func TestLogicalSourceIdentityNeverLeaksLocalPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	stagedPath := filepath.Join(tmpDir, "staged-abcdef.xml")
+	xmlContent := `<Envelope><Item><Name>A</Name></Item><Item><Name>B</Name></Item></Envelope>`
+	if err := os.WriteFile(stagedPath, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write staged file: %v", err)
+	}
+	const logicalURI = "s3://example-bucket/data/source.xml"
+
+	signature := &FileSignature{
+		SignatureID:         "test",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType:     "item",
+		MatchSelectors: []MatchSelector{{XPath: "//Item"}},
+		FieldMappings:  []FieldMapping{{OutputField: "name", XPath: "Name", Type: "string"}},
+	}
+	rp := provenance.RuntimeOptions{SourceURI: logicalURI}
+
+	// Buffered path: records land in ExtractResult.Records.
+	result := ProcessFileWithApplicability(stagedPath, signature, extractCfg, nil, nil, false, rp)
+	if result.Error != nil {
+		t.Fatalf("ProcessFileWithApplicability() error = %v", result.Error)
+	}
+	if result.File != stagedPath {
+		t.Errorf("result.File = %q, want the local staged path %q (used for hashing)", result.File, stagedPath)
+	}
+	if result.LogicalURI != logicalURI {
+		t.Errorf("result.LogicalURI = %q, want %q", result.LogicalURI, logicalURI)
+	}
+	if len(result.Records) != 2 {
+		t.Fatalf("records = %d, want 2", len(result.Records))
+	}
+	for i, record := range result.Records {
+		runtimeBlock, ok := record["_runtime"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("record %d missing _runtime block", i)
+		}
+		if got := runtimeBlock["source_file"]; got != logicalURI {
+			t.Errorf("record %d _runtime.source_file = %#v, want %q", i, got, logicalURI)
+		}
+		if got, _ := runtimeBlock["source_file"].(string); strings.Contains(got, tmpDir) {
+			t.Errorf("record %d _runtime.source_file leaked the staged path: %q", i, got)
+		}
+	}
+
+	// Sink path: the file-boundary summary must also carry the logical identity.
+	sink := &trackingRecordSink{}
+	sinkResult := ProcessFileWithApplicabilityToSink(context.Background(), stagedPath, signature, extractCfg, nil, nil, false, rp, sink)
+	if sinkResult.Error != nil {
+		t.Fatalf("ProcessFileWithApplicabilityToSink() error = %v", sinkResult.Error)
+	}
+	if sinkResult.LogicalURI != logicalURI {
+		t.Errorf("sink result.LogicalURI = %q, want %q", sinkResult.LogicalURI, logicalURI)
+	}
+	if len(sink.boundaries) != 1 {
+		t.Fatalf("sink boundaries = %d, want 1", len(sink.boundaries))
+	}
+	if sink.boundaries[0].SourceFile != logicalURI {
+		t.Errorf("boundary SourceFile = %q, want %q", sink.boundaries[0].SourceFile, logicalURI)
+	}
+	for i, record := range sink.records {
+		runtimeBlock := record["_runtime"].(map[string]interface{})
+		if got, _ := runtimeBlock["source_file"].(string); got != logicalURI {
+			t.Errorf("sink record %d _runtime.source_file = %q, want %q", i, got, logicalURI)
+		}
+	}
+}
+
 func TestProcessFileStreaming_DoesNotMutatePreparedConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "reuse.xml")
