@@ -6,7 +6,8 @@
 # a live S3-compatible endpoint. Two ways to get an endpoint, tried in order:
 #
 #   1. BYO (bring-your-own): export the standard contract — a URI + an S3 credential
-#      reference — and the suite runs against it (moto, MinIO, Wasabi, R2, real S3).
+#      reference — and the suite runs against it (moto, MinIO, AWS S3, or any
+#      S3-compatible provider).
 #      https endpoints keep TLS enforced; http:// opts into insecure.
 #
 #        SUMPTER_TEST_S3_ENDPOINT   e.g. https://s3.us-east-1.amazonaws.com
@@ -17,8 +18,8 @@
 #        SUMPTER_TEST_S3_SECRET     secret access key (used only when no profile)
 #        SUMPTER_TEST_S3_REGION     optional, default us-east-1
 #
-#      Tip: keep these in a gitignored .envrc (direnv). Never commit endpoint,
-#      bucket, profile, or credential values. See docs/sop/cicd-and-local-gates.md.
+#      Tip: keep these per-developer values in a gitignored .envrc (direnv).
+#      See docs/sop/cicd-and-local-gates.md.
 #
 #   2. Self-provision: with no BYO endpoint, this script stands up an ephemeral
 #      moto server in a cached Python venv, creates a bucket, runs, and tears it

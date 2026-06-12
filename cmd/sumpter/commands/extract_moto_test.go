@@ -21,7 +21,7 @@ import (
 )
 
 // motoInsecure reports whether the endpoint is plaintext http:// (local moto or
-// MinIO). A BYO https endpoint (Wasabi, R2, real S3) keeps TLS enforced.
+// MinIO). A BYO https endpoint keeps TLS enforced.
 func motoInsecure(endpoint string) bool {
 	return strings.HasPrefix(strings.ToLower(endpoint), "http://")
 }

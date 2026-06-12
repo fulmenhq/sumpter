@@ -98,7 +98,7 @@ The runner obtains an endpoint two ways, tried in order:
 ### 1. Bring-your-own (BYO) endpoint
 
 Export the standard contract — a **URI plus an S3 credential reference** — and the
-suite runs against it (moto, MinIO, Wasabi, Cloudflare R2, real AWS S3). An
+suite runs against it (moto, MinIO, AWS S3, or any S3-compatible provider). An
 `https://` endpoint keeps TLS enforced; only a plaintext `http://` endpoint opts
 into the insecure posture.
 
@@ -129,20 +129,19 @@ profile+literal mixing are rejected.
 #### Local setup with direnv (`.envrc`)
 
 `.envrc` is gitignored, so it is the natural home for your local, machine-specific
-endpoint + profile + bucket (no secrets — those stay in `~/.aws/credentials`).
-A profile-based `.envrc` looks like:
+endpoint + profile + bucket; credentials themselves resolve from
+`~/.aws/credentials` via the profile. A profile-based `.envrc` looks like:
 
 ```bash
-# .envrc — gitignored; never commit endpoint/bucket/profile refs to the repo
+# .envrc (gitignored) — your local, machine-specific test config
 export SUMPTER_TEST_S3_ENDPOINT="https://<your-s3-compatible-endpoint>"
 export SUMPTER_TEST_S3_REGION="<region>"
 export SUMPTER_TEST_S3_PROFILE="<your-aws-profile>"   # resolves creds from ~/.aws
 export SUMPTER_TEST_S3_BUCKET="<your-test-bucket>"
 ```
 
-Per the repository confidentiality posture, **no real endpoint, bucket, profile, or
-credential value belongs in any tracked file** — `.envrc` and `~/.aws/*` are
-operator-local only.
+These values are per-developer, so they live in `.envrc` and `~/.aws/*` rather
+than in the repository.
 
 ### 2. Self-provisioned ephemeral moto
 

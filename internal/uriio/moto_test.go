@@ -58,7 +58,7 @@ func motoPool(t *testing.T) (*uriio.ProviderPool, string) {
 		Endpoint:       endpoint,
 		ForcePathStyle: true,
 		// Insecure only for an http:// endpoint (local moto/MinIO); a BYO
-		// https endpoint (e.g. Wasabi, R2) keeps TLS enforced.
+		// https endpoint keeps TLS enforced.
 		Insecure: strings.HasPrefix(strings.ToLower(endpoint), "http://"),
 	}
 	// Prefer a shared-config profile when given (the SDK reads ~/.aws/credentials
