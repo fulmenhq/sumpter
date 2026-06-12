@@ -1,15 +1,30 @@
+//go:build s3integration
+
+// S3 live-integration tests: require a live S3-compatible endpoint, excluded from
+// the default/CI build. Run with `-tags s3integration` (see
+// `make test-integration-s3` and docs/sop/cicd-and-local-gates.md).
+
 package commands
 
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
+
+// motoInsecure reports whether the endpoint is plaintext http:// (local moto or
+// MinIO). A BYO https endpoint keeps TLS enforced.
+func motoInsecure(endpoint string) bool {
+	return strings.HasPrefix(strings.ToLower(endpoint), "http://")
+}
 
 // Cloud source-in integration tests (S3-compatible). These drive the extract
 // command end-to-end against a live moto/MinIO endpoint and assert the cloud
@@ -20,7 +35,9 @@ import (
 //
 //	SUMPTER_TEST_S3_ENDPOINT  e.g. http://127.0.0.1:9000
 //	SUMPTER_TEST_S3_BUCKET    a pre-created bucket
-//	SUMPTER_TEST_S3_KEY_ID / SUMPTER_TEST_S3_SECRET   credentials
+//	SUMPTER_TEST_S3_PROFILE   AWS shared-config profile (preferred; resolves
+//	                          creds from ~/.aws/credentials, no secret in env)
+//	SUMPTER_TEST_S3_KEY_ID / SUMPTER_TEST_S3_SECRET   literal creds (if no profile)
 //	SUMPTER_TEST_S3_REGION    optional, defaults to us-east-1
 
 const motoSourceXML = `<root><item><name>A</name></item><item><name>B</name></item></root>`
@@ -29,6 +46,7 @@ type motoEnv struct {
 	endpoint string
 	bucket   string
 	region   string
+	profile  string
 	keyID    string
 	secret   string
 }
@@ -44,56 +62,162 @@ func motoEnvOrSkip(t *testing.T) motoEnv {
 	if region == "" {
 		region = "us-east-1"
 	}
-	return motoEnv{
+	m := motoEnv{
 		endpoint: endpoint,
 		bucket:   bucket,
 		region:   region,
+		profile:  os.Getenv("SUMPTER_TEST_S3_PROFILE"),
 		keyID:    os.Getenv("SUMPTER_TEST_S3_KEY_ID"),
 		secret:   os.Getenv("SUMPTER_TEST_S3_SECRET"),
 	}
+	// Fail closed: a BYO endpoint is configured, so require an explicit namespaced
+	// credential reference. Skipping or falling back to the AWS default chain here
+	// could hit the configured bucket with the developer's ambient identity.
+	if ok, msg := byoCredsValid(m.profile, m.keyID, m.secret); !ok {
+		t.Fatalf("S3 integration harness misconfigured: %s", msg)
+	}
+	return m
 }
 
-// motoHandleConfig is the credentials config the extract command loads: the
-// default handle points at the moto endpoint with the loud insecure opt-in (moto
-// is typically http://).
+// byoCredsValid enforces exactly one explicit credential mode for a BYO endpoint:
+// a profile, or both literal keys. Half-pairs, profile+literal mixing, and an
+// empty credential (which would silently use the AWS default chain) are rejected.
+func byoCredsValid(profile, keyID, secret string) (bool, string) {
+	hasProfile := profile != ""
+	hasKey := keyID != ""
+	hasSecret := secret != ""
+	switch {
+	case hasProfile && (hasKey || hasSecret):
+		return false, "set SUMPTER_TEST_S3_PROFILE or the KEY_ID/SECRET pair, not both"
+	case hasProfile:
+		return true, ""
+	case hasKey && hasSecret:
+		return true, ""
+	case hasKey != hasSecret:
+		return false, "SUMPTER_TEST_S3_KEY_ID and SUMPTER_TEST_S3_SECRET must both be set"
+	default:
+		return false, "set SUMPTER_TEST_S3_PROFILE (preferred) or both SUMPTER_TEST_S3_KEY_ID and SUMPTER_TEST_S3_SECRET; refusing to fall back to ambient AWS credentials"
+	}
+}
+
+// handleConfig builds the HandleConfig for the configured endpoint, preferring a
+// shared-config profile (no secret in env/process) over a literal key/secret pair.
+func (m motoEnv) handleConfig() uriio.HandleConfig {
+	hc := uriio.HandleConfig{
+		Region:         m.region,
+		Endpoint:       m.endpoint,
+		ForcePathStyle: true,
+		Insecure:       motoInsecure(m.endpoint),
+	}
+	if m.profile != "" {
+		hc.Profile = m.profile
+	} else {
+		hc.AccessKeyID = uriio.Secret(m.keyID)
+		hc.SecretAccessKey = uriio.Secret(m.secret)
+	}
+	return hc
+}
+
+// writeCredentialsConfig writes the credentials config the extract command loads:
+// the default handle points at the configured endpoint. With a profile it carries
+// no secret material (the SDK resolves the profile from ~/.aws/credentials).
 func (m motoEnv) writeCredentialsConfig(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "credentials.yaml")
+	insecure := "false"
+	if motoInsecure(m.endpoint) {
+		insecure = "true"
+	}
 	body := "handles:\n" +
 		"  default:\n" +
 		"    region: " + m.region + "\n" +
 		"    endpoint: " + m.endpoint + "\n" +
 		"    force_path_style: true\n" +
-		"    insecure: true\n" +
-		"    access_key_id: " + m.keyID + "\n" +
-		"    secret_access_key: " + m.secret + "\n"
+		"    insecure: " + insecure + "\n"
+	if m.profile != "" {
+		body += "    profile: " + m.profile + "\n"
+	} else {
+		body += "    access_key_id: " + m.keyID + "\n" +
+			"    secret_access_key: " + m.secret + "\n"
+	}
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write credentials config: %v", err)
 	}
 	return path
 }
 
-// putMotoObject uploads payload to bucket/key through the uriio provider.
+// runKeyPrefix returns a unique, per-run key prefix so each test run is isolated
+// from leftover or concurrent objects in a shared bucket, and so listing
+// assertions see exactly the objects this run created.
+func runKeyPrefix() string {
+	return "sumpter-itest/" + strconv.FormatInt(time.Now().UnixNano(), 36) + "/"
+}
+
+// putObject uploads payload to bucket/key through the uriio provider and registers
+// a best-effort delete so the test leaves no artifact behind in the bucket.
 func (m motoEnv) putObject(t *testing.T, key string, payload []byte) {
 	t.Helper()
-	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
-		"default": {
-			Region:          m.region,
-			Endpoint:        m.endpoint,
-			ForcePathStyle:  true,
-			Insecure:        true,
-			AccessKeyID:     uriio.Secret(m.keyID),
-			SecretAccessKey: uriio.Secret(m.secret),
-		},
-	}}
-	pool := uriio.NewProviderPool(uriio.NewResolver(cfg, nil))
-	t.Cleanup(func() { _ = pool.Close() })
-	prov, err := pool.Provider(context.Background(), "default", m.bucket)
-	if err != nil {
-		t.Fatalf("pool.Provider: %v", err)
-	}
+	prov, closePool := m.provider(t)
+	defer closePool()
 	if err := prov.PutObject(context.Background(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
 		t.Fatalf("PutObject(%s): %v", key, err)
+	}
+	t.Cleanup(func() { m.deleteObject(t, key) })
+}
+
+// deleteObject removes a test object. Cleanup is best-effort: a failure is logged,
+// not fatal, so it never masks the test outcome.
+func (m motoEnv) deleteObject(t *testing.T, key string) {
+	prov, closePool := m.provider(t)
+	defer closePool()
+	if err := prov.DeleteObject(context.Background(), key); err != nil {
+		t.Logf("cleanup: delete %s: %v", key, err)
+	}
+}
+
+// provider builds a pooled provider for the configured endpoint/bucket and returns
+// it with a close function.
+func (m motoEnv) provider(t *testing.T) (prov interface {
+	PutObject(ctx context.Context, key string, r io.Reader, size int64) error
+	DeleteObject(ctx context.Context, key string) error
+}, closePool func()) {
+	t.Helper()
+	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
+		"default": m.handleConfig(),
+	}}
+	pool := uriio.NewProviderPool(uriio.NewResolver(cfg, nil))
+	p, err := pool.Provider(context.Background(), "default", m.bucket)
+	if err != nil {
+		_ = pool.Close()
+		t.Fatalf("pool.Provider: %v", err)
+	}
+	return p, func() { _ = pool.Close() }
+}
+
+// TestBYOCredsValid locks the fail-closed BYO credential-mode matrix: exactly one
+// explicit namespaced reference (a profile, or both literal keys) is accepted;
+// half-pairs, mixing, and an empty credential (which would silently use the AWS
+// default chain) are rejected.
+func TestBYOCredsValid(t *testing.T) {
+	cases := []struct {
+		name              string
+		profile, kid, sec string
+		want              bool
+	}{
+		{"profile only", "p", "", "", true},
+		{"both keys", "", "k", "s", true},
+		{"key only (half pair)", "", "k", "", false},
+		{"secret only (half pair)", "", "", "s", false},
+		{"neither (would use ambient)", "", "", "", false},
+		{"profile + key (mixing)", "p", "k", "", false},
+		{"profile + both keys (mixing)", "p", "k", "s", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if ok, _ := byoCredsValid(tc.profile, tc.kid, tc.sec); ok != tc.want {
+				t.Errorf("byoCredsValid(%q,%q,%q) = %v, want %v", tc.profile, tc.kid, tc.sec, ok, tc.want)
+			}
+		})
 	}
 }
 
@@ -108,7 +232,7 @@ func TestMotoExtractSourceInNoLeak(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SUMPTER_HOME", home)
 
-	key := "cloudready/source-in/doc.xml"
+	key := runKeyPrefix() + "source-in/doc.xml"
 	m.putObject(t, key, []byte(motoSourceXML))
 	logicalURI := "s3://" + m.bucket + "/" + key
 
@@ -135,7 +259,7 @@ func TestMotoExtractInputPrefixNoLeak(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SUMPTER_HOME", home)
 
-	prefix := "cloudready/prefix-in/"
+	prefix := runKeyPrefix() + "prefix-in/"
 	keyA := prefix + "a.xml"
 	keyB := prefix + "b.xml"
 	m.putObject(t, keyA, []byte(motoSourceXML))
