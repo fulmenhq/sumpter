@@ -440,7 +440,12 @@ func runExtract(opts *ExtractOptions) error {
 	// For now, serial processing
 	for _, file := range files {
 		logical := logicalIdentity(file, logicalByLocal)
-		externalFields, err := buildExternalFieldsForFile(file, opts, fieldPlan, warnLimiter)
+		// source_extraction derives record fields from the source identity (its
+		// filename/absolute/relative path), so it must see the logical URI — never
+		// the staged local path — for cloud inputs. It reads no file bytes, so the
+		// logical identity is the correct input. For local sources this is the same
+		// string as the read path.
+		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if err != nil {
 			if opts.ContinueOnError {
 				result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
@@ -930,7 +935,12 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 
 	for _, file := range files {
 		logical := logicalIdentity(file, logicalByLocal)
-		externalFields, err := buildExternalFieldsForFile(file, opts, fieldPlan, warnLimiter)
+		// source_extraction derives record fields from the source identity (its
+		// filename/absolute/relative path), so it must see the logical URI — never
+		// the staged local path — for cloud inputs. It reads no file bytes, so the
+		// logical identity is the correct input. For local sources this is the same
+		// string as the read path.
+		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if err != nil {
 			if !opts.ContinueOnError {
 				return fmt.Errorf("failed to build external fields for file %s: %w", logical, err)
@@ -2065,6 +2075,13 @@ func sourceExtractionInput(opts *ExtractOptions) recipesmanifest.InputDefaults {
 }
 
 func sourceExtractionTarget(filePath, sourceType string, input recipesmanifest.InputDefaults) (string, error) {
+	// A cloud source identity (s3://...) is matched in URI space, not as a
+	// filesystem path: filepath.Abs/Rel would mangle the scheme or treat the
+	// object key as escaping the root, and would also stamp the local staging
+	// directory into extracted fields. Handle it explicitly.
+	if ref, err := uriio.Classify(filePath); err == nil && ref.IsCloud() {
+		return cloudSourceExtractionTarget(ref, sourceType, input)
+	}
 	switch sourceType {
 	case recipesmanifest.SourceExtractionFilename:
 		return filepath.Base(filePath), nil
@@ -2079,6 +2096,51 @@ func sourceExtractionTarget(filePath, sourceType string, input recipesmanifest.I
 	default:
 		return "", fmt.Errorf("unsupported source_extraction source %q", sourceType)
 	}
+}
+
+// cloudSourceExtractionTarget derives a source_extraction match target from a
+// cloud reference in URI space, so the logical s3:// identity (never a staged
+// local path) is what record fields are extracted from.
+func cloudSourceExtractionTarget(ref uriio.Ref, sourceType string, input recipesmanifest.InputDefaults) (string, error) {
+	switch sourceType {
+	case recipesmanifest.SourceExtractionFilename:
+		key := ref.Key
+		if i := strings.LastIndex(key, "/"); i >= 0 {
+			key = key[i+1:]
+		}
+		return key, nil
+	case recipesmanifest.SourceExtractionAbsolutePath:
+		// The canonical logical URI is the absolute identity for a cloud object.
+		return ref.LogicalURI, nil
+	case recipesmanifest.SourceExtractionRelativePath:
+		return cloudRelativeSourcePath(input.Path, ref)
+	default:
+		return "", fmt.Errorf("unsupported source_extraction source %q", sourceType)
+	}
+}
+
+// cloudRelativeSourcePath returns the object key relative to a matching cloud
+// input prefix (same bucket), mirroring relative_path for local roots. A file
+// outside the root's bucket/prefix is reported as escaping the root.
+func cloudRelativeSourcePath(root string, fileRef uriio.Ref) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", fmt.Errorf("relative_path requires --input-path; got single --files mode; use 'absolute_path' or 'filename' instead")
+	}
+	rootRef, err := uriio.Classify(root)
+	if err != nil {
+		return "", fmt.Errorf("failed to classify source_extraction root %s: %w", root, err)
+	}
+	if !rootRef.IsCloud() || rootRef.Bucket != fileRef.Bucket {
+		return "", fmt.Errorf("source_extraction relative_path file %s escapes input root %s", fileRef.LogicalURI, root)
+	}
+	prefix := rootRef.Key
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if !strings.HasPrefix(fileRef.Key, prefix) {
+		return "", fmt.Errorf("source_extraction relative_path file %s escapes input root %s", fileRef.LogicalURI, root)
+	}
+	return strings.TrimPrefix(fileRef.Key, prefix), nil
 }
 
 func resolveRelativeSourcePath(root, filePath string, followSymlinks bool) (string, error) {
