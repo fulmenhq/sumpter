@@ -45,6 +45,14 @@ func motoPool(t *testing.T) (*uriio.ProviderPool, string) {
 	if region == "" {
 		region = "us-east-1"
 	}
+	profile := os.Getenv("SUMPTER_TEST_S3_PROFILE")
+	keyID := os.Getenv("SUMPTER_TEST_S3_KEY_ID")
+	secret := os.Getenv("SUMPTER_TEST_S3_SECRET")
+	// Fail closed: a BYO endpoint is configured, so require an explicit namespaced
+	// credential reference rather than letting the AWS default chain take over.
+	if ok, msg := byoCredsValid(profile, keyID, secret); !ok {
+		t.Fatalf("S3 integration harness misconfigured: %s", msg)
+	}
 	hc := uriio.HandleConfig{
 		Region:         region,
 		Endpoint:       endpoint,
@@ -56,16 +64,37 @@ func motoPool(t *testing.T) (*uriio.ProviderPool, string) {
 	// Prefer a shared-config profile when given (the SDK reads ~/.aws/credentials
 	// directly, so no secret enters the env/process); otherwise use the literal
 	// key/secret pair.
-	if profile := os.Getenv("SUMPTER_TEST_S3_PROFILE"); profile != "" {
+	if profile != "" {
 		hc.Profile = profile
 	} else {
-		hc.AccessKeyID = uriio.Secret(os.Getenv("SUMPTER_TEST_S3_KEY_ID"))
-		hc.SecretAccessKey = uriio.Secret(os.Getenv("SUMPTER_TEST_S3_SECRET"))
+		hc.AccessKeyID = uriio.Secret(keyID)
+		hc.SecretAccessKey = uriio.Secret(secret)
 	}
 	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{"moto": hc}}
 	pool := uriio.NewProviderPool(uriio.NewResolver(cfg, nil))
 	t.Cleanup(func() { _ = pool.Close() })
 	return pool, bucket
+}
+
+// byoCredsValid enforces exactly one explicit credential mode for a BYO endpoint:
+// a profile, or both literal keys. Half-pairs, profile+literal mixing, and an
+// empty credential (which would silently use the AWS default chain) are rejected.
+func byoCredsValid(profile, keyID, secret string) (bool, string) {
+	hasProfile := profile != ""
+	hasKey := keyID != ""
+	hasSecret := secret != ""
+	switch {
+	case hasProfile && (hasKey || hasSecret):
+		return false, "set SUMPTER_TEST_S3_PROFILE or the KEY_ID/SECRET pair, not both"
+	case hasProfile:
+		return true, ""
+	case hasKey && hasSecret:
+		return true, ""
+	case hasKey != hasSecret:
+		return false, "SUMPTER_TEST_S3_KEY_ID and SUMPTER_TEST_S3_SECRET must both be set"
+	default:
+		return false, "set SUMPTER_TEST_S3_PROFILE (preferred) or both SUMPTER_TEST_S3_KEY_ID and SUMPTER_TEST_S3_SECRET; refusing to fall back to ambient AWS credentials"
+	}
 }
 
 // TestMotoRoundTrip is the scaffold smoke test: put then get an object via the

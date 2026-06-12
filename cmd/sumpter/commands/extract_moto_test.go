@@ -62,13 +62,41 @@ func motoEnvOrSkip(t *testing.T) motoEnv {
 	if region == "" {
 		region = "us-east-1"
 	}
-	return motoEnv{
+	m := motoEnv{
 		endpoint: endpoint,
 		bucket:   bucket,
 		region:   region,
 		profile:  os.Getenv("SUMPTER_TEST_S3_PROFILE"),
 		keyID:    os.Getenv("SUMPTER_TEST_S3_KEY_ID"),
 		secret:   os.Getenv("SUMPTER_TEST_S3_SECRET"),
+	}
+	// Fail closed: a BYO endpoint is configured, so require an explicit namespaced
+	// credential reference. Skipping or falling back to the AWS default chain here
+	// could hit the configured bucket with the developer's ambient identity.
+	if ok, msg := byoCredsValid(m.profile, m.keyID, m.secret); !ok {
+		t.Fatalf("S3 integration harness misconfigured: %s", msg)
+	}
+	return m
+}
+
+// byoCredsValid enforces exactly one explicit credential mode for a BYO endpoint:
+// a profile, or both literal keys. Half-pairs, profile+literal mixing, and an
+// empty credential (which would silently use the AWS default chain) are rejected.
+func byoCredsValid(profile, keyID, secret string) (bool, string) {
+	hasProfile := profile != ""
+	hasKey := keyID != ""
+	hasSecret := secret != ""
+	switch {
+	case hasProfile && (hasKey || hasSecret):
+		return false, "set SUMPTER_TEST_S3_PROFILE or the KEY_ID/SECRET pair, not both"
+	case hasProfile:
+		return true, ""
+	case hasKey && hasSecret:
+		return true, ""
+	case hasKey != hasSecret:
+		return false, "SUMPTER_TEST_S3_KEY_ID and SUMPTER_TEST_S3_SECRET must both be set"
+	default:
+		return false, "set SUMPTER_TEST_S3_PROFILE (preferred) or both SUMPTER_TEST_S3_KEY_ID and SUMPTER_TEST_S3_SECRET; refusing to fall back to ambient AWS credentials"
 	}
 }
 
@@ -164,6 +192,33 @@ func (m motoEnv) provider(t *testing.T) (prov interface {
 		t.Fatalf("pool.Provider: %v", err)
 	}
 	return p, func() { _ = pool.Close() }
+}
+
+// TestBYOCredsValid locks the fail-closed BYO credential-mode matrix: exactly one
+// explicit namespaced reference (a profile, or both literal keys) is accepted;
+// half-pairs, mixing, and an empty credential (which would silently use the AWS
+// default chain) are rejected.
+func TestBYOCredsValid(t *testing.T) {
+	cases := []struct {
+		name              string
+		profile, kid, sec string
+		want              bool
+	}{
+		{"profile only", "p", "", "", true},
+		{"both keys", "", "k", "s", true},
+		{"key only (half pair)", "", "k", "", false},
+		{"secret only (half pair)", "", "", "s", false},
+		{"neither (would use ambient)", "", "", "", false},
+		{"profile + key (mixing)", "p", "k", "", false},
+		{"profile + both keys (mixing)", "p", "k", "s", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if ok, _ := byoCredsValid(tc.profile, tc.kid, tc.sec); ok != tc.want {
+				t.Errorf("byoCredsValid(%q,%q,%q) = %v, want %v", tc.profile, tc.kid, tc.sec, ok, tc.want)
+			}
+		})
+	}
 }
 
 // TestMotoExtractSourceInNoLeak proves an s3:// --files source extracts, and the

@@ -119,7 +119,12 @@ path against a real provider. Use literal `KEY_ID`/`SECRET` only where a profile
 not available.
 
 These vars are deliberately namespaced (`SUMPTER_TEST_S3_*`) so the suite never
-picks up a developer's ambient `AWS_*` credentials by accident.
+picks up a developer's ambient `AWS_*` credentials by accident. This is enforced
+**fail-closed**: when an endpoint and bucket are set, the runner (and the test
+harnesses) require exactly one explicit credential mode — a profile, or both
+literal keys — and abort before any request rather than letting the AWS default
+credential chain (env / shared config / IMDS) silently take over. Half-pairs and
+profile+literal mixing are rejected.
 
 #### Local setup with direnv (`.envrc`)
 

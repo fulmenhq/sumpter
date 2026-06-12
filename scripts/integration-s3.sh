@@ -50,6 +50,15 @@ run_suite() {
 	go test -tags "${TAG}" -count=1 -timeout=300s ./...
 }
 
+fail_no_harness() {
+	echo -e "${RED}❌ Cannot run the S3 integration suite: ${1}${NC}" >&2
+	echo -e "${RED}   Provide a BYO endpoint (SUMPTER_TEST_S3_ENDPOINT + SUMPTER_TEST_S3_BUCKET)${NC}" >&2
+	echo -e "${RED}   with SUMPTER_TEST_S3_PROFILE (preferred) or both SUMPTER_TEST_S3_KEY_ID and${NC}" >&2
+	echo -e "${RED}   SUMPTER_TEST_S3_SECRET; or set SUMPTER_SKIP_S3_INTEGRATION=1 to skip.${NC}" >&2
+	echo -e "${RED}   See docs/sop/cicd-and-local-gates.md.${NC}" >&2
+	exit 1
+}
+
 # Escape hatch first.
 if [ "${SUMPTER_SKIP_S3_INTEGRATION:-}" = "1" ]; then
 	echo -e "${YELLOW}⚠️  SUMPTER_SKIP_S3_INTEGRATION=1 — skipping S3 live-integration suite.${NC}"
@@ -59,19 +68,23 @@ fi
 
 # Path 1: BYO endpoint.
 if [ -n "${SUMPTER_TEST_S3_ENDPOINT:-}" ] && [ -n "${SUMPTER_TEST_S3_BUCKET:-}" ]; then
+	# Fail closed: BYO must carry an explicit namespaced credential reference — a
+	# profile, or both literal keys — never an empty/half-pair cred that would let
+	# the AWS default chain (env/shared config/IMDS) silently take over the run.
+	prof="${SUMPTER_TEST_S3_PROFILE:-}"
+	kid="${SUMPTER_TEST_S3_KEY_ID:-}"
+	sec="${SUMPTER_TEST_S3_SECRET:-}"
+	if [ -n "$prof" ] && { [ -n "$kid" ] || [ -n "$sec" ]; }; then
+		fail_no_harness "set SUMPTER_TEST_S3_PROFILE or the KEY_ID/SECRET pair, not both"
+	elif [ -z "$prof" ] && { [ -z "$kid" ] || [ -z "$sec" ]; }; then
+		fail_no_harness "BYO requires SUMPTER_TEST_S3_PROFILE (preferred) or both SUMPTER_TEST_S3_KEY_ID and SUMPTER_TEST_S3_SECRET; refusing to fall back to ambient AWS credentials"
+	fi
 	echo -e "${BLUE}Using BYO S3 endpoint: ${SUMPTER_TEST_S3_ENDPOINT} (bucket ${SUMPTER_TEST_S3_BUCKET})${NC}"
 	run_suite
 	exit $?
 fi
 
 # Path 2: self-provision moto.
-fail_no_harness() {
-	echo -e "${RED}❌ Cannot run the S3 integration suite: ${1}${NC}" >&2
-	echo -e "${RED}   Provide a BYO endpoint (SUMPTER_TEST_S3_ENDPOINT + SUMPTER_TEST_S3_BUCKET${NC}" >&2
-	echo -e "${RED}   + SUMPTER_TEST_S3_KEY_ID/SECRET), or set SUMPTER_SKIP_S3_INTEGRATION=1 to skip.${NC}" >&2
-	echo -e "${RED}   See docs/sop/cicd-and-local-gates.md.${NC}" >&2
-	exit 1
-}
 
 if ! command -v python3 >/dev/null 2>&1; then
 	fail_no_harness "no BYO endpoint and python3 is not on PATH for self-provisioning moto"
