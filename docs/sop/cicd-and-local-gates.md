@@ -150,8 +150,8 @@ server in a cached Python virtualenv (`.cache/integration/motovenv`, gitignored)
 creates a bucket, runs the suite, and tears the server down. Requirements:
 
 - `python3` on `PATH`.
-- Network access on the **first** run only (to `pip install moto[server]`); the
-  venv is cached and reused afterward.
+- Network access on the **first** run only (to `pip install` the pinned
+  `moto[server]` version); the venv is cached and reused afterward.
 
 ### Escape hatch
 

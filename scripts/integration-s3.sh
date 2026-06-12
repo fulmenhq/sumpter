@@ -45,6 +45,9 @@ TAG="s3integration"
 VENV_DIR=".cache/integration/motovenv"
 SELF_BUCKET="sumpter-itest"
 MOTO_PORT="${SUMPTER_MOTO_PORT:-5005}"
+# Pinned for reproducibility (matches the dependency-pinning posture). Bump
+# deliberately after revalidating the self-provisioned suite.
+MOTO_VERSION="5.2.2"
 
 run_suite() {
 	echo -e "${BLUE}Running S3 integration suite (-tags ${TAG})...${NC}"
@@ -94,8 +97,8 @@ fi
 if [ ! -x "${VENV_DIR}/bin/moto_server" ]; then
 	echo -e "${BLUE}Bootstrapping moto into ${VENV_DIR} (first run only)...${NC}"
 	python3 -m venv "${VENV_DIR}" || fail_no_harness "could not create the moto venv"
-	"${VENV_DIR}/bin/pip" install --quiet 'moto[server]' ||
-		fail_no_harness "could not pip-install moto[server] (offline?)"
+	"${VENV_DIR}/bin/pip" install --quiet "moto[server]==${MOTO_VERSION}" ||
+		fail_no_harness "could not pip-install moto[server]==${MOTO_VERSION} (offline?)"
 fi
 
 echo -e "${BLUE}Starting ephemeral moto on 127.0.0.1:${MOTO_PORT}...${NC}"
