@@ -12,8 +12,10 @@ import (
 	"context"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
@@ -77,11 +79,18 @@ func TestMotoRoundTrip(t *testing.T) {
 		t.Fatalf("pool.Provider: %v", err)
 	}
 
-	key := "uriio-scaffold/roundtrip.txt"
+	// Unique key per run + best-effort delete so the suite leaves no artifact in a
+	// shared bucket.
+	key := "sumpter-itest/" + strconv.FormatInt(time.Now().UnixNano(), 36) + "/roundtrip.txt"
 	payload := []byte("cloudready scaffold round-trip")
 	if err := prov.PutObject(ctx, key, bytes.NewReader(payload), int64(len(payload))); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := prov.DeleteObject(ctx, key); err != nil {
+			t.Logf("cleanup: delete %s: %v", key, err)
+		}
+	})
 
 	rc, _, err := prov.GetObject(ctx, key)
 	if err != nil {

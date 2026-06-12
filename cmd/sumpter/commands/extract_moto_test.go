@@ -9,10 +9,13 @@ package commands
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
@@ -115,21 +118,52 @@ func (m motoEnv) writeCredentialsConfig(t *testing.T, dir string) string {
 	return path
 }
 
-// putMotoObject uploads payload to bucket/key through the uriio provider.
+// runKeyPrefix returns a unique, per-run key prefix so each test run is isolated
+// from leftover or concurrent objects in a shared bucket, and so listing
+// assertions see exactly the objects this run created.
+func runKeyPrefix() string {
+	return "sumpter-itest/" + strconv.FormatInt(time.Now().UnixNano(), 36) + "/"
+}
+
+// putObject uploads payload to bucket/key through the uriio provider and registers
+// a best-effort delete so the test leaves no artifact behind in the bucket.
 func (m motoEnv) putObject(t *testing.T, key string, payload []byte) {
+	t.Helper()
+	prov, closePool := m.provider(t)
+	defer closePool()
+	if err := prov.PutObject(context.Background(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
+		t.Fatalf("PutObject(%s): %v", key, err)
+	}
+	t.Cleanup(func() { m.deleteObject(t, key) })
+}
+
+// deleteObject removes a test object. Cleanup is best-effort: a failure is logged,
+// not fatal, so it never masks the test outcome.
+func (m motoEnv) deleteObject(t *testing.T, key string) {
+	prov, closePool := m.provider(t)
+	defer closePool()
+	if err := prov.DeleteObject(context.Background(), key); err != nil {
+		t.Logf("cleanup: delete %s: %v", key, err)
+	}
+}
+
+// provider builds a pooled provider for the configured endpoint/bucket and returns
+// it with a close function.
+func (m motoEnv) provider(t *testing.T) (prov interface {
+	PutObject(ctx context.Context, key string, r io.Reader, size int64) error
+	DeleteObject(ctx context.Context, key string) error
+}, closePool func()) {
 	t.Helper()
 	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
 		"default": m.handleConfig(),
 	}}
 	pool := uriio.NewProviderPool(uriio.NewResolver(cfg, nil))
-	t.Cleanup(func() { _ = pool.Close() })
-	prov, err := pool.Provider(context.Background(), "default", m.bucket)
+	p, err := pool.Provider(context.Background(), "default", m.bucket)
 	if err != nil {
+		_ = pool.Close()
 		t.Fatalf("pool.Provider: %v", err)
 	}
-	if err := prov.PutObject(context.Background(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
-		t.Fatalf("PutObject(%s): %v", key, err)
-	}
+	return p, func() { _ = pool.Close() }
 }
 
 // TestMotoExtractSourceInNoLeak proves an s3:// --files source extracts, and the
@@ -143,7 +177,7 @@ func TestMotoExtractSourceInNoLeak(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SUMPTER_HOME", home)
 
-	key := "cloudready/source-in/doc.xml"
+	key := runKeyPrefix() + "source-in/doc.xml"
 	m.putObject(t, key, []byte(motoSourceXML))
 	logicalURI := "s3://" + m.bucket + "/" + key
 
@@ -170,7 +204,7 @@ func TestMotoExtractInputPrefixNoLeak(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SUMPTER_HOME", home)
 
-	prefix := "cloudready/prefix-in/"
+	prefix := runKeyPrefix() + "prefix-in/"
 	keyA := prefix + "a.xml"
 	keyB := prefix + "b.xml"
 	m.putObject(t, keyA, []byte(motoSourceXML))
