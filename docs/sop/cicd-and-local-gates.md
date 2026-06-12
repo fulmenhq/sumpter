@@ -97,21 +97,47 @@ The runner obtains an endpoint two ways, tried in order:
 
 ### 1. Bring-your-own (BYO) endpoint
 
-Export the standard contract — a **URI plus the normal S3 key/secret pair** — and
-the suite runs against it (moto, MinIO, Wasabi, Cloudflare R2, real AWS S3). An
+Export the standard contract — a **URI plus an S3 credential reference** — and the
+suite runs against it (moto, MinIO, Wasabi, Cloudflare R2, real AWS S3). An
 `https://` endpoint keeps TLS enforced; only a plaintext `http://` endpoint opts
 into the insecure posture.
 
-| Variable                   | Meaning                                                  | Required |
-| -------------------------- | -------------------------------------------------------- | -------- |
-| `SUMPTER_TEST_S3_ENDPOINT` | Endpoint URI (e.g. `https://s3.us-east-1.wasabisys.com`) | yes      |
-| `SUMPTER_TEST_S3_BUCKET`   | A pre-created bucket name                                | yes      |
-| `SUMPTER_TEST_S3_KEY_ID`   | Access key id                                            | yes      |
-| `SUMPTER_TEST_S3_SECRET`   | Secret access key                                        | yes      |
-| `SUMPTER_TEST_S3_REGION`   | Region (default `us-east-1`)                             | no       |
+| Variable                   | Meaning                                                  | Required          |
+| -------------------------- | -------------------------------------------------------- | ----------------- |
+| `SUMPTER_TEST_S3_ENDPOINT` | Endpoint URI (e.g. `https://s3.us-east-1.wasabisys.com`) | yes               |
+| `SUMPTER_TEST_S3_BUCKET`   | A pre-created bucket name                                | yes               |
+| `SUMPTER_TEST_S3_PROFILE`  | AWS shared-config profile (preferred — see below)        | profile _or_ keys |
+| `SUMPTER_TEST_S3_KEY_ID`   | Access key id (used only when no profile)                | profile _or_ keys |
+| `SUMPTER_TEST_S3_SECRET`   | Secret access key (used only when no profile)            | profile _or_ keys |
+| `SUMPTER_TEST_S3_REGION`   | Region (default `us-east-1`)                             | no                |
 
-These are deliberately namespaced (`SUMPTER_TEST_S3_*`) so the suite never picks
-up a developer's ambient `AWS_*` credentials by accident.
+**Prefer a profile.** With `SUMPTER_TEST_S3_PROFILE`, credentials resolve from your
+`~/.aws/credentials` via the AWS SDK — **no secret ever enters the environment, the
+test process, or the on-disk credentials config the harness writes** (it records
+only `profile: <name>`). This also exercises Sumpter's profile-handle credential
+path against a real provider. Use literal `KEY_ID`/`SECRET` only where a profile is
+not available.
+
+These vars are deliberately namespaced (`SUMPTER_TEST_S3_*`) so the suite never
+picks up a developer's ambient `AWS_*` credentials by accident.
+
+#### Local setup with direnv (`.envrc`)
+
+`.envrc` is gitignored, so it is the natural home for your local, machine-specific
+endpoint + profile + bucket (no secrets — those stay in `~/.aws/credentials`).
+A profile-based `.envrc` looks like:
+
+```bash
+# .envrc — gitignored; never commit endpoint/bucket/profile refs to the repo
+export SUMPTER_TEST_S3_ENDPOINT="https://<your-s3-compatible-endpoint>"
+export SUMPTER_TEST_S3_REGION="<region>"
+export SUMPTER_TEST_S3_PROFILE="<your-aws-profile>"   # resolves creds from ~/.aws
+export SUMPTER_TEST_S3_BUCKET="<your-test-bucket>"
+```
+
+Per the repository confidentiality posture, **no real endpoint, bucket, profile, or
+credential value belongs in any tracked file** — `.envrc` and `~/.aws/*` are
+operator-local only.
 
 ### 2. Self-provisioned ephemeral moto
 

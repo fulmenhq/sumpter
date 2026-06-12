@@ -32,7 +32,9 @@ func motoInsecure(endpoint string) bool {
 //
 //	SUMPTER_TEST_S3_ENDPOINT  e.g. http://127.0.0.1:9000
 //	SUMPTER_TEST_S3_BUCKET    a pre-created bucket
-//	SUMPTER_TEST_S3_KEY_ID / SUMPTER_TEST_S3_SECRET   credentials
+//	SUMPTER_TEST_S3_PROFILE   AWS shared-config profile (preferred; resolves
+//	                          creds from ~/.aws/credentials, no secret in env)
+//	SUMPTER_TEST_S3_KEY_ID / SUMPTER_TEST_S3_SECRET   literal creds (if no profile)
 //	SUMPTER_TEST_S3_REGION    optional, defaults to us-east-1
 
 const motoSourceXML = `<root><item><name>A</name></item><item><name>B</name></item></root>`
@@ -41,6 +43,7 @@ type motoEnv struct {
 	endpoint string
 	bucket   string
 	region   string
+	profile  string
 	keyID    string
 	secret   string
 }
@@ -60,14 +63,33 @@ func motoEnvOrSkip(t *testing.T) motoEnv {
 		endpoint: endpoint,
 		bucket:   bucket,
 		region:   region,
+		profile:  os.Getenv("SUMPTER_TEST_S3_PROFILE"),
 		keyID:    os.Getenv("SUMPTER_TEST_S3_KEY_ID"),
 		secret:   os.Getenv("SUMPTER_TEST_S3_SECRET"),
 	}
 }
 
-// motoHandleConfig is the credentials config the extract command loads: the
-// default handle points at the moto endpoint with the loud insecure opt-in (moto
-// is typically http://).
+// handleConfig builds the HandleConfig for the configured endpoint, preferring a
+// shared-config profile (no secret in env/process) over a literal key/secret pair.
+func (m motoEnv) handleConfig() uriio.HandleConfig {
+	hc := uriio.HandleConfig{
+		Region:         m.region,
+		Endpoint:       m.endpoint,
+		ForcePathStyle: true,
+		Insecure:       motoInsecure(m.endpoint),
+	}
+	if m.profile != "" {
+		hc.Profile = m.profile
+	} else {
+		hc.AccessKeyID = uriio.Secret(m.keyID)
+		hc.SecretAccessKey = uriio.Secret(m.secret)
+	}
+	return hc
+}
+
+// writeCredentialsConfig writes the credentials config the extract command loads:
+// the default handle points at the configured endpoint. With a profile it carries
+// no secret material (the SDK resolves the profile from ~/.aws/credentials).
 func (m motoEnv) writeCredentialsConfig(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "credentials.yaml")
@@ -80,9 +102,13 @@ func (m motoEnv) writeCredentialsConfig(t *testing.T, dir string) string {
 		"    region: " + m.region + "\n" +
 		"    endpoint: " + m.endpoint + "\n" +
 		"    force_path_style: true\n" +
-		"    insecure: " + insecure + "\n" +
-		"    access_key_id: " + m.keyID + "\n" +
-		"    secret_access_key: " + m.secret + "\n"
+		"    insecure: " + insecure + "\n"
+	if m.profile != "" {
+		body += "    profile: " + m.profile + "\n"
+	} else {
+		body += "    access_key_id: " + m.keyID + "\n" +
+			"    secret_access_key: " + m.secret + "\n"
+	}
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write credentials config: %v", err)
 	}
@@ -93,14 +119,7 @@ func (m motoEnv) writeCredentialsConfig(t *testing.T, dir string) string {
 func (m motoEnv) putObject(t *testing.T, key string, payload []byte) {
 	t.Helper()
 	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
-		"default": {
-			Region:          m.region,
-			Endpoint:        m.endpoint,
-			ForcePathStyle:  true,
-			Insecure:        motoInsecure(m.endpoint),
-			AccessKeyID:     uriio.Secret(m.keyID),
-			SecretAccessKey: uriio.Secret(m.secret),
-		},
+		"default": m.handleConfig(),
 	}}
 	pool := uriio.NewProviderPool(uriio.NewResolver(cfg, nil))
 	t.Cleanup(func() { _ = pool.Close() })

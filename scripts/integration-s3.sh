@@ -5,15 +5,20 @@
 # Runs the `s3integration`-tagged tests (cloud read boundary, source-in) against
 # a live S3-compatible endpoint. Two ways to get an endpoint, tried in order:
 #
-#   1. BYO (bring-your-own): export the standard contract — a URI + the normal S3
-#      key/secret pair — and the suite runs against it (moto, MinIO, Wasabi, R2,
-#      real S3). https endpoints keep TLS enforced; http:// opts into insecure.
+#   1. BYO (bring-your-own): export the standard contract — a URI + an S3 credential
+#      reference — and the suite runs against it (moto, MinIO, Wasabi, R2, real S3).
+#      https endpoints keep TLS enforced; http:// opts into insecure.
 #
 #        SUMPTER_TEST_S3_ENDPOINT   e.g. https://s3.us-east-1.wasabisys.com
 #        SUMPTER_TEST_S3_BUCKET     a pre-created bucket
-#        SUMPTER_TEST_S3_KEY_ID     access key id
-#        SUMPTER_TEST_S3_SECRET     secret access key
+#        SUMPTER_TEST_S3_PROFILE    AWS profile (preferred; creds from ~/.aws, no
+#                                   secret in env) — OR the literal pair below
+#        SUMPTER_TEST_S3_KEY_ID     access key id   (used only when no profile)
+#        SUMPTER_TEST_S3_SECRET     secret access key (used only when no profile)
 #        SUMPTER_TEST_S3_REGION     optional, default us-east-1
+#
+#      Tip: keep these in a gitignored .envrc (direnv). Never commit endpoint,
+#      bucket, profile, or credential values. See docs/sop/cicd-and-local-gates.md.
 #
 #   2. Self-provision: with no BYO endpoint, this script stands up an ephemeral
 #      moto server in a cached Python venv, creates a bucket, runs, and tears it
@@ -41,42 +46,42 @@ SELF_BUCKET="sumpter-itest"
 MOTO_PORT="${SUMPTER_MOTO_PORT:-5005}"
 
 run_suite() {
-  echo -e "${BLUE}Running S3 integration suite (-tags ${TAG})...${NC}"
-  go test -tags "${TAG}" -count=1 -timeout=300s ./...
+	echo -e "${BLUE}Running S3 integration suite (-tags ${TAG})...${NC}"
+	go test -tags "${TAG}" -count=1 -timeout=300s ./...
 }
 
 # Escape hatch first.
 if [ "${SUMPTER_SKIP_S3_INTEGRATION:-}" = "1" ]; then
-  echo -e "${YELLOW}⚠️  SUMPTER_SKIP_S3_INTEGRATION=1 — skipping S3 live-integration suite.${NC}"
-  echo -e "${YELLOW}   (Documented escape for offline machines; see docs/sop/cicd-and-local-gates.md.)${NC}"
-  exit 0
+	echo -e "${YELLOW}⚠️  SUMPTER_SKIP_S3_INTEGRATION=1 — skipping S3 live-integration suite.${NC}"
+	echo -e "${YELLOW}   (Documented escape for offline machines; see docs/sop/cicd-and-local-gates.md.)${NC}"
+	exit 0
 fi
 
 # Path 1: BYO endpoint.
 if [ -n "${SUMPTER_TEST_S3_ENDPOINT:-}" ] && [ -n "${SUMPTER_TEST_S3_BUCKET:-}" ]; then
-  echo -e "${BLUE}Using BYO S3 endpoint: ${SUMPTER_TEST_S3_ENDPOINT} (bucket ${SUMPTER_TEST_S3_BUCKET})${NC}"
-  run_suite
-  exit $?
+	echo -e "${BLUE}Using BYO S3 endpoint: ${SUMPTER_TEST_S3_ENDPOINT} (bucket ${SUMPTER_TEST_S3_BUCKET})${NC}"
+	run_suite
+	exit $?
 fi
 
 # Path 2: self-provision moto.
 fail_no_harness() {
-  echo -e "${RED}❌ Cannot run the S3 integration suite: ${1}${NC}" >&2
-  echo -e "${RED}   Provide a BYO endpoint (SUMPTER_TEST_S3_ENDPOINT + SUMPTER_TEST_S3_BUCKET${NC}" >&2
-  echo -e "${RED}   + SUMPTER_TEST_S3_KEY_ID/SECRET), or set SUMPTER_SKIP_S3_INTEGRATION=1 to skip.${NC}" >&2
-  echo -e "${RED}   See docs/sop/cicd-and-local-gates.md.${NC}" >&2
-  exit 1
+	echo -e "${RED}❌ Cannot run the S3 integration suite: ${1}${NC}" >&2
+	echo -e "${RED}   Provide a BYO endpoint (SUMPTER_TEST_S3_ENDPOINT + SUMPTER_TEST_S3_BUCKET${NC}" >&2
+	echo -e "${RED}   + SUMPTER_TEST_S3_KEY_ID/SECRET), or set SUMPTER_SKIP_S3_INTEGRATION=1 to skip.${NC}" >&2
+	echo -e "${RED}   See docs/sop/cicd-and-local-gates.md.${NC}" >&2
+	exit 1
 }
 
 if ! command -v python3 >/dev/null 2>&1; then
-  fail_no_harness "no BYO endpoint and python3 is not on PATH for self-provisioning moto"
+	fail_no_harness "no BYO endpoint and python3 is not on PATH for self-provisioning moto"
 fi
 
 if [ ! -x "${VENV_DIR}/bin/moto_server" ]; then
-  echo -e "${BLUE}Bootstrapping moto into ${VENV_DIR} (first run only)...${NC}"
-  python3 -m venv "${VENV_DIR}" || fail_no_harness "could not create the moto venv"
-  "${VENV_DIR}/bin/pip" install --quiet 'moto[server]' \
-    || fail_no_harness "could not pip-install moto[server] (offline?)"
+	echo -e "${BLUE}Bootstrapping moto into ${VENV_DIR} (first run only)...${NC}"
+	python3 -m venv "${VENV_DIR}" || fail_no_harness "could not create the moto venv"
+	"${VENV_DIR}/bin/pip" install --quiet 'moto[server]' ||
+		fail_no_harness "could not pip-install moto[server] (offline?)"
 fi
 
 echo -e "${BLUE}Starting ephemeral moto on 127.0.0.1:${MOTO_PORT}...${NC}"
@@ -89,8 +94,11 @@ trap cleanup EXIT
 # Health wait.
 up=0
 for _ in $(seq 1 40); do
-  if curl -sf "http://127.0.0.1:${MOTO_PORT}/moto-api/" >/dev/null 2>&1; then up=1; break; fi
-  sleep 0.25
+	if curl -sf "http://127.0.0.1:${MOTO_PORT}/moto-api/" >/dev/null 2>&1; then
+		up=1
+		break
+	fi
+	sleep 0.25
 done
 [ "${up}" = "1" ] || fail_no_harness "moto did not become healthy (see /tmp/sumpter-moto.log)"
 

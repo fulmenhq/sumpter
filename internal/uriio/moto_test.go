@@ -43,18 +43,24 @@ func motoPool(t *testing.T) (*uriio.ProviderPool, string) {
 	if region == "" {
 		region = "us-east-1"
 	}
-	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
-		"moto": {
-			Region:          region,
-			Endpoint:        endpoint,
-			AccessKeyID:     uriio.Secret(os.Getenv("SUMPTER_TEST_S3_KEY_ID")),
-			SecretAccessKey: uriio.Secret(os.Getenv("SUMPTER_TEST_S3_SECRET")),
-			ForcePathStyle:  true,
-			// Insecure only for an http:// endpoint (local moto/MinIO); a BYO
-			// https endpoint (e.g. Wasabi, R2) keeps TLS enforced.
-			Insecure: strings.HasPrefix(strings.ToLower(endpoint), "http://"),
-		},
-	}}
+	hc := uriio.HandleConfig{
+		Region:         region,
+		Endpoint:       endpoint,
+		ForcePathStyle: true,
+		// Insecure only for an http:// endpoint (local moto/MinIO); a BYO
+		// https endpoint (e.g. Wasabi, R2) keeps TLS enforced.
+		Insecure: strings.HasPrefix(strings.ToLower(endpoint), "http://"),
+	}
+	// Prefer a shared-config profile when given (the SDK reads ~/.aws/credentials
+	// directly, so no secret enters the env/process); otherwise use the literal
+	// key/secret pair.
+	if profile := os.Getenv("SUMPTER_TEST_S3_PROFILE"); profile != "" {
+		hc.Profile = profile
+	} else {
+		hc.AccessKeyID = uriio.Secret(os.Getenv("SUMPTER_TEST_S3_KEY_ID"))
+		hc.SecretAccessKey = uriio.Secret(os.Getenv("SUMPTER_TEST_S3_SECRET"))
+	}
+	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{"moto": hc}}
 	pool := uriio.NewProviderPool(uriio.NewResolver(cfg, nil))
 	t.Cleanup(func() { _ = pool.Close() })
 	return pool, bucket
