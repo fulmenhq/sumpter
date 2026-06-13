@@ -77,7 +77,8 @@ type IndexMetadata struct {
 
 // BuildOptions configures index building behavior
 type BuildOptions struct {
-	InputPath      string // Path to source XML file
+	InputPath      string // Local path the builder reads source bytes from (a staged working copy for cloud sources)
+	SourceIdentity string // Logical source identity recorded in the index header's source.path; defaults to InputPath when empty. For cloud sources this is the logical s3:// URI, never the staged local path.
 	OutputPath     string // Path for output index file (optional, defaults to SUMPTER_HOME/indexes/<hash>.recordindex.json)
 	Selector       string // XPath selector for record boundaries (e.g., "//VariationArchive")
 	IncludeP50     bool   // Include p50 (median) in summary stats

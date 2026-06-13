@@ -76,10 +76,19 @@ func (b *Builder) BuildTo(writers ...IndexWriter) (result *RecordIndex, err erro
 		return nil, fmt.Errorf("failed to compute source file hash: %w", err)
 	}
 
+	// The header records the logical source identity (the s3:// URI for cloud
+	// sources), not the staged local read path under $SUMPTER_HOME/work, which is
+	// internal and must never leak into the index. Local builds leave
+	// SourceIdentity empty and fall back to InputPath (byte-for-byte unchanged).
+	sourceIdentity := b.opts.SourceIdentity
+	if sourceIdentity == "" {
+		sourceIdentity = b.opts.InputPath
+	}
+
 	header := &RecordIndex{
 		Version: SchemaVersion,
 		Source: SourceInfo{
-			Path:              b.opts.InputPath,
+			Path:              sourceIdentity,
 			SizeBytes:         fileInfo.Size(),
 			SHA256:            sourceHash,
 			Compressed:        compressed,
@@ -268,6 +277,29 @@ func (b *Builder) WriteToFile(index *RecordIndex, outputPath string) error {
 		return fmt.Errorf("failed to encode index to JSON: %w", err)
 	}
 
+	return nil
+}
+
+// VerifySourceIntegrity checks that the file at localPath matches the size and
+// SHA-256 recorded in the index header's SourceInfo. It is the cloud read-
+// boundary guard for parallel/seekable extraction: a remote source object is
+// mutable, so if it changed since the index was built the recorded byte offsets
+// are no longer valid and extraction must fail rather than read garbage ranges.
+func VerifySourceIntegrity(localPath string, source SourceInfo) error {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return fmt.Errorf("stat source for integrity check: %w", err)
+	}
+	if info.Size() != source.SizeBytes {
+		return fmt.Errorf("source size mismatch: index recorded %d bytes but the source is %d bytes (the source changed since the index was built; rebuild the index)", source.SizeBytes, info.Size())
+	}
+	sum, err := computeFileSHA256(localPath)
+	if err != nil {
+		return fmt.Errorf("hash source for integrity check: %w", err)
+	}
+	if sum != source.SHA256 {
+		return fmt.Errorf("source SHA-256 mismatch: index recorded %s but the source hashes to %s (the source changed since the index was built; rebuild the index)", source.SHA256, sum)
+	}
 	return nil
 }
 
