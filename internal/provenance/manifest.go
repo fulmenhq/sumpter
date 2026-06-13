@@ -96,32 +96,46 @@ type Output struct {
 	WithholdColumns []string `json:"withhold_columns,omitempty"`
 }
 
-// WriteManifest writes a deterministic, indented JSON sidecar.
+// WriteManifest writes a deterministic, indented JSON sidecar to a local path
+// (bare path or file:// URI). It is the local-only convenience over
+// WriteManifestVia: it resolves the destination through the credential-less uriio
+// seam, so a cloud sidecar destination is rejected here. Cloud sidecar
+// publication goes through WriteManifestVia with a session-resolved target so it
+// publishes alongside its output under the run's output credentials.
 func WriteManifest(path string, manifest Manifest) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("manifest path is required")
 	}
-	// Route the destination through the uriio seam: local sidecars resolve to
-	// their own path and Publish is a no-op; cloud sidecars are rejected until the
-	// cloud write boundary lands (the sidecar publishes alongside its output).
 	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: path})
 	if err != nil {
 		return err
 	}
-	path = tgt.LocalPath
+	return WriteManifestVia(context.Background(), tgt, manifest)
+}
+
+// WriteManifestVia writes the deterministic, indented JSON sidecar to the given
+// output target and publishes it. The target may be local (no-op Publish) or a
+// session-resolved cloud target (staging file + PutObject on Publish); the
+// package stays session-agnostic — it only knows the target. The sidecar is
+// written fully to the target's local path and only then published, so a publish
+// failure never leaves a truncated manifest object.
+func WriteManifestVia(ctx context.Context, target *uriio.OutputTarget, manifest Manifest) error {
+	if target == nil {
+		return fmt.Errorf("manifest output target is required")
+	}
 	manifest.SchemaVersion = ManifestSchemaVersion
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal provenance manifest: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target.LocalPath), 0o750); err != nil {
 		return fmt.Errorf("create provenance manifest directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write provenance manifest %s: %w", path, err)
+	if err := os.WriteFile(target.LocalPath, data, 0o600); err != nil {
+		return fmt.Errorf("write provenance manifest %s: %w", target.LogicalURI, err)
 	}
-	return tgt.Publish(context.Background())
+	return target.Publish(ctx)
 }
 
 // BuildInputLedger hashes and stats a processed input. localPath is the file the

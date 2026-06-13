@@ -81,6 +81,17 @@ type ExtractOptions struct {
 	// supplied.
 	CredentialsPath     string   // Path to the credentials config (handles)
 	CredentialOverrides []string // Repeatable handle=profile CLI overrides
+	// OutputCredentialsHandle selects the credential handle for the cloud write
+	// boundary (a handle name, never a secret). Precedence: this CLI value >
+	// recipe defaults.output.credentials_handle > the default handle. Independent
+	// of the input handle so a run can read from one account and write to another.
+	OutputCredentialsHandle string
+
+	// outputSession publishes cloud (s3://) output for the run; nil for local
+	// output. outputHandle is the resolved handle it publishes under. Both are set
+	// once at run start and consumed by every output writer.
+	outputSession *uriio.Session
+	outputHandle  string
 }
 
 func NewExtractCommand() *cobra.Command {
@@ -160,6 +171,7 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().BoolVar(&opts.VerifyIndex, "verify-index", false, "Verify index integrity with SHA-256 before extraction")
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
+	cmd.Flags().StringVar(&opts.OutputCredentialsHandle, "output-credentials-handle", "", "Credential handle name for cloud (s3://) output (a handle reference, not a secret; defaults to the default handle)")
 
 	_ = cmd.MarkFlagRequired("signature-config-path")
 	_ = cmd.MarkFlagRequired("extract-config-path")
@@ -243,11 +255,21 @@ func resolveLocalReferences(opts *ExtractOptions) error {
 		}
 	}
 	if opts.OutputPath != "" {
-		local, err := uriio.LocalPath("result output", opts.OutputPath)
+		ref, err := uriio.Classify(opts.OutputPath)
 		if err != nil {
 			return err
 		}
-		opts.OutputPath = local
+		if !ref.IsCloud() {
+			// Local output resolves to its filesystem path exactly as before. A
+			// cloud (s3://) output destination is kept as its logical URI; output
+			// keys are composed in URI space and published through the output
+			// session at the write boundary.
+			local, err := uriio.LocalPath("result output", opts.OutputPath)
+			if err != nil {
+				return err
+			}
+			opts.OutputPath = local
+		}
 	}
 	if opts.RecordIndex != "" {
 		local, err := uriio.LocalPath("record index", opts.RecordIndex)
@@ -341,6 +363,16 @@ func runExtract(opts *ExtractOptions) error {
 		return err
 	}
 
+	// Set up the cloud write boundary: when output is an s3:// destination this
+	// creates the run's output session (publishing under the resolved output
+	// handle) and validates the handle up front so an unknown handle fails before
+	// any extraction work. Both extraction routes (sequential + record-index) read
+	// the session off opts. Local output leaves the session nil (zero-drift).
+	if err := setupOutputSession(opts, runtimeProvenance.RunID); err != nil {
+		return err
+	}
+	defer closeOutputSession(opts)
+
 	fieldPlan, err := buildExternalFieldPlan(opts, extCfg.FieldMappings)
 	if err != nil {
 		return err
@@ -432,7 +464,7 @@ func runExtract(opts *ExtractOptions) error {
 	sanitizeRoots := manifestSanitizeRoots(opts)
 	manifestPath := ""
 	if manifestEnabled {
-		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+		manifestPath = outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	}
 	dispositionSummary := newDispositionSummary(len(files))
 	failureManifest := newExtractFailureManifest(len(files))
@@ -618,21 +650,21 @@ func runExtract(opts *ExtractOptions) error {
 	}
 
 	if opts.ContinueOnError && failureManifest.Failed > 0 {
-		failuresPath := filepath.Join(opts.OutputPath, "failures.json")
-		if err := writeExtractFailureManifest(failuresPath, failureManifest); err != nil {
+		failuresPath := outputRefJoin(opts.OutputPath, "failures.json")
+		if err := writeExtractFailureManifest(opts, failuresPath, failureManifest); err != nil {
 			return err
 		}
 	}
 
 	if opts.ApplicabilityConfig != nil && opts.OutputPath != "" {
-		if err := writeDispositionSummary(filepath.Join(opts.OutputPath, "dispositions.json"), dispositionSummary); err != nil {
+		if err := writeDispositionSummary(opts, outputRefJoin(opts.OutputPath, "dispositions.json"), dispositionSummary); err != nil {
 			return err
 		}
 	}
 
 	if manifestEnabled {
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
-		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -644,7 +676,7 @@ func runExtract(opts *ExtractOptions) error {
 		return dispositionFailure
 	}
 	if opts.ContinueOnError && failureManifest.Failed > 0 {
-		return fmt.Errorf("partial extraction failure: applied=%d failed=%d failures=%s", failureManifest.Applied, failureManifest.Failed, filepath.Join(opts.OutputPath, "failures.json"))
+		return fmt.Errorf("partial extraction failure: applied=%d failed=%d failures=%s", failureManifest.Applied, failureManifest.Failed, outputRefJoin(opts.OutputPath, "failures.json"))
 	}
 	return nil
 }
@@ -694,25 +726,25 @@ func (m *extractFailureManifestFile) add(file string, reason extract.Disposition
 	})
 }
 
-func writeExtractFailureManifest(path string, manifest *extractFailureManifestFile) error {
+func writeExtractFailureManifest(opts *ExtractOptions, path string, manifest *extractFailureManifestFile) error {
 	if manifest == nil || manifest.Failed == 0 {
 		return nil
 	}
-	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: path})
+	tgt, err := openOutputTarget(context.Background(), opts, path)
 	if err != nil {
 		return err
 	}
-	path = tgt.LocalPath
+	localPath := tgt.LocalPath
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal extraction failures: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("create extraction failure manifest directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write extraction failure manifest %s: %w", path, err)
+	if err := os.WriteFile(localPath, data, 0o600); err != nil {
+		return fmt.Errorf("write extraction failure manifest %s: %w", tgt.LogicalURI, err)
 	}
 	return tgt.Publish(context.Background())
 }
@@ -828,25 +860,25 @@ func sanitizeDispositionText(text string, roots []string) string {
 	return text
 }
 
-func writeDispositionSummary(path string, summary *dispositionSummaryFile) error {
+func writeDispositionSummary(opts *ExtractOptions, path string, summary *dispositionSummaryFile) error {
 	if summary == nil || len(summary.Files) == 0 {
 		return nil
 	}
-	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: path})
+	tgt, err := openOutputTarget(context.Background(), opts, path)
 	if err != nil {
 		return err
 	}
-	path = tgt.LocalPath
+	localPath := tgt.LocalPath
 	data, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal dispositions summary: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("create dispositions directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write dispositions summary %s: %w", path, err)
+	if err := os.WriteFile(localPath, data, 0o600); err != nil {
+		return fmt.Errorf("write dispositions summary %s: %w", tgt.LogicalURI, err)
 	}
 	return tgt.Publish(context.Background())
 }
@@ -928,7 +960,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 	sanitizeRoots := manifestSanitizeRoots(opts)
 	manifestPath := ""
 	if manifestEnabled {
-		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+		manifestPath = outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	}
 	dispositionSummary := newDispositionSummary(len(files))
 	failureManifest := newExtractFailureManifest(len(files))
@@ -1034,21 +1066,21 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 	}
 
 	if opts.ContinueOnError && failureManifest.Failed > 0 {
-		failuresPath := filepath.Join(opts.OutputPath, "failures.json")
-		if err := writeExtractFailureManifest(failuresPath, failureManifest); err != nil {
+		failuresPath := outputRefJoin(opts.OutputPath, "failures.json")
+		if err := writeExtractFailureManifest(opts, failuresPath, failureManifest); err != nil {
 			return err
 		}
 	}
 
 	if opts.ApplicabilityConfig != nil && opts.OutputPath != "" {
-		if err := writeDispositionSummary(filepath.Join(opts.OutputPath, "dispositions.json"), dispositionSummary); err != nil {
+		if err := writeDispositionSummary(opts, outputRefJoin(opts.OutputPath, "dispositions.json"), dispositionSummary); err != nil {
 			return err
 		}
 	}
 
 	if manifestEnabled {
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
-		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -1060,7 +1092,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		return dispositionFailure
 	}
 	if opts.ContinueOnError && failureManifest.Failed > 0 {
-		return fmt.Errorf("partial extraction failure: applied=%d failed=%d failures=%s", failureManifest.Applied, failureManifest.Failed, filepath.Join(opts.OutputPath, "failures.json"))
+		return fmt.Errorf("partial extraction failure: applied=%d failed=%d failures=%s", failureManifest.Applied, failureManifest.Failed, outputRefJoin(opts.OutputPath, "failures.json"))
 	}
 	return nil
 }
@@ -1127,11 +1159,13 @@ func newJSONOutputTarget(opts *ExtractOptions, inputFile string) (*jsonOutputTar
 	}
 
 	outputFile := outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, inputFile)
-	// Route the destination through the uriio seam up front so a cloud target
-	// fails fast (before any records are streamed). Local targets resolve to
-	// their own path and Publish (in Commit) is a no-op; the existing atomic
-	// temp-file + rename commit is unchanged for local output.
-	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: outputFile})
+	// Route the destination through the output seam up front so a cloud target
+	// fails fast (before any records are streamed). Local targets resolve to their
+	// own path and Publish (in Commit) is a no-op; for cloud, LocalPath is a
+	// staging file the streaming sink writes (temp + rename), and Commit's Publish
+	// uploads the completed artifact. The existing atomic temp-file + rename commit
+	// is unchanged either way.
+	tgt, err := openOutputTarget(context.Background(), opts, outputFile)
 	if err != nil {
 		return nil, err
 	}
@@ -1383,7 +1417,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	sanitizeRoots := manifestSanitizeRoots(opts)
 	manifestPath := ""
 	if manifestEnabled {
-		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+		manifestPath = outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	}
 	var manifestInputs []provenance.Input
 	var manifestOutputs []provenance.Output
@@ -1426,7 +1460,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 
 	if manifestEnabled {
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
-		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -1444,7 +1478,7 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 	sanitizeRoots := manifestSanitizeRoots(opts)
 	manifestPath := ""
 	if manifestEnabled {
-		manifestPath = filepath.Join(opts.OutputPath, provenance.ManifestFileName)
+		manifestPath = outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	}
 
 	target, err := newJSONOutputTarget(opts, "parallel")
@@ -1490,7 +1524,7 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 		}
 		countsByRecordType := map[string]int{extCfg.RecordType: recordCount}
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
-		if err := provenance.WriteManifest(manifestPath, manifest); err != nil {
+		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -1762,7 +1796,7 @@ func outputFileForFormat(opts *ExtractOptions, format, inputFile string) string 
 	if format == recipesmanifest.OutputFormatParquet {
 		filename = replaceOutputExtension(filename, ".parquet")
 	}
-	return filepath.Join(opts.OutputPath, filename)
+	return outputRefJoin(opts.OutputPath, filename)
 }
 
 func replaceOutputExtension(filename, ext string) string {
@@ -1776,18 +1810,29 @@ func replaceOutputExtension(filename, ext string) string {
 func writeRecordsForFormat(outputFile, format string, records []map[string]interface{}, extCfg *extract.ExtractRecordMatch, sigCfg *extract.FileSignature, opts *ExtractOptions, runtime provenance.RuntimeOptions, sourceFile, manifestPath string) error {
 	switch format {
 	case recipesmanifest.OutputFormatJSON:
-		return writeRecordsToFile(outputFile, records)
+		return writeRecordsToFile(opts, outputFile, records)
 	case recipesmanifest.OutputFormatParquet:
 		if opts == nil || opts.Recipe == nil {
 			logging.GetLogger().Warn("Parquet output without recipe.yaml; recipe provenance metadata will be omitted",
 				zap.String("file", outputFile))
 		}
+		// The parquet writer needs a local seekable file. Resolve the destination
+		// through the output seam: local writes go to the final path (no-op
+		// Publish); a cloud destination writes the complete parquet to a staging
+		// file, then Publish uploads it.
+		tgt, err := openOutputTarget(context.Background(), opts, outputFile)
+		if err != nil {
+			return err
+		}
 		metadata := parquetFileMetadata(sigCfg, opts, runtime, sourceFile, manifestPath)
-		return parquetwriter.WriteFile(outputFile, extCfg, records, parquetwriter.Options{
+		if err := parquetwriter.WriteFile(tgt.LocalPath, extCfg, records, parquetwriter.Options{
 			Compression:     opts.ParquetCompression,
 			Metadata:        metadata,
 			WithholdColumns: opts.ParquetWithholdColumns,
-		})
+		}); err != nil {
+			return err
+		}
+		return tgt.Publish(context.Background())
 	default:
 		return fmt.Errorf("unsupported output format %q", format)
 	}
@@ -2323,6 +2368,100 @@ func newCloudSession(opts *ExtractOptions, runID string) (*uriio.Session, error)
 	return newCloudSessionFromCredentials(opts.CredentialsPath, opts.CredentialOverrides, runID)
 }
 
+// resolvedOutputHandle returns the credential handle for cloud output. Precedence
+// is CLI selector > recipe defaults.output.credentials_handle (already mapped
+// onto opts.OutputCredentialsHandle by the recipe runner) > the default handle.
+func resolvedOutputHandle(opts *ExtractOptions) string {
+	if h := strings.TrimSpace(opts.OutputCredentialsHandle); h != "" {
+		return h
+	}
+	return uriio.DefaultHandleName
+}
+
+// setupOutputSession creates the run's cloud output session when the output
+// destination is an s3:// URI. It resolves and validates the output handle up
+// front (an unknown handle fails before any extraction work) and emits a loud,
+// redacted run-start confirmation of the destination — a misrouted write is
+// materially more dangerous than a misrouted read, so the operator sees the
+// resolved bucket/endpoint/handle (never credentials) before any bytes leave.
+// Local output leaves opts.outputSession nil (byte-for-byte unchanged).
+func setupOutputSession(opts *ExtractOptions, runID string) error {
+	if strings.TrimSpace(opts.OutputPath) == "" {
+		return nil
+	}
+	ref, err := uriio.Classify(opts.OutputPath)
+	if err != nil {
+		return err
+	}
+	if !ref.IsCloud() {
+		return nil
+	}
+
+	handle := resolvedOutputHandle(opts)
+	session, err := newCloudSession(opts, runID)
+	if err != nil {
+		return err
+	}
+	// Fail fast on an unknown/invalid output handle, before any work or staging.
+	confirmation, err := session.DescribeOutputHandle(handle, ref.Bucket)
+	if err != nil {
+		_ = session.Close()
+		return err
+	}
+	opts.outputSession = session
+	opts.outputHandle = handle
+
+	logging.GetLogger().Info("Publishing extraction output to cloud destination",
+		zap.String("destination", ref.LogicalURI),
+		zap.String("handle", handle),
+		zap.String("resolved", confirmation))
+	return nil
+}
+
+// closeOutputSession removes the output session's staging directory and releases
+// its providers on every run exit path. Safe when no session was created.
+func closeOutputSession(opts *ExtractOptions) {
+	if opts == nil || opts.outputSession == nil {
+		return
+	}
+	if err := opts.outputSession.Close(); err != nil {
+		logging.GetLogger().Warn("Failed to clean up cloud output staging directory", zap.Error(err))
+	}
+	opts.outputSession = nil
+}
+
+// openOutputTarget resolves a destination through the run's output session when
+// one exists (cloud output), otherwise through the local-only free resolver. It
+// is the single seam every output writer uses so cloud publishing and local
+// writes share one path.
+func openOutputTarget(ctx context.Context, opts *ExtractOptions, reference string) (*uriio.OutputTarget, error) {
+	if opts != nil && opts.outputSession != nil {
+		return opts.outputSession.OpenOutput(ctx, reference, opts.outputHandle)
+	}
+	return uriio.OpenOutput(ctx, uriio.OutputRequest{Reference: reference})
+}
+
+// writeProvenanceManifest publishes the provenance sidecar through the run's
+// output seam, so a cloud manifest publishes alongside its output under the
+// output handle (local stays a no-op-publish write).
+func writeProvenanceManifest(opts *ExtractOptions, path string, manifest provenance.Manifest) error {
+	tgt, err := openOutputTarget(context.Background(), opts, path)
+	if err != nil {
+		return err
+	}
+	return provenance.WriteManifestVia(context.Background(), tgt, manifest)
+}
+
+// outputRefJoin composes an output destination from a base path/URI and a file
+// name. For a cloud (s3://) base it joins in URI space (filepath.Join would
+// collapse the "//"); for a local base it is filepath.Join.
+func outputRefJoin(base, name string) string {
+	if ref, err := uriio.Classify(base); err == nil && ref.IsCloud() {
+		return strings.TrimRight(base, "/") + "/" + name
+	}
+	return filepath.Join(base, name)
+}
+
 // acquireRecordIndexSource makes a record index's source available locally for
 // seekable/parallel extraction. A local header path is returned as-is with a
 // no-op cleanup (byte-for-byte the historical behavior). A cloud (s3://) header
@@ -2516,21 +2655,21 @@ func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
 	return files, nil
 }
 
-func writeRecordsToFile(filename string, records []map[string]interface{}) error {
+func writeRecordsToFile(opts *ExtractOptions, filename string, records []map[string]interface{}) error {
 	// Route the destination through the uriio seam. Local destinations resolve to
-	// their own path and Publish is a no-op; cloud destinations are rejected until
-	// the cloud write boundary lands. (Cloud publish — which must close-then-upload
-	// — is wired in a later delivery; for local the existing direct write stands.)
-	tgt, err := uriio.OpenOutput(context.Background(), uriio.OutputRequest{Reference: filename})
+	// their own path and Publish is a no-op; a cloud destination resolves to a
+	// staging file that Publish uploads only after every record is written, so a
+	// mid-write failure returns before Publish and leaves no object.
+	tgt, err := openOutputTarget(context.Background(), opts, filename)
 	if err != nil {
 		return err
 	}
-	filename = tgt.LocalPath
+	localPath := tgt.LocalPath
 
-	if err := os.MkdirAll(filepath.Dir(filename), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return err
 	}
-	file, err := os.Create(filename) // #nosec G304 - filename is constructed from user-provided output path and pattern
+	file, err := os.Create(localPath) // #nosec G304 - localPath is a staging path or a user-provided output path
 	if err != nil {
 		return err
 	}
@@ -2543,7 +2682,11 @@ func writeRecordsToFile(filename string, records []map[string]interface{}) error
 			return err
 		}
 	}
-
+	// Close before publishing so the staged artifact is fully flushed; only then
+	// upload. A close error must not be masked.
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close output %s: %w", tgt.LogicalURI, err)
+	}
 	return tgt.Publish(context.Background())
 }
 

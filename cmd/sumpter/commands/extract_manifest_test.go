@@ -204,7 +204,7 @@ func TestJSONOutputTargetMatchesBufferedJSONLBytes(t *testing.T) {
 		{"_runtime": map[string]interface{}{"record_num": 2}, "extract": map[string]interface{}{"data": map[string]interface{}{"name": "B"}}},
 	}
 	expectedFile := filepath.Join(dir, "expected.json")
-	if err := writeRecordsToFile(expectedFile, records); err != nil {
+	if err := writeRecordsToFile(nil, expectedFile, records); err != nil {
 		t.Fatalf("writeRecordsToFile: %v", err)
 	}
 

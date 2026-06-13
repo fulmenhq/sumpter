@@ -160,6 +160,142 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string) (*Acqui
 	}, nil
 }
 
+// outputStagingDirName is the subdirectory of the run staging directory under
+// which output artifacts are formed locally before publication, kept separate
+// from acquired input objects so an output key can never collide with a source.
+const outputStagingDirName = "out"
+
+// maxSinglePutBytes is the S3 single-PUT object-size limit (5 GiB). gonimbus
+// v0.2.3 publishes via a single PutObject (no multipart), so a larger object
+// would fail in the SDK with a cryptic EntityTooLarge. We pre-check and fail
+// clearly instead; large/multipart cloud output is a follow-on (SUM-006).
+const maxSinglePutBytes = 5 * 1024 * 1024 * 1024
+
+// DescribeOutputHandle validates that an output handle resolves (an unknown
+// non-default handle errors here, before any write) and returns a redacted,
+// log-safe description of the resolved destination: bucket, endpoint, region, and
+// handle name only — never credentials. Used for the cloud-output run-start
+// confirmation so a misroute is visible before bytes leave.
+func (s *Session) DescribeOutputHandle(handle, bucket string) (string, error) {
+	hc, err := s.pool.resolver.Resolve(handle)
+	if err != nil {
+		return "", err
+	}
+	endpoint := hc.Endpoint
+	if endpoint == "" {
+		endpoint = "(aws default)"
+	}
+	region := hc.Region
+	if region == "" {
+		region = "(default)"
+	}
+	return fmt.Sprintf("bucket=%s endpoint=%s region=%s handle=%s", bucket, endpoint, region, handle), nil
+}
+
+// OpenOutput resolves a destination for writing. Local destinations write
+// directly to their final path with a no-op Publish (byte-for-byte the historical
+// behavior). An s3:// destination writes to a staging file under the run
+// directory; Publish uploads the fully-formed local artifact via a single
+// PutObject (so a failed publish leaves no partial object) and then removes the
+// staging file. The output handle may differ from the input handle — the provider
+// pool is keyed per handle, so one session serves cloud->cloud with independent
+// credentials.
+func (s *Session) OpenOutput(ctx context.Context, reference, handle string) (*OutputTarget, error) {
+	ref, err := Classify(reference)
+	if err != nil {
+		return nil, err
+	}
+	switch ref.Scheme {
+	case SchemeLocal:
+		return &OutputTarget{LogicalURI: ref.LogicalURI, LocalPath: ref.LocalPath, Scheme: SchemeLocal}, nil
+	case SchemeS3:
+		return s.openOutputS3(ref, handle)
+	default:
+		return nil, notImplemented("result publication", ref)
+	}
+}
+
+func (s *Session) openOutputS3(ref Ref, handle string) (*OutputTarget, error) {
+	if ref.IsPattern() || ref.IsPrefix() {
+		return nil, fmt.Errorf("uriio: output needs a single object key, not a prefix/pattern (%s)", ref.LogicalURI)
+	}
+	stageDir, err := s.ensureStageDir()
+	if err != nil {
+		return nil, err
+	}
+	staged, err := safeStagePath(filepath.Join(stageDir, outputStagingDirName), ref.Key)
+	if err != nil {
+		return nil, err
+	}
+	bucket, key, logical := ref.Bucket, ref.Key, ref.LogicalURI
+	return &OutputTarget{
+		LogicalURI: logical,
+		LocalPath:  staged,
+		Scheme:     SchemeS3,
+		publish: func(ctx context.Context) error {
+			prov, err := s.pool.Provider(ctx, handle, bucket)
+			if err != nil {
+				return err
+			}
+			// #nosec G304 - staged is validated by safeStagePath to stay under the run dir.
+			f, err := os.Open(staged)
+			if err != nil {
+				return fmt.Errorf("uriio: open staged output: %w", err)
+			}
+			defer func() { _ = f.Close() }()
+			info, err := f.Stat()
+			if err != nil {
+				return fmt.Errorf("uriio: stat staged output: %w", err)
+			}
+			if err := publishSizeWithinLimit(logical, info.Size()); err != nil {
+				return err
+			}
+			// PutObject is a single PUT (no multipart in this provider): it either
+			// stores the whole object or fails, so a publish error never leaves a
+			// truncated object a consumer could read as complete.
+			if err := prov.PutObject(ctx, key, f, info.Size()); err != nil {
+				// Surface only the logical destination + a redacted reason: the raw
+				// AWS SDK error can echo credential material (e.g. an access key id on
+				// an auth failure). Use %s, not %w, so the unredacted SDK error cannot
+				// be re-exposed by downstream error wrapping. Redaction additionally
+				// scrubs any literal-key cleartext for this handle.
+				return fmt.Errorf("uriio: publish %s failed: %s", logical, redactSecrets(err.Error(), s.pool.redactionSecrets(handle)))
+			}
+			// Best-effort: the run staging dir is removed wholesale by Session.Close,
+			// so a failure to remove the individual staged file here is not fatal.
+			_ = os.Remove(staged)
+			return nil
+		},
+	}, nil
+}
+
+// publishSizeWithinLimit fails clearly when a cloud output object would exceed
+// the single-PUT ceiling, instead of letting the SDK return a cryptic
+// EntityTooLarge. Large/multipart cloud output is a follow-on (SUM-006).
+func publishSizeWithinLimit(logical string, size int64) error {
+	if size > maxSinglePutBytes {
+		return fmt.Errorf("uriio: cloud output object %s is %d bytes, exceeding the %d-byte single-PUT limit; large/multipart cloud output is deferred (SUM-006)", logical, size, int64(maxSinglePutBytes))
+	}
+	return nil
+}
+
+// redactSecrets replaces any occurrence of the given secret cleartext values in
+// s with a placeholder. It is applied to provider/SDK error strings before they
+// are surfaced to logs, stderr, or persisted artifacts, so credential material
+// (e.g. a literal access key id echoed in an auth error) never leaks. Handles
+// that resolve credentials via an AWS profile expose no cleartext here, so their
+// secrets[] is empty — the belt-and-suspenders control there is that publish
+// errors surface only the logical destination, never the raw SDK message chain.
+func redactSecrets(s string, secrets []string) string {
+	for _, sec := range secrets {
+		if sec == "" {
+			continue
+		}
+		s = strings.ReplaceAll(s, sec, "[redacted]")
+	}
+	return s
+}
+
 // writeStagedFile writes r to path, creating parents and refusing to follow a
 // pre-planted symlink (O_EXCL).
 func writeStagedFile(path string, r io.Reader) error {
