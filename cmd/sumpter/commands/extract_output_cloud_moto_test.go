@@ -18,6 +18,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,8 +27,36 @@ import (
 
 	gonimbusprovider "github.com/3leaps/gonimbus/pkg/provider"
 	"github.com/fulmenhq/sumpter/internal/index"
+	"github.com/fulmenhq/sumpter/internal/provenance"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
+
+// assertManifestOutputPath decodes a published manifest and asserts it records
+// exactly the expected logical output destination in outputs[].path (not just a
+// substring), and that no entry leaks the local staging root.
+func assertManifestOutputPath(t *testing.T, manifestBytes []byte, wantOutput, stageRoot string) {
+	t.Helper()
+	var m provenance.Manifest
+	if err := json.Unmarshal(manifestBytes, &m); err != nil {
+		t.Fatalf("decode manifest: %v\n%s", err, manifestBytes)
+	}
+	if len(m.Outputs) != 1 {
+		t.Fatalf("manifest outputs len = %d, want 1: %+v", len(m.Outputs), m.Outputs)
+	}
+	if m.Outputs[0].Path != wantOutput {
+		t.Errorf("manifest outputs[0].path = %q, want logical URI %q", m.Outputs[0].Path, wantOutput)
+	}
+	for _, o := range m.Outputs {
+		if strings.Contains(o.Path, stageRoot) {
+			t.Errorf("manifest outputs[].path leaked staging root %q: %q", stageRoot, o.Path)
+		}
+	}
+	for _, in := range m.Inputs {
+		if strings.Contains(in.Path, stageRoot) {
+			t.Errorf("manifest inputs[].path leaked staging root %q: %q", stageRoot, in.Path)
+		}
+	}
+}
 
 // s3ObjectReader is the read/list surface the write-boundary tests need to verify
 // published objects.
@@ -166,16 +195,12 @@ func TestMotoExtractOutputLocalToCloudNoLeak(t *testing.T) {
 	if !ok {
 		t.Fatalf("provenance sidecar %smanifest.json was not published", prefix)
 	}
-	manifest := string(manifestData)
-	if !strings.Contains(manifest, outURI) && !strings.Contains(manifest, prefix+"out.json") {
-		t.Errorf("manifest does not record the logical output destination:\n%s", manifest)
-	}
-	// No-leak: the staging root must not appear in any published artifact.
 	stageRoot := filepath.Join(home, "work", "cloud")
-	for _, blob := range []string{string(outData), manifest} {
-		if strings.Contains(blob, stageRoot) {
-			t.Errorf("published artifact leaked the staging path %q", stageRoot)
-		}
+	// Exact-equality assertion on outputs[].path (not a substring): the manifest
+	// must record the logical destination, never the staging path.
+	assertManifestOutputPath(t, manifestData, strings.TrimRight(outURI, "/")+"/out.json", stageRoot)
+	if strings.Contains(string(outData), stageRoot) {
+		t.Errorf("published output object leaked the staging path %q", stageRoot)
 	}
 	assertStagingCleanedUp(t, home)
 }
@@ -231,13 +256,8 @@ func TestMotoExtractRecordIndexOutputToCloudNoLeak(t *testing.T) {
 	if !ok {
 		t.Fatalf("provenance sidecar %smanifest.json was not published", prefix)
 	}
-	manifest := string(manifestData)
-	if !strings.Contains(manifest, prefix+"out.json") && !strings.Contains(manifest, outURI) {
-		t.Errorf("manifest does not record the logical output destination:\n%s", manifest)
-	}
-	if stageRoot := filepath.Join(home, "work", "cloud"); strings.Contains(manifest, stageRoot) {
-		t.Errorf("record-index streaming manifest leaked the staging path %q:\n%s", stageRoot, manifest)
-	}
+	stageRoot := filepath.Join(home, "work", "cloud")
+	assertManifestOutputPath(t, manifestData, strings.TrimRight(outURI, "/")+"/out.json", stageRoot)
 	assertStagingCleanedUp(t, home)
 }
 
