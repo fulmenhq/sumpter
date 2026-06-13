@@ -2,8 +2,11 @@ package uriio
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestPublishSizeWithinLimit covers the single-PUT ceiling guard: an object at or
@@ -40,6 +43,27 @@ func TestRedactSecrets(t *testing.T) {
 	}
 }
 
+// TestRedactSecretsScrubsAKIDWithoutConfiguredSecret is the profile/default-chain
+// case: sumpter holds no literal cleartext, but an SDK auth error may echo the
+// resolved access key id. The last-defense pattern scrub must catch it even when
+// secrets[] is empty.
+func TestRedactSecretsScrubsAKIDWithoutConfiguredSecret(t *testing.T) {
+	raw := "operation error S3: PutObject, InvalidAccessKeyId: the key AKIAIOSFODNN7EXAMPLE is not valid"
+	got := redactSecrets(raw, nil) // no configured literal secrets (profile handle)
+	if strings.Contains(got, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("AKID leaked despite no configured secret: %q", got)
+	}
+	if !strings.Contains(got, "[redacted-key-id]") {
+		t.Errorf("AKID not replaced by placeholder: %q", got)
+	}
+	// Temporary (STS) and role key-id prefixes are also covered.
+	for _, akid := range []string{"ASIAABCDEFGHIJKLMNOP", "AROAXYZ234567ABCDEFG"} {
+		if redactAWSKeyIDs("id="+akid) != "id=[redacted-key-id]" {
+			t.Errorf("AKID prefix not scrubbed: %s", akid)
+		}
+	}
+}
+
 // TestResolverRedactionSecrets proves a literal-key handle exposes its cleartext
 // for scrubbing while a profile handle exposes nothing (the SDK holds its creds).
 func TestResolverRedactionSecrets(t *testing.T) {
@@ -59,6 +83,38 @@ func TestResolverRedactionSecrets(t *testing.T) {
 	}
 	if prof := r.redactionSecrets("prof"); len(prof) != 0 {
 		t.Errorf("profile handle secrets = %v, want none", prof)
+	}
+}
+
+// TestSessionOpenOutputPublishFailurePropagates proves a cloud publish failure
+// returns an error. This is the mechanism that makes a sidecar (provenance
+// manifest) publish failure fatal after the primary output is already PUT: the
+// write boundary publishes the primary first, then the sidecar through the same
+// Publish path, and a non-nil Publish error propagates to fail the run. It points
+// at a refused endpoint with a bounded context so the SDK fails fast.
+func TestSessionOpenOutputPublishFailurePropagates(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &CredentialsConfig{Handles: map[string]HandleConfig{
+		"default": {Region: "us-east-1", Endpoint: "http://127.0.0.1:1", ForcePathStyle: true, Insecure: true},
+	}}
+	s := NewSession(NewResolver(cfg, nil), dir, "testrun")
+	defer func() { _ = s.Close() }()
+
+	tgt, err := s.OpenOutput(context.Background(), "s3://bucket/out/result.json", DefaultHandleName)
+	if err != nil {
+		t.Fatalf("OpenOutput(cloud) error = %v", err)
+	}
+	// Write a complete local artifact at the staging path, then publish it.
+	if err := os.MkdirAll(filepath.Dir(tgt.LocalPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tgt.LocalPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := tgt.Publish(ctx); err == nil {
+		t.Fatal("Publish to a refused endpoint = nil, want a fatal publish error")
 	}
 }
 

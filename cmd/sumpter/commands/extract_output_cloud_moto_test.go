@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	gonimbusprovider "github.com/3leaps/gonimbus/pkg/provider"
+	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
@@ -175,6 +176,67 @@ func TestMotoExtractOutputLocalToCloudNoLeak(t *testing.T) {
 		if strings.Contains(blob, stageRoot) {
 			t.Errorf("published artifact leaked the staging path %q", stageRoot)
 		}
+	}
+	assertStagingCleanedUp(t, home)
+}
+
+// TestMotoExtractRecordIndexOutputToCloudNoLeak covers the record-index JSON
+// streaming output path to s3://: the manifest must record the logical output
+// destination and never the local staging path (the path devrev flagged where
+// the streaming target previously stored the staging path).
+func TestMotoExtractRecordIndexOutputToCloudNoLeak(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	dir := createExtractManifestFixture(t)
+
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+
+	// Build a LOCAL index from the fixture (index files stay local).
+	xmlPath := filepath.Join(dir, "input.xml")
+	indexPath := filepath.Join(dir, "input.recordindex.json")
+	builder := index.NewBuilder(index.BuildOptions{InputPath: xmlPath, OutputPath: indexPath, Selector: "//item"})
+	idx, err := builder.Build()
+	if err != nil {
+		t.Fatalf("build index: %v", err)
+	}
+	if err := builder.WriteToFile(idx, indexPath); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	prefix := runKeyPrefix() + "ri-out/"
+	outURI := "s3://" + m.bucket + "/" + prefix
+	credPath := m.writeCredentialsConfig(t, dir)
+
+	opts := &ExtractOptions{
+		Files:           xmlPath,
+		Format:          "json",
+		OutputPath:      outURI,
+		OutputPattern:   "out.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		RecordIndex:     indexPath,
+		Workers:         2,
+		CredentialsPath: credPath,
+		CommandName:     "sumpter extract files",
+		Argv:            []string{"extract", "files"},
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract(record-index -> cloud) error = %v", err)
+	}
+
+	if _, ok := m.getObject(t, prefix+"out.json"); !ok {
+		t.Fatalf("record-index output %sout.json was not published", prefix)
+	}
+	manifestData, ok := m.getObject(t, prefix+"manifest.json")
+	if !ok {
+		t.Fatalf("provenance sidecar %smanifest.json was not published", prefix)
+	}
+	manifest := string(manifestData)
+	if !strings.Contains(manifest, prefix+"out.json") && !strings.Contains(manifest, outURI) {
+		t.Errorf("manifest does not record the logical output destination:\n%s", manifest)
+	}
+	if stageRoot := filepath.Join(home, "work", "cloud"); strings.Contains(manifest, stageRoot) {
+		t.Errorf("record-index streaming manifest leaked the staging path %q:\n%s", stageRoot, manifest)
 	}
 	assertStagingCleanedUp(t, home)
 }

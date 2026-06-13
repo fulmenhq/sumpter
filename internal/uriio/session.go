@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -280,12 +281,13 @@ func publishSizeWithinLimit(logical string, size int64) error {
 }
 
 // redactSecrets replaces any occurrence of the given secret cleartext values in
-// s with a placeholder. It is applied to provider/SDK error strings before they
-// are surfaced to logs, stderr, or persisted artifacts, so credential material
-// (e.g. a literal access key id echoed in an auth error) never leaks. Handles
-// that resolve credentials via an AWS profile expose no cleartext here, so their
-// secrets[] is empty — the belt-and-suspenders control there is that publish
-// errors surface only the logical destination, never the raw SDK message chain.
+// s with a placeholder, then applies a last-defense scrub of AWS access-key-id-
+// shaped tokens. It is applied to provider/SDK error strings before they are
+// surfaced to logs, stderr, or persisted artifacts, so credential material never
+// leaks. The literal-value pass covers config-supplied keys (S1); the pattern
+// pass covers profile/default-chain handles, whose cleartext sumpter never holds
+// — so if the SDK echoes an AKID on an auth failure there is otherwise nothing to
+// scrub it.
 func redactSecrets(s string, secrets []string) string {
 	for _, sec := range secrets {
 		if sec == "" {
@@ -293,7 +295,20 @@ func redactSecrets(s string, secrets []string) string {
 		}
 		s = strings.ReplaceAll(s, sec, "[redacted]")
 	}
-	return s
+	return redactAWSKeyIDs(s)
+}
+
+// awsAccessKeyIDInText matches an AWS access key id embedded in a larger string:
+// a 4-letter principal-type prefix (AKIA long-term, ASIA temporary/STS, AROA
+// role, AIDA user, etc.) plus 16 uppercase-alphanumeric characters. Unanchored,
+// unlike the validation pattern in cli.go which matches a whole token.
+var awsAccessKeyIDInText = regexp.MustCompile(`(AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA)[A-Z0-9]{16}`)
+
+// redactAWSKeyIDs scrubs AWS access-key-id-shaped tokens from a string. This is
+// the last-defense control for handles whose secret cleartext sumpter does not
+// hold (profile / default-chain), where an SDK error could echo the resolved AKID.
+func redactAWSKeyIDs(s string) string {
+	return awsAccessKeyIDInText.ReplaceAllString(s, "[redacted-key-id]")
 }
 
 // writeStagedFile writes r to path, creating parents and refusing to follow a

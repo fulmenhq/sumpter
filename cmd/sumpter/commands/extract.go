@@ -1009,7 +1009,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 				result.DispositionDetail = closeErr.Error()
 			}
 			if isJSONOutputFailure(result.Error) {
-				return fmt.Errorf("failed to write output %s: %w", target.outputFile, result.Error)
+				return fmt.Errorf("failed to write output %s: %w", target.logicalName(), result.Error)
 			}
 			if result.Error != nil {
 				logger.Error("Failed to process file",
@@ -1028,7 +1028,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		}
 		if closeErr != nil {
 			target.Abort()
-			return fmt.Errorf("failed to close output %s: %w", target.outputFile, closeErr)
+			return fmt.Errorf("failed to close output %s: %w", target.logicalName(), closeErr)
 		}
 		if err := target.Commit(); err != nil {
 			return err
@@ -1060,7 +1060,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		}
 		countsByRecordType[extCfg.RecordType] += recordCount
 		if manifestEnabled {
-			manifestOutputs = append(manifestOutputs, provenanceOutput(target.outputFile, recipesmanifest.OutputFormatJSON, recordCount, opts, sanitizeRoots...))
+			manifestOutputs = append(manifestOutputs, provenanceOutput(target.logicalName(), recipesmanifest.OutputFormatJSON, recordCount, opts, sanitizeRoots...))
 		}
 		failureManifest.addApplied()
 	}
@@ -1139,13 +1139,23 @@ func recordFailedSequentialResult(result extract.ExtractResult, opts *ExtractOpt
 type jsonOutputTarget struct {
 	opts       *ExtractOptions
 	inputFile  string
-	outputFile string
+	outputFile string // local filesystem path the sink writes/commits to (a staging path for cloud)
+	logicalURI string // canonical destination identity for manifests, errors, and logs (never the staging path)
 	tempFile   string
 	file       *os.File
 	sink       *extract.JSONLRecordSink
 	output     *uriio.OutputTarget
 	stdout     bool
 	closed     bool
+}
+
+// logicalName returns the destination identity for manifests and user-facing
+// errors: the logical URI when set (cloud or local file://), else the local path.
+func (t *jsonOutputTarget) logicalName() string {
+	if t.logicalURI != "" {
+		return t.logicalURI
+	}
+	return t.outputFile
 }
 
 func newJSONOutputTarget(opts *ExtractOptions, inputFile string) (*jsonOutputTarget, error) {
@@ -1173,6 +1183,7 @@ func newJSONOutputTarget(opts *ExtractOptions, inputFile string) (*jsonOutputTar
 		opts:       opts,
 		inputFile:  inputFile,
 		outputFile: tgt.LocalPath,
+		logicalURI: tgt.LogicalURI,
 		output:     tgt,
 	}, nil
 }
@@ -1217,7 +1228,7 @@ func (t *jsonOutputTarget) ensureOpen() error {
 	}
 	tempFile, err := os.CreateTemp(outputDir, "."+filepath.Base(t.outputFile)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temporary output for %s: %w", t.outputFile, err)
+		return fmt.Errorf("create temporary output for %s: %w", t.logicalName(), err)
 	}
 
 	t.tempFile = tempFile.Name()
@@ -1261,14 +1272,14 @@ func (t *jsonOutputTarget) Commit() error {
 	}
 	if err := os.Rename(t.tempFile, t.outputFile); err != nil {
 		_ = os.Remove(t.tempFile)
-		return wrapJSONOutputError(fmt.Sprintf("commit output %s", t.outputFile), err)
+		return wrapJSONOutputError(fmt.Sprintf("commit output %s", t.logicalName()), err)
 	}
 	// Publish makes the committed artifact durable at the destination. No-op for
 	// local targets (the rename already finalized it); the cloud upload lands here
 	// in a later delivery.
 	if t.output != nil {
 		if err := t.output.Publish(context.Background()); err != nil {
-			return wrapJSONOutputError(fmt.Sprintf("publish output %s", t.outputFile), err)
+			return wrapJSONOutputError(fmt.Sprintf("publish output %s", t.logicalName()), err)
 		}
 	}
 	return nil
@@ -1495,13 +1506,13 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 			extractErr = fmt.Errorf("%w; failed to close output: %v", extractErr, closeErr)
 		}
 		if isJSONOutputFailure(extractErr) {
-			return fmt.Errorf("failed to write output %s: %w", target.outputFile, extractErr)
+			return fmt.Errorf("failed to write output %s: %w", target.logicalName(), extractErr)
 		}
 		return fmt.Errorf("parallel extraction failed: %w", extractErr)
 	}
 	if closeErr != nil {
 		target.Abort()
-		return fmt.Errorf("failed to close output %s: %w", target.outputFile, closeErr)
+		return fmt.Errorf("failed to close output %s: %w", target.logicalName(), closeErr)
 	}
 	if err := target.Commit(); err != nil {
 		return err
@@ -1520,7 +1531,7 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 		input.RecordType = extCfg.RecordType
 		manifestInputs := []provenance.Input{input}
 		manifestOutputs := []provenance.Output{
-			provenanceOutput(target.outputFile, recipesmanifest.OutputFormatJSON, recordCount, opts, sanitizeRoots...),
+			provenanceOutput(target.logicalName(), recipesmanifest.OutputFormatJSON, recordCount, opts, sanitizeRoots...),
 		}
 		countsByRecordType := map[string]int{extCfg.RecordType: recordCount}
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
@@ -2444,6 +2455,15 @@ func openOutputTarget(ctx context.Context, opts *ExtractOptions, reference strin
 // writeProvenanceManifest publishes the provenance sidecar through the run's
 // output seam, so a cloud manifest publishes alongside its output under the
 // output handle (local stays a no-op-publish write).
+//
+// Publish-ordering contract (S9): every primary output is published BEFORE this
+// sidecar — all call sites invoke this only after the output loop completes. A
+// cloud PutObject is atomic (single PUT, no partial object), so if the sidecar
+// publish fails the primary objects are already durable while this returns a
+// fatal error: the run fails with the output object present but no manifest. That
+// state is intentional and must be read as a failed run ("an output object
+// present without its manifest means the run failed; do not treat it as
+// success") — a published object can no longer be un-published.
 func writeProvenanceManifest(opts *ExtractOptions, path string, manifest provenance.Manifest) error {
 	tgt, err := openOutputTarget(context.Background(), opts, path)
 	if err != nil {
