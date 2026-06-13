@@ -18,6 +18,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract/parallel"
 	"github.com/fulmenhq/sumpter/internal/extract/parquetwriter"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
+	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
@@ -1295,26 +1296,38 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	if err != nil {
 		return fmt.Errorf("failed to read index header: %w", err)
 	}
-	// Record-index (parallel) extraction reads its source directly from the index
-	// header's path. Cloud sources in this mode require staging the seekable source
-	// and carrying its logical URI through the index schema, which is deferred to a
-	// follow-up; fail fast with an actionable message rather than treating an s3://
-	// URI as a local path.
-	if srcRef, classifyErr := uriio.Classify(header.Source.Path); classifyErr == nil && srcRef.IsCloud() {
-		return fmt.Errorf("record-index extraction from cloud sources (%s) is not yet supported; "+
-			"extract directly with --files or --input-path, or build the index from a local copy", header.Source.Path)
-	}
-	externalFields, err := buildExternalFieldsForFile(header.Source.Path, opts, fieldPlan, warnLimiter)
+	// Make the index's source available locally. A local header path is used as-is
+	// (unchanged); a cloud (s3://) header path is staged to a run-scoped working
+	// copy and verified against the index header before any byte-range read. The
+	// staged localReadPath is internal (byte reads only); logicalURI drives
+	// provenance, output naming, and source_extraction — never the staging path.
+	localReadPath, logicalURI, cleanupSource, err := acquireRecordIndexSource(context.Background(), opts, runtimeProvenance.RunID, header)
 	if err != nil {
-		return fmt.Errorf("failed to build external fields for file %s: %w", header.Source.Path, err)
+		return err
+	}
+	defer func() {
+		if cerr := cleanupSource(); cerr != nil {
+			logger.Warn("Failed to clean up cloud staging directory", zap.Error(cerr))
+		}
+	}()
+	if logicalURI != localReadPath {
+		// Cloud source: published artifacts and source_extraction use the logical
+		// s3:// identity. SourceIdentity() returns SourceURI when set, so enrichment
+		// and provenance record the URI while byte reads use the staged path.
+		runtimeProvenance.SourceURI = logicalURI
+	}
+
+	externalFields, err := buildExternalFieldsForFile(logicalURI, opts, fieldPlan, warnLimiter)
+	if err != nil {
+		return fmt.Errorf("failed to build external fields for file %s: %w", logicalURI, err)
 	}
 
 	// Create parallel extraction options
 	// Pass the already-opened store to avoid double-open
 	parallelOpts := parallel.ExtractionOptions{
 		IndexPath:         opts.RecordIndex,
-		SourcePath:        header.Source.Path,
-		IndexStore:        indexStore, // Pass pre-opened store to avoid double-open
+		SourcePath:        localReadPath, // staged working copy for cloud sources; the header path for local
+		IndexStore:        indexStore,    // Pass pre-opened store to avoid double-open
 		Workers:           opts.Workers,
 		MaxRecordSizeMB:   opts.MaxRecordSizeMB,
 		SkipLargeRecords:  opts.SkipLargeRecords,
@@ -1340,11 +1353,11 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 			if err != nil {
 				return err
 			}
-			if err := enforceMinOccurrences(opts, extCfg, sigCfg, header.Source.Path, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
+			if err := enforceMinOccurrences(opts, extCfg, sigCfg, logicalURI, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
 				return err
 			}
 		}
-		return runParallelJSONStreamingExtraction(opts, extCfg, parallelOpts, header.Source.Path, runtimeProvenance, startedAt)
+		return runParallelJSONStreamingExtraction(opts, extCfg, parallelOpts, localReadPath, logicalURI, runtimeProvenance, startedAt)
 	}
 
 	// Create parallel extractor
@@ -1359,7 +1372,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	if err != nil {
 		return err
 	}
-	if err := enforceMinOccurrences(opts, extCfg, sigCfg, header.Source.Path, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
+	if err := enforceMinOccurrences(opts, extCfg, sigCfg, logicalURI, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
 		return err
 	}
 
@@ -1386,10 +1399,10 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	} else {
 		countsByRecordType[extCfg.RecordType] = len(records)
 		if manifestEnabled {
-			// Parallel/record-index mode reads the source path from the index
-			// header; cloud sources here are deferred (PR-3b), so the local read
-			// path and the logical identity are the same value today.
-			input, err := provenance.BuildInputLedger(header.Source.Path, header.Source.Path, sanitizeRoots...)
+			// The input ledger hashes the local bytes (localReadPath — a staged
+			// working copy for cloud sources) but records the logical identity
+			// (logicalURI), so the staging path never reaches the manifest.
+			input, err := provenance.BuildInputLedger(localReadPath, logicalURI, sanitizeRoots...)
 			if err != nil {
 				return err
 			}
@@ -1398,7 +1411,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		}
 		for _, format := range outputFormats {
 			outputFile := outputFileForFormat(opts, format, "parallel")
-			if err := writeRecordsForFormat(outputFile, format, records, extCfg, sigCfg, opts, runtimeProvenance, header.Source.Path, manifestPath); err != nil {
+			if err := writeRecordsForFormat(outputFile, format, records, extCfg, sigCfg, opts, runtimeProvenance, logicalURI, manifestPath); err != nil {
 				logger.Error("Failed to write output file",
 					zap.String("file", outputFile),
 					zap.Error(err))
@@ -1424,7 +1437,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	return nil
 }
 
-func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, parallelOpts parallel.ExtractionOptions, sourcePath string, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
+func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, parallelOpts parallel.ExtractionOptions, localReadPath, logicalURI string, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
 	logger := logging.GetLogger()
 	ctx := context.Background()
 	manifestEnabled := shouldWriteManifest(opts)
@@ -1464,7 +1477,9 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 	logger.Info("Parallel extraction complete", zap.Int("record_count", recordCount))
 
 	if manifestEnabled {
-		input, err := provenance.BuildInputLedger(sourcePath, sourcePath, sanitizeRoots...)
+		// Hash the local bytes (staged working copy for cloud sources) but record
+		// the logical identity, so the staging path never reaches the manifest.
+		input, err := provenance.BuildInputLedger(localReadPath, logicalURI, sanitizeRoots...)
 		if err != nil {
 			return err
 		}
@@ -2305,13 +2320,56 @@ func referencesIncludeCloud(opts *ExtractOptions) (bool, error) {
 // Sumpter work directory. It also runs a startup orphan sweep of stale staging
 // directories left by prior crashed runs before any new staging begins.
 func newCloudSession(opts *ExtractOptions, runID string) (*uriio.Session, error) {
-	cliProfiles, err := uriio.ParseCredentialOverrides(opts.CredentialOverrides)
+	return newCloudSessionFromCredentials(opts.CredentialsPath, opts.CredentialOverrides, runID)
+}
+
+// acquireRecordIndexSource makes a record index's source available locally for
+// seekable/parallel extraction. A local header path is returned as-is with a
+// no-op cleanup (byte-for-byte the historical behavior). A cloud (s3://) header
+// path is staged to a run-scoped working copy and verified against the index
+// header (size + SHA-256) before any byte-range read — the remote object is
+// mutable, so a mismatch means the index is stale and its offsets cannot be
+// trusted. localReadPath is the staged path the seekable extractor reads ranges
+// from; logicalURI is the logical identity recorded in provenance, output
+// naming, and source_extraction (never the staging path). The caller MUST invoke
+// cleanup on every exit path.
+func acquireRecordIndexSource(ctx context.Context, opts *ExtractOptions, runID string, header *index.RecordIndex) (localReadPath, logicalURI string, cleanup func() error, err error) {
+	noop := func() error { return nil }
+	ref, cerr := uriio.Classify(header.Source.Path)
+	if cerr != nil || !ref.IsCloud() {
+		// Local source (or an unclassifiable path treated as local): unchanged.
+		return header.Source.Path, header.Source.Path, noop, nil
+	}
+	session, serr := newCloudSession(opts, runID)
+	if serr != nil {
+		return "", "", noop, serr
+	}
+	src, aerr := session.Acquire(ctx, header.Source.Path, uriio.DefaultHandleName)
+	if aerr != nil {
+		_ = session.Close()
+		return "", "", noop, fmt.Errorf("acquire record-index source %s: %w", header.Source.Path, aerr)
+	}
+	if verr := index.VerifySourceIntegrity(src.LocalPath, header.Source); verr != nil {
+		_ = session.Close()
+		return "", "", noop, fmt.Errorf("record-index source %s: %w", header.Source.Path, verr)
+	}
+	return src.LocalPath, src.LogicalURI, session.Close, nil
+}
+
+// newCloudSessionFromCredentials builds a uriio cloud session from the same
+// credential inputs the extract command exposes (a credentials-config path and
+// repeatable handle=profile overrides). It is shared by extract and the index
+// command so cloud source acquisition behaves identically at every read-boundary
+// entry point. No secrets are accepted here — only a config path and handle
+// references (see uriio.ParseCredentialOverrides / LoadCredentialsConfig).
+func newCloudSessionFromCredentials(credentialsPath string, credentialOverrides []string, runID string) (*uriio.Session, error) {
+	cliProfiles, err := uriio.ParseCredentialOverrides(credentialOverrides)
 	if err != nil {
 		return nil, err
 	}
 	var credCfg *uriio.CredentialsConfig
-	if strings.TrimSpace(opts.CredentialsPath) != "" {
-		credCfg, err = uriio.LoadCredentialsConfig(opts.CredentialsPath)
+	if strings.TrimSpace(credentialsPath) != "" {
+		credCfg, err = uriio.LoadCredentialsConfig(credentialsPath)
 		if err != nil {
 			return nil, err
 		}

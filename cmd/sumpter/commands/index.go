@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -15,9 +16,74 @@ import (
 	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/index/store"
 	"github.com/fulmenhq/sumpter/internal/logging"
+	"github.com/fulmenhq/sumpter/internal/provenance"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
+
+// resolvedIndexSource is an index build/verify source made available on the
+// local filesystem through the uriio read boundary. For a cloud source it is a
+// staged working copy; Identity carries the logical s3:// URI (never the staging
+// path) and cleanup removes the run's staging directory. For a local source
+// LocalPath and Identity coincide and cleanup is a no-op.
+type resolvedIndexSource struct {
+	LocalPath string // local path to read source bytes from
+	Identity  string // logical identity recorded in / compared against the index
+	BaseName  string // source basename for default output-path derivation
+	cleanup   func() error
+}
+
+// resolveIndexSource classifies an index source argument and makes it available
+// locally. Cloud sources are single objects only — an index maps one source
+// file, so prefixes and globs are rejected. The staged copy is byte-identical to
+// the indexed object, so byte offsets and integrity hashes remain valid.
+func resolveIndexSource(ctx context.Context, op, inputArg, credentialsPath string, credentialOverrides []string) (*resolvedIndexSource, error) {
+	ref, err := uriio.Classify(inputArg)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	if !ref.IsCloud() {
+		absPath, err := filepath.Abs(ref.LocalPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve input path: %w", err)
+		}
+		if _, err := os.Stat(absPath); err != nil {
+			return nil, fmt.Errorf("input file not found: %w", err)
+		}
+		return &resolvedIndexSource{
+			LocalPath: absPath,
+			Identity:  absPath,
+			BaseName:  filepath.Base(absPath),
+			cleanup:   func() error { return nil },
+		}, nil
+	}
+
+	if ref.IsPrefix() || ref.IsPattern() {
+		return nil, fmt.Errorf("%s: cloud index source must be a single object, not a prefix or glob: %s", op, inputArg)
+	}
+
+	runID, err := provenance.NewRunID()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	session, err := newCloudSessionFromCredentials(credentialsPath, credentialOverrides, runID)
+	if err != nil {
+		return nil, err
+	}
+	src, err := session.Acquire(ctx, inputArg, uriio.DefaultHandleName)
+	if err != nil {
+		_ = session.Close()
+		return nil, fmt.Errorf("%s: acquire %s: %w", op, inputArg, err)
+	}
+	return &resolvedIndexSource{
+		LocalPath: src.LocalPath,
+		Identity:  src.LogicalURI,
+		BaseName:  path.Base(ref.Key),
+		cleanup:   session.Close,
+	}, nil
+}
 
 // NewIndexCommand creates the parent 'index' command with build and verify subcommands
 func NewIndexCommand() *cobra.Command {
@@ -46,14 +112,16 @@ Use 'sumpter index build' to create an index and 'sumpter index verify' to valid
 
 func newIndexBuildCommand() *cobra.Command {
 	var (
-		outputPath string
-		selector   string
-		includeP50 bool
-		includeP95 bool
-		includeP99 bool
-		progress   bool
-		emitJSON   bool
-		emitSzst   bool
+		outputPath          string
+		selector            string
+		includeP50          bool
+		includeP95          bool
+		includeP99          bool
+		progress            bool
+		emitJSON            bool
+		emitSzst            bool
+		credentialsPath     string
+		credentialOverrides []string
 	)
 
 	cmd := &cobra.Command{
@@ -79,18 +147,21 @@ Example:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := logging.Component("index-build")
-			inputPath := args[0]
 
-			// Resolve absolute path
-			absPath, err := filepath.Abs(inputPath)
+			// Resolve the source through the uriio read boundary. A cloud (s3://)
+			// source is staged to a local working copy that the builder reads
+			// byte-for-byte; the index records the logical URI (src.Identity), and
+			// the staging path never leaks into the index, output, or logs.
+			src, err := resolveIndexSource(cmd.Context(), "index build", args[0], credentialsPath, credentialOverrides)
 			if err != nil {
-				return fmt.Errorf("failed to resolve input path: %w", err)
+				return err
 			}
-
-			// Validate input file exists
-			if _, err := os.Stat(absPath); err != nil {
-				return fmt.Errorf("input file not found: %w", err)
-			}
+			defer func() {
+				if cerr := src.cleanup(); cerr != nil {
+					logger.Warn("Failed to clean up cloud staging directory", zap.Error(cerr))
+				}
+			}()
+			absPath := src.LocalPath
 
 			// Validate selector
 			if selector == "" {
@@ -119,7 +190,7 @@ Example:
 					return fmt.Errorf("failed to create indexes directory: %w", err)
 				}
 
-				inputBaseName := filepath.Base(absPath)
+				inputBaseName := src.BaseName
 				ext := filepath.Ext(inputBaseName)
 				nameWithoutExt := inputBaseName[:len(inputBaseName)-len(ext)]
 				basePath = filepath.Join(indexesDir, nameWithoutExt)
@@ -133,7 +204,7 @@ Example:
 			jsonOutputPath := basePath + ".recordindex.json"
 
 			logger.Info("Building record index",
-				zap.String("input", absPath),
+				zap.String("input", src.Identity),
 				zap.String("base_path", basePath),
 				zap.String("selector", selector),
 				zap.Bool("emit_json", emitJSON),
@@ -146,6 +217,7 @@ Example:
 			// Build index
 			buildOpts := index.BuildOptions{
 				InputPath:      absPath,
+				SourceIdentity: src.Identity,
 				OutputPath:     jsonOutputPath,
 				Selector:       selector,
 				IncludeP50:     includeP50,
@@ -167,7 +239,7 @@ Example:
 			}
 
 			if progress {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Building index for %s...\n", filepath.Base(absPath))
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Building index for %s...\n", src.BaseName)
 			}
 
 			startTime := time.Now()
@@ -218,16 +290,20 @@ Example:
 	cmd.Flags().BoolVarP(&progress, "progress", "p", true, "Show progress messages")
 	cmd.Flags().BoolVar(&emitJSON, "emit-json", true, "Emit JSON format (*.recordindex.json)")
 	cmd.Flags().BoolVar(&emitSzst, "emit-szst", false, "Emit seekable-zstd format (requires CGO build)")
+	cmd.Flags().StringVar(&credentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML) for s3:// sources")
+	cmd.Flags().StringArrayVar(&credentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
 
 	return cmd
 }
 
 func newIndexVerifyCommand() *cobra.Command {
 	var (
-		indexPath     string
-		verifyRecords bool
-		failFast      bool
-		progress      bool
+		indexPath           string
+		verifyRecords       bool
+		failFast            bool
+		progress            bool
+		credentialsPath     string
+		credentialOverrides []string
 	)
 
 	cmd := &cobra.Command{
@@ -254,22 +330,30 @@ Example:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := logging.Component("index-verify")
-			inputPath := args[0]
 
-			// Resolve absolute path
-			absPath, err := filepath.Abs(inputPath)
+			// Resolve the source through the uriio read boundary. A cloud (s3://)
+			// source is staged to a local working copy; verification then compares
+			// the staged bytes' size + SHA-256 against the index's recorded values,
+			// detecting drift between the remote object and the index just as it
+			// does for local sources.
+			src, err := resolveIndexSource(cmd.Context(), "index verify", args[0], credentialsPath, credentialOverrides)
 			if err != nil {
-				return fmt.Errorf("failed to resolve input path: %w", err)
+				return err
 			}
+			defer func() {
+				if cerr := src.cleanup(); cerr != nil {
+					logger.Warn("Failed to clean up cloud staging directory", zap.Error(cerr))
+				}
+			}()
+			absPath := src.LocalPath
 
-			// Validate input file exists
-			if _, err := os.Stat(absPath); err != nil {
-				return fmt.Errorf("input file not found: %w", err)
-			}
-
-			// Determine index path
+			// Determine index path. Cloud sources have no local directory to derive
+			// a default companion index from, so --index is required for them.
 			finalIndexPath := indexPath
 			if finalIndexPath == "" {
+				if src.Identity != absPath {
+					return fmt.Errorf("--index is required when verifying a cloud source (%s)", src.Identity)
+				}
 				// Default: same directory as input, .recordindex.json extension
 				baseName := filepath.Base(absPath)
 				ext := filepath.Ext(baseName)
@@ -283,13 +367,13 @@ Example:
 			}
 
 			logger.Info("Verifying record index",
-				zap.String("input", absPath),
+				zap.String("input", src.Identity),
 				zap.String("index", finalIndexPath),
 				zap.Bool("verify_records", verifyRecords),
 			)
 
 			if progress {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Verifying index for %s...\n", filepath.Base(absPath))
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Verifying index for %s...\n", src.BaseName)
 				if verifyRecords {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  (with per-record verification - this may take a while)\n")
 				}
@@ -369,6 +453,8 @@ Example:
 	cmd.Flags().BoolVar(&verifyRecords, "verify-records", false, "Verify individual record checksums (slower, more thorough)")
 	cmd.Flags().BoolVar(&failFast, "fail-fast", false, "Stop on first verification error (only with --verify-records)")
 	cmd.Flags().BoolVarP(&progress, "progress", "p", true, "Show progress messages")
+	cmd.Flags().StringVar(&credentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML) for s3:// sources")
+	cmd.Flags().StringArrayVar(&credentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
 
 	return cmd
 }
