@@ -593,6 +593,13 @@ handles:
       credentials_handle: writer
   ```
 
+  The `reader`/`writer` handle names are defined in the credentials config supplied
+  at run time:
+
+  ```bash
+  sumpter recipes run extract ./my-recipe --credentials credentials.yaml
+  ```
+
   A recipe carries a handle **name** only — never key material; the
   no-secrets-in-recipe-YAML rule holds. A `--input-credentials-handle` /
   `--output-credentials-handle` CLI value overrides the recipe's declared handle.
