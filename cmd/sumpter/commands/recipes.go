@@ -17,7 +17,6 @@ import (
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
-	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -655,6 +654,12 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 	if opts == nil || extractOpts == nil {
 		return args
 	}
+	// The cloud credential flags (--credentials, --credential, --input/output-
+	// credentials-handle) are intentionally omitted from the recorded argv: they
+	// are operator/environment-specific (a local config path, a profile reference)
+	// rather than part of the portable recipe-run invocation, and the recipe's
+	// declared handle names already capture the intent. The credentials config
+	// itself never contains run-portable state worth replaying here.
 	appendFlag := func(name, value string) {
 		if strings.TrimSpace(value) != "" {
 			args = append(args, name+"="+value)
@@ -689,9 +694,14 @@ func resolveMaybeRelative(base, candidate string) string {
 	if candidate == "" {
 		return ""
 	}
-	// A cloud (s3://) reference is a logical URI, not a workspace-relative path;
-	// pass it through untouched (filepath.Join would collapse the "//").
-	if ref, err := uriio.Classify(candidate); err == nil && ref.IsCloud() {
+	// A scheme-qualified reference (s3://, file://, or an as-yet-unsupported
+	// scheme) is an absolute URI, never a workspace-relative path. Return it
+	// verbatim so uriio classifies it downstream: cloud refs route through the
+	// read/write boundary, file:// normalizes to its local path, and an
+	// unsupported scheme gets the actionable uriio.ErrUnsupportedScheme rejection
+	// in resolveLocalReferences / resolveInputSources — rather than being mangled
+	// into a workspace-local path like "<workspace>/gs:/bucket/key".
+	if strings.Contains(candidate, "://") {
 		return candidate
 	}
 	if filepath.IsAbs(candidate) {

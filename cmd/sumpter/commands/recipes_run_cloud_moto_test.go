@@ -144,16 +144,12 @@ func TestMotoRecipeRunCloudInOut(t *testing.T) {
 		t.Fatalf("recipe-run sidecar %smanifest.json was not published", outPrefix)
 	}
 	stageRoot := filepath.Join(home, "work", "cloud")
-	if strings.Contains(string(manifestData), stageRoot) {
-		t.Errorf("recipe-run manifest leaked the staging path %q", stageRoot)
-	}
-	// Both logical cloud identities should appear; the staged path must not.
-	manifest := string(manifestData)
-	if !strings.Contains(manifest, srcKey) {
+	// Exact-equality assertion on outputs[].path + no staging-path leak in any
+	// manifest input/output entry (same helper as the PR-4 write-boundary tests).
+	assertManifestOutputPath(t, manifestData, strings.TrimRight(outURI, "/")+"/out.json", stageRoot)
+	// The logical source identity must be recorded.
+	if !strings.Contains(string(manifestData), srcKey) {
 		t.Errorf("manifest missing logical source identity %q", srcURI)
-	}
-	if !strings.Contains(manifest, outPrefix+"out.json") && !strings.Contains(manifest, outURI) {
-		t.Errorf("manifest missing logical output destination %q", outURI)
 	}
 	assertStagingCleanedUp(t, home)
 }
