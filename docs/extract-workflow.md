@@ -507,6 +507,89 @@ metadata, including grouped reconciliations, remains in the JSONL envelope. Use
 `defaults.output.formats: [json, parquet]` when analytics consumers need
 Parquet columns and auditors need the `_validation` block from the same run.
 
+## Cloud Sources and Outputs (S3-compatible)
+
+`extract` can read its source from, and publish its results to, an S3-compatible
+object store. Either boundary is optional and independent: a run can be
+`local→local` (the default, unchanged), `cloud→local`, `local→cloud`, or
+`cloud→cloud`. Bare paths and `file://` URIs always resolve locally and behave
+byte-for-byte as before — a run that references no `s3://` URI does no credential
+or network work at all.
+
+- **Source input** (`--input-path`/`--files`): a single object
+  `s3://bucket/key.xml`, or a prefix `s3://bucket/prefix/` with the usual
+  `--include-pattern`/`--exclude-pattern` globs (matched against keys relative to
+  the prefix). Each matched object is fetched and **materialized to local working
+  storage** under `${SUMPTER_HOME}/work/`, processed with the normal local
+  pipeline, and removed when the run finishes. Operators should be aware that a
+  cloud source is fully copied to local disk for the duration of the run (see
+  [ADR-0008](architecture/adr/0008-sensitive-data-outside-repository-trees.md)).
+- **Result output** (`--output-path`): JSON/NDJSON records, the Parquet secondary
+  output, and the provenance sidecar manifest are published to the destination
+  prefix. The logical `s3://` identity is what appears in record `_runtime`,
+  provenance manifests, failure/disposition sidecars, and Parquet metadata — the
+  local staging path never leaks into a published artifact.
+
+The core stays local: temporary files, record indexes, and all intermediate
+state are local-disk only even when both ends are cloud.
+
+**Durability and limits.** Each artifact is written completely to local disk and
+then published as a single object, so a failed or interrupted publish never
+leaves a truncated object that a consumer could read as complete. A publish
+failure is fatal and is **not** suppressed by `--continue-on-error` (the durable-
+output posture of [ADR-0009](architecture/adr/0009-record-sink-output-streaming-contract.md)).
+Single-object publication is capped at 5 GiB; a larger output fails with a clear
+message rather than a cryptic store error. Larger/multipart cloud output, cloud
+range reads, and non-S3 providers (`gs://`, `azblob://`) are on the roadmap and
+return an actionable error today.
+
+### Credentials
+
+Credentials are referenced **by handle name** — never inlined as secrets in a
+recipe. A handle names an account/endpoint/region; the bucket comes from the
+`s3://` URI at I/O time. Handles are declared in a credentials config passed with
+`--credentials <path>`:
+
+```yaml
+# credentials.yaml — handle names map to account/endpoint/region, no buckets
+handles:
+  default: # used when an s3:// URI declares no explicit handle
+    profile: my-aws-profile # AWS shared-config profile (preferred — no secret here)
+    region: us-east-1
+  minio: # an S3-compatible store reached through a custom endpoint
+    region: us-east-1
+    endpoint: https://objstore.internal.example
+    force_path_style: true
+```
+
+- **Profiles are preferred.** A `profile` resolves credentials from the AWS
+  shared-config chain (`~/.aws/...`), so no secret material lives in the config
+  file. Inline `access_key_id`/`secret_access_key` are permitted but discouraged;
+  a config that carries literal keys must be owner-only (`chmod 0600`) or loading
+  fails. **No secrets ever belong in recipe YAML** — recipes reference a handle
+  name only.
+- **CLI selection and override.** `--credential <handle>=<profile>` overrides (or
+  defines) a handle's profile from the command line — a reference, never a raw
+  key, so secrets stay out of `argv`, `ps`, and shell history. `--output-credentials-handle <name>`
+  selects the handle used for **output**, independently of the input handle, so a
+  `cloud→cloud` run can read from one account and write to another. Precedence is
+  CLI selector > recipe > the `default` handle.
+- **Default-chain vs hermetic posture.** A handle with no `endpoint` and no
+  explicit keys uses the **ambient AWS default credential chain** — convenient,
+  but environment/shared-config settings can influence where requests go. A
+  **hermetic** handle pins an explicit profile (or keys), `region`, and
+  `endpoint`. Prefer the hermetic posture for unattended and CI runs so nothing is
+  inherited from the environment.
+- **Transport.** A custom `endpoint` must be `https://`. A plaintext `http://`
+  endpoint is refused unless the handle sets `insecure: true` — a loud, explicit
+  opt-in, since a plaintext endpoint puts credentials and data on the wire.
+- **Anonymous/unsigned reads** are not supported yet; every request is signed.
+
+The credentials config is parsed fail-closed: an unknown or misspelled field
+(e.g. `insecur: true`) is an error, never a silent fall-through to an insecure
+default. A missing or undefined handle fails at load time, before any object is
+read or written.
+
 ## Streaming / NDJSON (Future Work)
 
 The upcoming NDJSON mode will emit:
