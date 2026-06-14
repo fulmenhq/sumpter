@@ -545,9 +545,11 @@ return an actionable error today.
 
 ### Credentials
 
-Credentials are referenced **by handle name** — never inlined as secrets in a
-recipe. A handle names an account/endpoint/region; the bucket comes from the
-`s3://` URI at I/O time. Handles are declared in a credentials config passed with
+Credentials are referenced **by handle name** — never inlined as secrets. A
+handle names an account/endpoint/region; the bucket comes from the `s3://` URI at
+I/O time. Cloud credentials are configured on the `sumpter extract files` CLI
+(the `index build`/`index verify` commands accept the same flags for their cloud
+sources). Handles are declared in a credentials config passed with
 `--credentials <path>`:
 
 ```yaml
@@ -556,7 +558,7 @@ handles:
   default: # used when an s3:// URI declares no explicit handle
     profile: my-aws-profile # AWS shared-config profile (preferred — no secret here)
     region: us-east-1
-  minio: # an S3-compatible store reached through a custom endpoint
+  custom: # an S3-compatible store reached through a custom endpoint
     region: us-east-1
     endpoint: https://objstore.internal.example
     force_path_style: true
@@ -566,14 +568,20 @@ handles:
   shared-config chain (`~/.aws/...`), so no secret material lives in the config
   file. Inline `access_key_id`/`secret_access_key` are permitted but discouraged;
   a config that carries literal keys must be owner-only (`chmod 0600`) or loading
-  fails. **No secrets ever belong in recipe YAML** — recipes reference a handle
-  name only.
+  fails. **No secrets ever belong in recipe YAML.**
 - **CLI selection and override.** `--credential <handle>=<profile>` overrides (or
   defines) a handle's profile from the command line — a reference, never a raw
   key, so secrets stay out of `argv`, `ps`, and shell history. `--output-credentials-handle <name>`
   selects the handle used for **output**, independently of the input handle, so a
-  `cloud→cloud` run can read from one account and write to another. Precedence is
-  CLI selector > recipe > the `default` handle.
+  `cloud→cloud` run can read from one account and write to another. The output
+  handle resolves as: the `--output-credentials-handle` selector, otherwise the
+  `default` handle.
+- **Recipe-level handles are planned.** Today cloud credentials are configured on
+  the `extract files` CLI as above; the input handle is the `default` handle.
+  Selecting credential handles from a recipe (`defaults.input.credentials_handle`
+  / `defaults.output.credentials_handle`) and the matching `sumpter recipes run`
+  credential flags are planned for a later slice. The no-secrets-in-recipe-YAML
+  rule already holds: a recipe would carry a handle *name*, never key material.
 - **Default-chain vs hermetic posture.** A handle with no `endpoint` and no
   explicit keys uses the **ambient AWS default credential chain** — convenient,
   but environment/shared-config settings can influence where requests go. A
