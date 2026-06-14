@@ -524,6 +524,9 @@ or network work at all.
   pipeline, and removed when the run finishes. Operators should be aware that a
   cloud source is fully copied to local disk for the duration of the run (see
   [ADR-0008](architecture/adr/0008-sensitive-data-outside-repository-trees.md)).
+  An abnormally terminated run (kill/OOM/crash) may leave a staged copy under
+  `${SUMPTER_HOME}/work/` (owner-only `0700`); it is reaped automatically on a
+  later run and is safe to delete.
 - **Result output** (`--output-path`): JSON/NDJSON records, the Parquet secondary
   output, and the provenance sidecar manifest are published to the destination
   prefix. The logical `s3://` identity is what appears in record `_runtime`,
@@ -572,10 +575,11 @@ handles:
 - **CLI selection and override.** `--credential <handle>=<profile>` overrides (or
   defines) a handle's profile from the command line — a reference, never a raw
   key, so secrets stay out of `argv`, `ps`, and shell history. `--output-credentials-handle <name>`
-  selects the handle used for **output**, independently of the input handle, so a
-  `cloud→cloud` run can read from one account and write to another. The output
-  handle resolves as: the `--output-credentials-handle` selector, otherwise the
-  `default` handle.
+  selects the handle used for **output**. The **input** side uses the `default`
+  handle today (a per-input handle selector arrives with the recipe-level work
+  below), so a `cloud→cloud` run reads via `default` and writes via the selected
+  output handle — read from one account, write to another. The output handle
+  resolves as: the `--output-credentials-handle` selector, otherwise `default`.
 - **Recipe-level handles are planned.** Today cloud credentials are configured on
   the `extract files` CLI as above; the input handle is the `default` handle.
   Selecting credential handles from a recipe (`defaults.input.credentials_handle`
