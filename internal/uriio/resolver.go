@@ -65,6 +65,25 @@ func (r *Resolver) Resolve(name string) (HandleConfig, error) {
 	return hc, nil
 }
 
+// redactionSecrets returns the literal secret cleartext values configured for a
+// handle, used to scrub provider/SDK error strings before they are surfaced. A
+// profile or CLI-override handle carries no literal keys (the SDK resolves them),
+// so the result is empty for those.
+func (r *Resolver) redactionSecrets(handle string) []string {
+	hc, err := r.Resolve(handle)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	if !hc.AccessKeyID.IsZero() {
+		out = append(out, hc.AccessKeyID.Reveal())
+	}
+	if !hc.SecretAccessKey.IsZero() {
+		out = append(out, hc.SecretAccessKey.Reveal())
+	}
+	return out
+}
+
 // endpointPosture describes the two documented credential postures so callers
 // and tests can reason about ambient vs hermetic behavior.
 //

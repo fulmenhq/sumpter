@@ -97,10 +97,11 @@ func TestExtractFileURIMatchesBarePath(t *testing.T) {
 	}
 }
 
-// TestExtractRejectsCloudReferences asserts the edge guard still fails fast on
-// cloud *output* / record-index references and on unsupported schemes, leaving no
-// output behind. Cloud *source inputs* are no longer rejected here — they route
-// through the read-boundary session (covered by the moto source-in tests).
+// TestExtractRejectsCloudReferences asserts the edge guard still fails fast on a
+// cloud *record-index* reference (the index file stays local) and on unsupported
+// schemes, leaving no output behind. Cloud *source inputs* (read boundary) and
+// cloud *output* (write boundary) are no longer rejected here — they route
+// through the session (covered by the moto source-in / output tests).
 func TestExtractRejectsCloudReferences(t *testing.T) {
 	dir := createExtractManifestFixture(t)
 	localInput := filepath.Join(dir, "input.xml")
@@ -110,11 +111,6 @@ func TestExtractRejectsCloudReferences(t *testing.T) {
 		mutate      func(o *ExtractOptions)
 		wantNotImpl bool // true: ErrSchemeNotImplemented; false: some classification error
 	}{
-		{
-			name:        "s3 output",
-			mutate:      func(o *ExtractOptions) { o.OutputPath = "s3://bucket/out/" },
-			wantNotImpl: true,
-		},
 		{
 			name:        "s3 record-index",
 			mutate:      func(o *ExtractOptions) { o.RecordIndex = "s3://bucket/idx.bin" },
@@ -169,7 +165,7 @@ func TestResolveLocalReferences(t *testing.T) {
 		{"s3 source in list is accepted", &ExtractOptions{Files: "a.xml, s3://b/c.xml"}, false},
 		{"s3 source input accepted", &ExtractOptions{InputPath: "s3://b/prefix/"}, false},
 		{"unsupported scheme in list", &ExtractOptions{Files: "a.xml, gs://b/c.xml"}, true},
-		{"s3 output", &ExtractOptions{OutputPath: "s3://b/out/"}, true},
+		{"s3 output accepted (write boundary)", &ExtractOptions{OutputPath: "s3://b/out/"}, false},
 		{"s3 record index", &ExtractOptions{RecordIndex: "s3://b/idx"}, true},
 		{"empty opts", &ExtractOptions{}, false},
 	}

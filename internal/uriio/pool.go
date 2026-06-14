@@ -30,6 +30,14 @@ func NewProviderPool(resolver *Resolver) *ProviderPool {
 	}
 }
 
+// redactionSecrets returns the literal secret cleartext values configured for a
+// handle, for scrubbing from provider/SDK error strings. Profile and CLI-override
+// handles resolve their credentials inside the AWS SDK and expose no cleartext
+// here, so the slice is empty for them.
+func (p *ProviderPool) redactionSecrets(handle string) []string {
+	return p.resolver.redactionSecrets(handle)
+}
+
 // poolKey is the cache key for a (handle, bucket) pair, normalizing the empty
 // handle to the default so "" and "default" share one provider.
 func poolKey(handle, bucket string) string {
