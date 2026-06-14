@@ -17,6 +17,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -292,7 +293,14 @@ func newRecipeRunExtractCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "extract <workspace>",
 		Short: "Execute an extract recipe defined in recipe.yaml",
-		Args:  cobra.ExactArgs(1),
+		Long: `Execute an extract recipe defined in recipe.yaml.
+
+A recipe's input and output may be S3-compatible cloud URIs (s3://) using
+credential handles — declared inline as defaults.{input,output}.credentials_handle
+and resolved from --credentials at run time, or selected with
+--input-credentials-handle / --output-credentials-handle. See
+docs/extract-workflow.md "Cloud Sources and Outputs".`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("format") && cmd.Flags().Changed("formats") {
 				return fmt.Errorf("--format and --formats are mutually exclusive")
@@ -324,6 +332,10 @@ func newRecipeRunExtractCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
 	cmd.Flags().StringVar(&opts.ExtractOverride, "extract", "", "Override manifest extract config path")
+	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
+	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
+	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input; overrides the recipe's defaults.input.credentials_handle")
+	cmd.Flags().StringVar(&opts.OutputCredentialsHandle, "output-credentials-handle", "", "Credential handle name for cloud (s3://) output; overrides the recipe's defaults.output.credentials_handle")
 
 	return cmd
 }
@@ -351,6 +363,13 @@ type recipeRunExtractOptions struct {
 	NoManifest        bool
 	SignatureOverride string
 	ExtractOverride   string
+	// Cloud credential options (handle references — no secrets in recipe YAML or
+	// on the CLI). They mirror the extract command and let a recipe run read
+	// from / write to s3:// destinations.
+	CredentialsPath         string
+	CredentialOverrides     []string
+	InputCredentialsHandle  string
+	OutputCredentialsHandle string
 }
 
 func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunExtractOptions) error {
@@ -459,7 +478,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	defaults := manifest.Defaults
 	sourceExtractionInput := defaults.Input
 	if sourceExtractionInput.Path != "" {
-		sourceExtractionInput.Path = recipesmanifest.ResolvePath(absWorkspace, sourceExtractionInput.Path)
+		sourceExtractionInput.Path = resolveMaybeRelative(absWorkspace, sourceExtractionInput.Path)
 	}
 
 	// Input resolution
@@ -468,7 +487,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	} else if defaults.Input.Mode == "files" && len(defaults.Input.Files) > 0 {
 		var resolved []string
 		for _, file := range defaults.Input.Files {
-			resolved = append(resolved, recipesmanifest.ResolvePath(absWorkspace, file))
+			resolved = append(resolved, resolveMaybeRelative(absWorkspace, file))
 		}
 		extractOpts.Files = strings.Join(resolved, ",")
 	}
@@ -477,7 +496,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		extractOpts.InputPath = resolveMaybeRelative(absWorkspace, opts.InputPath)
 		sourceExtractionInput.Path = extractOpts.InputPath
 	} else if defaults.Input.Mode != "files" && defaults.Input.Path != "" {
-		extractOpts.InputPath = recipesmanifest.ResolvePath(absWorkspace, defaults.Input.Path)
+		extractOpts.InputPath = resolveMaybeRelative(absWorkspace, defaults.Input.Path)
 	}
 
 	// Include/exclude patterns
@@ -526,7 +545,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	if opts.OutputPath != "" {
 		extractOpts.OutputPath = resolveMaybeRelative(absWorkspace, opts.OutputPath)
 	} else if defaults.Output.Path != "" {
-		extractOpts.OutputPath = recipesmanifest.ResolvePath(absWorkspace, defaults.Output.Path)
+		extractOpts.OutputPath = resolveMaybeRelative(absWorkspace, defaults.Output.Path)
 	}
 
 	if opts.OutputPattern != "" {
@@ -534,6 +553,23 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	} else {
 		extractOpts.OutputPattern = defaults.Output.Pattern
 		extractOpts.OutputPatterns = defaults.Output.Patterns
+	}
+
+	// Cloud credentials are handle references — no secrets in recipe YAML or on the
+	// CLI. The credentials config + handle selectors flow through to the extract
+	// read/write boundaries; CLI selectors override the recipe's declared handles
+	// (precedence: CLI > recipe > the default handle).
+	extractOpts.CredentialsPath = opts.CredentialsPath
+	extractOpts.CredentialOverrides = opts.CredentialOverrides
+	if strings.TrimSpace(opts.InputCredentialsHandle) != "" {
+		extractOpts.InputCredentialsHandle = opts.InputCredentialsHandle
+	} else {
+		extractOpts.InputCredentialsHandle = defaults.Input.CredentialsHandle
+	}
+	if strings.TrimSpace(opts.OutputCredentialsHandle) != "" {
+		extractOpts.OutputCredentialsHandle = opts.OutputCredentialsHandle
+	} else {
+		extractOpts.OutputCredentialsHandle = defaults.Output.CredentialsHandle
 	}
 	parquetCompression, err := defaults.Output.ParquetCompression()
 	if err != nil {
@@ -652,6 +688,11 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 func resolveMaybeRelative(base, candidate string) string {
 	if candidate == "" {
 		return ""
+	}
+	// A cloud (s3://) reference is a logical URI, not a workspace-relative path;
+	// pass it through untouched (filepath.Join would collapse the "//").
+	if ref, err := uriio.Classify(candidate); err == nil && ref.IsCloud() {
+		return candidate
 	}
 	if filepath.IsAbs(candidate) {
 		return candidate

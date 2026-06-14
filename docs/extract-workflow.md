@@ -574,18 +574,28 @@ handles:
   fails. **No secrets ever belong in recipe YAML.**
 - **CLI selection and override.** `--credential <handle>=<profile>` overrides (or
   defines) a handle's profile from the command line — a reference, never a raw
-  key, so secrets stay out of `argv`, `ps`, and shell history. `--output-credentials-handle <name>`
-  selects the handle used for **output**. The **input** side uses the `default`
-  handle today (a per-input handle selector arrives with the recipe-level work
-  below), so a `cloud→cloud` run reads via `default` and writes via the selected
-  output handle — read from one account, write to another. The output handle
-  resolves as: the `--output-credentials-handle` selector, otherwise `default`.
-- **Recipe-level handles are planned.** Today cloud credentials are configured on
-  the `extract files` CLI as above; the input handle is the `default` handle.
-  Selecting credential handles from a recipe (`defaults.input.credentials_handle`
-  / `defaults.output.credentials_handle`) and the matching `sumpter recipes run`
-  credential flags are planned for a later slice. The no-secrets-in-recipe-YAML
-  rule already holds: a recipe would carry a handle *name*, never key material.
+  key, so secrets stay out of `argv`, `ps`, and shell history. `--input-credentials-handle <name>`
+  and `--output-credentials-handle <name>` select the handles used for the
+  **input** and **output** sides independently, so a `cloud→cloud` run can read
+  from one account and write to another. Each side resolves as: its CLI selector,
+  otherwise the recipe's declared handle (below), otherwise the `default` handle.
+- **From a recipe.** `sumpter recipes run` accepts the same credential flags
+  (`--credentials`, `--credential`, `--input-credentials-handle`,
+  `--output-credentials-handle`), and a recipe can name its handles inline:
+
+  ```yaml
+  defaults:
+    input:
+      path: s3://my-bucket/incoming/
+      credentials_handle: reader # resolved from --credentials at run time
+    output:
+      path: s3://archive/extracted/
+      credentials_handle: writer
+  ```
+
+  A recipe carries a handle **name** only — never key material; the
+  no-secrets-in-recipe-YAML rule holds. A `--input-credentials-handle` /
+  `--output-credentials-handle` CLI value overrides the recipe's declared handle.
 - **Default-chain vs hermetic posture.** A handle with no `endpoint` and no
   explicit keys uses the **ambient AWS default credential chain** — convenient,
   but environment/shared-config settings can influence where requests go. A

@@ -141,6 +141,10 @@ Output formats:
 Default memory usage is bounded by parser state and writer buffering. Exact
 percentile flags retain record sizes to calculate exact percentiles.
 
+The source may be an S3-compatible cloud URI (s3://) using a credential handle
+(--credentials/--credential); see docs/extract-workflow.md "Cloud Sources and
+Outputs". The index file itself is always written locally.
+
 Example:
   sumpter index build clinvar.xml --selector "//VariationArchive" --output clinvar.recordindex.json
   sumpter index build clinvar.xml --selector "//VariationArchive" --emit-szst --emit-json=false`,

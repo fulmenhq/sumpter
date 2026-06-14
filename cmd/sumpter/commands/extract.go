@@ -81,6 +81,10 @@ type ExtractOptions struct {
 	// supplied.
 	CredentialsPath     string   // Path to the credentials config (handles)
 	CredentialOverrides []string // Repeatable handle=profile CLI overrides
+	// InputCredentialsHandle selects the credential handle for the cloud read
+	// boundary (a handle name, never a secret). Precedence: this CLI value >
+	// recipe defaults.input.credentials_handle > the default handle.
+	InputCredentialsHandle string
 	// OutputCredentialsHandle selects the credential handle for the cloud write
 	// boundary (a handle name, never a secret). Precedence: this CLI value >
 	// recipe defaults.output.credentials_handle > the default handle. Independent
@@ -122,7 +126,10 @@ func newExtractFilesCommand() *cobra.Command {
 
 The command supports both direct file specification and directory scanning with glob patterns.
 Files are matched against the signature configuration, and matching records are extracted
-according to the extract configuration, producing structured output.`,
+according to the extract configuration, producing structured output.
+
+Source input and result output may be S3-compatible cloud URIs (s3://) using
+credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Retrieve the allow-large-files flag from the persistent flags
 			allowLargeFiles, err := cmd.InheritedFlags().GetBool("allow-large-files")
@@ -171,6 +178,7 @@ according to the extract configuration, producing structured output.`,
 	cmd.Flags().BoolVar(&opts.VerifyIndex, "verify-index", false, "Verify index integrity with SHA-256 before extraction")
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
+	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input (a handle reference, not a secret; defaults to the default handle)")
 	cmd.Flags().StringVar(&opts.OutputCredentialsHandle, "output-credentials-handle", "", "Credential handle name for cloud (s3://) output (a handle reference, not a secret; defaults to the default handle)")
 
 	_ = cmd.MarkFlagRequired("signature-config-path")
@@ -2389,6 +2397,18 @@ func resolvedOutputHandle(opts *ExtractOptions) string {
 	return uriio.DefaultHandleName
 }
 
+// resolvedInputHandle returns the credential handle for cloud source acquisition.
+// Precedence is CLI selector > recipe defaults.input.credentials_handle (mapped
+// onto opts.InputCredentialsHandle by the recipe runner) > the default handle.
+func resolvedInputHandle(opts *ExtractOptions) string {
+	if opts != nil {
+		if h := strings.TrimSpace(opts.InputCredentialsHandle); h != "" {
+			return h
+		}
+	}
+	return uriio.DefaultHandleName
+}
+
 // setupOutputSession creates the run's cloud output session when the output
 // destination is an s3:// URI. It resolves and validates the output handle up
 // front (an unknown handle fails before any extraction work) and emits a loud,
@@ -2503,7 +2523,7 @@ func acquireRecordIndexSource(ctx context.Context, opts *ExtractOptions, runID s
 	if serr != nil {
 		return "", "", noop, serr
 	}
-	src, aerr := session.Acquire(ctx, header.Source.Path, uriio.DefaultHandleName)
+	src, aerr := session.Acquire(ctx, header.Source.Path, resolvedInputHandle(opts))
 	if aerr != nil {
 		_ = session.Close()
 		return "", "", noop, fmt.Errorf("acquire record-index source %s: %w", header.Source.Path, aerr)
@@ -2573,7 +2593,7 @@ func discoverInputReferences(ctx context.Context, session *uriio.Session, opts *
 		// A single cloud object addressed directly — acquire it, no listing.
 		return []string{opts.InputPath}, nil
 	}
-	listing, err := session.List(ctx, opts.InputPath, uriio.DefaultHandleName, opts.IncludePattern, opts.ExcludePattern)
+	listing, err := session.List(ctx, opts.InputPath, resolvedInputHandle(opts), opts.IncludePattern, opts.ExcludePattern)
 	if err != nil {
 		return nil, err
 	}
@@ -2616,7 +2636,7 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 	for _, ref := range refs {
 		var src *uriio.AcquiredSource
 		if session != nil {
-			src, err = session.Acquire(ctx, ref, uriio.DefaultHandleName)
+			src, err = session.Acquire(ctx, ref, resolvedInputHandle(opts))
 		} else {
 			src, err = uriio.Acquire(ctx, uriio.AcquireRequest{Reference: ref})
 		}
