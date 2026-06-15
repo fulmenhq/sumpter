@@ -185,6 +185,7 @@ The public-data exemplars are deliberately drawn from **five different verticals
 - **Encoding resilience**: Normalize to UTF-8, handle BOMs and legacy encodings
 - **Structure discovery**: `inspect` surfaces element paths, attributes, and samples
 - **Integrity verification**: SHA-256 checksums at file and record level
+- **Cloud sources and outputs**: read source data from and publish results to S3-compatible object storage (`s3://`), with credential handles (no secrets in recipe YAML). See [Cloud Sources and Outputs](docs/extract-workflow.md#cloud-sources-and-outputs-s3-compatible).
 - **Observability**: Structured logs, progress tracking, and diagnostics
 
 ---

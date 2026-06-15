@@ -162,6 +162,58 @@ assets:
 	}
 }
 
+// TestValidateRecipeManifestCredentialsHandle covers the cloud credential-handle
+// fields on defaults.{input,output}: a valid handle slug is accepted, and a
+// malformed name (whitespace) is rejected by the schema's handle-name pattern.
+func TestValidateRecipeManifestCredentialsHandle(t *testing.T) {
+	schemaFS, err := assets.GetSchemasFS()
+	if err != nil {
+		t.Skipf("embedded schemas unavailable: %v", err)
+	}
+	validator := NewSchemaValidatorFromFS(schemaFS)
+
+	valid := `version: recipe/v0.1.0
+kind: extract
+id: cloud_recipe
+assets:
+  signature: signature.yaml
+  extract: extract.yaml
+defaults:
+  input:
+    path: s3://my-bucket/in/
+    credentials_handle: reader
+  output:
+    path: s3://my-bucket/out/
+    credentials_handle: writer
+`
+	result, err := validator.ValidateRecipeManifest([]byte(valid), "recipe.yaml")
+	if err != nil {
+		t.Fatalf("ValidateRecipeManifest(valid) error: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("expected valid manifest with credential handles, got: %+v", result.Errors)
+	}
+
+	invalid := `version: recipe/v0.1.0
+kind: extract
+id: cloud_recipe
+assets:
+  signature: signature.yaml
+  extract: extract.yaml
+defaults:
+  output:
+    path: s3://my-bucket/out/
+    credentials_handle: "bad handle name"
+`
+	result, err = validator.ValidateRecipeManifest([]byte(invalid), "recipe.yaml")
+	if err != nil {
+		t.Fatalf("ValidateRecipeManifest(invalid) error: %v", err)
+	}
+	if result.Valid {
+		t.Fatal("expected malformed credentials_handle to be rejected by the handle-name pattern")
+	}
+}
+
 func TestValidateMainConfig(t *testing.T) {
 	// Create a temporary directory for schemas
 	tempDir, err := os.MkdirTemp("", "sumpter-validation-test")

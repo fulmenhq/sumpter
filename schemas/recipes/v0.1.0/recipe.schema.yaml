@@ -123,6 +123,10 @@ properties:
               type: string
           path:
             type: string
+          credentials_handle:
+            type: string
+            description: "Credential handle name for cloud (s3://) source input. A handle reference, never a secret; resolved from the credentials config. A --input-credentials-handle CLI value overrides this."
+            pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
           include_pattern:
             type: string
           exclude_pattern:
@@ -147,6 +151,10 @@ properties:
             uniqueItems: true
           path:
             type: string
+          credentials_handle:
+            type: string
+            description: "Credential handle name for cloud (s3://) output. A handle reference, never a secret; resolved from the credentials config. A --output-credentials-handle CLI value overrides this."
+            pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
           pattern:
             type: string
           patterns:

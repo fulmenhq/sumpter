@@ -136,24 +136,26 @@ type SourceExtractionPattern struct {
 
 // InputDefaults controls input discovery when executing extract recipes.
 type InputDefaults struct {
-	Mode           string   `yaml:"mode"`
-	Files          []string `yaml:"files"`
-	Path           string   `yaml:"path"`
-	IncludePattern string   `yaml:"include_pattern"`
-	ExcludePattern string   `yaml:"exclude_pattern"`
-	MaxDepth       int      `yaml:"max_depth"`
-	FollowSymlinks bool     `yaml:"follow_symlinks"`
+	Mode              string   `yaml:"mode"`
+	Files             []string `yaml:"files"`
+	Path              string   `yaml:"path"`
+	CredentialsHandle string   `yaml:"credentials_handle,omitempty"`
+	IncludePattern    string   `yaml:"include_pattern"`
+	ExcludePattern    string   `yaml:"exclude_pattern"`
+	MaxDepth          int      `yaml:"max_depth"`
+	FollowSymlinks    bool     `yaml:"follow_symlinks"`
 }
 
 // OutputDefaults controls output formatting when executing extract recipes.
 type OutputDefaults struct {
-	Format        string            `yaml:"format,omitempty"`
-	Formats       []string          `yaml:"formats,omitempty"`
-	Path          string            `yaml:"path"`
-	Pattern       string            `yaml:"pattern,omitempty"`
-	Patterns      map[string]string `yaml:"patterns,omitempty"`
-	UniformSchema bool              `yaml:"uniform_schema,omitempty"`
-	Parquet       *ParquetDefaults  `yaml:"parquet,omitempty"`
+	Format            string            `yaml:"format,omitempty"`
+	Formats           []string          `yaml:"formats,omitempty"`
+	Path              string            `yaml:"path"`
+	CredentialsHandle string            `yaml:"credentials_handle,omitempty"`
+	Pattern           string            `yaml:"pattern,omitempty"`
+	Patterns          map[string]string `yaml:"patterns,omitempty"`
+	UniformSchema     bool              `yaml:"uniform_schema,omitempty"`
+	Parquet           *ParquetDefaults  `yaml:"parquet,omitempty"`
 }
 
 // ParquetDefaults controls recipe-level Parquet output behavior.
