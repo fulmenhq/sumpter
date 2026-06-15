@@ -309,6 +309,21 @@ func validateCredentialOptions(opts *ExtractOptions) error {
 			return err
 		}
 	}
+	// Validate the handle-name selectors with the same slug rule as the
+	// credentials config and --credential overrides, so a malformed selector
+	// (e.g. "bad handle") fails fast with an invalid-handle-name error rather than
+	// surfacing later as an undefined-handle resolution failure. Empty selectors
+	// fall back to the default handle and need no validation.
+	for _, sel := range []struct{ flag, value string }{
+		{"--input-credentials-handle", opts.InputCredentialsHandle},
+		{"--output-credentials-handle", opts.OutputCredentialsHandle},
+	} {
+		if v := strings.TrimSpace(sel.value); v != "" {
+			if err := uriio.ValidateHandleName(v); err != nil {
+				return fmt.Errorf("%s: %w", sel.flag, err)
+			}
+		}
+	}
 	return nil
 }
 
