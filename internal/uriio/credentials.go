@@ -116,6 +116,18 @@ func validHandleName(name string) bool {
 	return handleNamePattern.MatchString(name)
 }
 
+// ValidateHandleName checks that name is a portable credential-handle slug,
+// returning an actionable error if not. It is the shared rule for every handle
+// reference surface — the credentials config, --credential overrides, and the
+// --input/output-credentials-handle selectors — so a malformed name (e.g. a
+// key-shaped value) is rejected identically everywhere.
+func ValidateHandleName(name string) error {
+	if !validHandleName(name) {
+		return fmt.Errorf("invalid credentials handle name %q (allowed: %s)", name, handleNamePattern.String())
+	}
+	return nil
+}
+
 // LoadCredentialsConfig reads, validates, and returns a credentials config.
 //
 // The parse is fail-closed: an unknown or typo'd field — e.g. "insecur: true" —
@@ -175,8 +187,8 @@ func parseCredentialsConfig(data []byte) (*CredentialsConfig, error) {
 // static TLS endpoint posture.
 func (c *CredentialsConfig) validate() error {
 	for name, h := range c.Handles {
-		if !validHandleName(name) {
-			return fmt.Errorf("uriio: invalid credentials handle name %q (allowed: %s)", name, handleNamePattern.String())
+		if err := ValidateHandleName(name); err != nil {
+			return fmt.Errorf("uriio: %w", err)
 		}
 		if !h.AccessKeyID.IsZero() != !h.SecretAccessKey.IsZero() {
 			return fmt.Errorf("uriio: credentials handle %q: access_key_id and secret_access_key must be set together", name)

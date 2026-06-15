@@ -118,6 +118,22 @@ func TestSessionOpenOutputPublishFailurePropagates(t *testing.T) {
 	}
 }
 
+// TestValidateHandleName covers the shared handle-name slug rule: portable slugs
+// are accepted; whitespace, key-shaped values, and empty are rejected with an
+// actionable message.
+func TestValidateHandleName(t *testing.T) {
+	for _, name := range []string{"default", "reader", "writer-2", "dst.account", "A1"} {
+		if err := ValidateHandleName(name); err != nil {
+			t.Errorf("ValidateHandleName(%q) = %v, want nil", name, err)
+		}
+	}
+	for _, name := range []string{"bad handle", "", "-leading", "has/slash", "key+like=value"} {
+		if err := ValidateHandleName(name); err == nil {
+			t.Errorf("ValidateHandleName(%q) = nil, want an invalid-handle-name error", name)
+		}
+	}
+}
+
 // TestOpenOutputLocalIsNoopPublish proves a local destination resolves to its own
 // path with a no-op Publish (zero-drift), with or without a session.
 func TestOpenOutputLocalIsNoopPublish(t *testing.T) {
