@@ -76,6 +76,15 @@ type HandleConfig struct {
 	// footgun guard: a plaintext endpoint puts credentials and data on the wire.
 	// The connect-time enforcement lands with the cloud read boundary.
 	Insecure bool `yaml:"insecure,omitempty"`
+	// Anonymous opts the handle into unsigned, anonymous reads of a public bucket.
+	// It is read-only by construction: the underlying provider rejects every
+	// mutating operation, and Sumpter additionally rejects an anonymous handle on
+	// any write target before staging (a write boundary never reaches the library
+	// error). Anonymous is mutually exclusive with all credential material — a
+	// Profile, literal keys, or a --credential override — and is rejected at config
+	// load (or CLI resolve) if combined. TLS endpoint posture still applies: an
+	// anonymous request still goes on the wire.
+	Anonymous bool `yaml:"anonymous,omitempty"`
 	// AccessKeyID is an explicit access key id. Permitted but discouraged; prefer
 	// a Profile handle. If set, SecretAccessKey must also be set. It is a Secret
 	// so the AKIA-style identifier never leaks through logs/JSON/YAML/format/errors.
@@ -192,6 +201,12 @@ func (c *CredentialsConfig) validate() error {
 		}
 		if !h.AccessKeyID.IsZero() != !h.SecretAccessKey.IsZero() {
 			return fmt.Errorf("uriio: credentials handle %q: access_key_id and secret_access_key must be set together", name)
+		}
+		// PA2: anonymous is mutually exclusive with any credential material. Reject
+		// at load rather than silently letting one win — anonymous is a distinct,
+		// read-only posture, not a fallback.
+		if h.Anonymous && (h.Profile != "" || h.HasLiteralKeys()) {
+			return fmt.Errorf("uriio: credentials handle %q: anonymous is mutually exclusive with profile/access_key_id/secret_access_key (anonymous is read-only public-bucket access; drop the credential fields or the anonymous flag)", name)
 		}
 		if err := validateEndpointPosture(name, h); err != nil {
 			return err

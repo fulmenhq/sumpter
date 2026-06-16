@@ -74,6 +74,38 @@ func TestResolverCLIOverrideDefinesUndeclaredHandle(t *testing.T) {
 	}
 }
 
+// TestResolverAnonymousHandle resolves a public-bucket anonymous handle and
+// confirms it carries no credential material.
+func TestResolverAnonymousHandle(t *testing.T) {
+	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
+		"public": {Anonymous: true, Region: "us-east-1"},
+	}}
+	hc, err := uriio.NewResolver(cfg, nil).Resolve("public")
+	if err != nil {
+		t.Fatalf("Resolve(public): %v", err)
+	}
+	if !hc.Anonymous {
+		t.Error("resolved handle is not anonymous")
+	}
+	if hc.Profile != "" || hc.HasLiteralKeys() {
+		t.Errorf("anonymous handle carries credential material: %+v", hc)
+	}
+}
+
+// TestResolverCLIOverrideRejectsAnonymous covers PA2: a --credential profile
+// override on an anonymous handle is rejected rather than silently signing what
+// the operator declared anonymous.
+func TestResolverCLIOverrideRejectsAnonymous(t *testing.T) {
+	cfg := &uriio.CredentialsConfig{Handles: map[string]uriio.HandleConfig{
+		"public": {Anonymous: true},
+	}}
+	r := uriio.NewResolver(cfg, map[string]string{"public": "some-profile"})
+	_, err := r.Resolve("public")
+	if err == nil || !strings.Contains(err.Error(), "anonymous") {
+		t.Fatalf("Resolve(public) with override = %v, want anonymous-conflict error", err)
+	}
+}
+
 // TestProviderPoolPoolsPerHandleBucket verifies one provider per unique
 // (handle, bucket), reuse on repeat, and clean Close. Construction uses explicit
 // credentials so no network or shared AWS config is required.

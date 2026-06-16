@@ -51,6 +51,31 @@ func TestSessionStageDirSecure(t *testing.T) {
 }
 
 // TestSweepStaleStaging removes run dirs older than maxAge and keeps fresh ones.
+// TestSessionRejectsAnonymousWrite is PA1: an anonymous (read-only) handle is
+// rejected on the output side both at the run-start describe and at open-output
+// time, before any staging directory is created — Sumpter fails closed rather
+// than relying on the provider's PutObject-time rejection.
+func TestSessionRejectsAnonymousWrite(t *testing.T) {
+	workDir := t.TempDir()
+	cfg := &CredentialsConfig{Handles: map[string]HandleConfig{
+		"public": {Anonymous: true, Region: "us-east-1"},
+	}}
+	sess := NewSession(NewResolver(cfg, nil), workDir, "run-anon")
+
+	if _, err := sess.DescribeOutputHandle("public", "bucket"); err == nil || !strings.Contains(err.Error(), "anonymous") {
+		t.Fatalf("DescribeOutputHandle(public) = %v, want anonymous-write rejection", err)
+	}
+
+	if _, err := sess.OpenOutput(context.Background(), "s3://bucket/out.json", "public"); err == nil || !strings.Contains(err.Error(), "anonymous") {
+		t.Fatalf("OpenOutput(public) = %v, want anonymous-write rejection", err)
+	}
+
+	// The rejected write must not have created a staging directory.
+	if _, err := os.Stat(filepath.Join(workDir, stagingDirName)); !os.IsNotExist(err) {
+		t.Errorf("anonymous write created a staging directory (err=%v); PA1 must fail before staging", err)
+	}
+}
+
 func TestSweepStaleStaging(t *testing.T) {
 	workDir := t.TempDir()
 	base := filepath.Join(workDir, stagingDirName)

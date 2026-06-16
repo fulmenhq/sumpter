@@ -180,6 +180,12 @@ func TestLoadCredentialsConfigValidation(t *testing.T) {
 		{"https endpoint ok", "handles:\n  h:\n    profile: p\n    endpoint: https://s3.example.com\n", false},
 		{"http endpoint rejected", "handles:\n  h:\n    profile: p\n    endpoint: http://minio:9000\n", true},
 		{"http endpoint with insecure opt-in", "handles:\n  h:\n    profile: p\n    endpoint: http://minio:9000\n    insecure: true\n", false},
+		// PA2: anonymous is a distinct read-only posture, mutually exclusive with creds.
+		{"anonymous handle ok", "handles:\n  public:\n    region: us-east-1\n    anonymous: true\n", false},
+		{"anonymous + profile rejected", "handles:\n  public:\n    anonymous: true\n    profile: p\n", true},
+		{"anonymous + literal keys rejected", "handles:\n  public:\n    anonymous: true\n    access_key_id: AKIAIOSFODNN7EXAMPLE\n    secret_access_key: shh\n", true},
+		{"anonymous with https endpoint ok", "handles:\n  public:\n    anonymous: true\n    endpoint: https://s3.example.com\n", false},
+		{"anonymous still subject to TLS posture", "handles:\n  public:\n    anonymous: true\n    endpoint: http://minio:9000\n", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
