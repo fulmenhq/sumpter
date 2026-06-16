@@ -224,6 +224,11 @@
           "type": "string",
           "minLength": 1
         },
+        "credentials_handle": {
+          "type": "string",
+          "description": "Resolved logical credential handle name that authorized acquiring this input. Present only for cloud (s3://) sources. A non-secret indirection label (same logical-identity class as the s3:// path), never the resolved profile, endpoint, region, or secret. Omitted for local/file inputs.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
         "sha256": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
@@ -271,6 +276,11 @@
         "path": {
           "type": "string",
           "minLength": 1
+        },
+        "credentials_handle": {
+          "type": "string",
+          "description": "Resolved logical credential handle name that authorized publishing this artifact. Present only for cloud (s3://) destinations. A non-secret indirection label (same logical-identity class as the s3:// path), never the resolved profile, endpoint, region, or secret. Omitted for local outputs.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
         },
         "format": {
           "type": "string",

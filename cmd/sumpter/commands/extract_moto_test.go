@@ -248,6 +248,14 @@ func TestMotoExtractSourceInNoLeak(t *testing.T) {
 	}
 
 	assertLogicalIdentityNoLeak(t, outDir, home, logicalURI)
+
+	// FU-2: the cloud input records the resolved input handle ("default"); the
+	// local output records none. No resolved credential material reaches the sidecar.
+	manifestData, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	assertManifestHandleNames(t, manifestData, m, "default", "")
 }
 
 // TestMotoExtractInputPrefixNoLeak proves an s3:// prefix --input-path is listed
@@ -289,6 +297,74 @@ func TestMotoExtractInputPrefixNoLeak(t *testing.T) {
 	}
 	assertNoStagingLeak(t, outDir, home)
 	assertStagingCleanedUp(t, home)
+}
+
+// TestMotoExtractDryRunDoesNotStage proves a cloud --dry-run is truly dry: it
+// previews the logical source identity without downloading or staging any object
+// (B3 / SUM-042). The single-object case is the sharp discriminator — a dry run
+// of a NON-EXISTENT object still succeeds and echoes its URI, because nothing is
+// fetched; the previous stage-then-list path would have tried to download it and
+// failed. Staging is lazy (created on first acquire), so a true dry run also
+// leaves no staging directory behind at all.
+func TestMotoExtractDryRunDoesNotStage(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	dir := createExtractManifestFixture(t)
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+	stageRoot := filepath.Join(home, "work", "cloud")
+
+	outDir := filepath.Join(dir, "out-dryrun")
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1) A single cloud object that was never uploaded. A truly-dry run succeeds
+	//    and echoes the logical URI without any fetch.
+	missingURI := "s3://" + m.bucket + "/" + runKeyPrefix() + "dryrun/never-uploaded.xml"
+	opts := newMatrixExtractOptions(dir, missingURI, outDir)
+	opts.CredentialsPath = m.writeCredentialsConfig(t, dir)
+	opts.DryRun = true
+
+	var runErr error
+	out := captureStdout(t, func() { runErr = runExtract(opts) })
+	if runErr != nil {
+		t.Fatalf("dry-run of a non-existent cloud object should succeed (no fetch), got: %v", runErr)
+	}
+	if !strings.Contains(out, missingURI) {
+		t.Errorf("dry-run output missing logical URI %q:\n%s", missingURI, out)
+	}
+	if _, err := os.Stat(stageRoot); !os.IsNotExist(err) {
+		t.Errorf("dry-run created a staging directory %q (err=%v); nothing should be staged", stageRoot, err)
+	}
+
+	// 2) A real prefix with two objects. A dry run lists (allowed — you must list
+	//    to know what matches) and echoes both logical URIs, still staging nothing.
+	prefix := runKeyPrefix() + "dryrun-prefix/"
+	keyA := prefix + "a.xml"
+	keyB := prefix + "b.xml"
+	m.putObject(t, keyA, []byte(motoSourceXML))
+	m.putObject(t, keyB, []byte(motoSourceXML))
+
+	popts := newMatrixExtractOptions(dir, "", outDir)
+	popts.Files = ""
+	popts.InputPath = "s3://" + m.bucket + "/" + prefix
+	popts.IncludePattern = "*.xml"
+	popts.CredentialsPath = m.writeCredentialsConfig(t, dir)
+	popts.DryRun = true
+
+	pout := captureStdout(t, func() { runErr = runExtract(popts) })
+	if runErr != nil {
+		t.Fatalf("dry-run of a cloud prefix should succeed, got: %v", runErr)
+	}
+	for _, key := range []string{keyA, keyB} {
+		uri := "s3://" + m.bucket + "/" + key
+		if !strings.Contains(pout, uri) {
+			t.Errorf("dry-run prefix output missing logical URI %q:\n%s", uri, pout)
+		}
+	}
+	if _, err := os.Stat(stageRoot); !os.IsNotExist(err) {
+		t.Errorf("dry-run (prefix) created a staging directory %q; listing must not stage", stageRoot)
+	}
 }
 
 // assertLogicalIdentityNoLeak runs the full leak/identity assertion set for a

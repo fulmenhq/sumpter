@@ -240,7 +240,7 @@ func TestBuildInputLedger(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	input, err := BuildInputLedger(path, path, dir)
+	input, err := BuildInputLedger(path, path, "", dir)
 	if err != nil {
 		t.Fatalf("BuildInputLedger: %v", err)
 	}
@@ -252,6 +252,30 @@ func TestBuildInputLedger(t *testing.T) {
 	}
 	if !strings.HasPrefix(input.SHA256, "sha256:") || len(input.SHA256) != len("sha256:")+64 {
 		t.Fatalf("sha256 format = %q", input.SHA256)
+	}
+
+	// FU-2 cloud-gate: a handle passed for a LOCAL source is never recorded, so
+	// local-input manifests stay byte-identical.
+	localWithHandle, err := BuildInputLedger(path, path, "prod-readonly", dir)
+	if err != nil {
+		t.Fatalf("BuildInputLedger (local, handle): %v", err)
+	}
+	if localWithHandle.CredentialsHandle != "" {
+		t.Fatalf("local input recorded credentials_handle %q, want empty", localWithHandle.CredentialsHandle)
+	}
+
+	// FU-2 cloud-gate: the resolved handle name IS recorded for a cloud (s3://)
+	// source, as logical identity alongside the logical URI — the bytes still come
+	// from the staged local copy (path), the identity is the s3:// URI.
+	cloudInput, err := BuildInputLedger(path, "s3://bucket/key.xml", "prod-readonly", dir)
+	if err != nil {
+		t.Fatalf("BuildInputLedger (cloud, handle): %v", err)
+	}
+	if cloudInput.CredentialsHandle != "prod-readonly" {
+		t.Fatalf("cloud input credentials_handle = %q, want prod-readonly", cloudInput.CredentialsHandle)
+	}
+	if cloudInput.Path != "s3://bucket/key.xml" {
+		t.Fatalf("cloud input path = %q, want logical s3:// URI", cloudInput.Path)
 	}
 }
 

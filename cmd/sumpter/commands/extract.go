@@ -418,6 +418,16 @@ func runExtract(opts *ExtractOptions) error {
 	// Continue with sequential extraction
 	logger.Debug("Sequential extraction mode")
 
+	// Dry run: preview the files that would be processed, by logical identity,
+	// WITHOUT acquiring (downloading/staging) cloud objects. A cloud prefix is
+	// still listed — you must list to know what would match — but no object bytes
+	// are read and nothing is staged, so a dry run is truly dry: it touches no
+	// staging directory and downloads nothing. Output is byte-identical to the
+	// previous (stage-then-list) behavior for both local and cloud sources.
+	if opts.DryRun {
+		return runDryRunPreview(context.Background(), opts, runtimeProvenance.RunID)
+	}
+
 	// Discover and acquire the run's input files through the uriio read boundary.
 	// Local references (bare paths and file:// URIs) resolve to their own local
 	// path — byte-for-byte the historical behavior; s3:// references are listed
@@ -442,28 +452,12 @@ func runExtract(opts *ExtractOptions) error {
 	logger.Debug("File discovery complete", zap.Int("file_count", len(files)))
 
 	if opts.ApplicabilityConfig != nil {
-		if strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
+		if strings.TrimSpace(opts.OutputPath) == "" {
 			return fmt.Errorf("applicability declared but requires --output-path for dispositions output")
 		}
 		if err := validateApplicabilityMode(opts, files); err != nil {
 			return err
 		}
-	}
-
-	// Dry run: list the files that would be processed, by logical identity (so a
-	// staged cloud working path never appears in dry-run output).
-	//
-	// NOTE: cloud sources are already staged by this point, so --dry-run currently
-	// downloads s3:// objects before listing them. Acceptable for this delivery;
-	// a listing-only cloud dry-run (discover without acquire) is a tracked
-	// follow-up.
-	if opts.DryRun {
-		logger.Debug("Starting dry run")
-		for _, file := range files {
-			fmt.Println(logicalIdentity(file, logicalByLocal))
-		}
-		logger.Debug("Dry run complete, exiting")
-		return nil
 	}
 
 	if opts.Progress {
@@ -541,7 +535,7 @@ func runExtract(opts *ExtractOptions) error {
 				failureManifest.add(result.LogicalURI, result.DispositionReason, detail, sanitizeRoots)
 			}
 			if manifestEnabled {
-				input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, sanitizeRoots...)
+				input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 				if err != nil {
 					if opts.ContinueOnError {
 						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.LogicalURI), zap.Error(err))
@@ -574,7 +568,7 @@ func runExtract(opts *ExtractOptions) error {
 				result.DispositionDetail = result.Error.Error()
 				failureManifest.add(result.LogicalURI, reason, result.Error.Error(), sanitizeRoots)
 				if manifestEnabled {
-					input, ledgerErr := provenance.BuildInputLedger(result.File, result.LogicalURI, sanitizeRoots...)
+					input, ledgerErr := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 					if ledgerErr != nil {
 						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.LogicalURI), zap.Error(ledgerErr))
 					} else {
@@ -603,7 +597,7 @@ func runExtract(opts *ExtractOptions) error {
 						failureManifest.add(result.LogicalURI, reason, err.Error(), sanitizeRoots)
 					}
 					if manifestEnabled {
-						input, ledgerErr := provenance.BuildInputLedger(result.File, result.LogicalURI, sanitizeRoots...)
+						input, ledgerErr := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 						if ledgerErr != nil {
 							return ledgerErr
 						}
@@ -625,7 +619,7 @@ func runExtract(opts *ExtractOptions) error {
 		}
 
 		if manifestEnabled {
-			input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, sanitizeRoots...)
+			input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 			if err != nil {
 				return err
 			}
@@ -1061,7 +1055,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 			dispositionSummary.add(result, sanitizeRoots)
 		}
 		if manifestEnabled {
-			input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, sanitizeRoots...)
+			input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 			if err != nil {
 				return err
 			}
@@ -1140,7 +1134,7 @@ func recordFailedSequentialResult(result extract.ExtractResult, opts *ExtractOpt
 		failureManifest.add(result.LogicalURI, result.DispositionReason, result.DispositionDetail, sanitizeRoots)
 	}
 	if manifestEnabled {
-		input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, sanitizeRoots...)
+		input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 		if err != nil {
 			if opts.ContinueOnError {
 				logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.LogicalURI), zap.Error(err))
@@ -1470,7 +1464,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 			// The input ledger hashes the local bytes (localReadPath — a staged
 			// working copy for cloud sources) but records the logical identity
 			// (logicalURI), so the staging path never reaches the manifest.
-			input, err := provenance.BuildInputLedger(localReadPath, logicalURI, sanitizeRoots...)
+			input, err := provenance.BuildInputLedger(localReadPath, logicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 			if err != nil {
 				return err
 			}
@@ -1547,7 +1541,7 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 	if manifestEnabled {
 		// Hash the local bytes (staged working copy for cloud sources) but record
 		// the logical identity, so the staging path never reaches the manifest.
-		input, err := provenance.BuildInputLedger(localReadPath, logicalURI, sanitizeRoots...)
+		input, err := provenance.BuildInputLedger(localReadPath, logicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 		if err != nil {
 			return err
 		}
@@ -1802,10 +1796,26 @@ func provenanceOutput(outputFile, format string, recordCount int, opts *ExtractO
 		Format:      format,
 		RecordCount: recordCount,
 	}
+	// FU-2: record the resolved logical output handle NAME for cloud (s3://)
+	// destinations only. opts.outputHandle is set exactly when a cloud output
+	// session exists (setupOutputSession), so local outputs stay byte-identical.
+	// Name only — never the resolved profile/endpoint/region/secret (S8).
+	if opts != nil && opts.outputHandle != "" && referenceIsCloud(outputFile) {
+		output.CredentialsHandle = opts.outputHandle
+	}
 	if format == recipesmanifest.OutputFormatParquet && opts != nil && len(opts.ParquetWithholdColumns) > 0 {
 		output.WithholdColumns = append([]string(nil), opts.ParquetWithholdColumns...)
 	}
 	return output
+}
+
+// referenceIsCloud reports whether a logical reference targets cloud object
+// storage (s3://). Classification failures are treated as non-cloud — the caller
+// gates emitting cloud-only provenance, so a parse failure conservatively omits
+// the handle rather than recording it on a local entry.
+func referenceIsCloud(reference string) bool {
+	ref, err := uriio.Classify(reference)
+	return err == nil && ref.IsCloud()
 }
 
 func outputFileForFormat(opts *ExtractOptions, format, inputFile string) string {
@@ -2620,6 +2630,60 @@ func discoverInputReferences(ctx context.Context, session *uriio.Session, opts *
 		refs = append(refs, e.LogicalURI)
 	}
 	return refs, nil
+}
+
+// runDryRunPreview prints the input references a run would process, by logical
+// identity, without acquiring (downloading/staging) any cloud object. It is the
+// truly-dry path for --dry-run: cloud prefixes are listed (no download), single
+// cloud objects are echoed (no network at all), and local globs are walked
+// exactly as before. No staging directory is created and no object bytes are
+// read.
+func runDryRunPreview(ctx context.Context, opts *ExtractOptions, runID string) error {
+	logger := logging.GetLogger()
+	logger.Debug("Starting dry run")
+	refs, session, err := discoverInputReferencesForPreview(ctx, opts, runID)
+	if session != nil {
+		defer func() {
+			if cerr := session.Close(); cerr != nil {
+				logger.Warn("Failed to clean up cloud session", zap.Error(cerr))
+			}
+		}()
+	}
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		fmt.Println(ref)
+	}
+	logger.Debug("Dry run complete, exiting")
+	return nil
+}
+
+// discoverInputReferencesForPreview lists the input references a run would
+// process, by logical identity, WITHOUT acquiring any of them. It shares the
+// cloud-session setup and reference discovery with resolveInputSources but stops
+// before the acquire/stage step, so a cloud dry run downloads nothing. Returns
+// the run session (nil for an all-local run) for the caller to Close.
+func discoverInputReferencesForPreview(ctx context.Context, opts *ExtractOptions, runID string) ([]string, *uriio.Session, error) {
+	cloud, err := referencesIncludeCloud(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	var session *uriio.Session
+	if cloud {
+		session, err = newCloudSession(opts, runID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	refs, err := discoverInputReferences(ctx, session, opts)
+	if err != nil {
+		if session != nil {
+			_ = session.Close()
+		}
+		return nil, nil, err
+	}
+	return refs, session, nil
 }
 
 // resolveInputSources discovers and acquires the run's input files through the
