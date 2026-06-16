@@ -536,6 +536,14 @@ or network work at all.
 The core stays local: temporary files, record indexes, and all intermediate
 state are local-disk only even when both ends are cloud.
 
+**Other commands that read cloud sources.** `inspect` and `index build`/`index
+verify` also accept a single `s3://` object as their source (prefixes/globs are
+rejected — these commands operate on one file). The object is staged to local
+working storage, read byte-for-byte, and the **logical `s3://` URI** is what
+appears in the inspect report, the index header, and any generated config — never
+the staging path. They take the same `--credentials`/`--credential` flags
+described below. Their own outputs (the report, the index file) remain local.
+
 **Durability and limits.** Each artifact is written completely to local disk and
 then published as a single object, so a failed or interrupted publish never
 leaves a truncated object that a consumer could read as complete. A publish
@@ -551,8 +559,8 @@ return an actionable error today.
 Credentials are referenced **by handle name** — never inlined as secrets. A
 handle names an account/endpoint/region; the bucket comes from the `s3://` URI at
 I/O time. Cloud credentials are configured on the `sumpter extract files` CLI
-(the `index build`/`index verify` commands accept the same flags for their cloud
-sources). Handles are declared in a credentials config passed with
+(the `index build`/`index verify` and `inspect` commands accept the same flags
+for their cloud sources). Handles are declared in a credentials config passed with
 `--credentials <path>`:
 
 ```yaml

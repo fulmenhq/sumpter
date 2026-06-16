@@ -17,6 +17,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 	"github.com/fulmenhq/sumpter/internal/inspect/configgen"
 	"github.com/fulmenhq/sumpter/internal/logging"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/utils"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -43,6 +44,11 @@ type InspectOptions struct {
 	OOMThresholdMB int    `json:"oom_threshold_mb"`
 	MaxCandidates  int    `json:"max_candidates"`
 	MaxRecords     int    `json:"max_records"`
+	// Cloud source credentials. CredentialsPath points at a named-handle config
+	// for s3:// sources; CredentialOverrides map handle=profile (references only,
+	// never raw keys). Unused for local/file sources and stdin.
+	CredentialsPath     string
+	CredentialOverrides []string
 }
 
 // InspectReportV0 matches the v0.1.1 schema
@@ -361,7 +367,13 @@ This command performs a streaming analysis of XML files to:
 - Generate reports in Markdown or JSON format
 
 The command uses streaming input parsing for large files (100MB+) with
-configurable sampling to balance speed and insight.`,
+configurable sampling to balance speed and insight.
+
+The source may be an S3-compatible cloud URI (s3://) using a credential handle
+(--credentials/--credential); see docs/extract-workflow.md "Cloud Sources and
+Outputs". A cloud source must be a single object (not a prefix or glob); it is
+staged to a local working copy that is inspected byte-for-byte, and the report
+records the logical s3:// URI, never the staging path.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				opts.File = args[0]
@@ -392,12 +404,44 @@ configurable sampling to balance speed and insight.`,
 	cmd.Flags().IntVar(&opts.MaxCandidates, "max-candidates", 5, "Maximum number of record candidates to analyze")
 	cmd.Flags().IntVar(&opts.MaxRecords, "max-records", 0, "Maximum number of records to analyze for statistics (0 = unlimited)")
 
+	// Cloud source credentials (s3:// inputs). Mirrors the index/extract surface.
+	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML) for s3:// sources")
+	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
+
 	return cmd
 }
 
 func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 	log := logging.Component("inspect")
 	startTime := time.Now()
+
+	// Resolve the source through the uriio read boundary. A cloud (s3://) source
+	// is staged to a local working copy that inspect reads byte-for-byte; the
+	// report records the logical identity (displayPath), and the staging path
+	// (localReadPath) never reaches the report, logs, or extension detection.
+	//
+	// For a LOCAL source, displayPath stays the user-supplied argument (relative
+	// or absolute, exactly as before) so local reports/configs are byte-identical
+	// and never gain a machine-specific absolute path — even though localReadPath
+	// resolves to the stat-validated absolute path for opening. Only a cloud
+	// source surfaces the resolver's identity (the logical s3:// URI).
+	localReadPath := opts.File
+	displayPath := opts.File
+	if opts.File != "-" {
+		src, err := resolveSingleObjectSource(cmd.Context(), "inspect", opts.File, opts.CredentialsPath, opts.CredentialOverrides)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if cerr := src.cleanup(); cerr != nil {
+				log.Warn("failed to clean up cloud staging directory", zap.Error(cerr))
+			}
+		}()
+		localReadPath = src.LocalPath
+		if ref, cerr := uriio.Classify(opts.File); cerr == nil && ref.IsCloud() {
+			displayPath = src.Identity
+		}
+	}
 
 	// Open input
 	var reader io.Reader
@@ -412,7 +456,7 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 			IsStdin: true,
 		}
 	} else {
-		file, err := os.Open(opts.File)
+		file, err := os.Open(localReadPath) // #nosec G304 - Sumpter-resolved read path: a stat-validated local source or a session-staged working copy under $SUMPTER_HOME (traversal-guarded at acquire)
 		if err != nil {
 			return fmt.Errorf("failed to open file: %w", err)
 		}
@@ -425,7 +469,7 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 
 		reader = bufio.NewReader(file)
 		fileInfo = FileInfo{
-			Path:    opts.File,
+			Path:    displayPath,
 			Size:    stat.Size(),
 			SizeMB:  fmt.Sprintf("%.2f", float64(stat.Size())/1024/1024),
 			IsStdin: false,
@@ -483,8 +527,8 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		} else if opts.RecordSelector == "" {
 			log.Warn("record analysis requires --record-selector to be specified")
 		} else {
-			// Open file again for analysis
-			analysisFile, err := os.Open(opts.File)
+			// Open file again for analysis (the staged local copy for cloud sources).
+			analysisFile, err := os.Open(localReadPath) // #nosec G304 - Sumpter-resolved read path: a stat-validated local source or a session-staged working copy under $SUMPTER_HOME (traversal-guarded at acquire)
 			if err != nil {
 				return fmt.Errorf("failed to open file for analysis: %w", err)
 			}
@@ -499,17 +543,19 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 			} else {
 				// Perform analysis with raw reader and encoding info
 				// Detect compression for analysis
+				// Compression is keyed on the logical identity (the s3:// key or local
+				// path), not the staging path which may not preserve the extension.
 				compressed := false
 				compression := "none"
-				if strings.HasSuffix(strings.ToLower(opts.File), ".gz") ||
-					strings.HasSuffix(strings.ToLower(opts.File), ".gzip") {
+				if strings.HasSuffix(strings.ToLower(displayPath), ".gz") ||
+					strings.HasSuffix(strings.ToLower(displayPath), ".gzip") {
 					compressed = true
 					compression = "gzip"
-				} else if strings.HasSuffix(strings.ToLower(opts.File), ".bz2") ||
-					strings.HasSuffix(strings.ToLower(opts.File), ".bzip2") {
+				} else if strings.HasSuffix(strings.ToLower(displayPath), ".bz2") ||
+					strings.HasSuffix(strings.ToLower(displayPath), ".bzip2") {
 					compressed = true
 					compression = "bzip2"
-				} else if strings.HasSuffix(strings.ToLower(opts.File), ".xz") {
+				} else if strings.HasSuffix(strings.ToLower(displayPath), ".xz") {
 					compressed = true
 					compression = "xz"
 				}
@@ -610,7 +656,7 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 
 	// Generate output
 	if opts.GenerateConfig {
-		if err := generateExtractConfig(cmd, opts); err != nil {
+		if err := generateExtractConfig(cmd, opts, localReadPath, displayPath); err != nil {
 			return err
 		}
 	} else {
@@ -636,13 +682,17 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 	return nil
 }
 
-func generateExtractConfig(cmd *cobra.Command, opts *InspectOptions) error {
+// generateExtractConfig emits a starter extract.yaml from the document. It reads
+// from localReadPath (the staged working copy for a cloud source) but records
+// displayPath (the logical s3:// URI or local path) as the source identity, so a
+// staging path never leaks into the generated config.
+func generateExtractConfig(cmd *cobra.Command, opts *InspectOptions, localReadPath, displayPath string) error {
 	if opts.File == "-" {
 		return fmt.Errorf("--generate-config requires a seekable file path; stdin is not supported")
 	}
 
 	readerFactory := func() (io.ReadCloser, error) {
-		file, err := os.Open(opts.File) // #nosec G304 - user-selected inspect input path
+		file, err := os.Open(localReadPath) // #nosec G304 - user-selected inspect input path (staged locally for cloud sources)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open file for config generation: %w", err)
 		}
@@ -655,7 +705,7 @@ func generateExtractConfig(cmd *cobra.Command, opts *InspectOptions) error {
 	}
 
 	result, err := configgen.Generate(readerFactory, configgen.Options{
-		SourcePath:        opts.File,
+		SourcePath:        displayPath,
 		RecordSelector:    opts.RecordSelector,
 		MinOccurrence:     opts.MinOccurrence,
 		OptionalThreshold: opts.OptionalThreshold,
