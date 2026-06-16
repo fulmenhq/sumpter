@@ -79,7 +79,14 @@ type FieldProvenance struct {
 
 // Input describes an input file considered by the extract run.
 type Input struct {
-	Path              string `json:"path"`
+	Path string `json:"path"`
+	// CredentialsHandle is the resolved logical credential handle NAME that
+	// authorized acquiring this input, recorded only for cloud (s3://) sources.
+	// It is logical identity — the non-secret indirection label, the same class
+	// as the s3:// URI in Path — never the resolved profile, endpoint, region, or
+	// secret it points at (S8). Empty (omitted) for local/file inputs, which stay
+	// byte-identical. See BuildInputLedger.
+	CredentialsHandle string `json:"credentials_handle,omitempty"`
 	SHA256            string `json:"sha256"`
 	SizeBytes         int64  `json:"size_bytes"`
 	RecordType        string `json:"record_type,omitempty"`
@@ -90,10 +97,16 @@ type Input struct {
 
 // Output describes an output artifact written by the extract run.
 type Output struct {
-	Path            string   `json:"path"`
-	Format          string   `json:"format"`
-	RecordCount     int      `json:"record_count"`
-	WithholdColumns []string `json:"withhold_columns,omitempty"`
+	Path string `json:"path"`
+	// CredentialsHandle is the resolved logical credential handle NAME that
+	// authorized publishing this artifact, recorded only for cloud (s3://)
+	// destinations. Same logical-identity, name-only rule as Input.CredentialsHandle:
+	// never the resolved profile/endpoint/region/secret (S8). Empty (omitted) for
+	// local outputs, which stay byte-identical.
+	CredentialsHandle string   `json:"credentials_handle,omitempty"`
+	Format            string   `json:"format"`
+	RecordCount       int      `json:"record_count"`
+	WithholdColumns   []string `json:"withhold_columns,omitempty"`
 }
 
 // WriteManifest writes a deterministic, indented JSON sidecar to a local path
@@ -143,7 +156,15 @@ func WriteManifestVia(ctx context.Context, target *uriio.OutputTarget, manifest 
 // itself for local ones. logicalURI is the canonical identity recorded in the
 // manifest (a bare path, file:// URI, or s3:// URI), so a staged working path
 // never leaks into a published artifact. For local sources the two coincide.
-func BuildInputLedger(localPath, logicalURI string, roots ...string) (Input, error) {
+//
+// credentialsHandle is the resolved logical handle NAME that authorized this
+// acquisition (after CLI > recipe-default > default precedence). It is recorded
+// only when logicalURI is a cloud (s3://) reference — the single gate that keeps
+// local/file inputs byte-identical and ensures the name rides only on entries
+// that actually crossed the cloud credential boundary. Callers always pass the
+// resolved name; the cloud test here decides whether it is persisted. Pass "" to
+// record no handle.
+func BuildInputLedger(localPath, logicalURI, credentialsHandle string, roots ...string) (Input, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		return Input{}, fmt.Errorf("stat input %s: %w", logicalURI, err)
@@ -152,11 +173,17 @@ func BuildInputLedger(localPath, logicalURI string, roots ...string) (Input, err
 	if err != nil {
 		return Input{}, err
 	}
-	return Input{
+	input := Input{
 		Path:      SanitizePath(logicalURI, roots...),
 		SHA256:    hash,
 		SizeBytes: info.Size(),
-	}, nil
+	}
+	if credentialsHandle != "" {
+		if ref, classifyErr := uriio.Classify(logicalURI); classifyErr == nil && ref.IsCloud() {
+			input.CredentialsHandle = credentialsHandle
+		}
+	}
+	return input, nil
 }
 
 func fileSHA256(path string) (string, error) {

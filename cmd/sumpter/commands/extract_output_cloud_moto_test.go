@@ -58,6 +58,83 @@ func assertManifestOutputPath(t *testing.T, manifestBytes []byte, wantOutput, st
 	}
 }
 
+// allowedManifestInputFields / allowedManifestOutputFields are the only JSON keys
+// a provenance input/output entry may carry. A resolved HandleConfig (profile,
+// endpoint, region, key id, secret) would surface as a key outside these sets, so
+// asserting the key set is a collision-free no-leak probe — unlike a raw
+// substring scan for short sentinel creds (the moto harness uses key/secret
+// "test", which is a substring of the public bucket/prefix and would false-fire).
+var allowedManifestInputFields = map[string]bool{
+	"path": true, "credentials_handle": true, "sha256": true, "size_bytes": true,
+	"record_type": true, "disposition": true, "disposition_reason": true, "disposition_detail": true,
+}
+
+var allowedManifestOutputFields = map[string]bool{
+	"path": true, "credentials_handle": true, "format": true, "record_count": true, "withhold_columns": true,
+}
+
+// assertManifestHandleNames decodes a published manifest and asserts that every
+// input entry records wantInput and every output entry records wantOutput as its
+// credentials_handle (FU-2: the resolved logical handle NAME), and that NO
+// resolved credential material leaks into the manifest. An empty
+// wantInput/wantOutput asserts that side carries NO handle at all (the
+// local/byte-identical case), catching a regression where a local entry wrongly
+// picks up a handle. The name is logical identity; the resolved HandleConfig it
+// points at is never recorded.
+//
+// No-leak is checked two ways, both collision-free: (1) every input/output entry
+// carries only known provenance keys — a resolved profile/endpoint/region/key
+// would appear as an extra key; (2) the resolved endpoint URL (distinctive, and
+// the most likely accidental leak vector via wrapped error strings) appears
+// nowhere in the sidecar.
+func assertManifestHandleNames(t *testing.T, manifestBytes []byte, m motoEnv, wantInput, wantOutput string) {
+	t.Helper()
+	var man provenance.Manifest
+	if err := json.Unmarshal(manifestBytes, &man); err != nil {
+		t.Fatalf("decode manifest for handle-name assertion: %v", err)
+	}
+	for _, in := range man.Inputs {
+		if in.CredentialsHandle != wantInput {
+			t.Errorf("manifest input %q credentials_handle = %q, want %q", in.Path, in.CredentialsHandle, wantInput)
+		}
+	}
+	for _, o := range man.Outputs {
+		if o.CredentialsHandle != wantOutput {
+			t.Errorf("manifest output %q credentials_handle = %q, want %q", o.Path, o.CredentialsHandle, wantOutput)
+		}
+	}
+
+	// Structured key allow-list: a leaked HandleConfig field surfaces as an
+	// unexpected key on an input/output entry.
+	var entries struct {
+		Inputs  []map[string]json.RawMessage `json:"inputs"`
+		Outputs []map[string]json.RawMessage `json:"outputs"`
+	}
+	if err := json.Unmarshal(manifestBytes, &entries); err != nil {
+		t.Fatalf("decode manifest entries: %v", err)
+	}
+	for _, in := range entries.Inputs {
+		for k := range in {
+			if !allowedManifestInputFields[k] {
+				t.Errorf("manifest input carries unexpected field %q (possible credential-material leak)", k)
+			}
+		}
+	}
+	for _, o := range entries.Outputs {
+		for k := range o {
+			if !allowedManifestOutputFields[k] {
+				t.Errorf("manifest output carries unexpected field %q (possible credential-material leak)", k)
+			}
+		}
+	}
+
+	// The resolved endpoint URL is distinctive (no collision with public tokens)
+	// and the likeliest accidental leak vector; assert it appears nowhere.
+	if m.endpoint != "" && strings.Contains(string(manifestBytes), m.endpoint) {
+		t.Errorf("manifest leaked the resolved endpoint %q (only the logical handle NAME may appear):\n%s", m.endpoint, manifestBytes)
+	}
+}
+
 // s3ObjectReader is the read/list surface the write-boundary tests need to verify
 // published objects.
 type s3ObjectReader interface {
@@ -199,6 +276,9 @@ func TestMotoExtractOutputLocalToCloudNoLeak(t *testing.T) {
 	// Exact-equality assertion on outputs[].path (not a substring): the manifest
 	// must record the logical destination, never the staging path.
 	assertManifestOutputPath(t, manifestData, strings.TrimRight(outURI, "/")+"/out.json", stageRoot)
+	// FU-2: a local->cloud run records the resolved output handle (the implicit
+	// "default") on the cloud output entry; no input handle (local source).
+	assertManifestHandleNames(t, manifestData, m, "", "default")
 	if strings.Contains(string(outData), stageRoot) {
 		t.Errorf("published output object leaked the staging path %q", stageRoot)
 	}
@@ -301,6 +381,14 @@ func TestMotoExtractCloudToCloudIndependentHandles(t *testing.T) {
 	if _, ok := m.getObject(t, outPrefix+"out.json"); !ok {
 		t.Fatalf("cloud->cloud output %sout.json was not published", outPrefix)
 	}
+	// FU-2: a cloud->cloud run binds each side to the handle that authorized it —
+	// the input under the default reader, the output under the CLI-selected
+	// "writer" — and no resolved credential material leaks into the sidecar.
+	manifestData, ok := m.getObject(t, outPrefix+"manifest.json")
+	if !ok {
+		t.Fatalf("cloud->cloud sidecar %smanifest.json was not published", outPrefix)
+	}
+	assertManifestHandleNames(t, manifestData, m, "default", "writer")
 	assertStagingCleanedUp(t, home)
 }
 

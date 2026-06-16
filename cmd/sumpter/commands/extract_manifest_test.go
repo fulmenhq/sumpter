@@ -1049,6 +1049,41 @@ func TestRunExtractManifestRecordsEffectiveParallelFormat(t *testing.T) {
 	}
 }
 
+// TestExtractDryRunLocalPreview locks the local --dry-run contract after the B3
+// refactor (which moved cloud dry-run to a list-only path): a local dry run
+// previews the input by path, writes no output, and reads no records. Local
+// behavior must stay byte-identical to the pre-refactor stage-then-list code.
+func TestExtractDryRunLocalPreview(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	inputPath := filepath.Join(dir, "input.xml")
+	outDir := filepath.Join(dir, "out-dryrun-local")
+
+	opts := &ExtractOptions{
+		Files:           inputPath,
+		Format:          "json",
+		OutputPath:      outDir,
+		OutputPattern:   "extract-{}.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		DryRun:          true,
+		CommandName:     "sumpter extract files",
+		Argv:            []string{"extract", "files"},
+	}
+
+	var runErr error
+	out := captureStdout(t, func() { runErr = runExtract(opts) })
+	if runErr != nil {
+		t.Fatalf("local dry-run error = %v", runErr)
+	}
+	if !strings.Contains(out, inputPath) {
+		t.Errorf("local dry-run did not preview the input path %q:\n%s", inputPath, out)
+	}
+	// Dry run writes nothing.
+	if _, err := os.Stat(outDir); !os.IsNotExist(err) {
+		t.Errorf("local dry-run produced output directory %q (err=%v); dry-run must write nothing", outDir, err)
+	}
+}
+
 func createExtractManifestFixture(t *testing.T) string {
 	t.Helper()
 	initExtractManifestTestLogger(t)

@@ -613,6 +613,17 @@ handles:
   endpoint is refused unless the handle sets `insecure: true` — a loud, explicit
   opt-in, since a plaintext endpoint puts credentials and data on the wire.
 - **Anonymous/unsigned reads** are not supported yet; every request is signed.
+- **Handle names are shareable logical labels — choose neutral slugs.** The
+  _resolved_ input and output handle **names** are recorded in the run's
+  provenance sidecar (`inputs[].credentials_handle` / `outputs[].credentials_handle`)
+  for cloud I/O, as logical identity alongside the `s3://` URI — never the
+  profile, endpoint, region, or any key material behind them. Because that sidecar
+  can itself be published to a cloud destination, a handle **name** can travel
+  into a published artifact, exactly like the bucket/prefix in the `s3://` URI
+  already does. Name handles with neutral, non-sensitive slugs (`prod-readonly`,
+  `archive`, `reader`, `writer`) — never client, engagement, vendor, or
+  vertical-trade identifiers. Local/`file://` runs record no handle and stay
+  byte-identical.
 
 The credentials config is parsed fail-closed: an unknown or misspelled field
 (e.g. `insecur: true`) is an error, never a silent fall-through to an insecure

@@ -214,6 +214,21 @@ Notes:
   `field_provenance` so consumers can distinguish recipe-computed values
   from XML-sourced fields.
 
+- `inputs[].credentials_handle` / `outputs[].credentials_handle` (optional,
+  cloud-only) record the **resolved** logical credential handle _name_ that
+  authorized acquiring an input or publishing an output, for cloud (`s3://`)
+  entries only. It is the resolved name after precedence (CLI selector > recipe
+  default > the `default` handle), so a `cloud→cloud` run that selects handles via
+  CLI override still has provenance of which identity sourced vs. published the
+  data. The handle name is logical identity — the same exposure class as the
+  `s3://` URI already recorded in `path` — **not** the profile, endpoint, region,
+  key id, secret, staging path, or account metadata behind it; those are never
+  recorded. The field is `omitempty`, so local/`file://` runs stay byte-identical
+  and carry no handle. `argv_sanitized` continues to omit the credential flags;
+  this structured field is the intentional, canonical provenance surface for the
+  access-boundary identity. Added in cloudready delivery-2 as an additive,
+  optional field — no `schema_version` bump.
+
 The JSON Schema for this manifest ships as `schemas/provenance/v1.json`
 alongside the implementation (committed in PR-C).
 
