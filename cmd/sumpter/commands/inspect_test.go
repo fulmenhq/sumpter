@@ -148,6 +148,62 @@ func TestInspectCommandGenerateConfigOutputNestedRelativePath(t *testing.T) {
 	}
 }
 
+// TestInspectLocalRelativePathPreserved guards the cloud-read refactor (PR-3):
+// routing local sources through the shared single-object resolver must NOT
+// absolutize the user-supplied path. A relative local argument stays byte-for-byte
+// in the JSON report's input.path and in the generated config's source — local
+// reports/configs must not gain a machine-specific absolute path.
+func TestInspectLocalRelativePathPreserved(t *testing.T) {
+	xmlContent := `<Orders><OrderEvent><ID>1</ID><Total>14.50</Total></OrderEvent><OrderEvent><ID>2</ID><Total>15.75</Total></OrderEvent></Orders>`
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "orders.xml"), []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("write xml: %v", err)
+	}
+
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+
+	const relArg = "orders.xml"
+
+	// JSON report: input.path is exactly the relative argument, not an abs path.
+	reportCmd := NewInspectCommand()
+	var reportOut bytes.Buffer
+	reportCmd.SetOut(&reportOut)
+	reportCmd.SetArgs([]string{"--format", "json", relArg})
+	if err := reportCmd.Execute(); err != nil {
+		t.Fatalf("inspect --format json failed: %v", err)
+	}
+	var report InspectReportV0
+	if err := json.Unmarshal(reportOut.Bytes(), &report); err != nil {
+		t.Fatalf("decode inspect report: %v", err)
+	}
+	if report.Input.Path != relArg {
+		t.Errorf("inspect report input.path = %q, want the supplied relative path %q", report.Input.Path, relArg)
+	}
+
+	// --generate-config: the recorded source is the relative argument, not an abs path.
+	cfgCmd := NewInspectCommand()
+	var cfgOut bytes.Buffer
+	cfgCmd.SetOut(&cfgOut)
+	cfgCmd.SetArgs([]string{"--generate-config", "--min-occurrence", "1", relArg})
+	if err := cfgCmd.Execute(); err != nil {
+		t.Fatalf("inspect --generate-config failed: %v", err)
+	}
+	if abs := filepath.Join(tmpDir, relArg); strings.Contains(cfgOut.String(), abs) {
+		t.Errorf("generated config leaked the absolute source path %q:\n%s", abs, cfgOut.String())
+	}
+}
+
 func TestInspectXML_Basic(t *testing.T) {
 	xmlContent := `<root><element id="1">text</element><element id="2">more text</element></root>`
 	reader := strings.NewReader(xmlContent)

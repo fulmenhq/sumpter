@@ -22,23 +22,24 @@ import (
 	"go.uber.org/zap"
 )
 
-// resolvedIndexSource is an index build/verify source made available on the
-// local filesystem through the uriio read boundary. For a cloud source it is a
-// staged working copy; Identity carries the logical s3:// URI (never the staging
-// path) and cleanup removes the run's staging directory. For a local source
-// LocalPath and Identity coincide and cleanup is a no-op.
-type resolvedIndexSource struct {
+// resolvedSingleObjectSource is a single source (index build/verify, inspect)
+// made available on the local filesystem through the uriio read boundary. For a
+// cloud source it is a staged working copy; Identity carries the logical s3://
+// URI (never the staging path) and cleanup removes the run's staging directory.
+// For a local source LocalPath and Identity coincide and cleanup is a no-op.
+type resolvedSingleObjectSource struct {
 	LocalPath string // local path to read source bytes from
 	Identity  string // logical identity recorded in / compared against the index
 	BaseName  string // source basename for default output-path derivation
 	cleanup   func() error
 }
 
-// resolveIndexSource classifies an index source argument and makes it available
-// locally. Cloud sources are single objects only — an index maps one source
-// file, so prefixes and globs are rejected. The staged copy is byte-identical to
-// the indexed object, so byte offsets and integrity hashes remain valid.
-func resolveIndexSource(ctx context.Context, op, inputArg, credentialsPath string, credentialOverrides []string) (*resolvedIndexSource, error) {
+// resolveSingleObjectSource classifies a single source argument and makes it
+// available locally. Cloud sources are single objects only — these commands map
+// one source file, so prefixes and globs are rejected. The staged copy is
+// byte-identical to the source object, so byte offsets and integrity hashes
+// remain valid.
+func resolveSingleObjectSource(ctx context.Context, op, inputArg, credentialsPath string, credentialOverrides []string) (*resolvedSingleObjectSource, error) {
 	ref, err := uriio.Classify(inputArg)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
@@ -52,7 +53,7 @@ func resolveIndexSource(ctx context.Context, op, inputArg, credentialsPath strin
 		if _, err := os.Stat(absPath); err != nil {
 			return nil, fmt.Errorf("input file not found: %w", err)
 		}
-		return &resolvedIndexSource{
+		return &resolvedSingleObjectSource{
 			LocalPath: absPath,
 			Identity:  absPath,
 			BaseName:  filepath.Base(absPath),
@@ -77,7 +78,7 @@ func resolveIndexSource(ctx context.Context, op, inputArg, credentialsPath strin
 		_ = session.Close()
 		return nil, fmt.Errorf("%s: acquire %s: %w", op, inputArg, err)
 	}
-	return &resolvedIndexSource{
+	return &resolvedSingleObjectSource{
 		LocalPath: src.LocalPath,
 		Identity:  src.LogicalURI,
 		BaseName:  path.Base(ref.Key),
@@ -156,7 +157,7 @@ Example:
 			// source is staged to a local working copy that the builder reads
 			// byte-for-byte; the index records the logical URI (src.Identity), and
 			// the staging path never leaks into the index, output, or logs.
-			src, err := resolveIndexSource(cmd.Context(), "index build", args[0], credentialsPath, credentialOverrides)
+			src, err := resolveSingleObjectSource(cmd.Context(), "index build", args[0], credentialsPath, credentialOverrides)
 			if err != nil {
 				return err
 			}
@@ -340,7 +341,7 @@ Example:
 			// the staged bytes' size + SHA-256 against the index's recorded values,
 			// detecting drift between the remote object and the index just as it
 			// does for local sources.
-			src, err := resolveIndexSource(cmd.Context(), "index verify", args[0], credentialsPath, credentialOverrides)
+			src, err := resolveSingleObjectSource(cmd.Context(), "index verify", args[0], credentialsPath, credentialOverrides)
 			if err != nil {
 				return err
 			}
