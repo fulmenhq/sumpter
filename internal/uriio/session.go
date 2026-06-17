@@ -178,6 +178,11 @@ const maxSinglePutBytes = 5 * 1024 * 1024 * 1024
 // handle name only — never credentials. Used for the cloud-output run-start
 // confirmation so a misroute is visible before bytes leave.
 func (s *Session) DescribeOutputHandle(handle, bucket string) (string, error) {
+	// PA1: reject an anonymous (read-only) handle on the output side at run start,
+	// before any extraction or staging. The openOutputS3 gate is the backstop.
+	if err := s.pool.resolver.rejectAnonymousWrite(handle); err != nil {
+		return "", err
+	}
 	hc, err := s.pool.resolver.Resolve(handle)
 	if err != nil {
 		return "", err
@@ -219,6 +224,13 @@ func (s *Session) OpenOutput(ctx context.Context, reference, handle string) (*Ou
 func (s *Session) openOutputS3(ref Ref, handle string) (*OutputTarget, error) {
 	if ref.IsPattern() || ref.IsPrefix() {
 		return nil, fmt.Errorf("uriio: output needs a single object key, not a prefix/pattern (%s)", ref.LogicalURI)
+	}
+	// PA1 (authoritative backstop): never stage an output under an anonymous
+	// (read-only) handle. This gate covers every cloud write path — result,
+	// provenance sidecar, parquet — since they all resolve their destination here,
+	// and it fires before any staging directory or file is created.
+	if err := s.pool.resolver.rejectAnonymousWrite(handle); err != nil {
+		return nil, err
 	}
 	stageDir, err := s.ensureStageDir()
 	if err != nil {

@@ -620,7 +620,23 @@ handles:
 - **Transport.** A custom `endpoint` must be `https://`. A plaintext `http://`
   endpoint is refused unless the handle sets `insecure: true` — a loud, explicit
   opt-in, since a plaintext endpoint puts credentials and data on the wire.
-- **Anonymous/unsigned reads** are not supported yet; every request is signed.
+- **Anonymous/unsigned reads (public buckets).** A handle with `anonymous: true`
+  reads a public bucket with unsigned requests — no credentials. It is **read-only
+  by construction**: the provider rejects every write, and Sumpter additionally
+  refuses an anonymous handle on any output target (result, sidecar, parquet)
+  before any staging, so a misdirected write fails fast rather than at upload time.
+  `anonymous: true` is **mutually exclusive** with `profile`, `access_key_id`/
+  `secret_access_key`, and a `--credential` override — combining them is a config
+  error, not a silent precedence. TLS posture still applies: an anonymous request
+  is still on the wire, so a custom `endpoint` must be `https://` (or `insecure:
+  true`). Example:
+
+  ```yaml
+  handles:
+    public-data: # e.g. an open-data bucket
+      region: us-east-1
+      anonymous: true
+  ```
 - **Handle names are shareable logical labels — choose neutral slugs.** The
   _resolved_ input and output handle **names** are recorded in the run's
   provenance sidecar (`inputs[].credentials_handle` / `outputs[].credentials_handle`)

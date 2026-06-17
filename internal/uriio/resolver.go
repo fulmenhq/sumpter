@@ -56,6 +56,14 @@ func (r *Resolver) Resolve(name string) (HandleConfig, error) {
 	}
 
 	if overridden {
+		// PA2: a --credential profile override on an anonymous handle would mix a
+		// credential into an anonymous (read-only) posture. Reject rather than
+		// silently signing what the operator declared anonymous.
+		if hc.Anonymous {
+			return HandleConfig{}, fmt.Errorf(
+				"uriio: credentials handle %q is anonymous and cannot take a --credential profile override "+
+					"(anonymous is read-only public-bucket access; drop the override or the anonymous flag)", name)
+		}
 		// A CLI profile reference defines or supersedes the handle's profile and
 		// supersedes any literal keys, keeping secrets out of argv.
 		hc.Profile = profile
@@ -63,6 +71,24 @@ func (r *Resolver) Resolve(name string) (HandleConfig, error) {
 		hc.SecretAccessKey = ""
 	}
 	return hc, nil
+}
+
+// rejectAnonymousWrite returns an actionable error if handle resolves to an
+// anonymous (read-only) posture. PA1: Sumpter fails a cloud write closed at the
+// write-boundary resolve point — before any staging — rather than relying solely
+// on the provider's PutObject-time read-only rejection (which is the backstop).
+func (r *Resolver) rejectAnonymousWrite(handle string) error {
+	hc, err := r.Resolve(handle)
+	if err != nil {
+		return err
+	}
+	if hc.Anonymous {
+		return fmt.Errorf(
+			"uriio: credentials handle %q is anonymous (read-only) and cannot be used for writes; "+
+				"anonymous access is for public-bucket reads only — select a credentialed handle for the output",
+			handleLabel(handle))
+	}
+	return nil
 }
 
 // redactionSecrets returns the literal secret cleartext values configured for a
@@ -109,6 +135,18 @@ func (r *Resolver) s3Config(handle, bucket string) (gonimbuss3.Config, error) {
 	// via CLI override (which skip the config-load validation).
 	if err := validateEndpointPosture(handleLabel(handle), hc); err != nil {
 		return gonimbuss3.Config{}, err
+	}
+	// An anonymous handle carries no credential material (enforced by PA2 at config
+	// load / CLI resolve), so build an unsigned config: gonimbus makes it read-only
+	// by construction and rejects any creds combined with Anonymous.
+	if hc.Anonymous {
+		return gonimbuss3.Config{
+			Bucket:         bucket,
+			Region:         hc.Region,
+			Endpoint:       hc.Endpoint,
+			ForcePathStyle: hc.ForcePathStyle,
+			Anonymous:      true,
+		}, nil
 	}
 	return gonimbuss3.Config{
 		Bucket:          bucket,
