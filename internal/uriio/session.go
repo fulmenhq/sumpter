@@ -145,7 +145,11 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string) (*Acqui
 	}
 	body, _, err := prov.GetObject(ctx, ref.Key)
 	if err != nil {
-		return nil, fmt.Errorf("uriio: get %s: %w", ref.LogicalURI, err)
+		// Redact + classify the cloud read error: the raw SDK error can echo
+		// credential material, and a throttle/unavailable condition is labeled so
+		// the operator knows it is transient. %s (not %w) so the raw error cannot be
+		// re-exposed by downstream wrapping.
+		return nil, fmt.Errorf("uriio: get %s failed: %s", ref.LogicalURI, cloudOpError(err, s.pool.redactionSecrets(handle)))
 	}
 	defer func() { _ = body.Close() }()
 
@@ -267,12 +271,14 @@ func (s *Session) openOutputS3(ref Ref, handle string) (*OutputTarget, error) {
 			// stores the whole object or fails, so a publish error never leaves a
 			// truncated object a consumer could read as complete.
 			if err := prov.PutObject(ctx, key, f, info.Size()); err != nil {
-				// Surface only the logical destination + a redacted reason: the raw
-				// AWS SDK error can echo credential material (e.g. an access key id on
-				// an auth failure). Use %s, not %w, so the unredacted SDK error cannot
-				// be re-exposed by downstream error wrapping. Redaction additionally
-				// scrubs any literal-key cleartext for this handle.
-				return fmt.Errorf("uriio: publish %s failed: %s", logical, redactSecrets(err.Error(), s.pool.redactionSecrets(handle)))
+				// Surface only the logical destination + a redacted, classified reason
+				// via the shared cloud-op seam: the raw AWS SDK error can echo
+				// credential material (e.g. an access key id on an auth failure), and a
+				// throttle/unavailable publish failure is labeled transient. %s (not %w)
+				// so the unredacted SDK error cannot be re-exposed by downstream
+				// wrapping. The failure stays fatal (publish-fatal, S9) regardless of the
+				// classification.
+				return fmt.Errorf("uriio: publish %s failed: %s", logical, cloudOpError(err, s.pool.redactionSecrets(handle)))
 			}
 			// Best-effort: the run staging dir is removed wholesale by Session.Close,
 			// so a failure to remove the individual staged file here is not fatal.
@@ -308,6 +314,32 @@ func redactSecrets(s string, secrets []string) string {
 		s = strings.ReplaceAll(s, sec, "[redacted]")
 	}
 	return redactAWSKeyIDs(s)
+}
+
+// cloudOpError builds a safe, operator-facing message for a failed cloud provider
+// operation (GetObject / List / PutObject). It is the single redaction+classify
+// seam for every cloud read and write boundary, so no cloud-op error reaches a
+// log, stderr, or persisted artifact raw.
+//
+//   - Classify first: a transient condition (the object store throttled the
+//     request or was temporarily unavailable, via the gonimbus provider sentinels)
+//     is labeled. Sumpter runs no retry layer of its own — the AWS SDK retries
+//     throttle/5xx internally — so a transient error that surfaces here means
+//     those retries are already exhausted; the label tells the operator a later
+//     re-run may succeed (vs. a permanent config/auth error they must fix). The
+//     failure stays fatal either way; classification never changes disposition.
+//   - Redact second: scrub any literal secret and AWS key-id-shaped token, because
+//     an SDK error can echo credential material on an auth/throttle failure.
+//
+// The caller renders the result with %s (never %w), so the raw SDK error cannot be
+// re-exposed unredacted by downstream wrapping. Classification is read from the raw
+// err before this flattening.
+func cloudOpError(err error, secrets []string) string {
+	msg := redactSecrets(err.Error(), secrets)
+	if gonimbusprovider.IsThrottled(err) || gonimbusprovider.IsProviderUnavailable(err) {
+		msg += " [transient: the object store throttled the request or was temporarily unavailable; a later retry may succeed]"
+	}
+	return msg
 }
 
 // awsAccessKeyIDInText matches an AWS access key id embedded in a larger string:
@@ -384,7 +416,10 @@ func (s *Session) listS3(ctx context.Context, ref Ref, handle, include, exclude 
 	for {
 		res, listErr := prov.List(ctx, gonimbusprovider.ListOptions{Prefix: prefix, ContinuationToken: token})
 		if listErr != nil {
-			return nil, fmt.Errorf("uriio: list %s: %w", ref.LogicalURI, listErr)
+			// Same redact + classify seam as the read/write boundaries: the cloud
+			// list path is reachable on prefix/parallel (record-index) reads and must
+			// not surface a raw SDK error. %s (not %w) for the same reason.
+			return nil, fmt.Errorf("uriio: list %s failed: %s", ref.LogicalURI, cloudOpError(listErr, s.pool.redactionSecrets(handle)))
 		}
 		for _, obj := range res.Objects {
 			if strings.HasSuffix(obj.Key, "/") {
