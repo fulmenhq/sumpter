@@ -56,7 +56,7 @@ type ExtractOptions struct {
 	ApplicabilityConfig      *extract.ApplicabilityConfig
 	ClientID                 string
 	SiteID                   string
-	ManifestParameters       map[string]string
+	ManifestParameters       map[string]recipesmanifest.ParamValue
 	Parameters               []string
 	ParametersRequired       []string
 	SourceExtraction         []recipesmanifest.SourceExtractionPattern
@@ -167,7 +167,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.ExtractConfig, "extract-config-path", "", "Path to extract configuration YAML file")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Client ID to blend into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Site ID to blend into extracted records")
-	cmd.Flags().StringSliceVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable)")
+	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 
@@ -1985,8 +1985,8 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 
 type externalFieldPlan struct {
 	shimFields         map[string]string
-	manifestParameters map[string]string
-	cliParameters      map[string]string
+	manifestParameters map[string]recipesmanifest.ParamValue
+	cliParameters      map[string]recipesmanifest.ParamValue
 	parametersRequired []string
 }
 
@@ -2001,8 +2001,8 @@ func buildExternalFields(opts *ExtractOptions, mappings []extract.FieldMapping) 
 func buildExternalFieldPlan(opts *ExtractOptions, mappings []extract.FieldMapping) (*externalFieldPlan, error) {
 	plan := &externalFieldPlan{
 		shimFields:         make(map[string]string),
-		manifestParameters: make(map[string]string),
-		cliParameters:      make(map[string]string),
+		manifestParameters: make(map[string]recipesmanifest.ParamValue),
+		cliParameters:      make(map[string]recipesmanifest.ParamValue),
 	}
 	if opts == nil {
 		return plan, nil
@@ -2031,7 +2031,11 @@ func buildExternalFieldPlan(opts *ExtractOptions, mappings []extract.FieldMappin
 		if key == "" {
 			return nil, fmt.Errorf("invalid --parameter %q: key cannot be empty", raw)
 		}
-		plan.cliParameters[key] = value
+		pv, perr := parseCLIParameterValue(key, value)
+		if perr != nil {
+			return nil, perr
+		}
+		plan.cliParameters[key] = pv
 	}
 	plan.parametersRequired = append(plan.parametersRequired, opts.ParametersRequired...)
 
@@ -2052,7 +2056,7 @@ func buildExternalFieldPlan(opts *ExtractOptions, mappings []extract.FieldMappin
 			return nil, fmt.Errorf("required parameter key cannot be empty")
 		}
 		value, ok := externalFields[required]
-		if !ok || strings.TrimSpace(fmt.Sprint(value)) == "" {
+		if !ok || externalFieldUnprovided(value) {
 			return nil, fmt.Errorf("required parameter %q not provided (neither defaults.parameters nor --parameter %s=...)", required, required)
 		}
 	}
@@ -2072,12 +2076,53 @@ func (p *externalFieldPlan) build(sourceFields map[string]string) map[string]int
 		externalFields[key] = value
 	}
 	for key, value := range p.manifestParameters {
-		externalFields[key] = value
+		externalFields[key] = value.AsScope()
 	}
 	for key, value := range p.cliParameters {
-		externalFields[key] = value
+		externalFields[key] = value.AsScope()
 	}
 	return externalFields
+}
+
+// parseCLIParameterValue parses a --parameter key=<value> value into a typed
+// parameter. A value is taken as a JSON array of strings ONLY when it begins with
+// "[" (after trimming): then it is strictly unmarshalled into []string, so a
+// number/boolean/object/nested/mixed array fails loudly rather than being
+// stringified, and empty members are rejected. Any other value — including one
+// that merely contains commas — stays the literal string it has always been.
+func parseCLIParameterValue(key, value string) (recipesmanifest.ParamValue, error) {
+	if !strings.HasPrefix(strings.TrimSpace(value), "[") {
+		return recipesmanifest.ScalarParam(value), nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(value)), &list); err != nil {
+		return recipesmanifest.ParamValue{}, fmt.Errorf(
+			"invalid --parameter %s: value looks like a JSON array but is not a valid array of strings "+
+				"(only string members are allowed — no numbers, booleans, objects, or nested arrays): %w", key, err)
+	}
+	for i, member := range list {
+		if member == "" {
+			return recipesmanifest.ParamValue{}, fmt.Errorf(
+				"invalid --parameter %s: list member %d is an empty string; empty members are not allowed "+
+					"(an empty prefix would match everything)", key, i)
+		}
+	}
+	return recipesmanifest.ListParam(list), nil
+}
+
+// externalFieldUnprovided reports whether a resolved external-field value counts
+// as "not provided" for parameters_required. A list value — even an empty list —
+// counts as provided (an explicit empty set is a meaningful run input); a string
+// counts as provided only when it is non-blank.
+func externalFieldUnprovided(value interface{}) bool {
+	switch v := value.(type) {
+	case []string:
+		return false
+	case string:
+		return strings.TrimSpace(v) == ""
+	default:
+		return strings.TrimSpace(fmt.Sprint(v)) == ""
+	}
 }
 
 func validateSourceExtractionDeclarations(opts *ExtractOptions, mappings []extract.FieldMapping) error {

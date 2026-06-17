@@ -42,7 +42,7 @@ sumpter recipes run extract <workspace> [flags]
 - `--output-path` / `--output-pattern`: Override output destinations
 - `--format`: Override output format (`json`, `structured`, `ndjson`, etc.)
 - `--client-id`, `--site-id`: Blend identifiers into the output payload
-- `--parameter key=value`: Inject or override a recipe parameter; repeat the flag for multiple values
+- `--parameter key=value`: Inject or override a recipe parameter; repeat the flag for multiple values. The value is a literal string unless it is a valid JSON array of strings, which becomes a **list parameter** (read by the `starts_with_any` / `value_in` DSL helpers). Quote the array for your shell, e.g. `--parameter prefixes='["NM_","NR_"]'`. A value that merely contains commas stays a literal string; list members must be non-empty strings (numbers/booleans/objects/nested/mixed arrays are rejected). List values are emitted into `extract.data` as a JSON array like scalar parameters unless withheld.
 - `--signature`, `--extract`: Override the manifest asset paths for debugging
 
 When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, progress settings, source extraction patterns, and any `defaults.parameters` values. Generic parameters are injected into every record after file-level source captures, and `--parameter` overrides the same key from the manifest. Parameter and source capture keys must not collide with `field_mappings[].output_field`; Sumpter fails the run instead of silently replacing content-derived fields. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
@@ -182,7 +182,7 @@ defaults:
 - **`defaults.output`** controls output formatting and destination, allowing NDJSON/structured JSON switches later.
 - **`defaults.cadence`** records operator-readable run cadence intent such as `daily-rolling`, `weekly`, `weekly-2x`, `on-demand`, `hourly`, `monthly`, or `quarterly`.
 - **`defaults.client_id` / `site_id`** pre-populate metadata for downstream consumers.
-- **`defaults.parameters`** injects arbitrary string parameters into every record; **`defaults.parameters_required`** fails the run if a required key does not resolve from the manifest or CLI.
+- **`defaults.parameters`** injects parameters into every record — each value is a string or a list of strings; **`defaults.parameters_required`** fails the run if a required key does not resolve from the manifest or CLI (an empty list counts as provided; an empty scalar string does not).
 - **`defaults.source_extraction`** injects named regexp captures from the source `filename`, `relative_path`, or `absolute_path` once per file; **`defaults.source_extraction_required`** fails before parameter merging if a required capture is absent. `relative_path` requires a root from `--input-path` or `defaults.input.path`.
 - **`kind`** distinguishes extract vs. acquire recipes; additional kinds can be introduced without changing the runner syntax.
 

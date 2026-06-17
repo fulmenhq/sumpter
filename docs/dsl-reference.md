@@ -57,10 +57,39 @@ against a single scope containing extracted record fields, earlier expression
 fields, and recipe parameters injected for the run.
 
 Recipe parameters come from `defaults.parameters` plus CLI
-`--parameter key=value` overrides. Parameters are string values in the current
-runtime. CLI values override manifest defaults before evaluation, and the same
-resolved values are emitted as fields in each record unless withheld by the
-selected output format configuration.
+`--parameter key=value` overrides. A parameter value is either a **string** or a
+**list of strings**. CLI values override manifest defaults before evaluation, and
+the same resolved values are emitted as fields in each record (a list as a JSON
+array) unless withheld by the selected output format configuration.
+
+Parameters are referenced as **bare DSL variables** (`curated_prefixes`), not
+`$curated_prefixes`. There is no `$` parameter syntax.
+
+A **list-of-strings** value is read by the membership/prefix functions
+(`starts_with_any`, `value_in`) — see [String Functions](#string-functions). It
+lets an operator promote an operationally-volatile set (curated reference data) to
+run config instead of inlining it into the recipe:
+
+```yaml
+defaults:
+  parameters:
+    curated_prefixes: ["NM_", "NR_", "NC_"] # list-typed; operator-overridable
+```
+
+```bash
+# Override at run time with a JSON array — no recipe edit:
+sumpter extract files ... --parameter curated_prefixes='["NM_","NR_","NC_","XM_"]'
+```
+
+List rules:
+
+- A CLI `--parameter` value becomes a list **only** when it is a valid JSON array
+  of strings; otherwise it stays a literal string (so a value that merely contains
+  commas is unchanged).
+- List members must be non-empty strings. Numbers, booleans, objects, nested or
+  mixed arrays, and empty members are rejected at parse time — never coerced.
+- An empty list (`[]`) is a valid, explicit empty set: it matches nothing and
+  counts as "provided" for `parameters_required` (an empty scalar string does not).
 
 Expression mappings continue to evaluate in declaration order. An expression
 can reference:
@@ -175,6 +204,21 @@ String function names are case-insensitive, like numeric function names.
 | `mask_tail`       | `mask_tail(string, keep_n, mask_char)`           | Same as above, with a custom single-rune mask character.                                                                                                                          |
 | `mask_middle`     | `mask_middle(string, head_n, tail_n)`            | Replaces runes between the first `head_n` and last `tail_n` runes with `X`. Nil-valued argument returns nil. `head_n + tail_n >= rune_count(input)` returns the input unchanged.  |
 | `mask_middle`     | `mask_middle(string, head_n, tail_n, mask_char)` | Same as above, with a custom single-rune mask character.                                                                                                                          |
+| `string_length`   | `string_length(string)`                          | Unicode **rune** count (not byte count). A nil-valued argument is length `0`, so `string_length(x) >= N` is a clean `false` on a missing field rather than a comparison error.    |
+| `starts_with_any` | `starts_with_any(string, list)`                  | True when the string value begins with **any** member of the list (a list-typed parameter). Case sensitive. A nil/empty value is false; an empty list is false.                   |
+| `value_in`        | `value_in(string, list)`                         | True when the string value **exactly equals** any member of the list. Exact match only — a near miss is false. Case sensitive. A nil value is false; an empty list is false.       |
+
+`starts_with_any` and `value_in` take a **list-of-strings** as their second
+argument — an ordinary bare-identifier parameter variable (see
+[Recipe Parameters](#recipe-parameters)). They are case sensitive; compose with
+`lower(...)` to fold case. A non-list second argument is a loud type error naming
+the function and the received type — a scalar and a list are never coerced into
+one another. List members must be non-empty: an empty member is rejected both at
+parameter parse time and again in the evaluator (an empty prefix would otherwise
+match everything). `string_length` lets a length/shape guard move from an
+`xpath:` `string-length(...)` helper into an `expression:` mapping, e.g.
+`(string_length(accession) >= 5) && starts_with_any(accession, curated_prefixes)`
+(use `&&`/`||` for boolean composition — the DSL has no `and`/`or` keywords).
 
 `normalize_space` uses Go `strings.Fields` / `unicode.IsSpace` semantics, so
 it treats the full Unicode whitespace class as whitespace. This is broader than
