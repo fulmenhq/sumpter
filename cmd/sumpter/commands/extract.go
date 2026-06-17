@@ -91,6 +91,17 @@ type ExtractOptions struct {
 	// of the input handle so a run can read from one account and write to another.
 	OutputCredentialsHandle string
 
+	// Reference tables (in_reference / lookup_reference). Declarations come from the
+	// recipe (defaults.reference_tables); ReferenceTableRoot is the recipe workspace
+	// directory used as the C1 containment root for local sources; overrides replace a
+	// declared table's source only (format/columns/caps stay recipe-declared).
+	ReferenceTableDecls     []recipesmanifest.ReferenceTableDecl
+	ReferenceTableRoot      string
+	ReferenceTableOverrides []string
+	// referenceTableProv carries the loaded-table provenance entries from the registry
+	// build to the sidecar manifest (sidecar-only, no row values).
+	referenceTableProv []provenance.ReferenceTable
+
 	// outputSession publishes cloud (s3://) output for the run; nil for local
 	// output. outputHandle is the resolved handle it publishes under. Both are set
 	// once at run start and consumed by every output writer.
@@ -403,6 +414,23 @@ func runExtract(opts *ExtractOptions) error {
 	if err := validateSourceExtractionDeclarations(opts, extCfg.FieldMappings); err != nil {
 		return err
 	}
+	// Reference-table pre-flight (C3): every in_reference / lookup_reference table name
+	// must be a string literal declared in defaults.reference_tables. Runs before the
+	// registry build (and before the dry-run return) so unknown/dynamic names fail
+	// pre-flight, not per-record. Then build the run-scoped, immutable registry once
+	// and thread it into the extract config for both the sequential and parallel paths.
+	// On a dry run the registry is not loaded (the build still validates containment).
+	if err := validateReferenceTableDeclarations(opts, extCfg.FieldMappings); err != nil {
+		return err
+	}
+	referenceRegistry, referenceProv, err := buildReferenceRegistry(opts, !opts.DryRun)
+	if err != nil {
+		return err
+	}
+	if referenceRegistry != nil {
+		extCfg.ReferenceTables = referenceRegistry
+	}
+	opts.referenceTableProv = referenceProv
 	warnLimiter := newSourceExtractionWarnLimiter(1000)
 
 	if opts.ApplicabilityConfig != nil && opts.RecordIndex != "" {
@@ -1921,6 +1949,7 @@ func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.
 		Inputs:             inputs,
 		Outputs:            outputs,
 		CountsByRecordType: counts,
+		ReferenceTables:    opts.referenceTableProv,
 	}
 }
 
@@ -1973,6 +2002,9 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	appendFlag("--run-id", opts.RunID)
 	for _, parameter := range opts.Parameters {
 		appendFlag("--parameter", parameter)
+	}
+	for _, override := range opts.ReferenceTableOverrides {
+		appendFlag("--reference-table", override)
 	}
 	if opts.ContinueOnError {
 		args = append(args, "--continue-on-error")

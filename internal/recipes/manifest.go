@@ -122,8 +122,27 @@ type Defaults struct {
 	ParametersRequired       []string                  `yaml:"parameters_required,omitempty"`
 	SourceExtraction         []SourceExtractionPattern `yaml:"source_extraction,omitempty"`
 	SourceExtractionRequired []string                  `yaml:"source_extraction_required,omitempty"`
+	ReferenceTables          []ReferenceTableDecl      `yaml:"reference_tables,omitempty"`
 	Workers                  int                       `yaml:"workers"`
 	Progress                 bool                      `yaml:"progress"`
+}
+
+// ReferenceTableDecl declares an external reference table loaded once per run to back
+// the in_reference (membership / Pattern A) and lookup_reference (key→value / Pattern
+// B) DSL functions. Source is a workspace-relative path resolved under a contained
+// root (no absolute paths, "..", or symlinks). Format, columns, and caps are fixed by
+// the recipe so a --reference-table source override (refreshing the data) cannot drift
+// the schema. Exactly one of Column or KeyColumn+ValueColumn is set.
+type ReferenceTableDecl struct {
+	Name        string `yaml:"name" json:"name"`
+	Source      string `yaml:"source" json:"source"`
+	Format      string `yaml:"format" json:"format"`
+	Header      bool   `yaml:"header,omitempty" json:"header,omitempty"`
+	Column      string `yaml:"column,omitempty" json:"column,omitempty"`
+	KeyColumn   string `yaml:"key_column,omitempty" json:"key_column,omitempty"`
+	ValueColumn string `yaml:"value_column,omitempty" json:"value_column,omitempty"`
+	MaxRows     int    `yaml:"max_rows" json:"max_rows"`
+	MaxBytes    int64  `yaml:"max_bytes,omitempty" json:"max_bytes,omitempty"`
 }
 
 // SourceExtractionPattern extracts fields from a source file location.

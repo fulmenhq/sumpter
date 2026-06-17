@@ -331,6 +331,7 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
 	cmd.Flags().StringVar(&opts.ExtractOverride, "extract", "", "Override manifest extract config path")
+	cmd.Flags().StringArrayVar(&opts.ReferenceTableOverrides, "reference-table", nil, "Override a declared reference table's source: name=workspace/relative/path (repeatable). Format, columns, and caps stay recipe-declared; the path is contained (no absolute, \"..\", or symlinks)")
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input; overrides the recipe's defaults.input.credentials_handle")
@@ -340,28 +341,29 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 }
 
 type recipeRunExtractOptions struct {
-	ManifestPath      string
-	Files             string
-	InputPath         string
-	IncludePattern    string
-	ExcludePattern    string
-	MaxDepth          int
-	FollowSymlinks    bool
-	DryRun            bool
-	ContinueOnError   bool
-	Progress          bool
-	Workers           int
-	Format            string
-	Formats           []string
-	OutputPath        string
-	OutputPattern     string
-	ClientID          string
-	SiteID            string
-	Parameters        []string
-	RunID             string
-	NoManifest        bool
-	SignatureOverride string
-	ExtractOverride   string
+	ManifestPath            string
+	Files                   string
+	InputPath               string
+	IncludePattern          string
+	ExcludePattern          string
+	MaxDepth                int
+	FollowSymlinks          bool
+	DryRun                  bool
+	ContinueOnError         bool
+	Progress                bool
+	Workers                 int
+	Format                  string
+	Formats                 []string
+	OutputPath              string
+	OutputPattern           string
+	ClientID                string
+	SiteID                  string
+	Parameters              []string
+	ReferenceTableOverrides []string
+	RunID                   string
+	NoManifest              bool
+	SignatureOverride       string
+	ExtractOverride         string
 	// Cloud credential options (handle references — no secrets in recipe YAML or
 	// on the CLI). They mirror the extract command and let a recipe run read
 	// from / write to s3:// destinations.
@@ -610,6 +612,11 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	extractOpts.ManifestParameters = defaults.Parameters
 	extractOpts.ParametersRequired = defaults.ParametersRequired
 	extractOpts.Parameters = opts.Parameters
+	// Reference tables: declarations come from the recipe; absWorkspace is the C1
+	// containment root for their local sources; CLI overrides replace a source only.
+	extractOpts.ReferenceTableDecls = defaults.ReferenceTables
+	extractOpts.ReferenceTableRoot = absWorkspace
+	extractOpts.ReferenceTableOverrides = opts.ReferenceTableOverrides
 	extractOpts.SourceExtraction = defaults.SourceExtraction
 	extractOpts.SourceExtractionRequired = defaults.SourceExtractionRequired
 	extractOpts.SourceExtractionInput = sourceExtractionInput
@@ -680,6 +687,9 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 	appendFlag("--run-id", opts.RunID)
 	for _, parameter := range opts.Parameters {
 		appendFlag("--parameter", parameter)
+	}
+	for _, override := range opts.ReferenceTableOverrides {
+		appendFlag("--reference-table", override)
 	}
 	if opts.ContinueOnError {
 		args = append(args, "--continue-on-error")
