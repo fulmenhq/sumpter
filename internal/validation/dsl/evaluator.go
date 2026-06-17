@@ -12,13 +12,38 @@ import (
 	"unicode/utf8"
 )
 
+// ReferenceLookup is the small read-only surface the DSL needs to answer the
+// in_reference / lookup_reference functions against the run-scoped reference-table
+// registry. It is satisfied structurally by *reftable.Registry, so the dsl package
+// imports no I/O or reftable types — the immutable registry pointer is threaded in
+// by the extraction runtime.
+type ReferenceLookup interface {
+	// Contains reports membership (Pattern A). A miss is (false, nil).
+	Contains(table, key string) (bool, error)
+	// Lookup returns the value-column entry and whether the key was present
+	// (Pattern B). A miss is ("", false, nil).
+	Lookup(table, key string) (string, bool, error)
+}
+
 // Evaluator evaluates expressions and filters against data.
 type Evaluator struct {
-	variables map[string]interface{} // Named variables for evaluation context
+	variables  map[string]interface{} // Named variables for evaluation context
+	references ReferenceLookup        // run-scoped reference tables (nil if unavailable)
+}
+
+// EvaluatorOption configures an Evaluator at construction.
+type EvaluatorOption func(*Evaluator)
+
+// WithReferenceLookup gives the evaluator access to the run-scoped reference-table
+// registry so in_reference / lookup_reference can resolve. Field-mapping expression
+// evaluation sets this; contexts without reference tables leave it nil and those
+// functions error loudly if called.
+func WithReferenceLookup(lookup ReferenceLookup) EvaluatorOption {
+	return func(e *Evaluator) { e.references = lookup }
 }
 
 // NewEvaluator creates a new evaluator with the given variable context.
-func NewEvaluator(variables map[string]interface{}) *Evaluator {
+func NewEvaluator(variables map[string]interface{}, opts ...EvaluatorOption) *Evaluator {
 	ctx := make(map[string]interface{})
 	for key, value := range variables {
 		ctx[key] = value
@@ -28,9 +53,13 @@ func NewEvaluator(variables map[string]interface{}) *Evaluator {
 	ctx["true"] = true
 	ctx["false"] = false
 
-	return &Evaluator{
+	e := &Evaluator{
 		variables: ctx,
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // EvaluateFilter evaluates a filter expression against a record.
@@ -463,9 +492,106 @@ func (e *Evaluator) evaluateFunctionCall(funcCall *FunctionCall) (interface{}, e
 		}
 		return false, nil
 
+	case "in_reference":
+		// Pattern A membership against a run-scoped reference table. arg0 is a string
+		// literal table name (enforced at config-validation pre-flight, defended here
+		// too); arg1 is the record field value. nil/empty field is a miss (false),
+		// never an error.
+		if len(funcCall.Args) != 2 {
+			return nil, fmt.Errorf("in_reference() requires exactly 2 arguments (table, field), got %d", len(funcCall.Args))
+		}
+		table, err := e.referenceTableNameArg(funcCall, 0)
+		if err != nil {
+			return nil, err
+		}
+		fieldVal, err := e.referenceFieldArg(funcCall, 1)
+		if err != nil {
+			return nil, err
+		}
+		if e.references == nil {
+			return nil, fmt.Errorf("in_reference(%q): reference tables are not available in this evaluation context", table)
+		}
+		if fieldVal == nil || *fieldVal == "" {
+			return false, nil
+		}
+		return e.references.Contains(table, *fieldVal)
+
+	case "lookup_reference":
+		// Pattern B key→value lookup against a run-scoped reference table. arg0 is a
+		// string literal table name; arg1 is the key field; arg2 is the default
+		// returned on a miss (string or null). nil/empty key returns the default.
+		if len(funcCall.Args) != 3 {
+			return nil, fmt.Errorf("lookup_reference() requires exactly 3 arguments (table, field, default), got %d", len(funcCall.Args))
+		}
+		table, err := e.referenceTableNameArg(funcCall, 0)
+		if err != nil {
+			return nil, err
+		}
+		fieldVal, err := e.referenceFieldArg(funcCall, 1)
+		if err != nil {
+			return nil, err
+		}
+		def, err := e.EvaluateExpression(funcCall.Args[2])
+		if err != nil {
+			return nil, err
+		}
+		if def != nil {
+			if _, ok := def.(string); !ok {
+				return nil, fmt.Errorf("lookup_reference() default must be a string or null, got %T", def)
+			}
+		}
+		if e.references == nil {
+			return nil, fmt.Errorf("lookup_reference(%q): reference tables are not available in this evaluation context", table)
+		}
+		if fieldVal == nil || *fieldVal == "" {
+			return def, nil
+		}
+		value, found, lerr := e.references.Lookup(table, *fieldVal)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if !found {
+			return def, nil
+		}
+		return value, nil
+
 	default:
 		return nil, fmt.Errorf("unknown function: %s", funcCall.Name)
 	}
+}
+
+// referenceTableNameArg returns the literal string table name at the given argument
+// index, erroring if the argument is not a string constant. This is the runtime
+// defence behind the config-validation pre-flight: record data must never select a
+// run resource, so a variable/expression table name is rejected.
+func (e *Evaluator) referenceTableNameArg(funcCall *FunctionCall, index int) (string, error) {
+	arg := funcCall.Args[index]
+	if arg.Type != ExprConstant {
+		return "", fmt.Errorf("%s() table name (argument %d) must be a string literal, not a variable or expression", strings.ToLower(funcCall.Name), index+1)
+	}
+	name, ok := arg.Value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s() table name (argument %d) must be a string literal, got %T", strings.ToLower(funcCall.Name), index+1, arg.Value)
+	}
+	return name, nil
+}
+
+// referenceFieldArg evaluates the field/key argument, requiring it to be a string or
+// nil (a nil/empty value is a miss, handled by the caller). A non-string is a loud
+// type error, matching the SUM-040 string-helper discipline.
+func (e *Evaluator) referenceFieldArg(funcCall *FunctionCall, index int) (*string, error) {
+	arg, err := e.EvaluateExpression(funcCall.Args[index])
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate %s() argument %d: %w", strings.ToLower(funcCall.Name), index+1, err)
+	}
+	if arg == nil {
+		return nil, nil
+	}
+	s, ok := arg.(string)
+	if !ok {
+		return nil, fmt.Errorf("%s() argument %d must be a string, got %T", strings.ToLower(funcCall.Name), index+1, arg)
+	}
+	return &s, nil
 }
 
 func (e *Evaluator) evaluateStringFunctionArg(funcCall *FunctionCall, wantArgs int) (*string, error) {

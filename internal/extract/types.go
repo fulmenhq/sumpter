@@ -79,8 +79,14 @@ type ExtractRecordMatch struct {
 	Summaries          []SummaryConfig         `yaml:"summaries,omitempty" json:"summaries,omitempty"`
 	UniformSchema      bool                    `yaml:"-" json:"-"`
 	OutputValidator    *schema.Validator       `yaml:"-" json:"-"`
-	prepareOnce        sync.Once               `yaml:"-" json:"-"`
-	prepareErr         error                   `yaml:"-" json:"-"`
+	// ReferenceTables is the run-scoped, immutable reference-table registry,
+	// set once during command orchestration before extraction and shared read-only
+	// across the sequential and parallel paths. nil when a run declares no reference
+	// tables. Field-mapping expression evaluation threads it into the DSL evaluator so
+	// in_reference / lookup_reference resolve. Not serialized.
+	ReferenceTables dsl.ReferenceLookup `yaml:"-" json:"-"`
+	prepareOnce     sync.Once           `yaml:"-" json:"-"`
+	prepareErr      error               `yaml:"-" json:"-"`
 }
 
 // MatchSelector represents a selector for matching records
