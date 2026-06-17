@@ -186,12 +186,24 @@ properties:
         type: object
         description: |
           Free-form key/value pairs injected as fields into every
-          extracted record's extract.data block and into scalar
-          field_mappings[].expression evaluation scope. Keys must not
-          collide with XPath-extracted or expression-derived output field
-          names; values are literal string scalars.
+          extracted record's extract.data block and into
+          field_mappings[].expression evaluation scope (as bare DSL
+          variables, not $variables). Keys must not collide with
+          XPath-extracted or expression-derived output field names. A value
+          is either a literal string scalar or a list of strings; a list is
+          read by the membership/prefix DSL helpers (starts_with_any,
+          value_in). List members must be non-empty strings — numbers,
+          booleans, objects, nested or mixed arrays, and empty members are
+          rejected. A run-time --parameter key='["a","b"]' overrides a
+          default; a CLI value is a list only when it is a valid JSON array
+          of strings, otherwise it stays a literal string.
         additionalProperties:
-          type: string
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+                minLength: 1
       parameters_required:
         type: array
         description: |

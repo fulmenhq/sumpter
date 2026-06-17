@@ -808,6 +808,105 @@ func TestStringFunctionCalls(t *testing.T) {
 			exprStr:     `mask_tail("abcdefgh")`,
 			wantErrText: []string{"mask_tail() requires 2 or 3 arguments, got 1"},
 		},
+
+		// SUM-040: string_length
+		{
+			name:       "string_length ascii",
+			exprStr:    `string_length("NM_12345")`,
+			wantResult: 8,
+		},
+		{
+			name:       "string_length counts runes not bytes",
+			exprStr:    `string_length("café")`,
+			wantResult: 4,
+		},
+		{
+			name:       "string_length nil is zero",
+			exprStr:    `string_length(missing)`,
+			variables:  map[string]interface{}{"missing": nil},
+			wantResult: 0,
+		},
+		{
+			name:       "string_length composes with numeric guard",
+			exprStr:    `string_length("NM_1") >= 5`,
+			wantResult: false,
+		},
+		{
+			name:        "string_length wrong type",
+			exprStr:     `string_length(prefixes)`,
+			variables:   map[string]interface{}{"prefixes": []string{"NM_"}},
+			wantErrText: []string{"string_length() argument must be a string", "[]string"},
+		},
+
+		// SUM-040: starts_with_any
+		{
+			name:       "starts_with_any positive",
+			exprStr:    `starts_with_any(accession, curated_prefixes)`,
+			variables:  map[string]interface{}{"accession": "NM_000546", "curated_prefixes": []string{"NM_", "NR_"}},
+			wantResult: true,
+		},
+		{
+			name:       "starts_with_any negative",
+			exprStr:    `starts_with_any(accession, curated_prefixes)`,
+			variables:  map[string]interface{}{"accession": "XR_000546", "curated_prefixes": []string{"NM_", "NR_"}},
+			wantResult: false,
+		},
+		{
+			name:       "starts_with_any empty list matches nothing",
+			exprStr:    `starts_with_any(accession, curated_prefixes)`,
+			variables:  map[string]interface{}{"accession": "NM_000546", "curated_prefixes": []string{}},
+			wantResult: false,
+		},
+		{
+			name:       "starts_with_any nil value is false",
+			exprStr:    `starts_with_any(accession, curated_prefixes)`,
+			variables:  map[string]interface{}{"accession": nil, "curated_prefixes": []string{"NM_"}},
+			wantResult: false,
+		},
+		{
+			name:        "starts_with_any non-list second arg is a loud type error",
+			exprStr:     `starts_with_any(accession, "NM_")`,
+			variables:   map[string]interface{}{"accession": "NM_1"},
+			wantErrText: []string{"starts_with_any() argument 2 must be a list of strings", "string"},
+		},
+		{
+			name:        "starts_with_any empty member rejected at evaluator",
+			exprStr:     `starts_with_any(accession, curated_prefixes)`,
+			variables:   map[string]interface{}{"accession": "NM_1", "curated_prefixes": []string{"NM_", ""}},
+			wantErrText: []string{"starts_with_any() list member 1 is an empty string"},
+		},
+		{
+			name:        "starts_with_any wrong arity",
+			exprStr:     `starts_with_any(accession)`,
+			variables:   map[string]interface{}{"accession": "NM_1"},
+			wantErrText: []string{"starts_with_any() requires exactly 2 arguments, got 1"},
+		},
+
+		// SUM-040: value_in
+		{
+			name:       "value_in exact match",
+			exprStr:    `value_in(status, accepted)`,
+			variables:  map[string]interface{}{"status": "reviewed", "accepted": []string{"reviewed", "validated"}},
+			wantResult: true,
+		},
+		{
+			name:       "value_in near miss does not match",
+			exprStr:    `value_in(status, accepted)`,
+			variables:  map[string]interface{}{"status": "review", "accepted": []string{"reviewed", "validated"}},
+			wantResult: false,
+		},
+		{
+			name:       "value_in empty list is false",
+			exprStr:    `value_in(status, accepted)`,
+			variables:  map[string]interface{}{"status": "reviewed", "accepted": []string{}},
+			wantResult: false,
+		},
+		{
+			name:        "value_in empty member rejected at evaluator",
+			exprStr:     `value_in(status, accepted)`,
+			variables:   map[string]interface{}{"status": "reviewed", "accepted": []string{""}},
+			wantErrText: []string{"value_in() list member 0 is an empty string"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -128,6 +128,34 @@ sumpter recipes run extract ./recipes/customer/retail-daily-sales \
 
 The lower-level `sumpter extract files` command accepts the same repeatable `--parameter key=value` flag. Missing `parameters_required` entries fail before extraction. After all parameter sources are merged, Sumpter rejects any parameter key that collides with a `field_mappings[].output_field`; injected values must not silently replace values extracted or derived from content.
 
+#### List-typed parameters and set classification
+
+A parameter value can be a **list of strings** as well as a scalar. A list is read by the DSL membership/prefix helpers — `starts_with_any(field, list)` (leading-prefix) and `value_in(field, list)` (exact membership) — so a recipe can classify a record against a set that an operator supplies as run config instead of inlining the set as an XPath disjunction. The recommended pattern: `xpath:` extracts the source value, an `expression:` mapping derives the classification.
+
+```yaml
+defaults:
+  parameters:
+    curated_prefixes: ["NM_", "NR_", "NC_"] # list-typed; operator-overridable
+
+# extract.yaml — one helper, no inlined member list:
+field_mappings:
+  - output_field: accession
+    xpath: Accession
+    type: string
+  - output_field: is_curated_molecule
+    expression: '(string_length(accession) >= 5) && starts_with_any(accession, curated_prefixes)'
+    type: boolean
+```
+
+Override the set at run time with a JSON array — no recipe edit, no revalidation:
+
+```bash
+sumpter recipes run extract ./recipes/genomics/refseq-classify \
+  --parameter curated_prefixes='["NM_","NR_","NC_","XM_"]'
+```
+
+A CLI `--parameter` value becomes a list **only** when it is a valid JSON array of strings (quote it for your shell); otherwise it stays a literal string, including a value that merely contains commas. List members must be non-empty strings — numbers, booleans, objects, nested/mixed arrays, and empty members are rejected, not coerced. An empty list (`[]`) matches nothing and counts as provided for `parameters_required`. List parameters are emitted into `extract.data` (as a JSON array) like scalar parameters unless withheld by output configuration. See the [DSL Reference](dsl-reference.md#recipe-parameters) for the full semantics and function reference.
+
 ### Source Extraction
 
 Recipes can derive file-level fields from the source `filename`, `relative_path`, or `absolute_path` using Go regular expressions with named captures. These fields are evaluated once per source file, before record extraction. If multiple source patterns produce the same capture name, later patterns overwrite earlier source values:

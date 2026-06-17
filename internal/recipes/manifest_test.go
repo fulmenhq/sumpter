@@ -235,11 +235,11 @@ defaults:
 	if err != nil {
 		t.Fatalf("LoadManifest failed: %v", err)
 	}
-	if manifest.Defaults.Parameters["region_id"] != "west" {
-		t.Fatalf("region_id parameter = %q, want west", manifest.Defaults.Parameters["region_id"])
+	if got := manifest.Defaults.Parameters["region_id"]; got.IsList() || got.Scalar() != "west" {
+		t.Fatalf("region_id parameter = %+v, want scalar west", got)
 	}
-	if manifest.Defaults.Parameters["tenant_id"] != "1234" {
-		t.Fatalf("tenant_id parameter = %q, want 1234", manifest.Defaults.Parameters["tenant_id"])
+	if got := manifest.Defaults.Parameters["tenant_id"]; got.IsList() || got.Scalar() != "1234" {
+		t.Fatalf("tenant_id parameter = %+v, want scalar 1234", got)
 	}
 	if len(manifest.Defaults.ParametersRequired) != 1 || manifest.Defaults.ParametersRequired[0] != "tenant_id" {
 		t.Fatalf("parameters_required = %#v, want [tenant_id]", manifest.Defaults.ParametersRequired)

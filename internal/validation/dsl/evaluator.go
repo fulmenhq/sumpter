@@ -400,6 +400,69 @@ func (e *Evaluator) evaluateFunctionCall(funcCall *FunctionCall) (interface{}, e
 		}
 		return maskMiddleString(*arg, headN, tailN, maskChar), nil
 
+	case "string_length":
+		// Unicode rune count (matching XPath string-length semantics), so a
+		// length/shape guard can move from xpath: into an expression: helper. A nil
+		// value has length 0 (so `string_length(x) >= N` is a clean false on a
+		// missing field rather than a comparison type error).
+		arg, err := e.evaluateStringFunctionArg(funcCall, 1)
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return 0, nil
+		}
+		return len([]rune(*arg)), nil
+
+	case "starts_with_any":
+		// True when the string value begins with ANY member of the list. The list is
+		// an ordinary bare-identifier variable (a list-typed parameter). Case
+		// sensitive — compose with lower() to fold case.
+		if len(funcCall.Args) != 2 {
+			return nil, fmt.Errorf("starts_with_any() requires exactly 2 arguments, got %d", len(funcCall.Args))
+		}
+		value, err := e.evaluateStringFunctionArg(funcCall, 0)
+		if err != nil {
+			return nil, err
+		}
+		list, err := e.evaluateStringListArg(funcCall, 1)
+		if err != nil {
+			return nil, err
+		}
+		if value == nil {
+			return false, nil
+		}
+		for _, member := range list {
+			if strings.HasPrefix(*value, member) {
+				return true, nil
+			}
+		}
+		return false, nil
+
+	case "value_in":
+		// True when the string value exactly equals ANY member of the list. Exact
+		// match only — a near miss does not match. Case sensitive.
+		if len(funcCall.Args) != 2 {
+			return nil, fmt.Errorf("value_in() requires exactly 2 arguments, got %d", len(funcCall.Args))
+		}
+		value, err := e.evaluateStringFunctionArg(funcCall, 0)
+		if err != nil {
+			return nil, err
+		}
+		list, err := e.evaluateStringListArg(funcCall, 1)
+		if err != nil {
+			return nil, err
+		}
+		if value == nil {
+			return false, nil
+		}
+		for _, member := range list {
+			if *value == member {
+				return true, nil
+			}
+		}
+		return false, nil
+
 	default:
 		return nil, fmt.Errorf("unknown function: %s", funcCall.Name)
 	}
@@ -423,6 +486,32 @@ func (e *Evaluator) evaluateStringFunctionArg(funcCall *FunctionCall, wantArgs i
 		return nil, fmt.Errorf("%s() argument must be a string, got %T", funcName, arg)
 	}
 	return &s, nil
+}
+
+// evaluateStringListArg evaluates the function argument at index and requires it
+// to be a []string (a list-typed parameter). A scalar — or any non-list — passed
+// where a list is expected is a loud type error naming the function and the
+// received type; it is never coerced (the recipe-author trust boundary: code and
+// data must not silently cross). Empty members are rejected here in the evaluator,
+// not only at parse/merge, as defense in depth: a direct evaluator-API call
+// bypasses CLI/manifest parsing, and an empty prefix in starts_with_any would
+// otherwise match everything (a silent classification bypass).
+func (e *Evaluator) evaluateStringListArg(funcCall *FunctionCall, index int) ([]string, error) {
+	funcName := strings.ToLower(funcCall.Name)
+	arg, err := e.EvaluateExpression(funcCall.Args[index])
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate %s() argument %d: %w", funcName, index+1, err)
+	}
+	list, ok := arg.([]string)
+	if !ok {
+		return nil, fmt.Errorf("%s() argument %d must be a list of strings, got %T", funcName, index+1, arg)
+	}
+	for i, member := range list {
+		if member == "" {
+			return nil, fmt.Errorf("%s() list member %d is an empty string; empty members are not allowed (an empty prefix would match everything)", funcName, i)
+		}
+	}
+	return list, nil
 }
 
 func evaluateNonNegativeIntArg(e *Evaluator, argExpr *Expression, funcName, argName string) (int, error) {
