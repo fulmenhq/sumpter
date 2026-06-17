@@ -2,12 +2,16 @@ package uriio
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	gonimbusprovider "github.com/3leaps/gonimbus/pkg/provider"
 )
 
 // TestSessionStageDirSecure is S5: the run staging dir is created with an
@@ -73,6 +77,39 @@ func TestSessionRejectsAnonymousWrite(t *testing.T) {
 	// The rejected write must not have created a staging directory.
 	if _, err := os.Stat(filepath.Join(workDir, stagingDirName)); !os.IsNotExist(err) {
 		t.Errorf("anonymous write created a staging directory (err=%v); PA1 must fail before staging", err)
+	}
+}
+
+// TestCloudOpError covers the shared cloud read/write error seam (PR-8): every
+// cloud-op error is redacted (literal secret + AKID pattern) before surfacing, and
+// a throttle / temporarily-unavailable condition is labeled transient while other
+// errors are not.
+func TestCloudOpError(t *testing.T) {
+	// Redaction: a literal secret and an AKID-shaped token are both scrubbed, and a
+	// non-transient error is not mislabeled.
+	raw := errors.New("PutObject denied for AKIAIOSFODNN7EXAMPLE using secret literal-secret-value")
+	got := cloudOpError(raw, []string{"literal-secret-value"})
+	if strings.Contains(got, "literal-secret-value") {
+		t.Errorf("cloudOpError leaked the literal secret: %q", got)
+	}
+	if strings.Contains(got, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("cloudOpError leaked the AKID: %q", got)
+	}
+	if strings.Contains(got, "transient") {
+		t.Errorf("non-transient error wrongly labeled transient: %q", got)
+	}
+
+	// Classification: throttle and temporarily-unavailable are labeled transient.
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"throttled", fmt.Errorf("s3 PutObject: %w", gonimbusprovider.ErrThrottled)},
+		{"unavailable", fmt.Errorf("s3 GetObject: %w", gonimbusprovider.ErrProviderUnavailable)},
+	} {
+		if msg := cloudOpError(tc.err, nil); !strings.Contains(msg, "transient") {
+			t.Errorf("%s error not labeled transient: %q", tc.name, msg)
+		}
 	}
 }
 
