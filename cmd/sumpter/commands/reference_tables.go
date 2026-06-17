@@ -50,7 +50,12 @@ func buildReferenceRegistry(opts *ExtractOptions, load bool) (*reftable.Registry
 		order = append(order, name)
 	}
 
-	// Apply --reference-table name=source overrides (source only).
+	// Apply --reference-table name=source overrides (source only). A table overridden
+	// more than once fails loud rather than silently taking the last value: two
+	// conflicting sources for the same table is operator error, and a silent last-wins
+	// would make the effective authority table (and its provenance) depend on argument
+	// order.
+	overridden := make(map[string]struct{}, len(opts.ReferenceTableOverrides))
 	for _, raw := range opts.ReferenceTableOverrides {
 		name, src, ok := strings.Cut(raw, "=")
 		name = strings.TrimSpace(name)
@@ -62,6 +67,10 @@ func buildReferenceRegistry(opts *ExtractOptions, load bool) (*reftable.Registry
 		if !found {
 			return nil, nil, fmt.Errorf("--reference-table %q: no reference table named %q is declared", raw, name)
 		}
+		if _, dup := overridden[name]; dup {
+			return nil, nil, fmt.Errorf("--reference-table %q: table %q is overridden more than once (conflicting sources; specify it at most once)", raw, name)
+		}
+		overridden[name] = struct{}{}
 		d.Source = src
 	}
 

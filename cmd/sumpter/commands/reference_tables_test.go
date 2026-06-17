@@ -181,6 +181,17 @@ func TestBuildReferenceRegistryErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("duplicate override fails loud", func(t *testing.T) {
+		opts := &ExtractOptions{
+			ReferenceTableDecls:     []recipesmanifest.ReferenceTableDecl{membershipDecl("refdata/curated.csv")},
+			ReferenceTableRoot:      root,
+			ReferenceTableOverrides: []string{"curated=refdata/curated.csv", "curated=refdata/curated.csv"},
+		}
+		if _, _, err := buildReferenceRegistry(opts, true); err == nil || !strings.Contains(err.Error(), "overridden more than once") {
+			t.Fatalf("err = %v, want duplicate-override (no silent last-wins)", err)
+		}
+	})
+
 	t.Run("duplicate declaration", func(t *testing.T) {
 		opts := &ExtractOptions{
 			ReferenceTableDecls: []recipesmanifest.ReferenceTableDecl{membershipDecl("refdata/curated.csv"), membershipDecl("refdata/curated.csv")},
