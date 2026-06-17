@@ -176,6 +176,33 @@ func TestLoadEmptyTableValid(t *testing.T) {
 	}
 }
 
+// TestLoadEmptyCSVFailsLoud asserts a zero-byte / headerless csv/tsv source fails
+// loud (the header is required to validate the declared column), distinct from the
+// header-only valid-empty-table case in TestLoadEmptyTableValid. Guards against a
+// mis-staged empty source silently becoming membership-always-false /
+// lookup-always-default.
+func TestLoadEmptyCSVFailsLoud(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec Spec
+		src  string
+	}{
+		{"zero-byte csv membership", membershipSpec(100), ""},
+		{"zero-byte csv lookup", lookupSpec(100), ""},
+		{"zero-byte tsv membership", func() Spec { s := membershipSpec(100); s.Format = FormatTSV; return s }(), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(tc.spec, strings.NewReader(tc.src))
+			if err == nil || !strings.Contains(err.Error(), "empty") {
+				t.Fatalf("err = %v, want loud empty-source abort", err)
+			}
+			if !strings.Contains(err.Error(), tc.spec.Name) {
+				t.Errorf("err = %v, want table name %q in message", err, tc.spec.Name)
+			}
+		})
+	}
+}
+
 func TestSpecValidate(t *testing.T) {
 	cases := []struct {
 		name    string

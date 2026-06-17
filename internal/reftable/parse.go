@@ -106,7 +106,12 @@ func loadDelimited(t *Table, spec Spec, r io.Reader, comma rune) error {
 	header, err := cr.Read()
 	if err != nil {
 		if err == io.EOF {
-			return nil // header-less empty stream → empty table (valid)
+			// A zero-byte / headerless stream has no header row, so the declared
+			// column(s) cannot be validated — fail loud rather than load a silently
+			// empty table that would make in_reference always-false /
+			// lookup_reference always-default for a mis-staged source. (A header-only
+			// file is still a valid empty table: the header proves the columns.)
+			return fmt.Errorf("reference table %q: csv/tsv source is empty (a header row is required to validate the declared column(s); a header-only file is a valid empty table)", spec.Name)
 		}
 		return parseError(spec.Name, 0, err)
 	}
