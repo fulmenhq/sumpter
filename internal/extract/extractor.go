@@ -1011,7 +1011,7 @@ func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecor
 				if strings.TrimSpace(mapping.Expression) == "" {
 					continue
 				}
-				value, err := extractExpressionValue(mapping, record, externalFields)
+				value, err := extractExpressionValue(mapping, record, externalFields, cfg.ReferenceTables)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1100,7 +1100,7 @@ func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlqu
 				if strings.TrimSpace(mapping.Expression) == "" {
 					continue
 				}
-				value, err := extractExpressionValue(mapping, record, externalFields)
+				value, err := extractExpressionValue(mapping, record, externalFields, cfg.ReferenceTables)
 				if err != nil {
 					return nil, emittedRecords, err
 				}
@@ -1578,7 +1578,7 @@ func extractValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, erro
 	}
 }
 
-func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}, externalFields map[string]interface{}) (interface{}, error) {
+func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}, externalFields map[string]interface{}, references dsl.ReferenceLookup) (interface{}, error) {
 	if mapping == nil {
 		return nil, nil
 	}
@@ -1603,7 +1603,7 @@ func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}
 	if err != nil {
 		return nil, err
 	}
-	evaluator := dsl.NewEvaluator(scope)
+	evaluator := dsl.NewEvaluator(scope, dsl.WithReferenceLookup(references))
 	value, err := evaluator.EvaluateExpression(expr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate expression for field %s (%q): %w", mapping.OutputField, expression, err)

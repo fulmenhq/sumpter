@@ -13,6 +13,7 @@ import (
 	"github.com/antchfx/xmlquery"
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/provenance"
+	"github.com/fulmenhq/sumpter/internal/reftable"
 	"github.com/fulmenhq/sumpter/internal/validation/dsl"
 )
 
@@ -1424,6 +1425,82 @@ func TestProcessFileStreaming_vs_NonStreaming(t *testing.T) {
 	}
 
 	t.Logf("✓ Streaming and non-streaming produce identical results for %d records", len(resultNonStreaming.Records))
+}
+
+// TestProcessFileStreamingResolvesReferenceTables is the regression for the clone
+// bug where cloneExtractConfig dropped ReferenceTables, so the streaming path
+// (ProcessFileStreaming → cloneExtractConfigForStreaming) evaluated in_reference /
+// lookup_reference against a nil registry and failed with "reference tables are not
+// available". The streaming path must carry the immutable run-scoped registry and
+// resolve identically to the in-memory path.
+func TestProcessFileStreamingResolvesReferenceTables(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "records.xml")
+	xmlContent := `<?xml version="1.0"?>
+<Envelope>
+  <Record><Accession>NM_000001</Accession></Record>
+  <Record><Accession>XR_999</Accession></Record>
+</Envelope>`
+	if err := os.WriteFile(testFile, []byte(xmlContent), 0o600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	tbl, err := reftable.Load(
+		reftable.Spec{Name: "curated", Format: reftable.FormatCSV, Header: true, Column: "accession", MaxRows: 100},
+		strings.NewReader("accession\nNM_000001\nNR_000002\n"),
+	)
+	if err != nil {
+		t.Fatalf("reftable.Load: %v", err)
+	}
+	reg, err := reftable.NewRegistry([]*reftable.Table{tbl})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+
+	signature := &FileSignature{
+		SignatureID:         "test-reference",
+		ConfidenceThreshold: 0.5,
+		MatchPatterns:       []MatchPattern{{Selector: "/Envelope", Weight: 1.0}},
+	}
+	extractCfg := &ExtractRecordMatch{
+		RecordType:     "test_record",
+		MatchSelectors: []MatchSelector{{XPath: "//Record"}},
+		FieldMappings: []FieldMapping{
+			{OutputField: "accession", XPath: "Accession", Type: "string"},
+			{OutputField: "is_curated", Expression: `in_reference('curated', accession)`, Type: "boolean"},
+		},
+		ReferenceTables: reg,
+	}
+
+	// In-memory path resolves the reference (uses cfg.ReferenceTables directly).
+	nonStreaming := ProcessFile(testFile, signature, extractCfg, nil, false)
+	if nonStreaming.Error != nil {
+		t.Fatalf("non-streaming extraction failed: %v", nonStreaming.Error)
+	}
+
+	// Streaming path must resolve identically — it goes through cloneExtractConfig.
+	streaming := ProcessFileStreaming(testFile, signature, extractCfg, nil)
+	if streaming.Error != nil {
+		t.Fatalf("streaming extraction failed (clone dropped ReferenceTables?): %v", streaming.Error)
+	}
+
+	if len(streaming.Records) != 2 || len(nonStreaming.Records) != 2 {
+		t.Fatalf("record counts: non-streaming=%d streaming=%d, want 2 each",
+			len(nonStreaming.Records), len(streaming.Records))
+	}
+
+	wantCurated := []bool{true, false}
+	for i := range streaming.Records {
+		streamData := extractDataBlock(t, streaming.Records[i])
+		nonStreamData := extractDataBlock(t, nonStreaming.Records[i])
+		if streamData["is_curated"] != wantCurated[i] {
+			t.Errorf("streaming record %d is_curated = %#v, want %v", i, streamData["is_curated"], wantCurated[i])
+		}
+		if streamData["is_curated"] != nonStreamData["is_curated"] {
+			t.Errorf("record %d is_curated mismatch: streaming=%#v non-streaming=%#v",
+				i, streamData["is_curated"], nonStreamData["is_curated"])
+		}
+	}
 }
 
 func TestProcessFileStreamingRecordNumDocumentOrderAndFilterGaps(t *testing.T) {

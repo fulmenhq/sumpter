@@ -30,7 +30,13 @@ func cloneExtractConfig(cfg *ExtractRecordMatch) *ExtractRecordMatch {
 		OutputOptions:      cfg.OutputOptions,
 		Summaries:          cloneSummaryConfigs(cfg.Summaries),
 		UniformSchema:      cfg.UniformSchema,
-		prepareOnce:        sync.Once{},
+		// ReferenceTables is the run-scoped, immutable reference-table registry,
+		// shared by pointer across clones — including the streaming path's
+		// cloneExtractConfigForStreaming — so reference expressions resolve on
+		// every extraction path. Nothing reachable from it is mutated after build, so
+		// sharing the same registry across concurrent workers is safe without copying.
+		ReferenceTables: cfg.ReferenceTables,
+		prepareOnce:     sync.Once{},
 	}
 	if cfg.OutputOptions != nil {
 		opts := *cfg.OutputOptions
