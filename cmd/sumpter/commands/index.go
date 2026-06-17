@@ -216,8 +216,10 @@ Example:
 				zap.Bool("emit_szst", emitSzst),
 			)
 
-			// Get version for metadata
-			version := getVersion()
+			// Get version for index metadata. Use the build-time injected version
+			// (not the CWD-relative VERSION file) so a built binary stamps the correct
+			// version regardless of the working directory it is run from.
+			version := getVersionFromBuild()
 
 			// Build index
 			buildOpts := index.BuildOptions{

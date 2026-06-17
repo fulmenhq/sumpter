@@ -40,6 +40,31 @@ func TestGetVersionFromBuild(t *testing.T) {
 	}
 }
 
+// TestGetVersionFromBuildIsCWDIndependent is the regression guard for the
+// out-of-tree --version bug: with a build-injected version, getVersionFromBuild
+// must return it regardless of the working directory. The root --version flag and
+// the index metadata both source it, so a built binary previously reported the
+// stale DefaultVersion ("0.1.0") when run outside the source tree because that
+// path read ./VERSION relative to the CWD.
+func TestGetVersionFromBuildIsCWDIndependent(t *testing.T) {
+	original := Version
+	defer func() { Version = original }()
+	Version = "9.9.9-test"
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(t.TempDir()); err != nil { // a dir with no VERSION file
+		t.Fatal(err)
+	}
+
+	if got := getVersionFromBuild(); got != "9.9.9-test" {
+		t.Errorf("getVersionFromBuild() outside the source tree = %q, want the injected 9.9.9-test (must not fall back to the CWD VERSION file / DefaultVersion)", got)
+	}
+}
+
 func TestGetEnvironment(t *testing.T) {
 	// Save original environment
 	originalEnv := make(map[string]string)
