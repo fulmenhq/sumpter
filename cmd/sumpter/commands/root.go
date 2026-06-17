@@ -29,7 +29,7 @@ Sumpter helps teams start fast and thrive on scale.
 Built for: Enterprise XML processing, data transformation, and analytics pipelines.
 
 Inspired by the Fulmen ecosystem and the American West's "sumpter" horses.`,
-	Version:          getVersion(),
+	Version:          getVersionFromBuild(),
 	PersistentPreRun: initializeEnvironment,
 	SilenceUsage:     true,
 }
