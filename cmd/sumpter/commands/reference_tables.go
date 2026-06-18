@@ -207,12 +207,20 @@ func loadCloudReferenceTable(ctx context.Context, session *uriio.Session, spec r
 	if err != nil {
 		return nil, fmt.Errorf("reference table %q: %w", spec.Name, err)
 	}
+	// Release the staged copy as soon as the table is read into memory: Load fully
+	// consumes the bytes, so holding the staged file is unnecessary, and freeing the
+	// key-derived staging path lets another declaration that names the SAME s3://
+	// object stage it too (one physical authority table can back several logical
+	// reference tables — local sources already allow this). The session's Close still
+	// sweeps anything left behind.
+	defer func() { _ = acquired.Cleanup() }()
 	f, err := os.Open(acquired.LocalPath) // #nosec G304 - staged under the run dir by uriio (traversal-guarded)
 	if err != nil {
 		return nil, fmt.Errorf("reference table %q: cannot open staged source", spec.Name)
 	}
-	defer func() { _ = f.Close() }()
-	return reftable.Load(spec, f)
+	table, lerr := reftable.Load(spec, f)
+	_ = f.Close()
+	return table, lerr
 }
 
 // referenceProvEntry builds the sidecar provenance entry for a loaded table. source
