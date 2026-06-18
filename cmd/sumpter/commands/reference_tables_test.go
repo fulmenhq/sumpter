@@ -211,6 +211,30 @@ func TestBuildReferenceRegistryErrors(t *testing.T) {
 	})
 }
 
+// TestBuildReferenceRegistryCloudRejectsPrefix asserts a cloud reference-table source
+// that is a prefix or glob (not a single object) fails statically — before any
+// network — on both a dry run (load=false) and a real run (load=true), rather than
+// only surfacing later in acquire.
+func TestBuildReferenceRegistryCloudRejectsPrefix(t *testing.T) {
+	for _, src := range []string{
+		"s3://bucket/refdata/",      // prefix (trailing slash)
+		"s3://bucket/refdata/*.csv", // glob pattern
+	} {
+		for _, load := range []bool{false, true} {
+			opts := &ExtractOptions{
+				ReferenceTableDecls: []recipesmanifest.ReferenceTableDecl{{
+					Name: "curated", Source: src, Format: "csv", Header: true, Column: "accession", MaxRows: 100,
+					CredentialsHandle: "reader",
+				}},
+			}
+			_, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", load)
+			if err == nil || !strings.Contains(err.Error(), "single object") {
+				t.Fatalf("src=%q load=%v: err = %v, want single-object rejection", src, load, err)
+			}
+		}
+	}
+}
+
 func TestValidateReferenceTableDeclarationsPreflight(t *testing.T) {
 	decls := []recipesmanifest.ReferenceTableDecl{membershipDecl("refdata/curated.csv")}
 

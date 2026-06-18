@@ -104,6 +104,13 @@ func buildReferenceRegistry(ctx context.Context, opts *ExtractOptions, runID str
 			// (traversal-guarded), not the local C1 path rule. The credential handle is
 			// a name only (FU-2 posture); an override may swap the URI but reuses the
 			// declared handle.
+			//
+			// A reference table is exactly one object. Reject a prefix or glob here —
+			// this is a static check (no network), so it fails the same on a dry run as
+			// on a real run, rather than only surfacing deep in acquire.
+			if ref.IsPattern() || ref.IsPrefix() {
+				return nil, nil, fmt.Errorf("reference table %q: source %s must be a single object, not a prefix or glob pattern", name, ref.LogicalURI)
+			}
 			handle := strings.TrimSpace(d.CredentialsHandle)
 			if handle == "" {
 				handle = uriio.DefaultHandleName

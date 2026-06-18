@@ -250,9 +250,10 @@ properties:
         description: |
           External reference tables loaded once per run to back the
           in_reference (membership / Pattern A) and lookup_reference
-          (key→value / Pattern B) DSL functions. Each source is a
-          workspace-relative path (absolute paths, ".." escapes, and
-          symlinks are refused); format, columns, and caps are fixed by the
+          (key→value / Pattern B) DSL functions. Each source is either a
+          contained workspace-relative path (absolute paths, ".." escapes,
+          and symlinks are refused) or an s3:// URI to a single object with a
+          credentials_handle; format, columns, and caps are fixed by the
           recipe so a --reference-table source override (refreshing the
           data) cannot drift the schema.
         items:
