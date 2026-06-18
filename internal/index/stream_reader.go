@@ -58,17 +58,25 @@ func OpenRecordIndexStream(path string) (*RecordIndexStream, error) {
 // Header parses forward until the records array begins, capturing any header
 // fields encountered before "records".
 func (s *RecordIndexStream) Header() (*RecordIndex, error) {
-	if s.objectDone || s.inRecords {
-		NormalizeRecordIndex(&s.header)
-		return &s.header, nil
-	}
-
-	if err := s.parseUntilRecords(); err != nil {
-		return nil, err
+	if !s.objectDone && !s.inRecords {
+		if err := s.parseUntilRecords(); err != nil {
+			return nil, err
+		}
 	}
 
 	NormalizeRecordIndex(&s.header)
-	return &s.header, nil
+
+	// Return a DETACHED value snapshot, never a pointer into the stream's mutable
+	// header. When the writer emits "summary"/"metadata" after "records" (the
+	// streaming default), a later NextRecord decodes those trailing fields into
+	// s.header — and a caller that retained the returned header (e.g. the parallel
+	// orchestrator reading Summary.TotalRecords while the producer drains records)
+	// must not observe that mutation. Every RecordIndex header field is a value type,
+	// so a struct copy fully detaches; Records is streamed separately and is not part
+	// of the header snapshot.
+	snapshot := s.header
+	snapshot.Records = nil
+	return &snapshot, nil
 }
 
 // NextRecord returns the next RecordMetadata entry.

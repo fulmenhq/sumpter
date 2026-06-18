@@ -25,12 +25,28 @@ var ErrSeekableZstdNotAvailable = errors.New("seekable-zstd support not availabl
 //
 // Implementations may read from JSON files, seekable-zstd compressed binary
 // stores, or other formats.
+//
+// Concurrency contract (race-fix). A store feeds a single streaming producer that
+// fans work out to parallel extraction workers, so the boundary is defined as:
+//   - Header() returns a DETACHED value snapshot the caller may retain and read
+//     concurrently while records stream. A later Records() iteration must never
+//     mutate a header a caller already holds. (For a streaming JSON index whose
+//     summary follows the records array, the snapshot's total may be unknown/zero
+//     until iteration completes; it must still never mutate under the caller.)
+//   - Records() returns a SINGLE-OWNER iterator: Next() is not called concurrently
+//     from multiple goroutines on one iterator.
+//   - Close() is not called concurrently with an active iterator unless an
+//     implementation explicitly documents support.
+//
+// Implementations that share decode/parse state between Header() and the record
+// iterator must snapshot the header (not expose the mutable pointer) to honor this.
 type IndexStore interface {
-	// Header returns the index header information (source, selector, summary).
-	// This should be cheap to call and not require loading all records.
+	// Header returns a detached snapshot of the index header (source, selector,
+	// summary). Cheap to call; does not load all records. The returned value is safe
+	// to retain while a Records() iterator drains (see the concurrency contract).
 	Header() (*index.RecordIndex, error)
 
-	// Records returns an iterator over all record metadata entries.
+	// Records returns a single-owner iterator over all record metadata entries.
 	// The caller must call Close on the returned iterator when done.
 	Records(ctx context.Context) (RecordIterator, error)
 

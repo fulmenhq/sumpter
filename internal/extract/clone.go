@@ -15,6 +15,17 @@ func cloneExtractConfigForStreaming(cfg *ExtractRecordMatch) *ExtractRecordMatch
 	return clone
 }
 
+// CloneRecordMatch returns a deep copy of cfg with all compiled XPath / match-XPath
+// state cleared (so each holder compiles and owns its own *xpath.Expr) while the
+// run-scoped, immutable reference-table registry stays shared BY POINTER (never
+// deep-copied or reloaded). Parallel extraction gives each worker its own clone so no
+// two workers share mutable XPath evaluator state, while the load-once registry and
+// read-only external fields remain shared. It covers match selectors, field mappings,
+// nested item_mapping, and polymorphic match_xpath + nested fields.
+func CloneRecordMatch(cfg *ExtractRecordMatch) *ExtractRecordMatch {
+	return cloneExtractConfig(cfg)
+}
+
 func cloneExtractConfig(cfg *ExtractRecordMatch) *ExtractRecordMatch {
 	if cfg == nil {
 		return nil
