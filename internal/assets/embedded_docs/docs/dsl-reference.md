@@ -123,6 +123,21 @@ change simple extract filters or the undefined-variable contract: referencing an
 undeclared parameter still fails with the existing `undefined variable: <name>`
 error.
 
+**Empty elements and the undefined-variable contract.** An XPath *string* field over
+an element that is **present but empty** (`<Field/>` or `<Field></Field>`) binds as
+**undefined** in DSL scope — not as `""`. Because `boolean(Parent/Child/Field)`
+evaluates to `true` for that same node, a boolean presence-check does **not** make a
+later string reference safe: a guard such as
+`has_field ? string_length(field) : 0` still fails with `undefined variable: field`
+when the element is empty. To guard on actual **content** rather than mere presence,
+test for a non-empty value:
+
+```yaml
+- output_field: has_field
+  xpath: "boolean(Parent/Child/Field[string-length(normalize-space(.)) > 0])"
+  type: boolean
+```
+
 ### Operators
 
 From lowest to highest precedence:
