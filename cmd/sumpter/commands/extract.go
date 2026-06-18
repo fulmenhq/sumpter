@@ -423,7 +423,7 @@ func runExtract(opts *ExtractOptions) error {
 	if err := validateReferenceTableDeclarations(opts, extCfg.FieldMappings); err != nil {
 		return err
 	}
-	referenceRegistry, referenceProv, err := buildReferenceRegistry(opts, !opts.DryRun)
+	referenceRegistry, referenceProv, err := buildReferenceRegistry(context.Background(), opts, runtimeProvenance.RunID, !opts.DryRun)
 	if err != nil {
 		return err
 	}

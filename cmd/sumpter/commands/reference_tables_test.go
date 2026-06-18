@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ func TestBuildReferenceRegistryLoadsContainedSource(t *testing.T) {
 		ReferenceTableDecls: []recipesmanifest.ReferenceTableDecl{membershipDecl("refdata/curated.csv")},
 		ReferenceTableRoot:  root,
 	}
-	reg, prov, err := buildReferenceRegistry(opts, true)
+	reg, prov, err := buildReferenceRegistry(context.Background(), opts, "test-run", true)
 	if err != nil {
 		t.Fatalf("buildReferenceRegistry: %v", err)
 	}
@@ -87,7 +88,7 @@ func TestBuildReferenceRegistryC1Containment(t *testing.T) {
 				ReferenceTableDecls: []recipesmanifest.ReferenceTableDecl{membershipDecl(tc.source)},
 				ReferenceTableRoot:  root,
 			}
-			_, _, err := buildReferenceRegistry(opts, true)
+			_, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", true)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
 			}
@@ -109,7 +110,7 @@ func TestBuildReferenceRegistryDryRunDoesNotLoad(t *testing.T) {
 		ReferenceTableRoot:  root,
 	}
 	// Dry run (load=false): validates containment/resolvability, does NOT parse.
-	reg, prov, err := buildReferenceRegistry(opts, false)
+	reg, prov, err := buildReferenceRegistry(context.Background(), opts, "test-run", false)
 	if err != nil {
 		t.Fatalf("dry-run build failed (should not load): %v", err)
 	}
@@ -117,7 +118,7 @@ func TestBuildReferenceRegistryDryRunDoesNotLoad(t *testing.T) {
 		t.Errorf("dry-run returned a loaded registry: reg=%v prov=%v", reg, prov)
 	}
 	// Real run (load=true): the empty source now fails loud.
-	if _, _, err := buildReferenceRegistry(opts, true); err == nil || !strings.Contains(err.Error(), "empty") {
+	if _, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", true); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("real-run err = %v, want empty-source abort", err)
 	}
 }
@@ -128,7 +129,7 @@ func TestBuildReferenceRegistryDryRunStillEnforcesContainment(t *testing.T) {
 		ReferenceTableDecls: []recipesmanifest.ReferenceTableDecl{membershipDecl("../escape.csv")},
 		ReferenceTableRoot:  root,
 	}
-	if _, _, err := buildReferenceRegistry(opts, false); err == nil || !strings.Contains(err.Error(), "escapes the workspace") {
+	if _, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", false); err == nil || !strings.Contains(err.Error(), "escapes the workspace") {
 		t.Fatalf("dry-run err = %v, want containment rejection even without loading", err)
 	}
 }
@@ -143,7 +144,7 @@ func TestBuildReferenceRegistryOverride(t *testing.T) {
 		ReferenceTableRoot:      root,
 		ReferenceTableOverrides: []string{"curated=refdata/alt.csv"},
 	}
-	reg, prov, err := buildReferenceRegistry(opts, true)
+	reg, prov, err := buildReferenceRegistry(context.Background(), opts, "test-run", true)
 	if err != nil {
 		t.Fatalf("buildReferenceRegistry: %v", err)
 	}
@@ -169,14 +170,14 @@ func TestBuildReferenceRegistryErrors(t *testing.T) {
 			ReferenceTableRoot:      root,
 			ReferenceTableOverrides: []string{"ghost=refdata/curated.csv"},
 		}
-		if _, _, err := buildReferenceRegistry(opts, true); err == nil || !strings.Contains(err.Error(), "no reference table named") {
+		if _, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", true); err == nil || !strings.Contains(err.Error(), "no reference table named") {
 			t.Fatalf("err = %v, want unknown-override", err)
 		}
 	})
 
 	t.Run("override without declarations", func(t *testing.T) {
 		opts := &ExtractOptions{ReferenceTableOverrides: []string{"curated=x.csv"}}
-		if _, _, err := buildReferenceRegistry(opts, true); err == nil || !strings.Contains(err.Error(), "declares no reference_tables") {
+		if _, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", true); err == nil || !strings.Contains(err.Error(), "declares no reference_tables") {
 			t.Fatalf("err = %v, want no-declarations", err)
 		}
 	})
@@ -187,7 +188,7 @@ func TestBuildReferenceRegistryErrors(t *testing.T) {
 			ReferenceTableRoot:      root,
 			ReferenceTableOverrides: []string{"curated=refdata/curated.csv", "curated=refdata/curated.csv"},
 		}
-		if _, _, err := buildReferenceRegistry(opts, true); err == nil || !strings.Contains(err.Error(), "overridden more than once") {
+		if _, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", true); err == nil || !strings.Contains(err.Error(), "overridden more than once") {
 			t.Fatalf("err = %v, want duplicate-override (no silent last-wins)", err)
 		}
 	})
@@ -197,17 +198,41 @@ func TestBuildReferenceRegistryErrors(t *testing.T) {
 			ReferenceTableDecls: []recipesmanifest.ReferenceTableDecl{membershipDecl("refdata/curated.csv"), membershipDecl("refdata/curated.csv")},
 			ReferenceTableRoot:  root,
 		}
-		if _, _, err := buildReferenceRegistry(opts, true); err == nil || !strings.Contains(err.Error(), "declared more than once") {
+		if _, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", true); err == nil || !strings.Contains(err.Error(), "declared more than once") {
 			t.Fatalf("err = %v, want duplicate-declaration", err)
 		}
 	})
 
 	t.Run("no declarations no overrides", func(t *testing.T) {
-		reg, prov, err := buildReferenceRegistry(&ExtractOptions{}, true)
+		reg, prov, err := buildReferenceRegistry(context.Background(), &ExtractOptions{}, "test-run", true)
 		if err != nil || reg != nil || prov != nil {
 			t.Fatalf("want (nil,nil,nil), got reg=%v prov=%v err=%v", reg, prov, err)
 		}
 	})
+}
+
+// TestBuildReferenceRegistryCloudRejectsPrefix asserts a cloud reference-table source
+// that is a prefix or glob (not a single object) fails statically — before any
+// network — on both a dry run (load=false) and a real run (load=true), rather than
+// only surfacing later in acquire.
+func TestBuildReferenceRegistryCloudRejectsPrefix(t *testing.T) {
+	for _, src := range []string{
+		"s3://bucket/refdata/",      // prefix (trailing slash)
+		"s3://bucket/refdata/*.csv", // glob pattern
+	} {
+		for _, load := range []bool{false, true} {
+			opts := &ExtractOptions{
+				ReferenceTableDecls: []recipesmanifest.ReferenceTableDecl{{
+					Name: "curated", Source: src, Format: "csv", Header: true, Column: "accession", MaxRows: 100,
+					CredentialsHandle: "reader",
+				}},
+			}
+			_, _, err := buildReferenceRegistry(context.Background(), opts, "test-run", load)
+			if err == nil || !strings.Contains(err.Error(), "single object") {
+				t.Fatalf("src=%q load=%v: err = %v, want single-object rejection", src, load, err)
+			}
+		}
+	}
 }
 
 func TestValidateReferenceTableDeclarationsPreflight(t *testing.T) {

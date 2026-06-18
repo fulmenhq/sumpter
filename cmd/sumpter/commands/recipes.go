@@ -331,7 +331,7 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
 	cmd.Flags().StringVar(&opts.ExtractOverride, "extract", "", "Override manifest extract config path")
-	cmd.Flags().StringArrayVar(&opts.ReferenceTableOverrides, "reference-table", nil, "Override a declared reference table's source: name=workspace/relative/path (repeatable). Format, columns, and caps stay recipe-declared; the path is contained (no absolute, \"..\", or symlinks)")
+	cmd.Flags().StringArrayVar(&opts.ReferenceTableOverrides, "reference-table", nil, "Override a declared reference table's source: name=source (repeatable). Source is a contained workspace-relative path (no absolute, \"..\", or symlinks) or an s3:// URI reusing the table's declared credentials_handle. Format, columns, and caps stay recipe-declared")
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input; overrides the recipe's defaults.input.credentials_handle")

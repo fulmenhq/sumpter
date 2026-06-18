@@ -121,13 +121,35 @@ func (s *Session) Acquire(ctx context.Context, reference, handle string) (*Acqui
 	case SchemeLocal:
 		return &AcquiredSource{LogicalURI: ref.LogicalURI, LocalPath: ref.LocalPath, Scheme: SchemeLocal}, nil
 	case SchemeS3:
-		return s.acquireS3(ctx, ref, handle)
+		return s.acquireS3(ctx, ref, handle, 0)
 	default:
 		return nil, notImplemented("source acquisition", ref)
 	}
 }
 
-func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string) (*AcquiredSource, error) {
+// AcquireBounded is Acquire with a pre-read size cap (bytes). For an s3:// source it
+// rejects an oversized object using the object-size metadata BEFORE staging, and
+// bounds the staged write with a limit reader as defence-in-depth against a
+// mis-reported size — so an oversized object can never fill the staging disk first
+// (the staging-disk DoS guard). maxBytes <= 0 means unbounded (identical to Acquire).
+// Local sources pass through unstaged; their cap is enforced by the reader that
+// consumes them.
+func (s *Session) AcquireBounded(ctx context.Context, reference, handle string, maxBytes int64) (*AcquiredSource, error) {
+	ref, err := Classify(reference)
+	if err != nil {
+		return nil, err
+	}
+	switch ref.Scheme {
+	case SchemeLocal:
+		return &AcquiredSource{LogicalURI: ref.LogicalURI, LocalPath: ref.LocalPath, Scheme: SchemeLocal}, nil
+	case SchemeS3:
+		return s.acquireS3(ctx, ref, handle, maxBytes)
+	default:
+		return nil, notImplemented("source acquisition", ref)
+	}
+}
+
+func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string, maxBytes int64) (*AcquiredSource, error) {
 	if ref.IsPattern() || ref.IsPrefix() {
 		return nil, fmt.Errorf("uriio: acquire needs a single object, not a prefix/pattern (%s) — list it first", ref.LogicalURI)
 	}
@@ -143,7 +165,7 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string) (*Acqui
 	if err != nil {
 		return nil, err
 	}
-	body, _, err := prov.GetObject(ctx, ref.Key)
+	body, size, err := prov.GetObject(ctx, ref.Key)
 	if err != nil {
 		// Redact + classify the cloud read error: the raw SDK error can echo
 		// credential material, and a throttle/unavailable condition is labeled so
@@ -153,8 +175,25 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string) (*Acqui
 	}
 	defer func() { _ = body.Close() }()
 
-	if err := writeStagedFile(staged, body); err != nil {
+	// C2 staging-disk DoS guard: when a cap is set, reject an oversized object using
+	// the object-size metadata before writing a single byte, and bound the staged
+	// write so a mis-reported size still cannot overrun the cap.
+	reader := io.Reader(body)
+	if maxBytes > 0 {
+		if size > maxBytes {
+			return nil, fmt.Errorf("uriio: object %s is %d bytes, exceeding the %d-byte cap; not staged", ref.LogicalURI, size, maxBytes)
+		}
+		reader = io.LimitReader(body, maxBytes+1)
+	}
+
+	if err := writeStagedFile(staged, reader); err != nil {
 		return nil, err
+	}
+	if maxBytes > 0 {
+		if fi, statErr := os.Stat(staged); statErr == nil && fi.Size() > maxBytes {
+			_ = os.Remove(staged)
+			return nil, fmt.Errorf("uriio: object %s exceeded the %d-byte cap during staging; removed", ref.LogicalURI, maxBytes)
+		}
 	}
 	stagedPath := staged
 	return &AcquiredSource{

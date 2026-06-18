@@ -250,9 +250,10 @@ properties:
         description: |
           External reference tables loaded once per run to back the
           in_reference (membership / Pattern A) and lookup_reference
-          (key→value / Pattern B) DSL functions. Each source is a
-          workspace-relative path (absolute paths, ".." escapes, and
-          symlinks are refused); format, columns, and caps are fixed by the
+          (key→value / Pattern B) DSL functions. Each source is either a
+          contained workspace-relative path (absolute paths, ".." escapes,
+          and symlinks are refused) or an s3:// URI to a single object with a
+          credentials_handle; format, columns, and caps are fixed by the
           recipe so a --reference-table source override (refreshing the
           data) cannot drift the schema.
         items:
@@ -275,8 +276,16 @@ properties:
               type: string
               description: |
                 Workspace-relative path to the table file (contained — no
-                absolute paths, "..", or symlinks).
+                absolute paths, "..", or symlinks), or an s3:// URI for a
+                cloud source.
               minLength: 1
+            credentials_handle:
+              type: string
+              description: |
+                Credential handle name for an s3:// source. A handle
+                reference, never a secret; resolved from the credentials
+                config. Omit for local sources.
+              pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
             format:
               type: string
               enum: ["csv", "tsv", "ndjson"]
