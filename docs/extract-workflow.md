@@ -213,11 +213,37 @@ column(s) — unused columns and raw rows are never retained. Duplicate keys in 
 key→value table fail loud; an oversized source (past `max_rows` or `max_bytes`)
 fails loud rather than truncating.
 
-**Source containment.** `source` is a **workspace-relative** path. Absolute paths,
-`..` escapes, and symlinks (final file or any parent component) are refused: a
+**Source containment.** A local `source` is a **workspace-relative** path. Absolute
+paths, `..` escapes, and symlinks (final file or any parent component) are refused: a
 reference-table source is read, and a Pattern-B lookup can emit its values into
 output, so an unconstrained path would be a local-file read/exfil surface. Keep
 reference data inside the recipe workspace.
+
+**Cloud sources (S3-compatible).** A `source` may instead be an `s3://` URI with a
+`credentials_handle` naming the cloud credential handle — a handle reference, never a
+secret (see [Cloud Sources and Outputs](#cloud-sources-and-outputs-s3-compatible)).
+The object is acquired once to the run staging directory under a **pre-read size cap**
+(`max_bytes`), so an oversized object is rejected using its size metadata before it can
+fill staging disk. Provenance records the logical `s3://` source and the handle
+**name** — never the signed URL or credentials.
+
+```yaml
+defaults:
+  reference_tables:
+    - name: curated
+      source: s3://refdata-bucket/curated/accessions.csv
+      credentials_handle: refdata-reader
+      format: csv
+      header: true
+      column: accession
+      max_rows: 500000
+      max_bytes: 52428800
+```
+
+A `--reference-table name=s3://…/other.csv` override re-points a declared table at a
+different object for one run, reusing the table's declared `credentials_handle`. On
+`--dry-run` a cloud table's handle is validated for resolvability but the object is
+**not** acquired.
 
 **Refresh without a recipe edit.** `--reference-table name=source` overrides a
 declared table's source path for a single run (repeatable). Only the source

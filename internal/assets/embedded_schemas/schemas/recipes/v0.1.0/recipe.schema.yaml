@@ -275,8 +275,16 @@ properties:
               type: string
               description: |
                 Workspace-relative path to the table file (contained — no
-                absolute paths, "..", or symlinks).
+                absolute paths, "..", or symlinks), or an s3:// URI for a
+                cloud source.
               minLength: 1
+            credentials_handle:
+              type: string
+              description: |
+                Credential handle name for an s3:// source. A handle
+                reference, never a secret; resolved from the credentials
+                config. Omit for local sources.
+              pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
             format:
               type: string
               enum: ["csv", "tsv", "ndjson"]

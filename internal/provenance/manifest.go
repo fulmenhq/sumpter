@@ -50,13 +50,17 @@ type ReferenceTable struct {
 	// Source is the logical workspace-relative path (or, in a later delivery, the
 	// logical s3:// URI) — the effective source after any --reference-table override,
 	// never the resolved absolute/staged path.
-	Source        string `json:"source"`
-	Format        string `json:"format"`         // csv | tsv | ndjson
-	Mode          string `json:"mode"`           // membership | lookup
-	RowCount      int    `json:"row_count"`      // physical source rows loaded
-	ContentSHA256 string `json:"content_sha256"` // "sha256:"-prefixed hash of source bytes
-	MaxRows       int    `json:"max_rows"`
-	MaxBytes      int64  `json:"max_bytes"`
+	Source string `json:"source"`
+	// CredentialsHandle is the logical credential handle NAME that authorized reading
+	// a cloud (s3://) source — the non-secret indirection label, same posture as
+	// Input.CredentialsHandle. Empty (omitted) for local sources.
+	CredentialsHandle string `json:"credentials_handle,omitempty"`
+	Format            string `json:"format"`         // csv | tsv | ndjson
+	Mode              string `json:"mode"`           // membership | lookup
+	RowCount          int    `json:"row_count"`      // physical source rows loaded
+	ContentSHA256     string `json:"content_sha256"` // "sha256:"-prefixed hash of source bytes
+	MaxRows           int    `json:"max_rows"`
+	MaxBytes          int64  `json:"max_bytes"`
 }
 
 // CLI captures the sanitized command surface used for a run.

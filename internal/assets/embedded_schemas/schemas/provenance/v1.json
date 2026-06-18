@@ -99,6 +99,10 @@
           "type": "string",
           "minLength": 1
         },
+        "credentials_handle": {
+          "type": "string",
+          "minLength": 1
+        },
         "format": {
           "type": "string",
           "enum": ["csv", "tsv", "ndjson"]

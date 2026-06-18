@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/reftable"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/validation/dsl"
 )
 
@@ -24,7 +26,7 @@ import (
 // reads no table bytes, so a dry run never pulls a (potentially large) table. It
 // returns the registry (nil when no tables are declared, or on a dry run) and the
 // provenance entries for the loaded tables (sidecar-only, no row values).
-func buildReferenceRegistry(opts *ExtractOptions, load bool) (*reftable.Registry, []provenance.ReferenceTable, error) {
+func buildReferenceRegistry(ctx context.Context, opts *ExtractOptions, runID string, load bool) (*reftable.Registry, []provenance.ReferenceTable, error) {
 	decls := opts.ReferenceTableDecls
 	if len(decls) == 0 {
 		if len(opts.ReferenceTableOverrides) > 0 {
@@ -75,9 +77,13 @@ func buildReferenceRegistry(opts *ExtractOptions, load bool) (*reftable.Registry
 	}
 
 	root := strings.TrimSpace(opts.ReferenceTableRoot)
-	if root == "" {
-		return nil, nil, fmt.Errorf("reference tables declared but no workspace root is set for containment")
-	}
+
+	// A run-scoped cloud session (created lazily on the first s3:// table) and a
+	// no-network resolver (used to validate cloud handles on a dry run). The session's
+	// staging directory is removed when this function returns — each table is fully
+	// read into memory by Load, so the staged file is not needed afterward.
+	var session *uriio.Session
+	var resolver *uriio.Resolver
 
 	tables := make([]*reftable.Table, 0, len(order))
 	prov := make([]provenance.ReferenceTable, 0, len(order))
@@ -87,33 +93,79 @@ func buildReferenceRegistry(opts *ExtractOptions, load bool) (*reftable.Registry
 		if err := spec.Validate(); err != nil {
 			return nil, nil, err
 		}
-		// C1 containment: resolve the workspace-relative source under root, rejecting
-		// absolute paths, ".." escapes, and symlinked components. This reads no table
-		// bytes (it only stats the path), so it runs on dry runs too — a dry run still
-		// proves the effective (possibly overridden) source is reachable and contained.
-		absPath, err := reftable.ResolveLocalSource(root, d.Source)
-		if err != nil {
-			return nil, nil, err
+
+		ref, cerr := uriio.Classify(d.Source)
+		if cerr != nil {
+			return nil, nil, fmt.Errorf("reference table %q: %w", name, cerr)
+		}
+
+		if ref.IsCloud() {
+			// Cloud (s3://) source. Containment is the uriio staging boundary
+			// (traversal-guarded), not the local C1 path rule. The credential handle is
+			// a name only (FU-2 posture); an override may swap the URI but reuses the
+			// declared handle.
+			handle := strings.TrimSpace(d.CredentialsHandle)
+			if handle == "" {
+				handle = uriio.DefaultHandleName
+			}
+			if verr := uriio.ValidateHandleName(handle); verr != nil {
+				return nil, nil, fmt.Errorf("reference table %q: %w", name, verr)
+			}
+			spec.Source = reftable.SourceMetadata{LogicalURI: ref.LogicalURI, CredentialsHandle: handle}
+			if !load {
+				// Dry run: validate the handle resolves (config-only, no network); do
+				// not acquire the object.
+				if resolver == nil {
+					r, rerr := referenceResolver(opts)
+					if rerr != nil {
+						return nil, nil, rerr
+					}
+					resolver = r
+				}
+				if _, rerr := resolver.Resolve(handle); rerr != nil {
+					return nil, nil, fmt.Errorf("reference table %q: %w", name, rerr)
+				}
+				continue
+			}
+			if session == nil {
+				s, serr := newCloudSession(opts, runID)
+				if serr != nil {
+					return nil, nil, serr
+				}
+				session = s
+				defer func() { _ = session.Close() }()
+			}
+			table, terr := loadCloudReferenceTable(ctx, session, spec, ref.LogicalURI, handle)
+			if terr != nil {
+				return nil, nil, terr
+			}
+			tables = append(tables, table)
+			prov = append(prov, referenceProvEntry(table, spec, ref.LogicalURI, handle))
+			continue
+		}
+
+		// Local source. C1 containment: resolve the workspace-relative source under
+		// root, rejecting absolute paths, ".." escapes, and symlinked components. This
+		// reads no table bytes (it only stats the path), so it runs on dry runs too — a
+		// dry run still proves the effective (possibly overridden) source is reachable
+		// and contained.
+		if root == "" {
+			return nil, nil, fmt.Errorf("reference table %q: a local source requires a workspace root for containment", name)
+		}
+		absPath, rerr := reftable.ResolveLocalSource(root, d.Source)
+		if rerr != nil {
+			return nil, nil, rerr
 		}
 		spec.Source = reftable.SourceMetadata{LogicalURI: d.Source}
 		if !load {
 			continue // dry run: validated + contained, but not read
 		}
-		table, err := loadReferenceTable(spec, absPath)
-		if err != nil {
-			return nil, nil, err
+		table, terr := loadReferenceTable(spec, absPath)
+		if terr != nil {
+			return nil, nil, terr
 		}
 		tables = append(tables, table)
-		prov = append(prov, provenance.ReferenceTable{
-			Name:          table.Name(),
-			Source:        d.Source,
-			Format:        string(table.Format()),
-			Mode:          string(table.Mode()),
-			RowCount:      table.RowCount(),
-			ContentSHA256: table.ContentSHA256(),
-			MaxRows:       spec.MaxRows,
-			MaxBytes:      effectiveReferenceMaxBytes(spec),
-		})
+		prov = append(prov, referenceProvEntry(table, spec, d.Source, ""))
 	}
 
 	if !load {
@@ -126,6 +178,58 @@ func buildReferenceRegistry(opts *ExtractOptions, load bool) (*reftable.Registry
 	// Deterministic sidecar order, matching registry.Tables().
 	sort.Slice(prov, func(i, j int) bool { return prov[i].Name < prov[j].Name })
 	return registry, prov, nil
+}
+
+// referenceResolver builds a credential-handle resolver from the run's credentials
+// config + CLI overrides. It performs no network I/O — used to confirm a cloud
+// reference table's handle resolves during a dry run.
+func referenceResolver(opts *ExtractOptions) (*uriio.Resolver, error) {
+	cliProfiles, err := uriio.ParseCredentialOverrides(opts.CredentialOverrides)
+	if err != nil {
+		return nil, err
+	}
+	var credCfg *uriio.CredentialsConfig
+	if strings.TrimSpace(opts.CredentialsPath) != "" {
+		credCfg, err = uriio.LoadCredentialsConfig(opts.CredentialsPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return uriio.NewResolver(credCfg, cliProfiles), nil
+}
+
+// loadCloudReferenceTable acquires an s3:// reference table to the run staging
+// directory with a pre-read size cap (C2 — an oversized object is rejected before it
+// can fill staging disk) and loads it. The staged file is removed when the session
+// closes.
+func loadCloudReferenceTable(ctx context.Context, session *uriio.Session, spec reftable.Spec, source, handle string) (*reftable.Table, error) {
+	acquired, err := session.AcquireBounded(ctx, source, handle, effectiveReferenceMaxBytes(spec))
+	if err != nil {
+		return nil, fmt.Errorf("reference table %q: %w", spec.Name, err)
+	}
+	f, err := os.Open(acquired.LocalPath) // #nosec G304 - staged under the run dir by uriio (traversal-guarded)
+	if err != nil {
+		return nil, fmt.Errorf("reference table %q: cannot open staged source", spec.Name)
+	}
+	defer func() { _ = f.Close() }()
+	return reftable.Load(spec, f)
+}
+
+// referenceProvEntry builds the sidecar provenance entry for a loaded table. source
+// is the effective (possibly overridden) logical source; handle is the logical
+// credential handle name for a cloud source (empty for local).
+func referenceProvEntry(table *reftable.Table, spec reftable.Spec, source, handle string) provenance.ReferenceTable {
+	return provenance.ReferenceTable{
+		Name:              table.Name(),
+		Source:            source,
+		CredentialsHandle: handle,
+		Format:            string(table.Format()),
+		Mode:              string(table.Mode()),
+		RowCount:          table.RowCount(),
+		ContentSHA256:     table.ContentSHA256(),
+		MaxRows:           spec.MaxRows,
+		MaxBytes:          effectiveReferenceMaxBytes(spec),
+	}
 }
 
 func referenceSpec(d *recipesmanifest.ReferenceTableDecl) reftable.Spec {

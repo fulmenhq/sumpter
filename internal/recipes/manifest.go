@@ -143,6 +143,10 @@ type ReferenceTableDecl struct {
 	ValueColumn string `yaml:"value_column,omitempty" json:"value_column,omitempty"`
 	MaxRows     int    `yaml:"max_rows" json:"max_rows"`
 	MaxBytes    int64  `yaml:"max_bytes,omitempty" json:"max_bytes,omitempty"`
+	// CredentialsHandle names the cloud credential handle for an s3:// source — a
+	// handle reference, never a secret. Empty for local sources. A --reference-table
+	// override that points at an s3:// URI reuses the declared handle.
+	CredentialsHandle string `yaml:"credentials_handle,omitempty" json:"credentials_handle,omitempty"`
 }
 
 // SourceExtractionPattern extracts fields from a source file location.
