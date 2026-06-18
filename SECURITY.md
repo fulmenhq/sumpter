@@ -13,12 +13,12 @@ Security updates are provided for:
 - **Latest stable release**: Current production-ready version
 - **Alpha releases**: Best-effort support during active development
 
-**Current Status**: Sumpter v0.1.x is in **alpha**. We provide security patches for the latest v0.1.x release. There is no commitment to backport fixes to earlier 0.1.x patches once a newer 0.1.x ships. For an overview of what alpha means across the whole project, see the **Project status: alpha** section of the [README](README.md); this document is the canonical home for supported versions and reporting.
+**Current Status**: Sumpter v0.2.x is in **alpha**. We provide security patches for the latest v0.2.x release. There is no commitment to backport fixes to earlier patches once a newer minor ships. For an overview of what alpha means across the whole project, see the **Project status: alpha** section of the [README](README.md); this document is the canonical home for supported versions and reporting.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+| 0.2.x   | :white_check_mark: |
+| < 0.2   | :x:                |
 
 ## Reporting a Vulnerability
 

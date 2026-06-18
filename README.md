@@ -61,7 +61,7 @@ Sumpter is in **alpha** — for us that's about _interface stability_, not matur
 
 **Memory contract:** XML input is tokenized incrementally where the streaming path applies. JSON/NDJSON file output is bounded with respect to emitted result count for sequential runs and record-index parallel runs: records stream through `RecordSink`, and the parallel route uses bounded reorder/backpressure instead of retaining the full output slice. Unambiguous record-index parallel runs enforce `min_occurrences` from index counts before publishing output and can still use the streaming route. This does not make every extract mode bounded end-to-end: DOM/non-streaming input can still load a document, and Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed floors intentionally remain buffered. See [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md) and [ADR-0009](docs/architecture/adr/0009-record-sink-output-streaming-contract.md).
 
-Security patches target the latest `0.1.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
+Security patches target the latest `0.2.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
 
 ---
 
@@ -178,7 +178,7 @@ The public-data exemplars are deliberately drawn from **five different verticals
 
 ## 🔑 Features
 
-- **Streaming input parsing and JSONL output**: Gigabyte-class XML inputs are tokenized incrementally where the streaming path applies, and JSON/NDJSON file output streams records through the record-sink path for sequential runs and record-index parallel runs with memory bounded by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Parquet, mixed-output, sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered in v0.1.8.
+- **Streaming input parsing and JSONL output**: Gigabyte-class XML inputs are tokenized incrementally where the streaming path applies, and JSON/NDJSON file output streams records through the record-sink path for sequential runs and record-index parallel runs with memory bounded by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Parquet, mixed-output, sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered in v0.2.0.
 - **Record Indexing**: Build seekable indexes for parallel extraction of multi-GB XML files
 - **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors
@@ -186,6 +186,8 @@ The public-data exemplars are deliberately drawn from **five different verticals
 - **Structure discovery**: `inspect` surfaces element paths, attributes, and samples
 - **Integrity verification**: SHA-256 checksums at file and record level
 - **Cloud sources and outputs**: read source data from and publish results to S3-compatible object storage (`s3://`), with credential handles (no secrets in recipe YAML). See [Cloud Sources and Outputs](docs/extract-workflow.md#cloud-sources-and-outputs-s3-compatible).
+- **Reference-table lookup**: recipes load external reference tables once per run and query them from field mappings — `in_reference` (membership) and `lookup_reference` (key→value enrichment) — from a contained local path or an `s3://` object. See [Reference Tables](docs/extract-workflow.md#reference-tables) and the [DSL reference](docs/dsl-reference.md).
+- **List-typed recipe parameters**: parameters can be lists of strings with `starts_with_any`, `value_in`, and `string_length` predicates for set-based classification.
 - **Observability**: Structured logs, progress tracking, and diagnostics
 
 ---
@@ -215,12 +217,15 @@ Available today:
 - ✅ Parallel extraction with worker pools
 - ✅ Streaming mode for very large XML files
 - ✅ Sequential NDJSON output with sidecar manifests and record-sink streaming
-- ✅ Parquet secondary output (buffered in v0.1.8)
+- ✅ Parquet secondary output (buffered in v0.2.0)
 - ✅ Recipe applicability gates and schema-backed dispositions
 - ✅ Multi-file continue-on-error failure manifests
 - ✅ Document-order `_runtime.record_num` semantics for single-selector extraction
 - ✅ Record-sink streaming contract and sequential sink primitives
 - ✅ Streaming record-index writers during index build
+- ✅ S3-compatible cloud (`s3://`) sources and outputs with named credential handles
+- ✅ External reference-table lookup (membership + key→value enrichment)
+- ✅ List-typed recipe parameters with set-classification predicates
 - 🔜 DuckDB output (planned)
 
 See `docs/releases/` for detailed release notes and `docs/user-guide/` for workflow documentation.
