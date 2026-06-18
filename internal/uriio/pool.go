@@ -71,7 +71,11 @@ func (p *ProviderPool) Provider(ctx context.Context, handle, bucket string) (*go
 		// The error comes from the AWS SDK config loader and describes a
 		// config/credential-resolution problem, not the secret value; cfg (which
 		// holds the cleartext key) goes out of scope here and is never logged.
-		return nil, fmt.Errorf("uriio: construct s3 provider for handle %q: %w", handleLabel(handle), err)
+		// Route it through cloudOpError (classify + redact) like every other
+		// cloud-op error, with %s (not %w) so downstream wrapping cannot re-expose
+		// the raw SDK error — completing the "no raw cloud-op error surfaces"
+		// invariant for the one remaining provider-construction site.
+		return nil, fmt.Errorf("uriio: construct s3 provider for handle %q: %s", handleLabel(handle), cloudOpError(err, p.redactionSecrets(handle)))
 	}
 	p.providers[key] = prov
 	return prov, nil
