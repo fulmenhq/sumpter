@@ -6,6 +6,41 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.2.0 (2026-06-18)
+
+**S3-compatible cloud I/O, external reference-table lookup, list-typed recipe parameters, and a parallel-extract correctness fix.**
+
+v0.2.0 is the first minor release after the 0.1.x line. It makes S3-compatible cloud I/O first-class across the engine, adds external reference-table lookups and list-typed recipe parameters for richer recipe-driven classification and enrichment, and fixes a parallel-extraction data race — backed by a new race-detector gate in CI. The cloud URI read/write thread deferred since v0.1.8 lands here.
+
+### What's new (summary)
+
+- **Cloud URI I/O (S3-compatible)** - `s3://` sources and outputs (and the provenance sidecar) across `extract`, `index`, recipe runs, and `inspect`, using named credential handles (references, never secrets). Includes parallel/record-index cloud sources, anonymous public-bucket reads (read-only), a truly-dry `--dry-run` (no acquire/stage), and classify+redact of cloud-I/O errors at a single seam. Provenance records the logical source/destination and handle name only.
+- **External reference-table lookup** - recipes load reference tables once per run and query them with the `in_reference` (membership) and `lookup_reference` (key→value) DSL functions, from a contained local path or an `s3://` object; CSV/TSV/NDJSON, `max_rows`/`max_bytes` caps, with local-path containment, a cloud pre-read size cap, config-validation pre-flight, and sidecar-only provenance (no row values).
+- **List-typed recipe parameters** - parameters may be lists of strings with the `starts_with_any`, `value_in`, and `string_length` predicates; a `--parameter key='["a","b"]'` override supplies a list without a recipe edit.
+- **Scoped race-detector CI gate** - `make test-race-parallel` is wired into CI over the parallel-extract and index packages plus the canonical repro.
+
+### Behavior changes (please review before upgrading)
+
+- **Cloud I/O is opt-in and back-compatible.** A run that references no `s3://` URI does no credential or network work; local/bare paths behave byte-for-byte as before.
+- **Parallel-extract data races fixed** (detached index-header snapshot + per-worker XPath plans); no output/provenance behavior change, no hot-path locks.
+- **Provenance sidecar schema (`sumpter.provenance/v1`)** gained an additive `reference_tables` block; existing manifests remain valid.
+- **No output-format changes** to existing local extraction/index paths.
+
+### Deferred
+
+- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, and >5 GiB multipart cloud output** remain follow-on work (an unsupported URI returns an actionable error today).
+- **DuckDB, Arrow, service health endpoints, Prometheus metrics, adaptive backpressure, and repair modes** remain roadmap items.
+
+### Release notes
+
+- `VERSION` is `0.2.0`. Binaries from this tag emit `v0.2.0` via `sumpter version`.
+- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.0` is the intended tag/version sanity check.
+- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
+
+See [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md) for the full release narrative.
+
+---
+
 ## v0.1.10 (2026-06-09)
 
 **Homebrew + Scoop distribution; Intel-Mac (`darwin-amd64`) prebuilt retired.**
@@ -68,42 +103,3 @@ This release deliberately precedes the Homebrew + Scoop wiring (next cycle): the
 - The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
 
 See [`docs/releases/v0.1.9.md`](docs/releases/v0.1.9.md) for the full release narrative.
-
----
-
-## v0.1.8 (2026-06-08)
-
-**Bounded-memory JSON/NDJSON output streaming, CI/local toolchain parity, and public-data corpus expansion.**
-
-v0.1.8 delivers the bounded end-to-end output streaming that v0.1.7 deferred. JSON and NDJSON file output now streams through the record-sink path for both sequential and record-index parallel runs, so extraction memory stays bounded instead of buffering every record per source file before writing.
-
-The bound is precise: it covers JSON/NDJSON sequential and record-index parallel output. Parquet, mixed-output runs (JSON/NDJSON and Parquet together), sequential `min_occurrences` paths, and ambiguous indexed-floor paths remain buffered in v0.1.8 by design.
-
-### What's new (summary)
-
-- **Bounded JSON/NDJSON output streaming** - sequential and record-index parallel extraction emit records through the record-sink path; parallel runs preserve document order through a bounded reorder window. Memory is bounded by parser state, active record work, writer buffers, and (parallel) the reorder window.
-- **Streaming memory-regression proof** - a fixture and test assert heap stays flat at scale so future changes cannot silently reintroduce full-result buffering.
-- **Streaming eligibility gating** - `min_occurrences` handling and a large-file gate decide when the bounded route applies; a sequential run that falls back to the buffered floor now warns.
-- **CI/local toolchain parity** - `config/toolchain.env` pins the Go and golangci-lint versions; `make toolchain-check` fails before linting on drift, and a pinned-staticcheck probe asserts `SA5011` is reported.
-- **Public-data corpus expansion** - USGS QuakeML, NWS CAP, and GovInfo USLM exemplars (recipes + runnable public-domain samples) widen the worked-example corpus across three new verticals.
-
-### Behavior changes (please review before upgrading)
-
-- **JSON/NDJSON output is bounded for sequential and record-index parallel runs.** Capacity planning for these paths can assume bounded output memory.
-- **Parquet, mixed-output, sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered.**
-- **Sequential buffered fallback now warns** so the behavior is observable.
-- **Local lint can fail before linting on toolchain drift** via `make toolchain-check` (run by `make lint` / `make check-all`).
-
-### Deferred
-
-- **Incremental Parquet writing, bounded mixed-output runs, and bounded sequential `min_occurrences` / ambiguous indexed-floor paths** remain future work.
-- **Cloud URI read/write (S3 and S3-compatible) I/O** is the next major capability thread, tracked separately.
-- **DuckDB, Arrow, service health endpoints, Prometheus metrics, adaptive backpressure, and repair modes** remain roadmap items.
-
-### Release notes
-
-- `VERSION` is `0.1.8`. Binaries from this tag emit `v0.1.8` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.8` is the intended tag/version sanity check.
-- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
-
-See [`docs/releases/v0.1.8.md`](docs/releases/v0.1.8.md) for the full release narrative.
