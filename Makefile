@@ -404,6 +404,14 @@ build-all: ## Build for all platforms
 install: build ## Install binary to $(INSTALL_DIR) (default ~/.local/bin; override with INSTALL_DIR=...)
 	@echo "$(BLUE)Installing $(BINARY_NAME) to $(INSTALL_DIR)...$(NC)"
 	@mkdir -p $(INSTALL_DIR)
+	@# Remove any existing binary FIRST so the copy lands on a fresh inode. A
+	@# cp-over-existing reuses the inode and, on macOS/arm64, trips the codesign
+	@# inode cache — the freshly built binary then dies with "zsh: killed" (SIGKILL).
+	@# Fail loud if an existing binary cannot be removed; stay silent when there is
+	@# simply nothing to remove (first install) — that is not an error.
+	@if [ -e "$(INSTALL_DIR)/$(BINARY_NAME)" ] || [ -L "$(INSTALL_DIR)/$(BINARY_NAME)" ]; then \
+		rm "$(INSTALL_DIR)/$(BINARY_NAME)" || { echo "$(RED)❌ Failed to remove existing $(INSTALL_DIR)/$(BINARY_NAME)$(NC)"; exit 1; }; \
+	fi
 	cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/
 	@echo "$(GREEN)✅ Installed to $(INSTALL_DIR)/$(BINARY_NAME)$(NC)"
 
