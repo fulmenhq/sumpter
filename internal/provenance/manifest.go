@@ -35,7 +35,28 @@ type Manifest struct {
 	Inputs             []Input           `json:"inputs"`
 	Outputs            []Output          `json:"outputs"`
 	CountsByRecordType map[string]int    `json:"counts_by_record_type"`
+	ReferenceTables    []ReferenceTable  `json:"reference_tables,omitempty"`
 	Attestations       []json.RawMessage `json:"attestations,omitempty"`
+}
+
+// ReferenceTable records the logical identity of an external reference table loaded
+// for a run (the in_reference / lookup_reference sources). It is sidecar-manifest
+// only — never repeated per output record — and carries NO row values: a content
+// hash plus name/source/shape/caps are enough to reproduce and audit the lookup
+// without multiplying the table's exposure across every record (the content hash of a
+// small sensitive set is itself a confirmation oracle, so it lives here once).
+type ReferenceTable struct {
+	Name string `json:"name"`
+	// Source is the logical workspace-relative path (or, in a later delivery, the
+	// logical s3:// URI) — the effective source after any --reference-table override,
+	// never the resolved absolute/staged path.
+	Source        string `json:"source"`
+	Format        string `json:"format"`         // csv | tsv | ndjson
+	Mode          string `json:"mode"`           // membership | lookup
+	RowCount      int    `json:"row_count"`      // physical source rows loaded
+	ContentSHA256 string `json:"content_sha256"` // "sha256:"-prefixed hash of source bytes
+	MaxRows       int    `json:"max_rows"`
+	MaxBytes      int64  `json:"max_bytes"`
 }
 
 // CLI captures the sanitized command surface used for a run.

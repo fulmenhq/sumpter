@@ -245,6 +245,75 @@ properties:
           type: string
           minLength: 1
         uniqueItems: true
+      reference_tables:
+        type: array
+        description: |
+          External reference tables loaded once per run to back the
+          in_reference (membership / Pattern A) and lookup_reference
+          (key→value / Pattern B) DSL functions. Each source is a
+          workspace-relative path (absolute paths, ".." escapes, and
+          symlinks are refused); format, columns, and caps are fixed by the
+          recipe so a --reference-table source override (refreshing the
+          data) cannot drift the schema.
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, source, format, max_rows]
+          oneOf:
+            - required: [column]
+            - required: [key_column, value_column]
+          properties:
+            name:
+              type: string
+              description: |
+                Table name referenced as a string literal in
+                in_reference('name', field) / lookup_reference('name',
+                field, default).
+              pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+              maxLength: 128
+            source:
+              type: string
+              description: |
+                Workspace-relative path to the table file (contained — no
+                absolute paths, "..", or symlinks).
+              minLength: 1
+            format:
+              type: string
+              enum: ["csv", "tsv", "ndjson"]
+            header:
+              type: boolean
+              description: |
+                csv/tsv only — the first row is a header. Required true to
+                reference columns by name.
+            column:
+              type: string
+              description: |
+                Membership (Pattern A) — the single column whose distinct
+                values form the set queried by in_reference.
+              minLength: 1
+            key_column:
+              type: string
+              description: |
+                Key→value lookup (Pattern B) — the key column matched by
+                lookup_reference.
+              minLength: 1
+            value_column:
+              type: string
+              description: |
+                Key→value lookup (Pattern B) — the value column returned by
+                lookup_reference.
+              minLength: 1
+            max_rows:
+              type: integer
+              minimum: 1
+              description: |
+                Fail-loud cap on physical source rows (no partial load).
+            max_bytes:
+              type: integer
+              minimum: 1
+              description: |
+                Fail-loud pre-read byte cap; defaults to 100 MiB when
+                omitted.
       workers:
         type: integer
         minimum: 1

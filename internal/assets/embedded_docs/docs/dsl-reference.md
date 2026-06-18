@@ -240,6 +240,40 @@ idempotent under the function contract: `mask_tail("XXXXefgh", 4)` returns
 cryptographic, not tokenization, and not hashing. Treat masked output as reduced
 fidelity display data, not as a security boundary.
 
+### Reference Table Functions
+
+These resolve a record field against an external **reference table** declared in
+the recipe (`defaults.reference_tables`) and loaded once per run. See
+[Reference Tables](extract-workflow.md#reference-tables) for the recipe surface.
+
+| Function           | Signature                            | Behavior                                                                                                                                                                |
+| ------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `in_reference`     | `in_reference(table, field)`         | Membership (Pattern A). True when `field`'s value is in the distinct set of the table's declared `column`. A nil/empty field is `false` (a miss, never an error).        |
+| `lookup_reference` | `lookup_reference(table, field, default)` | Key→value lookup (Pattern B). Returns the table's `value_column` entry for the `key_column` matching `field`; on a miss (or a nil/empty field) returns `default`.   |
+
+The first argument **must be a string literal** — a table name, not a variable or
+expression. Record data must never select which run resource is read, so a
+non-literal table name is a loud error at config validation (pre-flight), before
+any record is processed; an unknown table name (one not declared in the recipe)
+fails pre-flight the same way. The match is exact and case sensitive; compose with
+`lower(...)` to fold case.
+
+```
+# extract.yaml
+- output_field: is_curated
+  expression: "in_reference('curated', accession)"
+  type: boolean
+- output_field: molecule_type
+  expression: "lookup_reference('molecule', accession, 'unknown')"
+  type: string
+```
+
+**Exposure note (`lookup_reference`).** Unlike `in_reference`'s boolean,
+`lookup_reference` emits a **table value** into the output record. A reference
+table's sensitivity therefore flows into output on a Pattern-B lookup — the
+standard withhold/output posture applies, so treat enrichment as data exposure on
+the same axis as any other emitted field.
+
 Mask counts (`keep_n`, `head_n`, `tail_n`) must be finite, non-negative,
 integer-valued numeric arguments and within the platform `int` conversion
 range. Fractional values, NaN, infinities, negative values, and values too large

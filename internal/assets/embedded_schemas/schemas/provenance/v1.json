@@ -62,6 +62,12 @@
         "minimum": 0
       }
     },
+    "reference_tables": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reference_table"
+      }
+    },
     "attestations": {
       "type": "array",
       "items": {
@@ -71,6 +77,54 @@
     }
   },
   "$defs": {
+    "reference_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "source",
+        "format",
+        "mode",
+        "row_count",
+        "content_sha256",
+        "max_rows",
+        "max_bytes"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format": {
+          "type": "string",
+          "enum": ["csv", "tsv", "ndjson"]
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["membership", "lookup"]
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_sha256": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_rows": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "cli": {
       "type": "object",
       "additionalProperties": false,

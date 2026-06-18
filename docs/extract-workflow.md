@@ -180,6 +180,67 @@ Merge precedence is legacy `client_id` / `site_id`, then source-extracted captur
 
 `relative_path` always requires an explicit root from `--input-path` or `defaults.input.path`; single-file `--files` runs without that root must use `filename` or `absolute_path`. Recipe `files` mode may still set `defaults.input.path` as metadata so relative extraction has a stable root. Source capture names must not collide with `field_mappings[].output_field` or `defaults.parameters` keys.
 
+### Reference Tables
+
+A recipe can declare external **reference tables** loaded once per run to back the
+[`in_reference` and `lookup_reference`](dsl-reference.md#reference-table-functions)
+DSL functions — membership tests and key→value enrichment against an authority list
+that is too large or too volatile to inline as a list parameter.
+
+```yaml
+defaults:
+  reference_tables:
+    - name: curated # referenced as in_reference('curated', ...)
+      source: refdata/curated_accessions.csv # workspace-relative; contained
+      format: csv # csv | tsv | ndjson
+      header: true # csv/tsv: columns referenced by name
+      column: accession # membership (Pattern A): the single set column
+      max_rows: 500000 # fail-loud cap on physical source rows
+    - name: molecule # referenced as lookup_reference('molecule', ...)
+      source: refdata/molecule_types.csv
+      format: csv
+      header: true
+      key_column: accession # key→value (Pattern B): match the key column…
+      value_column: molecule_type # …and return this column on a hit
+      max_rows: 500000
+      max_bytes: 52428800 # optional pre-read byte cap (default 100 MiB)
+```
+
+Each table declares **exactly one** shape: a membership `column` (Pattern A) _or_ a
+`key_column` + `value_column` pair (Pattern B). Tables are loaded into immutable,
+in-memory maps before extraction begins and projected down to only the declared
+column(s) — unused columns and raw rows are never retained. Duplicate keys in a
+key→value table fail loud; an oversized source (past `max_rows` or `max_bytes`)
+fails loud rather than truncating.
+
+**Source containment.** `source` is a **workspace-relative** path. Absolute paths,
+`..` escapes, and symlinks (final file or any parent component) are refused: a
+reference-table source is read, and a Pattern-B lookup can emit its values into
+output, so an unconstrained path would be a local-file read/exfil surface. Keep
+reference data inside the recipe workspace.
+
+**Refresh without a recipe edit.** `--reference-table name=source` overrides a
+declared table's source path for a single run (repeatable). Only the source
+changes; the format, columns, and caps stay recipe-declared, so a refreshed data
+file cannot silently change the table's shape. The override path is held to the
+same containment rule, and provenance records the **effective** (overridden) source.
+
+```bash
+# Re-point the 'curated' table at this week's authority file, recipe unchanged:
+sumpter recipes run extract ./workspace \
+  --reference-table curated=refdata/curated_accessions_2026w24.csv
+```
+
+**Pre-flight and dry-run.** Unknown or non-literal table names fail at config
+validation, before any record is processed. `--dry-run` validates the declarations,
+source containment, and resolvability but does **not** load table contents, so a dry
+run stays cheap even with large tables.
+
+**Provenance.** Each loaded table is recorded once in the sidecar manifest under
+`reference_tables` (name, effective source, format, mode, row count, a `sha256:`
+content hash of the source bytes, and caps) — never row values, and never repeated
+per output record.
+
 ### Field Mappings
 
 `field_mappings` can extract values from XML with `xpath` or derive scalar fields with `expression`.
