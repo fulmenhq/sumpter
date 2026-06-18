@@ -221,6 +221,16 @@ test-parallel: ## Run tests with parallel execution and race detection
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) -parallel=4 $(TEST_FLAGS_RACE) ./...
 
+.PHONY: test-race-parallel
+test-race-parallel: ## Race gate (-race -count=1) on parallel-extract + index packages + canonical parallel repro
+	@echo "$(BLUE)Running scoped race gate (-race -count=1)...$(NC)"
+	$(GOTEST) -race -count=1 ./internal/extract/parallel/... ./internal/index/...
+	$(GOTEST) -race -count=1 ./internal/extract/ -run 'TestCloneRecordMatchGivesPerHolderXPathState'
+	$(GOTEST) -race -count=1 ./cmd/sumpter/commands -run 'TestRunExtractManifestRecordsEffectiveParallelFormat'
+	@echo "$(GREEN)Race gate passed$(NC)"
+# Scoped to -count=1 by design: the separate, pre-existing -count>1 command
+# global-state test pollution is NOT part of this gate (see race-fix).
+
 .PHONY: test-coverage
 test-coverage: ## Run tests with detailed coverage analysis
 	@echo "$(BLUE)Running tests with detailed coverage analysis...$(NC)"

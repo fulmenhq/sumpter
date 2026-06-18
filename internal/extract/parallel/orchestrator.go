@@ -112,8 +112,6 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to schedule work: %w", err)
 	}
 
-	extractor := NewSeekableExtractor(pe.opts.SourcePath, extCfg, sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
-
 	// Start worker pool
 	var wg sync.WaitGroup
 	stats := scheduler.GetStats()
@@ -123,10 +121,15 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 
 	for i := 0; i < pe.opts.Workers; i++ {
 		wg.Add(1)
-		go func(workerID int) {
+		// Each worker gets its own extractor over a per-worker clone of the extract
+		// config, so workers never share mutable compiled *xpath.Expr state (the
+		// site-B race). The clone clears compiled XPath and keeps the immutable
+		// reference-table registry + external fields shared by pointer (read-only).
+		workerExtractor := NewSeekableExtractor(pe.opts.SourcePath, extract.CloneRecordMatch(extCfg), sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
+		go func(workerID int, ex *SeekableExtractor) {
 			defer wg.Done()
-			Worker(workerID, scheduler.GetWorkChannel(), scheduler.GetResultChannel(), extractor, stats)
-		}(i)
+			Worker(workerID, scheduler.GetWorkChannel(), scheduler.GetResultChannel(), ex, stats)
+		}(i, workerExtractor)
 	}
 
 	// Wait for all workers to finish, then close result channel
@@ -264,8 +267,6 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 		return summary, fmt.Errorf("failed to schedule work: %w", err)
 	}
 
-	extractor := NewSeekableExtractor(pe.opts.SourcePath, extCfg, sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
-
 	var wg sync.WaitGroup
 	stats := scheduler.GetStats()
 
@@ -274,10 +275,12 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 
 	for i := 0; i < pe.opts.Workers; i++ {
 		wg.Add(1)
-		go func(workerID int) {
+		// Per-worker extractor over a per-worker config clone — see Extract().
+		workerExtractor := NewSeekableExtractor(pe.opts.SourcePath, extract.CloneRecordMatch(extCfg), sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
+		go func(workerID int, ex *SeekableExtractor) {
 			defer wg.Done()
-			Worker(workerID, scheduler.GetWorkChannel(), scheduler.GetResultChannel(), extractor, stats)
-		}(i)
+			Worker(workerID, scheduler.GetWorkChannel(), scheduler.GetResultChannel(), ex, stats)
+		}(i, workerExtractor)
 	}
 
 	go func() {
