@@ -34,6 +34,7 @@ var errJSONOutput = errors.New("json output failure")
 
 type ExtractOptions struct {
 	Files                    string
+	FileList                 string
 	InputPath                string
 	IncludePattern           string
 	ExcludePattern           string
@@ -160,7 +161,8 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of file paths to process")
+	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of file paths to process (short ad hoc sets; subject to the shell argv limit — use --file-list for large batches)")
+	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local paths or s3:// URIs), one per line; blank lines and # comments ignored. No directory walk, no argv limit — the batch input for large/precise sets. Mutually exclusive with --files and --input-path")
 	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Input path for processing (directory or file)")
 	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "*.xml", "File inclusion pattern (use quotes for globs: \"*.xml\")")
 	cmd.Flags().StringVar(&opts.ExcludePattern, "exclude-pattern", "", "File exclusion pattern (use quotes for globs: \"temp/*\")")
@@ -343,12 +345,22 @@ func runExtract(opts *ExtractOptions) error {
 	logger.Debug("Starting extract command")
 	startedAt := time.Now().UTC()
 
-	// Validate options
-	if opts.Files == "" && opts.InputPath == "" {
-		return fmt.Errorf("must specify either --files or --input-path")
+	// Validate options: exactly one input mode (--files, --file-list, --input-path).
+	inputModes := 0
+	if opts.Files != "" {
+		inputModes++
 	}
-	if opts.Files != "" && opts.InputPath != "" {
-		return fmt.Errorf("cannot specify both --files and --input-path")
+	if opts.FileList != "" {
+		inputModes++
+	}
+	if opts.InputPath != "" {
+		inputModes++
+	}
+	if inputModes == 0 {
+		return fmt.Errorf("must specify one of --files, --file-list, or --input-path")
+	}
+	if inputModes > 1 {
+		return fmt.Errorf("specify only one of --files, --file-list, or --input-path")
 	}
 	outputFormats, err := effectiveOutputFormats(opts)
 	if err != nil {
@@ -1972,6 +1984,11 @@ func manifestSanitizeRoots(opts *ExtractOptions) []string {
 			roots = append(roots, filepath.Dir(file))
 		}
 	}
+	if opts.FileList != "" {
+		// The list file's directory is the resolution base for its relative entries,
+		// so it covers the input refs the list contributes.
+		roots = append(roots, filepath.Dir(opts.FileList))
+	}
 	return roots
 }
 
@@ -1986,6 +2003,7 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 		}
 	}
 	appendFlag("--files", opts.Files)
+	appendFlag("--file-list", opts.FileList)
 	appendFlag("--input-path", opts.InputPath)
 	appendFlag("--include-pattern", opts.IncludePattern)
 	appendFlag("--exclude-pattern", opts.ExcludePattern)
@@ -2461,6 +2479,25 @@ func referencesIncludeCloud(opts *ExtractOptions) (bool, error) {
 		}
 		return r.IsCloud(), nil
 	}
+	if opts.FileList != "" {
+		// A file-list can carry s3:// refs, so the session-need check must read it (the
+		// same refs discoverInputReferences will use). readFileListRefs validates each
+		// entry's scheme with line context.
+		refs, err := readFileListRefs(opts.FileList)
+		if err != nil {
+			return false, err
+		}
+		for _, ref := range refs {
+			cloud, cerr := isCloud(ref)
+			if cerr != nil {
+				return false, cerr
+			}
+			if cloud {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 	if opts.Files != "" {
 		for _, f := range strings.Split(opts.Files, ",") {
 			if f = strings.TrimSpace(f); f != "" {
@@ -2670,6 +2707,12 @@ func newCloudSessionFromCredentials(credentialsPath string, credentialOverrides 
 // prefix/glob is enumerated through the session (include/exclude globs apply), and
 // a single cloud object is returned as one reference.
 func discoverInputReferences(ctx context.Context, session *uriio.Session, opts *ExtractOptions) ([]string, error) {
+	if opts.FileList != "" {
+		// Batch file-list input: the orchestrator supplies the exact set of
+		// references (local or s3://) — no directory walk, no argv ceiling. Refs are
+		// acquired through the same read boundary as --files entries.
+		return readFileListRefs(opts.FileList)
+	}
 	if opts.Files != "" {
 		refs := make([]string, 0)
 		for _, f := range strings.Split(opts.Files, ",") {
@@ -2838,18 +2881,50 @@ func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
 		query.Exclude = []string{exclude}
 	}
 
+	// Discovery visibility: a local --input-path run walks the ENTIRE tree before the
+	// include pattern filters files (filename-only patterns like *.xml can't prune
+	// directories), so on a large mixed-grain corpus there is a multi-minute stall
+	// before any record is produced — and an accidental over-scope is invisible.
+	// Surface the enumeration as a legible phase: announce it, report the matched
+	// count + elapsed time, and warn loudly when the walk is slow.
+	logger := logging.GetLogger()
+	logger.Info("Enumerating input files",
+		zap.String("root", absInput),
+		zap.String("include", opts.IncludePattern),
+		zap.String("exclude", opts.ExcludePattern),
+		zap.Int("max_depth", opts.MaxDepth))
+
+	start := time.Now()
 	results, err := facade.Find(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover files from %s: %w", absInput, err)
 	}
+	elapsed := time.Since(start)
 
 	files := make([]string, 0, len(results))
 	for _, result := range results {
 		files = append(files, filepath.Clean(filepath.FromSlash(result.SourcePath)))
 	}
 
+	logger.Info("Input discovery complete",
+		zap.String("root", absInput),
+		zap.Int("matched", len(files)),
+		zap.Duration("elapsed", elapsed))
+	if elapsed >= slowInputDiscoveryThreshold {
+		logger.Warn("Input enumeration was slow: sumpter walked the whole tree under --input-path before --include-pattern filtered it (filename-only patterns cannot prune directories). For large or precisely-scoped sets, prefer --file-list (an explicit list, no walk), a narrower --input-path, or --exclude-pattern to skip known-large subtrees",
+			zap.String("root", absInput),
+			zap.Duration("elapsed", elapsed),
+			zap.Int("matched", len(files)),
+			zap.String("include", opts.IncludePattern))
+	}
+
 	return files, nil
 }
+
+// slowInputDiscoveryThreshold is the elapsed-time bound past which a local
+// --input-path enumeration is flagged as slow, so an over-broad walk is loud rather
+// than an unexplained stall.
+const slowInputDiscoveryThreshold = 5 * time.Second
 
 func writeRecordsToFile(opts *ExtractOptions, filename string, records []map[string]interface{}) error {
 	// Route the destination through the uriio seam. Local destinations resolve to

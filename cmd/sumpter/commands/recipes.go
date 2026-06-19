@@ -310,7 +310,8 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	}
 
 	cmd.Flags().StringVar(&opts.ManifestPath, "manifest", "recipe.yaml", "Path to recipe manifest relative to workspace")
-	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of files to process (overrides manifest)")
+	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of files to process (overrides manifest; short ad hoc sets — use --file-list for large batches)")
+	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local or s3://), one per line; # comments ignored. No walk, no argv limit (overrides manifest). Mutually exclusive with --files/--input-path")
 	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory of XML files to process (overrides manifest)")
 	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "", "Override manifest include pattern")
 	cmd.Flags().StringVar(&opts.ExcludePattern, "exclude-pattern", "", "Override manifest exclude pattern")
@@ -343,6 +344,7 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 type recipeRunExtractOptions struct {
 	ManifestPath            string
 	Files                   string
+	FileList                string
 	InputPath               string
 	IncludePattern          string
 	ExcludePattern          string
@@ -482,22 +484,35 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		sourceExtractionInput.Path = resolveMaybeRelative(absWorkspace, sourceExtractionInput.Path)
 	}
 
-	// Input resolution
+	// Input resolution. A CLI input flag (--files / --file-list / --input-path)
+	// overrides the manifest input; each provided flag is set so a conflicting CLI
+	// combination is caught by runExtract's single-mode check. Only when no CLI input
+	// flag is given does the manifest's input mode apply (files / files_from / path).
+	cliInput := opts.FileList != "" || opts.Files != "" || opts.InputPath != ""
+	if opts.FileList != "" {
+		extractOpts.FileList = resolveMaybeRelative(absWorkspace, opts.FileList)
+	}
 	if opts.Files != "" {
 		extractOpts.Files = opts.Files
-	} else if defaults.Input.Mode == "files" && len(defaults.Input.Files) > 0 {
-		var resolved []string
-		for _, file := range defaults.Input.Files {
-			resolved = append(resolved, resolveMaybeRelative(absWorkspace, file))
-		}
-		extractOpts.Files = strings.Join(resolved, ",")
 	}
-
 	if opts.InputPath != "" {
 		extractOpts.InputPath = resolveMaybeRelative(absWorkspace, opts.InputPath)
 		sourceExtractionInput.Path = extractOpts.InputPath
-	} else if defaults.Input.Mode != "files" && defaults.Input.Path != "" {
-		extractOpts.InputPath = resolveMaybeRelative(absWorkspace, defaults.Input.Path)
+	}
+	if !cliInput {
+		switch {
+		case defaults.Input.Mode == "files" && len(defaults.Input.Files) > 0:
+			var resolved []string
+			for _, file := range defaults.Input.Files {
+				resolved = append(resolved, resolveMaybeRelative(absWorkspace, file))
+			}
+			extractOpts.Files = strings.Join(resolved, ",")
+		case strings.TrimSpace(defaults.Input.FilesFrom) != "":
+			extractOpts.FileList = resolveMaybeRelative(absWorkspace, defaults.Input.FilesFrom)
+		case defaults.Input.Path != "":
+			extractOpts.InputPath = resolveMaybeRelative(absWorkspace, defaults.Input.Path)
+			sourceExtractionInput.Path = extractOpts.InputPath
+		}
 	}
 
 	// Include/exclude patterns
@@ -622,8 +637,8 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	extractOpts.SourceExtractionInput = sourceExtractionInput
 	extractOpts.SourceExtractionRecipeID = manifest.ID
 
-	if extractOpts.Files == "" && extractOpts.InputPath == "" {
-		return errors.New("no input source resolved: provide --files, --input-path, or define defaults.input in recipe.yaml")
+	if extractOpts.Files == "" && extractOpts.FileList == "" && extractOpts.InputPath == "" {
+		return errors.New("no input source resolved: provide --files, --file-list, or --input-path, or define defaults.input in recipe.yaml")
 	}
 	extractOpts.Argv = buildRecipeExtractArgv(workspace, opts, extractOpts)
 
@@ -674,6 +689,7 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 	}
 	appendFlag("--manifest", opts.ManifestPath)
 	appendFlag("--files", extractOpts.Files)
+	appendFlag("--file-list", extractOpts.FileList)
 	appendFlag("--input-path", extractOpts.InputPath)
 	appendFlag("--include-pattern", extractOpts.IncludePattern)
 	appendFlag("--exclude-pattern", extractOpts.ExcludePattern)

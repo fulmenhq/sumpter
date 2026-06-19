@@ -121,6 +121,15 @@ properties:
             type: array
             items:
               type: string
+          files_from:
+            type: string
+            description: |
+              Path to a newline-delimited file listing input references (local
+              paths or s3:// URIs), one per line; blank lines and # comments
+              are ignored. The batch input for large/precise sets — no
+              directory walk and no command-line argv limit. Relative local
+              entries resolve against the list file's directory. A
+              --file-list CLI value overrides this.
           path:
             type: string
           credentials_handle:

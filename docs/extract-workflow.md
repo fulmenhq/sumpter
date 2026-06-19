@@ -105,6 +105,22 @@ sumpter recipes run extract ./recipes/customer/retail-daily-sales \
 
 The runner resolves relative paths via `recipe.yaml`, applies defaults for include/exclude patterns, and delegates to the extract engine. Override any option at the command line when experimenting.
 
+### Input selection (batch lists, directories, large trees)
+
+Processing **many files in one invocation** is a supported, first-class workflow — it is much faster than a separate run per file, especially for many small files. Pick the input mode that scopes the run precisely; exactly one of these applies per run:
+
+- **`--file-list <path>` / manifest `defaults.input.files_from`** — a newline-delimited file listing input references (local paths or `s3://` URIs), one per line; blank lines and `#` comments are ignored. **This is the batch input for large or precisely-scoped sets:** it does **no directory walk** and is not subject to the shell argv limit, so an upstream selection step (a metadata/index query, a crawl listing) can hand sumpter exactly the file set — including an arbitrary subset that no single path glob can express. Relative local entries resolve against the **list file's directory**; entries are processed in listed order.
+
+  ```bash
+  sumpter recipes run extract ./workspace --file-list ./batch/inputs.list
+  ```
+
+- **`--files a.xml,b.xml`** — a short, ad hoc comma-separated set. Convenient for a handful of files, but a comma argument hits the shell's `ARGV_MAX` ceiling at thousands of entries — use `--file-list` for large batches.
+
+- **`--input-path <dir>`** — walk a directory tree and filter by `--include-pattern` / `--exclude-pattern`. Note the walk enumerates the **entire** tree before the include pattern filters files (a filename-only pattern like `*.xml` can match in any subtree and so cannot prune directories), which can be a multi-minute stall on a large mixed-grain corpus. Sumpter now announces the enumeration phase and warns when the walk is slow. To scope precisely on a large tree, prefer `--file-list`, a narrower `--input-path`, or `--exclude-pattern` to skip known-large subtrees (exclude patterns **do** prune directories).
+
+`--file-list` is designed to accept `s3://` references under the same credential-handle posture as cloud sources, so the same mechanism carries over for cloud inputs.
+
 ### Recipe Parameters
 
 Recipes can declare literal parameters that are injected into every extracted record's `extract.data` block. Use them for operator-known identifiers or tags the source XML does not carry.
