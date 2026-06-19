@@ -1877,13 +1877,19 @@ func findChildrenByNameAll(node *xmlquery.Node, name string) []*xmlquery.Node {
 func coerceString(value interface{}) (interface{}, error) {
 	switch v := value.(type) {
 	case nil:
+		// Absent: no selected node / no expression result. Stays absent (omitted from
+		// the record → undefined in DSL scope). The ternary guard remains the pattern
+		// for maybe-absent fields.
 		return nil, nil
 	case string:
-		trimmed := strings.TrimSpace(v)
-		if trimmed == "" {
-			return nil, nil
-		}
-		return trimmed, nil
+		// Present-but-empty (and whitespace-only) string values bind as a first-class
+		// "" — the typed-string coercion contract: trim, then preserve the empty string
+		// as a DEFINED value rather than collapsing it to nil. This makes XPath
+		// boolean(node) presence and the string field agree for an empty element, and
+		// string_length("")/starts_with_any("", ...) follow their contracts. Shared by
+		// XPath string mappings and expression mappings with type: string. Only a nil
+		// value remains absent/undefined. (empty-element-bind)
+		return strings.TrimSpace(v), nil
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64), nil
 	case bool:

@@ -123,17 +123,29 @@ change simple extract filters or the undefined-variable contract: referencing an
 undeclared parameter still fails with the existing `undefined variable: <name>`
 error.
 
-**Empty elements and the undefined-variable contract.** An XPath *string* field over
-an element that is **present but empty** (`<Field/>` or `<Field></Field>`) binds as
-**undefined** in DSL scope — not as `""`. Because `boolean(Parent/Child/Field)`
-evaluates to `true` for that same node, a boolean presence-check does **not** make a
-later string reference safe: a guard such as
-`has_field ? string_length(field) : 0` still fails with `undefined variable: field`
-when the element is empty. To guard on actual **content** rather than mere presence,
-test for a non-empty value:
+**Empty elements vs. absent elements.** A string field over an element that is
+**present but empty** (`<Field/>`, `<Field></Field>`, or whitespace-only) binds as the
+empty string `""` — a defined value — so `boolean(Parent/Child/Field)` presence and the
+string field agree, and `string_length("") == 0` / `starts_with_any("", list) == false`
+follow their contracts. An **absent** element (no matching node) is different: its
+string field is **omitted**, so referencing it directly fails with
+`undefined variable: field`. Use the `has_field ? f(field) : default` ternary guard for
+**maybe-absent** fields — `boolean()` is the right presence test, and on the false
+branch the undefined variable is never referenced:
 
 ```yaml
 - output_field: has_field
+  xpath: "boolean(Parent/Child/Field)"
+  type: boolean
+- output_field: classified
+  expression: "has_field ? f(field) : default"
+```
+
+A guard on **non-empty content** (rather than mere presence) is a separate intent —
+use it only when the recipe specifically wants to exclude present-but-empty values:
+
+```yaml
+- output_field: has_content
   xpath: "boolean(Parent/Child/Field[string-length(normalize-space(.)) > 0])"
   type: boolean
 ```
@@ -233,7 +245,11 @@ parameter parse time and again in the evaluator (an empty prefix would otherwise
 match everything). `string_length` lets a length/shape guard move from an
 `xpath:` `string-length(...)` helper into an `expression:` mapping, e.g.
 `(string_length(accession) >= 5) && starts_with_any(accession, curated_prefixes)`
-(use `&&`/`||` for boolean composition — the DSL has no `and`/`or` keywords).
+(use `&&`/`||` for boolean composition — the DSL has no `and`/`or` keywords). This is
+safe when `accession` is present (including present-but-empty, which binds `""`); if the
+element can be **absent**, guard it with `has_accession ? (...) : default` (see the
+"Empty elements vs. absent elements" note above), since a direct reference to an absent
+field fails with `undefined variable`.
 
 `normalize_space` uses Go `strings.Fields` / `unicode.IsSpace` semantics, so
 it treats the full Unicode whitespace class as whitespace. This is broader than
