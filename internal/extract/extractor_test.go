@@ -916,10 +916,14 @@ func TestCoerceString(t *testing.T) {
 		input    interface{}
 		expected interface{}
 	}{
-		{"nil", nil, nil},
-		{"empty string", "", nil},
-		{"whitespace string", "   ", nil},
+		// empty-element-bind: a present-but-empty string binds as "" (a defined value),
+		// not nil; only an absent (nil) value stays undefined. Whitespace-only trims to
+		// "". Shared by XPath string mappings and type:string expression mappings.
+		{"nil stays absent", nil, nil},
+		{"empty string binds empty", "", ""},
+		{"whitespace string trims to empty", "   ", ""},
 		{"valid string", "hello", "hello"},
+		{"surrounding whitespace trimmed", "  hi  ", "hi"},
 		{"int to string", 42, "42"},
 		{"float to string", 3.14, "3.14"},
 		{"bool true to string", true, "true"},

@@ -147,6 +147,13 @@ field_mappings:
     type: boolean
 ```
 
+This references `accession` directly, which is safe when the element is present —
+including **present-but-empty** (it binds `""`, so `string_length` is `0`). If
+`Accession` can be **absent** in your inputs, guard it with
+`has_accession ? (...) : false` (where `has_accession: boolean(Accession)`), since a
+direct reference to an absent field fails with `undefined variable` — see
+[Empty elements vs. absent elements](dsl-reference.md) in the DSL reference.
+
 Override the set at run time with a JSON array — no recipe edit, no revalidation:
 
 ```bash
