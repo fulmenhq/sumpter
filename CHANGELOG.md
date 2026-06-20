@@ -8,6 +8,22 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-20
+
+**Two dogfood-driven fixes: present-but-empty string elements bind `""` instead of erroring, and a batch file-list input that skips directory enumeration.**
+
+See [`docs/releases/v0.2.1.md`](docs/releases/v0.2.1.md) for the full release narrative.
+
+### Added
+
+- **Batch file-list input (`input-prune`)** - `extract --file-list <path>` and recipe `defaults.input.files_from` read a newline-delimited list of input references (local paths or `s3://`/`file://` URIs, one per line; `#` comments and blank lines ignored), feeding the existing batch path with **no directory walk** and without the `--files` argv ceiling. Relative local entries resolve against the list file's directory; listed order is preserved; an unsupported scheme or an empty list fails loud with line context. Mutually exclusive with `--files` / `--input-path`; the recipe schema gains `input.files_from` (#101).
+- **`--input-path` discovery visibility (`input-prune`)** - directory enumeration now announces its start, reports the matched count and elapsed time, and warns loudly past a slow threshold, so an accidental over-scope or a slow walk is visible in the first seconds instead of a silent multi-minute stall. No change to discovery results (#101).
+
+### Changed
+
+- **Present-but-empty string elements bind `""` (`empty-element-bind`)** - an XPath *string* field over an element that is present but empty now binds the empty string (a defined value) in DSL scope, agreeing with what `boolean()` reports for the same node, so the `has_x ? f(string_x) : default` guard pattern no longer crashes with `undefined variable`. This is a behavior change for upgraders — see [`docs/releases/v0.2.1.md`](docs/releases/v0.2.1.md) (#100).
+- **VERSION bumped to `0.2.1`** for this release.
+
 ## [0.2.0] - 2026-06-18
 
 **S3-compatible cloud I/O, external reference-table lookup, list-typed recipe parameters, and a parallel-extract correctness fix.**
@@ -268,97 +284,3 @@ See [`docs/releases/v0.1.4.md`](docs/releases/v0.1.4.md) for the full release na
 ### Removed
 
 - **Vestigial `BlindingConfig` types** removed from extract surface (PR #15).
-
-## [0.1.2] - 2026-05-10
-
-### Added
-
-- **Seekable-Zstd Compressed Index Store** - 10-20x smaller indexes with parallel random access
-  - Two-file format: `*.recordindex.header.json` (metadata) + `*.recordindex.records.szst` (compressed records)
-  - `--emit-szst` flag for `index build` command
-  - Automatic format detection in all index commands
-  - CGO bindings with pre-built libraries for Linux glibc and musl
-- **Format-Agnostic Index CLI** - All index commands support both JSON and seekable-zstd formats
-  - `index stream`: Stream-walk indexes without loading into memory
-  - `index verify`: Verify index integrity against source XML
-  - `index build`: Generate indexes in JSON, seekable-zstd, or both formats
-- **CI/CD for Cross-Platform Builds** - GitHub Actions workflow validates CGO linking
-  - Linux glibc (Debian Bookworm) validation
-  - Linux musl (Alpine) validation
-
-### Changed
-
-- Parallel extraction orchestrator now streams records on-demand (constant memory)
-- Index commands auto-detect format by file extension
-- Build tooling improvements: renamed `pre-commit`/`pre-push` to `precommit`/`prepush`
-
-### Fixed
-
-- Yamllint issues in CI workflow files
-- Routine security improvements from audit findings
-
-### Docs
-
-- Comprehensive index workflow guide with seekable-zstd documentation
-- Container deployment patterns for CGO builds
-- v0.1.2 release notes with migration guide
-
-## [0.1.1] - 2025-10-13
-
-### Added
-
-- **Hybrid Streaming XML Architecture** (ADR-0005): Constant-memory XML processing for 50GB+ files
-  - RecordScanner with token-by-token streaming and XPath-based record selection
-  - Automatic streaming mode for files >100MB with `--allow-large-files` flag
-  - 99.95% memory reduction: 111GB → 50MB RSS for 50GB XML files
-  - Transparent .gz decompression support in streaming mode
-- Recipe system with manifest-based workflows (`recipes` command)
-  - `recipes init`: Scaffold new recipe workspaces with templates
-  - `recipes run extract`: Execute extract recipes with manifest defaults
-  - `recipes retrieve`: Acquire data from APIs and file systems (SEC EDGAR support)
-  - Manifest validation with JSON Schema 2020-12
-- Comprehensive test suite achieving 50% coverage (alpha phase gate)
-  - Streaming package: 83.9% coverage (exceeds production 80% threshold)
-  - Transforms: 91.4% coverage
-  - Recipes: 86.7% coverage
-  - DSL validation: 68.0% coverage
-- New test files: transforms, recipes manifest, regulatory scraper, validate/retrieve commands, doctor/envinfo
-- Doctor command for environment setup and diagnostics
-  - Interactive SEC EDGAR configuration wizard with compliance validation
-  - Environment health checks and setup script generation
-- Retrieve command with validation helpers and path security
-
-### Changed
-
-- Extract command automatically uses streaming for large files when `--allow-large-files` is set
-- Enhanced extract record-match schema with streaming mode documentation
-- Recipe manifest schema with defaults, input/output configuration, and asset references
-
-### Fixed
-
-- Recipe subcommand test expectations (init/retrieve/run vs list/show/run)
-- Validate command test compilation errors
-
-### Docs
-
-- ADR-0005: Hybrid Streaming XML Architecture with performance benchmarks
-- Recipe system documentation and workflow examples
-- Release notes for v0.1.1 with streaming architecture details
-
-## [0.1.0] - 2025-09-18
-
-### Added
-
-- Initial release: Sumpter v0.1.0 bootstrap
-- XML inspection foundations with dialect registry and SEC EDGAR dialect
-- Logging component with console/JSON output and PII redaction
-- Makefile quality gates; schema validation via goneat; coverage scripts
-- Embedded docs and schemas; CLI commands: version, envinfo, inspect, docs
-
-### Fixed
-
-- Errcheck issues in envinfo
-
-### Docs
-
-- SOPs, ADRs, and user guides embedded

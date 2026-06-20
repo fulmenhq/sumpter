@@ -6,6 +6,38 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.2.1 (2026-06-20)
+
+**Two dogfood-driven fixes: present-but-empty string elements bind `""` instead of erroring, and a batch file-list input that skips directory enumeration.**
+
+v0.2.1 is a focused patch off the v0.2.0 dogfood feedback (a 1.2M-row run). It carries two independent fixes — a present-but-empty XML string element now binds a defined `""` instead of an undefined value, and a new batch file-list input hands the engine an exact file set with no directory walk. The v0.2.0 surface (cloud I/O, reference-table lookup, list-typed parameters) is unchanged.
+
+### What's new (summary)
+
+- **Present-but-empty string elements bind `""` (`empty-element-bind`)** - an XPath string field over a present-but-empty element now binds the empty string (a defined value) instead of undefined, agreeing with `boolean()` presence, so the `has_x ? f(string_x) : default` guard pattern no longer crashes with `undefined variable`. The v0.2.0 doc-note workaround already shipped; this is the real fix.
+- **Batch file-list input (`input-prune`)** - `extract --file-list <path>` and recipe `defaults.input.files_from` read a newline-delimited list of input references (local paths or `s3://`/`file://` URIs; `#` comments and blanks ignored), feeding the existing batch path with **no directory walk** and without the `--files` argv ceiling. Relative local entries resolve against the list file's directory; order preserved; unsupported scheme / empty list fail loud with line context. Mutually exclusive with `--files` / `--input-path`. Cloud entries are verified end to end (moto).
+- **`--input-path` discovery visibility (`input-prune`)** - directory enumeration now announces its start, reports matched count + elapsed, and warns loudly past a slow threshold; no change to discovery results.
+
+### Behavior changes (please review before upgrading)
+
+- **Present-but-empty binding changed.** A recipe that previously errored `undefined variable` on a present-but-empty element now produces `""` for that field. Absent vs present-but-empty remains distinguishable (`boolean()` is `false` vs `true`); only the present-but-empty *string binding* changed from undefined to `""`. To reject empty elements, add an explicit guard (`string_length(field) > 0 ? … : …`).
+- **No other output-format changes.** The v0.2.0 cloud-I/O, reference-table, list-parameter, and provenance behavior is unchanged; the platform matrix is identical to 0.2.0.
+
+### Deferred
+
+- **File-list single-read refactor**, **`files_from`/`mode` precedence docs-or-validation**, and **directory-prune + streaming discovery** (plus a secondary `--input-glob` shortcut) are tracked follow-ups.
+- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, DuckDB/Arrow, service health endpoints, Prometheus metrics, and repair modes** remain roadmap items.
+
+### Release notes
+
+- `VERSION` is `0.2.1`. Binaries from this tag emit `v0.2.1` via `sumpter version`.
+- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.1` is the intended tag/version sanity check.
+- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
+
+See [`docs/releases/v0.2.1.md`](docs/releases/v0.2.1.md) for the full release narrative.
+
+---
+
 ## v0.2.0 (2026-06-18)
 
 **S3-compatible cloud I/O, external reference-table lookup, list-typed recipe parameters, and a parallel-extract correctness fix.**
@@ -70,36 +102,3 @@ v0.1.10 makes Sumpter installable through Homebrew and Scoop, and trims the rele
 - The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication. Homebrew/Scoop PRs land as post-release housekeeping.
 
 See [`docs/releases/v0.1.10.md`](docs/releases/v0.1.10.md) for the full release narrative.
-
----
-
-## v0.1.9 (2026-06-09)
-
-**Complete the release artifact matrix — `windows-arm64` now shipped.**
-
-v0.1.9 is a small, front-loaded distribution patch. It closes the one gap in Sumpter's published binary matrix: the release now ships `sumpter-windows-arm64.exe`, so all six raw binaries (linux/darwin/windows × amd64/arm64) are present and arch-complete. There are no product-code changes.
-
-This release deliberately precedes the Homebrew + Scoop wiring (next cycle): the package-manager formula and manifest reference these published assets by URL, so the full matrix must exist and be published first.
-
-### What's new (summary)
-
-- **`windows-arm64` release binary** - `make release-build` / `make build-all` now emit `sumpter-windows-arm64.exe` alongside the existing five targets, completing arch parity with the dimlox/refbolt convention. The binary cross-compiles on the pure-Go path (`CGO_ENABLED=0`); checksums, signatures, and the release upload all glob over the release directory, so the new binary is covered with no other tooling change.
-- **GitHub Actions runtimes on Node 24** - `actions/checkout` (v4→v6), `actions/setup-go` (v5→v6), and `softprops/action-gh-release` (v2→v3) moved to their current Node-24 majors across all four workflows, clearing the GitHub Actions Node-20 runtime deprecation.
-
-### Behavior changes (please review before upgrading)
-
-- **Windows-on-ARM is now a published target.** Windows/ARM64 users get a native binary directly from the release instead of relying on emulation of the amd64 build.
-- **No product-code or output-format changes.** Extraction, indexing, and CLI behavior are identical to v0.1.8.
-
-### Deferred
-
-- **Homebrew + Scoop wiring** is the next cycle (v0.1.10) and depends on these published assets.
-- **Cloud URI read/write (S3 and S3-compatible) I/O** remains the next major capability thread, tracked separately.
-
-### Release notes
-
-- `VERSION` is `0.1.9`. Binaries from this tag emit `v0.1.9` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.9` is the intended tag/version sanity check.
-- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
-
-See [`docs/releases/v0.1.9.md`](docs/releases/v0.1.9.md) for the full release narrative.
