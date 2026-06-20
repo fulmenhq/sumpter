@@ -10,7 +10,7 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 **Two dogfood-driven fixes: present-but-empty string elements bind `""` instead of erroring, and a batch file-list input that skips directory enumeration.**
 
-v0.2.1 is a focused patch off the v0.2.0 dogfood feedback (a 1.2M-row run). It carries two independent fixes — a present-but-empty XML string element now binds a defined `""` instead of an undefined value, and a new batch file-list input hands the engine an exact file set with no directory walk. The v0.2.0 surface (cloud I/O, reference-table lookup, list-typed parameters) is unchanged.
+v0.2.1 is a focused patch off real-world v0.2.0 dogfood feedback. It carries two independent fixes — a present-but-empty XML string element now binds a defined `""` instead of an undefined value, and a new batch file-list input hands the engine an exact file set with no directory walk. The v0.2.0 surface (cloud I/O, reference-table lookup, list-typed parameters) is unchanged.
 
 ### What's new (summary)
 

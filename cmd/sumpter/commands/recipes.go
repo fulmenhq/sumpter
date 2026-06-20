@@ -312,7 +312,7 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.ManifestPath, "manifest", "recipe.yaml", "Path to recipe manifest relative to workspace")
 	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of files to process (overrides manifest; short ad hoc sets — use --file-list for large batches)")
 	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local or s3://), one per line; # comments ignored. No walk, no argv limit (overrides manifest). Mutually exclusive with --files/--input-path")
-	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory of XML files to process (overrides manifest)")
+	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory of XML files to process; walks and filters by include/exclude patterns — for large or precisely-scoped sets prefer --file-list (overrides manifest)")
 	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "", "Override manifest include pattern")
 	cmd.Flags().StringVar(&opts.ExcludePattern, "exclude-pattern", "", "Override manifest exclude pattern")
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", -1, "Override manifest max depth")

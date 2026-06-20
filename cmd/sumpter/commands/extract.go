@@ -136,9 +136,12 @@ func newExtractFilesCommand() *cobra.Command {
 		Short: "Extract structured data from XML files",
 		Long: `Extract structured records from XML files based on user-provided signature and extract configurations.
 
-The command supports both direct file specification and directory scanning with glob patterns.
-Files are matched against the signature configuration, and matching records are extracted
-according to the extract configuration, producing structured output.
+Choose exactly one input mode: --files for a short ad hoc set, --input-path to
+walk and pattern-filter a directory tree, or --file-list for a newline-delimited
+batch of references (no directory walk, no argv limit — the input for large or
+precisely-scoped sets). Processing many files in one invocation is the supported,
+faster path for large sets. Matching records are extracted according to the
+extract configuration, producing structured output.
 
 Source input and result output may be S3-compatible cloud URIs (s3://) using
 credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
@@ -163,7 +166,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 
 	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of file paths to process (short ad hoc sets; subject to the shell argv limit — use --file-list for large batches)")
 	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local paths or s3:// URIs), one per line; blank lines and # comments ignored. No directory walk, no argv limit — the batch input for large/precise sets. Mutually exclusive with --files and --input-path")
-	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Input path for processing (directory or file)")
+	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory (or single file) to process; walks the tree and filters by --include-pattern/--exclude-pattern. The walk enumerates the whole tree before filtering and announces progress on large trees — for large or precisely-scoped sets prefer --file-list. Mutually exclusive with --files and --file-list")
 	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "*.xml", "File inclusion pattern (use quotes for globs: \"*.xml\")")
 	cmd.Flags().StringVar(&opts.ExcludePattern, "exclude-pattern", "", "File exclusion pattern (use quotes for globs: \"temp/*\")")
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", 0, "Maximum directory depth to scan (0 = unlimited)")

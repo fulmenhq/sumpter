@@ -105,11 +105,18 @@
         },
         "format": {
           "type": "string",
-          "enum": ["csv", "tsv", "ndjson"]
+          "enum": [
+            "csv",
+            "tsv",
+            "ndjson"
+          ]
         },
         "mode": {
           "type": "string",
-          "enum": ["membership", "lookup"]
+          "enum": [
+            "membership",
+            "lookup"
+          ]
         },
         "row_count": {
           "type": "integer",
