@@ -201,7 +201,7 @@ defaults:
 
 Merge precedence is legacy `client_id` / `site_id`, then source-extracted captures, then `defaults.parameters`, then CLI `--parameter` overrides. Required source captures are checked before `defaults.parameters` and CLI values are merged, so a missing filename/path capture cannot be masked by a literal parameter.
 
-`relative_path` always requires an explicit root from `--input-path` or `defaults.input.path`; single-file `--files` runs without that root must use `filename` or `absolute_path`. Recipe `files` mode may still set `defaults.input.path` as metadata so relative extraction has a stable root. Source capture names must not collide with `field_mappings[].output_field` or `defaults.parameters` keys.
+`relative_path` always requires an explicit root from `--input-path` or `defaults.input.path`; `--files` and `--file-list` runs without that root must use `filename` or `absolute_path` (neither input mode defines a traversal root on its own). Recipe `files`/`files_from` mode may still set `defaults.input.path` as metadata so relative extraction has a stable root. Source capture names must not collide with `field_mappings[].output_field` or `defaults.parameters` keys.
 
 ### Reference Tables
 
@@ -654,10 +654,13 @@ object store. Either boundary is optional and independent: a run can be
 byte-for-byte as before — a run that references no `s3://` URI does no credential
 or network work at all.
 
-- **Source input** (`--input-path`/`--files`): a single object
+- **Source input** (`--input-path`/`--files`/`--file-list`): a single object
   `s3://bucket/key.xml`, or a prefix `s3://bucket/prefix/` with the usual
   `--include-pattern`/`--exclude-pattern` globs (matched against keys relative to
-  the prefix). Each matched object is fetched and **materialized to local working
+  the prefix). A `--file-list` may instead enumerate explicit `s3://` objects
+  directly — no prefix listing — under the same credential-handle posture, which
+  is the precise batch input when an upstream step already knows the exact object
+  set. Each matched object is fetched and **materialized to local working
   storage** under `${SUMPTER_HOME}/work/`, processed with the normal local
   pipeline, and removed when the run finishes. Operators should be aware that a
   cloud source is fully copied to local disk for the duration of the run (see
