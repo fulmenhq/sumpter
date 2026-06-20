@@ -161,6 +161,7 @@ type SourceExtractionPattern struct {
 type InputDefaults struct {
 	Mode              string   `yaml:"mode"`
 	Files             []string `yaml:"files"`
+	FilesFrom         string   `yaml:"files_from,omitempty"`
 	Path              string   `yaml:"path"`
 	CredentialsHandle string   `yaml:"credentials_handle,omitempty"`
 	IncludePattern    string   `yaml:"include_pattern"`
