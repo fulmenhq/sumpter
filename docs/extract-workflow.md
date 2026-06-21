@@ -203,6 +203,18 @@ Merge precedence is legacy `client_id` / `site_id`, then source-extracted captur
 
 `relative_path` always requires an explicit root from `--input-path` or `defaults.input.path`; `--files` and `--file-list` runs without that root must use `filename` or `absolute_path` (neither input mode defines a traversal root on its own). Recipe `files`/`files_from` mode may still set `defaults.input.path` as metadata so relative extraction has a stable root. Source capture names must not collide with `field_mappings[].output_field` or `defaults.parameters` keys.
 
+**Tagging records by source grain or provenance.** The example above captures a _partition key_ (`business_date`), but the same `source: filename` capture also tags each record by **which file produced it** — a provenance or classification field emitted once per file at extract time, instead of every downstream consumer re-deriving it from `_runtime.source_file`. This is the right tool when one logical record arrives under two filename conventions at different grains — e.g. a fine-grained `unit-*.xml` (one record per file) and a coarse-grained `batch-*.xml` (many records per file) sharing one schema — and reconciliation must keep one across both. Capture the discriminator from the filename prefix:
+
+```yaml
+defaults:
+  source_extraction:
+    - id: grain-tag
+      source: filename
+      pattern: '^(?P<grain>unit|batch)-.*\.xml$'
+```
+
+The capture is emitted directly as a `grain` field on every record — when a single grain/provenance column is all you need, **name the capture as the final field** and add no `field_mappings` for it. To derive a _separate_ field from it, capture under an internal name like `source_grain` and add a `field_mappings` expression with a **different** `output_field` (e.g. `output_field: grain_class`, `expression: 'source_grain == "unit" ? "fine" : "coarse"'`). The raw capture is still emitted alongside the derived field — an expression _adds_ a column, it does not rename or suppress the capture — and a capture name must not collide with any `field_mappings[].output_field` (the collision rule above). Because `source: filename` needs no input root, this composes with `--files` / `--file-list` batches (no directory walk), and the captured field sits alongside the `_runtime.source_file` provenance already on each record.
+
 ### Reference Tables
 
 A recipe can declare external **reference tables** loaded once per run to back the
