@@ -282,6 +282,7 @@ func newRecipeRunCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(newRecipeRunExtractCommand())
+	cmd.AddCommand(newRecipeRunExtractMultiCommand())
 
 	return cmd
 }
