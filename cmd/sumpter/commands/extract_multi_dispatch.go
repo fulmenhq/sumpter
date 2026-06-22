@@ -111,8 +111,12 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) error {
 	// validated directory and, for cloud destinations, its write-boundary
 	// session. Deferred from the loader so nothing is created before validation.
 	for _, plan := range plans {
-		if err := os.MkdirAll(plan.OutputDir, 0o750); err != nil {
-			return fmt.Errorf("recipe %q: failed to create output directory: %w", plan.RecipeID, err)
+		// Only create a local directory for a local destination; a cloud (s3://)
+		// output dir is published through the output session/target, not MkdirAll.
+		if !referenceIsCloud(plan.OutputDir) {
+			if err := os.MkdirAll(plan.OutputDir, 0o750); err != nil {
+				return fmt.Errorf("recipe %q: failed to create output directory: %w", plan.RecipeID, err)
+			}
 		}
 		if err := setupOutputSession(plan.opts, shared.RunID); err != nil {
 			return fmt.Errorf("recipe %q: %w", plan.RecipeID, err)
