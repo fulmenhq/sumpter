@@ -83,7 +83,16 @@ func resolveRecipeOutputDirs(outputRoot string, recipeIDs []string) ([]recipeOut
 	if len(recipeIDs) == 0 {
 		return nil, fmt.Errorf("extract-multi requires at least one recipe")
 	}
-	cleanRoot := filepath.Clean(outputRoot)
+	// A cloud (s3://) output root is URI-shaped: filepath.Clean/Join would mangle
+	// the scheme (s3://bucket -> s3:/bucket) and the local FS containment checks
+	// (Rel/Lstat/MkdirAll) do not apply. Join cloud roots with URI semantics and
+	// rely on the validated single-component slug for containment; the output
+	// session + target validate/publish each concrete object.
+	cloud := referenceIsCloud(outputRoot)
+	cleanRoot := outputRoot
+	if !cloud {
+		cleanRoot = filepath.Clean(outputRoot)
+	}
 	out := make([]recipeOutputDir, 0, len(recipeIDs))
 	byFoldedSlug := make(map[string]string, len(recipeIDs)) // lowercased slug -> first recipe id seen
 	for _, id := range recipeIDs {
@@ -91,9 +100,10 @@ func resolveRecipeOutputDirs(outputRoot string, recipeIDs []string) ([]recipeOut
 		if err != nil {
 			return nil, err
 		}
-		// Case-insensitive collision key: on a case-insensitive filesystem two
-		// case-variant slugs name the same directory, so they must fail loud
-		// rather than silently share (and clobber) one output directory.
+		// Case-insensitive collision key: on a case-insensitive filesystem (and on
+		// most object stores' practical key handling) two case-variant slugs name
+		// the same destination, so they must fail loud rather than silently share
+		// (and clobber) one output location.
 		foldKey := strings.ToLower(slug)
 		if prev, dup := byFoldedSlug[foldKey]; dup {
 			return nil, fmt.Errorf(
@@ -101,6 +111,14 @@ func resolveRecipeOutputDirs(outputRoot string, recipeIDs []string) ([]recipeOut
 				prev, id)
 		}
 		byFoldedSlug[foldKey] = id
+
+		if cloud {
+			// deriveRecipeOutputSlug already guarantees a single path component
+			// (no "..", separators, or scheme/volume prefix), so the URI join
+			// stays under the cloud prefix. No local FS checks apply.
+			out = append(out, recipeOutputDir{RecipeID: id, Slug: slug, Dir: outputRefJoin(outputRoot, slug)})
+			continue
+		}
 
 		dir := filepath.Join(cleanRoot, slug)
 		// Lexical containment: confirm the joined directory is still under root.

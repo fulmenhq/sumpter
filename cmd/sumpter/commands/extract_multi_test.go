@@ -129,6 +129,28 @@ func TestResolveRecipeOutputDirs_RejectsExistingRegularFile(t *testing.T) {
 	}
 }
 
+func TestResolveRecipeOutputDirs_PreservesCloudRoot(t *testing.T) {
+	// A cloud (s3://) output root must keep its URI form: filepath.Clean would
+	// collapse "s3://bucket/prefix" to "s3:/bucket/prefix" and the dispatcher
+	// would then treat it as a local path, bypassing the cloud output session.
+	dirs, err := resolveRecipeOutputDirs("s3://bucket/prefix", []string{"summary", "line-items"})
+	if err != nil {
+		t.Fatalf("resolveRecipeOutputDirs(cloud): %v", err)
+	}
+	want := map[string]string{
+		"summary":    "s3://bucket/prefix/summary",
+		"line-items": "s3://bucket/prefix/line-items",
+	}
+	for _, d := range dirs {
+		if d.Dir != want[d.RecipeID] {
+			t.Errorf("recipe %q cloud dir = %q, want %q", d.RecipeID, d.Dir, want[d.RecipeID])
+		}
+		if !strings.HasPrefix(d.Dir, "s3://") {
+			t.Errorf("recipe %q cloud dir %q lost its s3:// scheme", d.RecipeID, d.Dir)
+		}
+	}
+}
+
 func TestResolveRecipeOutputDirs_RejectsExistingSymlinkDir(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

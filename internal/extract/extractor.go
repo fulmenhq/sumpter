@@ -702,14 +702,13 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 // ProcessParsedDocument runs applicability, signature matching, and record
 // extraction against an ALREADY-PARSED document. It is the shared seam used by
 // both single-recipe processing (via processFileWithProvenance, which reads and
-// parses the file first) and the extract-multi dispatcher (SUM-057), which
-// parses each input file ONCE and dispatches the parsed document to multiple
-// recipes.
+// parses the file first) and the extract-multi dispatcher, which parses each
+// input file ONCE and dispatches the parsed document to multiple recipes.
 //
 // The doc MUST be treated as strictly read-only by callers and by extraction:
 // the multi-recipe pass shares a single *xmlquery.Node across recipes, so any
-// node mutation would be a cross-recipe shared-state hazard (SUM-057 SF4). Each
-// recipe must pass its own extCfg (use CloneRecordMatch per concurrent holder).
+// node mutation would be a cross-recipe shared-state hazard. Each recipe must
+// pass its own extCfg (use CloneRecordMatch per concurrent holder).
 func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) ExtractResult {
 	if ctx == nil {
 		ctx = context.Background()
@@ -918,6 +917,40 @@ func shouldUseLargeFileStreaming(filePath string, allowLargeFiles bool, sink Rec
 		estimatedSize = fileInfo.Size() * 10 // Conservative 10x decompression ratio
 	}
 	return estimatedSize > streamingThreshold && (allowLargeFiles || (sink != nil && appCfg == nil)), estimatedSize, isCompressed
+}
+
+// ParseFileForDOMDispatch reads and DOM-parses a file once for multi-recipe
+// dispatch, where the resulting (read-only) document is shared across recipes.
+//
+// It enforces the DOM-only contract of the multi-recipe pass: a file large
+// enough that the single-recipe engine would route it to the streaming path is
+// rejected with an error rather than silently DOM-parsed, because multi-recipe
+// extraction does not support the streaming/indexed path. The returned document
+// MUST be treated as strictly read-only by callers (it is shared across
+// recipes via ProcessParsedDocument).
+func ParseFileForDOMDispatch(filePath string, allowLargeFiles bool) (*xmlquery.Node, error) {
+	const streamingThreshold = 100 * 1024 * 1024 // 100MB, matching the single-recipe streaming threshold
+	if info, err := os.Stat(filePath); err == nil {
+		estimated := info.Size()
+		if strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz") {
+			estimated = info.Size() * 10 // conservative decompression estimate, matching shouldUseLargeFileStreaming
+		}
+		if estimated > streamingThreshold {
+			return nil, fmt.Errorf(
+				"file %s is too large for extract-multi (estimated %d bytes exceeds the %d DOM-parse threshold); "+
+					"extract-multi parses each file once into memory and does not support the large-file streaming path",
+				filePath, estimated, int64(streamingThreshold))
+		}
+	}
+	content, err := readFileContent(filePath, allowLargeFiles) // #nosec G304 - filePath comes from a user-provided file list or directory scan
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	doc, err := xmlquery.Parse(strings.NewReader(string(content)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse XML: %w", err)
+	}
+	return doc, nil
 }
 
 func evaluateApplicability(doc *xmlquery.Node, cfg *ApplicabilityConfig) (bool, error) {
