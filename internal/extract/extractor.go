@@ -638,51 +638,7 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	}
 	logger.Debug("Starting file processing", zap.String("file", filePath))
 
-	result := ExtractResult{File: filePath, LogicalURI: runtimeProvenance.SourceIdentity(filePath), SignatureMatchStatus: SignatureMatchUnknown}
-	emittedRecords := 0
-	boundaryDisposition := DispositionApplied
-	boundaryReason := DispositionReason("")
-	boundaryDetail := ""
-	markFailed := func(reason DispositionReason, detail string) {
-		if appCfg == nil {
-			return
-		}
-		result.Disposition = DispositionFailed
-		result.DispositionReason = reason
-		result.DispositionDetail = detail
-	}
-	markBoundaryFailure := func(reason DispositionReason, detail string) {
-		boundaryDisposition = DispositionFailed
-		boundaryReason = reason
-		boundaryDetail = detail
-	}
-	emitBoundary := func() {
-		if sink == nil {
-			return
-		}
-		switch result.Disposition {
-		case DispositionFailed:
-			boundaryDisposition = DispositionFailed
-			boundaryReason = result.DispositionReason
-			boundaryDetail = result.DispositionDetail
-		case DispositionNotApplicable:
-			boundaryDisposition = DispositionNotApplicable
-			boundaryReason = result.DispositionReason
-			boundaryDetail = result.DispositionDetail
-		}
-		summary := FileEmissionSummary{
-			SourceFile:        runtimeProvenance.SourceIdentity(filePath),
-			RecordType:        extCfg.RecordType,
-			RecordCount:       emittedRecords,
-			Disposition:       boundaryDisposition,
-			DispositionReason: boundaryReason,
-			DispositionDetail: boundaryDetail,
-		}
-		if err := sink.OnFileBoundary(ctx, summary); err != nil && result.Error == nil {
-			result.Error = fmt.Errorf("failed to emit file boundary: %w", err)
-			markFailed(DispositionReasonInternalError, result.Error.Error())
-		}
-	}
+	t := newBoundaryTracker(ctx, filePath, extCfg, appCfg, runtimeProvenance, sink)
 
 	// Check if we should use streaming mode for large files
 	// Streaming mode threshold: 100MB uncompressed (or 10MB compressed with 10x ratio estimate)
@@ -691,11 +647,11 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	shouldStream, estimatedSize, streamCompressed := shouldUseLargeFileStreaming(filePath, allowLargeFiles, sink, appCfg, streamingThreshold)
 	if shouldStream {
 		if appCfg != nil {
-			result.Error = fmt.Errorf("applicability declared but not supported in streaming mode")
-			markFailed(DispositionReasonInternalError, result.Error.Error())
-			markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
-			emitBoundary()
-			return result
+			t.result.Error = fmt.Errorf("applicability declared but not supported in streaming mode")
+			t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
+			t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
+			t.emitBoundary()
+			return t.result
 		}
 		logger.Info("Using streaming mode for large file",
 			zap.String("file", filePath),
@@ -714,11 +670,11 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	content, err := readFileContent(filePath, allowLargeFiles) // #nosec G304 - filePath comes from user-provided file list or directory scan
 	if err != nil {
 		logger.Error("Failed to read file", zap.String("file", filePath), zap.Error(err))
-		result.Error = fmt.Errorf("failed to read file: %w", err)
-		markFailed(DispositionReasonInternalError, result.Error.Error())
-		markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
-		emitBoundary()
-		return result
+		t.result.Error = fmt.Errorf("failed to read file: %w", err)
+		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
+		t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
+		t.emitBoundary()
+		return t.result
 	}
 	isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
 	if isCompressed {
@@ -732,73 +688,97 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	doc, err := xmlquery.Parse(strings.NewReader(string(content)))
 	if err != nil {
 		logger.Error("Failed to parse XML", zap.String("file", filePath), zap.Error(err))
-		result.Error = fmt.Errorf("failed to parse XML: %w", err)
-		markFailed(DispositionReasonParseError, result.Error.Error())
-		markBoundaryFailure(DispositionReasonParseError, result.Error.Error())
-		emitBoundary()
-		return result
+		t.result.Error = fmt.Errorf("failed to parse XML: %w", err)
+		t.markFailed(DispositionReasonParseError, t.result.Error.Error())
+		t.markBoundaryFailure(DispositionReasonParseError, t.result.Error.Error())
+		t.emitBoundary()
+		return t.result
 	}
 	logger.Debug("XML parsed successfully", zap.String("file", filePath))
+
+	return ProcessParsedDocument(ctx, doc, filePath, sigCfg, extCfg, appCfg, externalFields, runtimeProvenance, sink)
+}
+
+// ProcessParsedDocument runs applicability, signature matching, and record
+// extraction against an ALREADY-PARSED document. It is the shared seam used by
+// both single-recipe processing (via processFileWithProvenance, which reads and
+// parses the file first) and the extract-multi dispatcher (SUM-057), which
+// parses each input file ONCE and dispatches the parsed document to multiple
+// recipes.
+//
+// The doc MUST be treated as strictly read-only by callers and by extraction:
+// the multi-recipe pass shares a single *xmlquery.Node across recipes, so any
+// node mutation would be a cross-recipe shared-state hazard (SUM-057 SF4). Each
+// recipe must pass its own extCfg (use CloneRecordMatch per concurrent holder).
+func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) ExtractResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	logger := logging.GetLogger()
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	t := newBoundaryTracker(ctx, filePath, extCfg, appCfg, runtimeProvenance, sink)
 
 	if appCfg != nil {
 		applies, err := evaluateApplicability(doc, appCfg)
 		if err != nil {
 			logger.Error("Failed to evaluate applicability", zap.String("file", filePath), zap.Error(err))
-			result.Error = fmt.Errorf("failed to evaluate applicability: %w", err)
-			markFailed(DispositionReasonValidationError, result.Error.Error())
-			markBoundaryFailure(DispositionReasonValidationError, result.Error.Error())
-			emitBoundary()
-			return result
+			t.result.Error = fmt.Errorf("failed to evaluate applicability: %w", err)
+			t.markFailed(DispositionReasonValidationError, t.result.Error.Error())
+			t.markBoundaryFailure(DispositionReasonValidationError, t.result.Error.Error())
+			t.emitBoundary()
+			return t.result
 		}
 		if !applies {
 			logger.Debug("File is not applicable to recipe", zap.String("file", filePath))
-			result.Disposition = DispositionNotApplicable
-			result.DispositionReason = DispositionReasonApplicabilityPredicateFalse
-			result.DispositionDetail = "applicability predicate evaluated false"
-			result.PerSelectorCounts = zeroSelectorCounts(extCfg)
-			result.PerSelectorCountsComplete = true
-			emitBoundary()
-			return result
+			t.result.Disposition = DispositionNotApplicable
+			t.result.DispositionReason = DispositionReasonApplicabilityPredicateFalse
+			t.result.DispositionDetail = "applicability predicate evaluated false"
+			t.result.PerSelectorCounts = zeroSelectorCounts(extCfg)
+			t.result.PerSelectorCountsComplete = true
+			t.emitBoundary()
+			return t.result
 		}
 	}
 
 	// Check if file matches signature
 	logger.Debug("Checking signature match", zap.String("file", filePath), zap.String("signature", sigCfg.SignatureID))
 	matches, confidence, err := matchesSignature(doc, sigCfg)
-	result.SignatureConfidence = confidence
+	t.result.SignatureConfidence = confidence
 	if err != nil {
 		logger.Error("Failed to check signature", zap.String("file", filePath), zap.Error(err))
-		result.Error = fmt.Errorf("failed to check signature: %w", err)
-		markFailed(DispositionReasonInternalError, result.Error.Error())
-		markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
-		emitBoundary()
-		return result
+		t.result.Error = fmt.Errorf("failed to check signature: %w", err)
+		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
+		t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
+		t.emitBoundary()
+		return t.result
 	}
 	logger.Debug("Signature check complete", zap.String("file", filePath), zap.Bool("matches", matches), zap.Float64("confidence", confidence))
 
 	if !matches {
 		// File doesn't match signature, return empty result unless applicability made the mismatch a failed disposition.
 		logger.Debug("File does not match signature", zap.String("file", filePath))
-		result.SignatureMatchStatus = SignatureMatchMismatched
-		result.PerSelectorCounts = zeroSelectorCounts(extCfg)
-		result.PerSelectorCountsComplete = true
+		t.result.SignatureMatchStatus = SignatureMatchMismatched
+		t.result.PerSelectorCounts = zeroSelectorCounts(extCfg)
+		t.result.PerSelectorCountsComplete = true
 		if appCfg != nil {
-			result.Disposition = DispositionFailed
-			result.DispositionReason = DispositionReasonSignatureMismatch
-			result.DispositionDetail = "signature predicate did not match"
+			t.result.Disposition = DispositionFailed
+			t.result.DispositionReason = DispositionReasonSignatureMismatch
+			t.result.DispositionDetail = "signature predicate did not match"
 		}
-		emitBoundary()
-		return result
+		t.emitBoundary()
+		return t.result
 	}
 
-	result.SignatureMatchStatus = SignatureMatchMatched
+	t.result.SignatureMatchStatus = SignatureMatchMatched
 
 	if err := prepareExtractConfig(extCfg); err != nil {
 		logger.Error("Failed to prepare extract config", zap.String("file", filePath), zap.Error(err))
-		result.Error = fmt.Errorf("failed to prepare extract config: %w", err)
-		markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
-		emitBoundary()
-		return result
+		t.result.Error = fmt.Errorf("failed to prepare extract config: %w", err)
+		t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
+		t.emitBoundary()
+		return t.result
 	}
 
 	// Extract records
@@ -807,47 +787,124 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 		perSelectorCounts, count, err := extractRecordsWithCountsAndRecordNumsToSink(ctx, doc, extCfg, externalFields, filePath, sigCfg, runtimeProvenance, sink)
 		if err != nil {
 			logger.Error("Failed to extract records to sink", zap.String("file", filePath), zap.Error(err))
-			result.Error = fmt.Errorf("failed to extract records: %w", err)
-			markFailed(DispositionReasonInternalError, result.Error.Error())
-			markBoundaryFailure(DispositionReasonInternalError, result.Error.Error())
-			emitBoundary()
-			return result
+			t.result.Error = fmt.Errorf("failed to extract records: %w", err)
+			t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
+			t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
+			t.emitBoundary()
+			return t.result
 		}
 		if appCfg != nil {
-			result.Disposition = DispositionApplied
+			t.result.Disposition = DispositionApplied
 		}
-		emittedRecords = count
-		result.PerSelectorCounts = perSelectorCounts
-		result.PerSelectorCountsComplete = true
-		emitBoundary()
-		logger.Debug("Record sink extraction complete", zap.String("file", filePath), zap.Int("record_count", emittedRecords))
-		return result
+		t.emittedRecords = count
+		t.result.PerSelectorCounts = perSelectorCounts
+		t.result.PerSelectorCountsComplete = true
+		t.emitBoundary()
+		logger.Debug("Record sink extraction complete", zap.String("file", filePath), zap.Int("record_count", t.emittedRecords))
+		return t.result
 	}
 
 	extractedRecords, perSelectorCounts, err := extractRecordsWithCountsAndRecordNums(doc, extCfg, externalFields)
 	if err != nil {
 		logger.Error("Failed to extract records", zap.String("file", filePath), zap.Error(err))
-		result.Error = fmt.Errorf("failed to extract records: %w", err)
-		markFailed(DispositionReasonInternalError, result.Error.Error())
-		return result
+		t.result.Error = fmt.Errorf("failed to extract records: %w", err)
+		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
+		return t.result
 	}
 	records, recordNums := splitExtractedRecords(extractedRecords)
 	logger.Debug("Record extraction complete", zap.String("file", filePath), zap.Int("record_count", len(records)))
 
 	if err := enrichRecordsWithRecordNums(records, recordNums, filePath, sigCfg, extCfg, runtimeProvenance); err != nil {
 		logger.Error("Failed to apply metadata", zap.String("file", filePath), zap.Error(err))
-		result.Error = err
-		markFailed(DispositionReasonInternalError, result.Error.Error())
-		return result
+		t.result.Error = err
+		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
+		return t.result
 	}
 
 	if appCfg != nil {
-		result.Disposition = DispositionApplied
+		t.result.Disposition = DispositionApplied
 	}
-	result.Records = records
-	result.PerSelectorCounts = perSelectorCounts
-	result.PerSelectorCountsComplete = true
-	return result
+	t.result.Records = records
+	t.result.PerSelectorCounts = perSelectorCounts
+	t.result.PerSelectorCountsComplete = true
+	return t.result
+}
+
+// boundaryTracker centralizes per-file disposition state and file-boundary
+// emission so the read/parse step (processFileWithProvenance) and the
+// parsed-document step (ProcessParsedDocument) share identical semantics. It
+// owns the in-flight ExtractResult for one file.
+type boundaryTracker struct {
+	ctx                 context.Context
+	sink                RecordSink
+	filePath            string
+	extCfg              *ExtractRecordMatch
+	appCfg              *ApplicabilityConfig
+	rp                  provenance.RuntimeOptions
+	result              ExtractResult
+	emittedRecords      int
+	boundaryDisposition Disposition
+	boundaryReason      DispositionReason
+	boundaryDetail      string
+}
+
+func newBoundaryTracker(ctx context.Context, filePath string, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, rp provenance.RuntimeOptions, sink RecordSink) *boundaryTracker {
+	return &boundaryTracker{
+		ctx:                 ctx,
+		sink:                sink,
+		filePath:            filePath,
+		extCfg:              extCfg,
+		appCfg:              appCfg,
+		rp:                  rp,
+		result:              ExtractResult{File: filePath, LogicalURI: rp.SourceIdentity(filePath), SignatureMatchStatus: SignatureMatchUnknown},
+		boundaryDisposition: DispositionApplied,
+	}
+}
+
+// markFailed records a failed disposition on the result, but only when an
+// applicability gate is configured (matching the original single-recipe
+// semantics where disposition is meaningful only for recipe-applicability runs).
+func (t *boundaryTracker) markFailed(reason DispositionReason, detail string) {
+	if t.appCfg == nil {
+		return
+	}
+	t.result.Disposition = DispositionFailed
+	t.result.DispositionReason = reason
+	t.result.DispositionDetail = detail
+}
+
+func (t *boundaryTracker) markBoundaryFailure(reason DispositionReason, detail string) {
+	t.boundaryDisposition = DispositionFailed
+	t.boundaryReason = reason
+	t.boundaryDetail = detail
+}
+
+func (t *boundaryTracker) emitBoundary() {
+	if t.sink == nil {
+		return
+	}
+	switch t.result.Disposition {
+	case DispositionFailed:
+		t.boundaryDisposition = DispositionFailed
+		t.boundaryReason = t.result.DispositionReason
+		t.boundaryDetail = t.result.DispositionDetail
+	case DispositionNotApplicable:
+		t.boundaryDisposition = DispositionNotApplicable
+		t.boundaryReason = t.result.DispositionReason
+		t.boundaryDetail = t.result.DispositionDetail
+	}
+	summary := FileEmissionSummary{
+		SourceFile:        t.rp.SourceIdentity(t.filePath),
+		RecordType:        t.extCfg.RecordType,
+		RecordCount:       t.emittedRecords,
+		Disposition:       t.boundaryDisposition,
+		DispositionReason: t.boundaryReason,
+		DispositionDetail: t.boundaryDetail,
+	}
+	if err := t.sink.OnFileBoundary(t.ctx, summary); err != nil && t.result.Error == nil {
+		t.result.Error = fmt.Errorf("failed to emit file boundary: %w", err)
+		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
+	}
 }
 
 func shouldUseLargeFileStreaming(filePath string, allowLargeFiles bool, sink RecordSink, appCfg *ApplicabilityConfig, streamingThreshold int64) (bool, int64, bool) {
