@@ -29,6 +29,10 @@ type multiSharedOptions struct {
 	MaxDepth       int
 	FollowSymlinks bool
 
+	// OutputPath is the shared output ROOT; each recipe writes to its own
+	// <OutputPath>/<recipe-id>/ subdirectory.
+	OutputPath string
+
 	// Run level.
 	ContinueOnError bool
 	Workers         int
@@ -285,6 +289,21 @@ func assembleRecipePlan(recipeID, absWorkspace, outputDir string, opts *ExtractO
 	}
 	if err := validateParquetWithholdColumns(opts.ParquetWithholdColumns, extCfg.OutputSchema); err != nil {
 		return nil, err
+	}
+	// extract-multi v0's dispatcher writes through the JSON sink only. Reject any
+	// non-JSON effective output format at load time (fail loud) rather than
+	// silently coercing a recipe's declared format — e.g. a `parquet` recipe must
+	// not get JSON bytes under a `.parquet` name.
+	formats, err := effectiveOutputFormats(opts)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range formats {
+		if f != recipesmanifest.OutputFormatJSON && f != recipesmanifest.OutputFormatNDJSON {
+			return nil, fmt.Errorf(
+				"recipe %q declares output format %q, but extract-multi v0 supports only json/ndjson output; run this recipe with single-recipe `recipes run extract` for other formats",
+				recipeID, f)
+		}
 	}
 	if opts.Recipe != nil && len(opts.Recipe.FieldProvenance) == 0 {
 		opts.Recipe.FieldProvenance = buildFieldProvenance(extCfg.FieldMappings)

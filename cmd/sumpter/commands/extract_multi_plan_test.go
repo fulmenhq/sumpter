@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -195,6 +196,38 @@ defaults:
 	shared := &multiSharedOptions{FileList: filepath.Join(t.TempDir(), "f.txt"), RunID: testMultiRunID}
 	if _, err := loadRecipePlan(ws, shared, filepath.Join(t.TempDir(), "summary"), io.Discard); err == nil {
 		t.Fatal("expected applicability asset escaping the workspace to be rejected, got nil")
+	}
+}
+
+func TestLoadRecipePlan_RejectsNonJSONFormat(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "pq")
+	// extract-multi v0 writes JSON only; a parquet-declaring recipe must be
+	// rejected at load time rather than silently coerced to JSON bytes.
+	recipe := `version: recipe/v0.1.0
+kind: extract
+id: pq
+content_version: "0.0.1"
+assets:
+  signature: signature/signature.yaml
+  extract: extract/extract.yaml
+defaults:
+  input:
+    mode: files
+    files:
+      - testdata/input.xml
+  output:
+    format: parquet
+    path: outputs
+    pattern: extract-{}.parquet
+`
+	if err := os.WriteFile(filepath.Join(ws, "recipe.yaml"), []byte(recipe), 0o600); err != nil {
+		t.Fatalf("rewrite recipe.yaml: %v", err)
+	}
+	shared := &multiSharedOptions{FileList: filepath.Join(t.TempDir(), "f.txt"), RunID: testMultiRunID}
+	if _, err := loadRecipePlan(ws, shared, filepath.Join(t.TempDir(), "pq"), io.Discard); err == nil {
+		t.Fatal("expected a non-JSON output format to be rejected, got nil")
+	} else if !strings.Contains(err.Error(), "json/ndjson") {
+		t.Errorf("unexpected error for parquet recipe: %v", err)
 	}
 }
 
