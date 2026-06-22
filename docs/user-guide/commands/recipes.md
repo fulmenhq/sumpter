@@ -105,6 +105,37 @@ evaluated, and the result type is the selected branch's value. Branch values
 should be compatible with the declared `type:` for fixed-schema outputs such as
 Parquet.
 
+### `run extract-multi`
+
+Apply several extract recipes to **one** input set in a single parse-once pass.
+
+```bash
+sumpter recipes run extract-multi <workspace>... [flags]
+```
+
+Each input file is read and parsed **once**, then dispatched to every recipe, so
+the read/parse cost is amortized from ~N× to 1× across N recipes — the dominant
+cost at high file counts (many small files). Each recipe writes to its own
+`<output-path>/<recipe-id>/` subdirectory (records, `manifest.json`, and
+`dispositions.json` / `failures.json` when applicable); output, formats,
+parameters, reference tables, and credential handles are per recipe (from each
+manifest). The input set, `--output-path` root, and run-level controls
+(`--continue-on-error`, credentials, the shared run id resolved once from
+`--run-id` → `SUMPTER_RUN_ID` → generated) are shared.
+
+Failure handling follows the input-vs-recipe boundary: a read/parse/acquire
+failure is input-level (every recipe sees it); an applicability, signature,
+extraction, `min_occurrences`, or output failure is recipe-level — isolated to
+that recipe's own `failures.json` (under `--continue-on-error`) and never aborts
+the others.
+
+**Scope (v0):** JSON/NDJSON output only (a recipe declaring another format such
+as Parquet is rejected — use single-recipe `run extract`); no streaming/large-file
+path (a file large enough to route to streaming is rejected, and
+`--allow-large-files` does not relax this); no cross-recipe joins/ordering. See
+[Run multiple recipes in one pass](../../extract-workflow.md) for the full
+walkthrough.
+
 ### `retrieve`
 
 Execute a recipe to acquire upstream data (currently SEC EDGAR filings).
