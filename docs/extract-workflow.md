@@ -105,6 +105,23 @@ sumpter recipes run extract ./recipes/customer/retail-daily-sales \
 
 The runner resolves relative paths via `recipe.yaml`, applies defaults for include/exclude patterns, and delegates to the extract engine. Override any option at the command line when experimenting.
 
+### Run multiple recipes in one pass (`extract-multi`)
+
+When several recipes extract different projections from the **same** input set — say a per-record summary, a line-item detail view, and a financial rollup — running them separately re-reads and re-parses every input file once per recipe. At high file counts (many small files) that redundant parse is the dominant cost. `recipes run extract-multi` applies all of them in a single pass: each input file is read and **parsed once**, then the parsed document is dispatched to every recipe, amortizing the read/parse work from ~N× to 1× across N recipes.
+
+```bash
+sumpter recipes run extract-multi \
+  ./recipes/summary ./recipes/line-items ./recipes/financial \
+  --file-list ./batch/inputs.list \
+  --output-path ./out
+```
+
+Each recipe writes to its **own** subdirectory under `--output-path`, named by the recipe `id` (`<output-path>/<recipe-id>/`): its records, provenance manifest, and — when applicable — `dispositions.json` / `failures.json`. Per-recipe state is fully isolated: output, formats, parameters, reference tables, and credential handles all come from each recipe's own manifest, and one recipe can never read or clobber another's output. The input set, the output root, and run-level controls (`--continue-on-error`, credentials, the shared run id) are shared across recipes; the run id resolves once (flag → `SUMPTER_RUN_ID` → generated) so every recipe's provenance ties to one invocation.
+
+Failure handling follows the input-vs-recipe boundary: a read/parse/acquire failure is **input-level** (it affects every recipe's view of that file), while an applicability, signature, extraction, `min_occurrences`, or output failure is **recipe-level** — isolated to that recipe and recorded in its own `failures.json` (under `--continue-on-error`) without aborting the others.
+
+**Scope (v0).** `extract-multi` writes **JSON/NDJSON** output only; a recipe declaring another format (e.g. Parquet) is rejected — run it with single-recipe `recipes run extract` instead. The large-file **streaming** path is not supported: each file is parsed once into memory, so a file large enough to route to streaming is rejected (`--allow-large-files` does not relax this). Cross-recipe joins, ordering, and combined-record assembly are out of scope — the pass amortizes the read + parse, nothing more.
+
 ### Input selection (batch lists, directories, large trees)
 
 Processing **many files in one invocation** is a supported, first-class workflow — it is much faster than a separate run per file, especially for many small files. Pick the input mode that scopes the run precisely; exactly one of these applies per run:
