@@ -156,6 +156,16 @@ func TestLoadRecipePlan_RequiresSharedOptions(t *testing.T) {
 // testMultiRunID is a valid UUIDv7 used as the shared run id in loader tests.
 const testMultiRunID = "0190a3f4-1c2d-7abc-9def-0123456789ab"
 
+func TestLoadRecipePlan_RequiresResolvedRunID(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	// An empty shared run id must be rejected: the run resolves one id once and
+	// shares it, so the loader never lets a recipe generate a divergent one.
+	shared := &multiSharedOptions{FileList: filepath.Join(t.TempDir(), "f.txt")} // RunID intentionally empty
+	if _, err := loadRecipePlan(ws, shared, filepath.Join(t.TempDir(), "summary"), io.Discard); err == nil {
+		t.Fatal("expected loadRecipePlan to reject an empty shared run id, got nil")
+	}
+}
+
 func TestLoadRecipePlan_RejectsEscapingApplicabilityAsset(t *testing.T) {
 	ws := writeMultiRecipeWorkspace(t, "summary")
 	// Repoint the applicability asset outside the workspace. The multi loader

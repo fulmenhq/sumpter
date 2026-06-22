@@ -34,8 +34,11 @@ type multiSharedOptions struct {
 	Workers         int
 	Progress        bool
 	DryRun          bool
-	// RunID is generated once for the whole multi run and shared by every plan
-	// so provenance ties the per-recipe outputs to a single invocation.
+	// RunID must be resolved ONCE for the whole multi run — the caller resolves
+	// or generates it before loading any plan — and is shared by every plan so
+	// each recipe's provenance ties back to a single invocation. loadRecipePlan
+	// rejects an empty RunID rather than letting each recipe independently
+	// generate a divergent UUIDv7.
 	RunID           string
 	NoManifest      bool
 	AllowLargeFiles bool
@@ -83,6 +86,13 @@ type RecipePlan struct {
 func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir string, warnOut io.Writer) (*RecipePlan, error) {
 	if shared == nil {
 		return nil, fmt.Errorf("loadRecipePlan: shared options are required")
+	}
+	// The run id must already be resolved for the whole run so every recipe's
+	// provenance ties to one invocation. Failing loud here makes the one-run-id
+	// contract impossible to misuse — an empty id would otherwise let each plan
+	// generate its own divergent UUIDv7.
+	if strings.TrimSpace(shared.RunID) == "" {
+		return nil, fmt.Errorf("loadRecipePlan: shared run id is required (resolve one run id once for the whole extract-multi run before loading plans)")
 	}
 	if warnOut == nil {
 		warnOut = io.Discard
