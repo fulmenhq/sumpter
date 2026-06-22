@@ -100,12 +100,41 @@ func TestResolveRecipeOutputDirs_RejectsTraversalRecipe(t *testing.T) {
 	}
 }
 
+func TestResolveRecipeOutputDirs_RejectsCaseInsensitiveCollision(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "out")
+	// "Summary" and "summary" are distinct strings but name the same directory
+	// on a case-insensitive filesystem (macOS APFS, Windows NTFS) — they must be
+	// rejected as a collision rather than silently sharing one output dir.
+	_, err := resolveRecipeOutputDirs(root, []string{"Summary", "line-items", "summary"})
+	if err == nil {
+		t.Fatal("expected error for case-insensitive output-slug collision, got nil")
+	}
+	if !strings.Contains(err.Error(), "distinct output subdirectory") {
+		t.Errorf("unexpected error for case-insensitive collision: %v", err)
+	}
+}
+
+func TestResolveRecipeOutputDirs_RejectsExistingRegularFile(t *testing.T) {
+	root := t.TempDir()
+	// A pre-existing regular file at <root>/<slug> cannot serve as the
+	// recipe-owned output directory; reject it at preflight rather than letting
+	// a downstream writer fail later.
+	if err := os.WriteFile(filepath.Join(root, "summary"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("write setup: %v", err)
+	}
+	if _, err := resolveRecipeOutputDirs(root, []string{"summary"}); err == nil {
+		t.Fatal("expected rejection of a pre-existing regular file at the output dir, got nil")
+	} else if !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("unexpected error for regular-file collision: %v", err)
+	}
+}
+
 func TestResolveRecipeOutputDirs_RejectsExistingSymlinkDir(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	// Pre-create <root>/summary as a symlink pointing OUTSIDE the output root.
 	// Lexical containment passes (summary is a single component under root), but
-	// writing through the symlink would escape; SF1 must reject it.
+	// writing through the symlink would escape; the preflight must reject it.
 	if err := os.Symlink(outside, filepath.Join(root, "summary")); err != nil {
 		t.Fatalf("symlink setup: %v", err)
 	}

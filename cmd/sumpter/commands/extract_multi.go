@@ -20,9 +20,9 @@ import (
 // `id` only as non-empty — it imposes no charset constraint, so an `id` could
 // otherwise carry a path separator, a parent-directory ("..") segment, an
 // absolute/volume prefix, or a control character into the output root. The slug
-// is therefore the path-traversal containment gate for the output isolation
-// boundary (SUM-057 SF1). A "." or ".." id is rejected because neither is a
-// valid leading-alphanumeric slug; "a..b" is allowed because, as a single path
+// is therefore the path-traversal containment gate for the extract-multi output
+// isolation boundary. A "." or ".." id is rejected because neither is a valid
+// leading-alphanumeric slug; "a..b" is allowed because, as a single path
 // component, it is an ordinary directory name and not a parent reference.
 var recipeSlugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
@@ -68,10 +68,14 @@ type recipeOutputDir struct {
 // resolveRecipeOutputDirs derives and validates a contained output directory for
 // each recipe under outputRoot, and fails loud — before any input is read,
 // parsed, or written — if a recipe id escapes the root or two recipes would
-// share an output directory. It is the SF1/SF5 preflight for extract-multi: per
-// recipe output isolation cannot be guaranteed if two recipes write to the same
-// place, and an unvalidated id must never escape the output root (SUM-057
-// SF1/SF5).
+// share an output directory. It is the extract-multi output-isolation preflight:
+// per-recipe output isolation cannot be guaranteed if two recipes write to the
+// same place, and an unvalidated id must never escape the output root.
+//
+// Collisions are detected case-insensitively because the team's primary
+// filesystems (macOS APFS, Windows NTFS) treat "Summary" and "summary" as the
+// same directory; keying the dedup on the verbatim slug would let two recipes
+// silently clobber each other's output there.
 func resolveRecipeOutputDirs(outputRoot string, recipeIDs []string) ([]recipeOutputDir, error) {
 	if strings.TrimSpace(outputRoot) == "" {
 		return nil, fmt.Errorf("extract-multi requires an output root (--output-path)")
@@ -81,18 +85,22 @@ func resolveRecipeOutputDirs(outputRoot string, recipeIDs []string) ([]recipeOut
 	}
 	cleanRoot := filepath.Clean(outputRoot)
 	out := make([]recipeOutputDir, 0, len(recipeIDs))
-	bySlug := make(map[string]string, len(recipeIDs)) // slug -> first recipe id seen
+	byFoldedSlug := make(map[string]string, len(recipeIDs)) // lowercased slug -> first recipe id seen
 	for _, id := range recipeIDs {
 		slug, err := deriveRecipeOutputSlug(id)
 		if err != nil {
 			return nil, err
 		}
-		if prev, dup := bySlug[slug]; dup {
+		// Case-insensitive collision key: on a case-insensitive filesystem two
+		// case-variant slugs name the same directory, so they must fail loud
+		// rather than silently share (and clobber) one output directory.
+		foldKey := strings.ToLower(slug)
+		if prev, dup := byFoldedSlug[foldKey]; dup {
 			return nil, fmt.Errorf(
-				"recipes %q and %q derive the same output subdirectory %q; extract-multi requires a distinct output subdirectory per recipe",
-				prev, id, slug)
+				"recipes %q and %q derive output subdirectories that collide (names are compared case-insensitively for filesystem safety); extract-multi requires a distinct output subdirectory per recipe",
+				prev, id)
 		}
-		bySlug[slug] = id
+		byFoldedSlug[foldKey] = id
 
 		dir := filepath.Join(cleanRoot, slug)
 		// Lexical containment: confirm the joined directory is still under root.
@@ -100,17 +108,25 @@ func resolveRecipeOutputDirs(outputRoot string, recipeIDs []string) ([]recipeOut
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("recipe %q output subdirectory %q escapes the output root", id, slug)
 		}
-		// SF1: lexical containment is not enough — filepath.Join/Rel do not
-		// follow symlinks. If the recipe's output subdirectory already exists as
-		// a symlink, the downstream local writers (MkdirAll + tempfile/rename)
-		// would write through it, escaping the output root. Refuse to write into
-		// a pre-existing symlinked recipe directory (a legitimately symlinked
-		// output *root* is fine — only the recipe-owned subdir is gated). This
-		// catches both live and dangling symlink targets.
+		// Lexical containment is not enough — filepath.Join/Rel do not follow
+		// symlinks, and a pre-existing non-directory at the slug path cannot be
+		// the recipe-owned output directory. Inspect any existing candidate:
+		//   - a symlink (live or dangling) is refused — the downstream local
+		//     writers (MkdirAll + tempfile/rename) would write through it and
+		//     escape the output root (a legitimately symlinked output *root* is
+		//     fine; only the recipe-owned subdir is gated);
+		//   - any other non-directory (e.g. a regular file) is refused — it
+		//     cannot serve as the output directory;
+		//   - a pre-existing real directory is allowed (re-runs).
 		if info, lerr := os.Lstat(dir); lerr == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
+			switch {
+			case info.Mode()&os.ModeSymlink != 0:
 				return nil, fmt.Errorf(
 					"recipe %q output subdirectory %q already exists as a symlink; refusing to write through it (extract-multi requires a real, recipe-owned output directory)",
+					id, slug)
+			case !info.IsDir():
+				return nil, fmt.Errorf(
+					"recipe %q output subdirectory %q already exists but is not a directory; extract-multi requires a real, recipe-owned output directory",
 					id, slug)
 			}
 		} else if !errors.Is(lerr, fs.ErrNotExist) {
