@@ -116,7 +116,19 @@ sumpter recipes run extract-multi \
   --output-path ./out
 ```
 
-Each recipe writes to its **own** subdirectory under `--output-path`, named by the recipe `id` (`<output-path>/<recipe-id>/`): its records, provenance manifest, and — when applicable — `dispositions.json` / `failures.json`. Per-recipe state is fully isolated: output, formats, parameters, reference tables, and credential handles all come from each recipe's own manifest, and one recipe can never read or clobber another's output. The input set, the output root, and run-level controls (`--continue-on-error`, credentials, the shared run id) are shared across recipes; the run id resolves once (flag → `SUMPTER_RUN_ID` → generated) so every recipe's provenance ties to one invocation.
+Each recipe writes to its **own** subdirectory under `--output-path`, named by the recipe `id` (`<output-path>/<recipe-id>/`): its records, provenance manifest, and — when applicable — `dispositions.json` / `failures.json`. Per-recipe state is fully isolated: output, formats, `defaults.parameters`, reference tables, and credential handles all come from each recipe's own manifest, and one recipe can never read or clobber another's output. The input set, the output root, and run-level controls (`--continue-on-error`, credentials, the shared run id) are shared across recipes; the run id resolves once (flag → `SUMPTER_RUN_ID` → generated) so every recipe's provenance ties to one invocation.
+
+**Shared run-level `--parameter`.** Each recipe's `defaults.parameters` stay authoritative for its per-recipe config, but a repeatable `--parameter key=value` on `extract-multi` is a **run-level override layer applied to every recipe** in the pass — the same operator-supplied override that single-recipe `recipes run extract --parameter` already provides (see [Recipe Parameters](#recipe-parameters)). It is layered **over** each recipe's `defaults.parameters` (CLI wins uniformly across recipes), satisfies each recipe's `parameters_required` independently, and supports the same scalar and JSON-list typed values. The value is injected into **every** recipe's records — use it for the genuinely per-run keys every recipe shares (for example a per-run provenance/version stamp or an operator runtime value) that have no manifest or input-path home. A shared key that collides with any recipe's `field_mappings[].output_field` fails the whole run at plan-load preflight, before any output is written.
+
+```bash
+sumpter recipes run extract-multi \
+  ./recipes/summary ./recipes/line-items ./recipes/financial \
+  --file-list ./batch/inputs.list \
+  --output-path ./out \
+  --parameter harness_version=2024.11.3
+```
+
+`--parameter` is **not** a credential transport — credential material stays behind named credential handles. Secret-shaped parameter keys (`token`, `secret`, `password`, `credential`, …) are redacted by key in the recorded provenance argv.
 
 Failure handling follows the input-vs-recipe boundary: a read/parse/acquire failure is **input-level** (it affects every recipe's view of that file), while an applicability, signature, extraction, `min_occurrences`, or output failure is **recipe-level** — isolated to that recipe and recorded in its own `failures.json` (under `--continue-on-error`) without aborting the others.
 
@@ -176,7 +188,7 @@ field_mappings:
     xpath: Accession
     type: string
   - output_field: is_curated_molecule
-    expression: '(string_length(accession) >= 5) && starts_with_any(accession, curated_prefixes)'
+    expression: "(string_length(accession) >= 5) && starts_with_any(accession, curated_prefixes)"
     type: boolean
 ```
 
@@ -781,6 +793,7 @@ handles:
   A recipe carries a handle **name** only — never key material; the
   no-secrets-in-recipe-YAML rule holds. A `--input-credentials-handle` /
   `--output-credentials-handle` CLI value overrides the recipe's declared handle.
+
 - **Default-chain vs hermetic posture.** A handle with no `endpoint` and no
   explicit keys uses the **ambient AWS default credential chain** — convenient,
   but environment/shared-config settings can influence where requests go. A
@@ -799,7 +812,7 @@ handles:
   `secret_access_key`, and a `--credential` override — combining them is a config
   error, not a silent precedence. TLS posture still applies: an anonymous request
   is still on the wire, so a custom `endpoint` must be `https://` (or `insecure:
-  true`). Example:
+true`). Example:
 
   ```yaml
   handles:
@@ -807,6 +820,7 @@ handles:
       region: us-east-1
       anonymous: true
   ```
+
 - **Handle names are shareable logical labels — choose neutral slugs.** The
   _resolved_ input and output handle **names** are recorded in the run's
   provenance sidecar (`inputs[].credentials_handle` / `outputs[].credentials_handle`)

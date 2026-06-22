@@ -271,18 +271,56 @@ func SanitizeArgv(args []string, roots ...string) []string {
 			out = append(out, key+"=<redacted>")
 			continue
 		}
+		// A --parameter value is itself an inner key=value pair injected into every
+		// record (the value carries the secret-shape, not the flag), so the inner
+		// key — not "parameter" — decides redaction. Joined form: --parameter=k=v.
+		if hasValue && isParameterFlag(key) {
+			out = append(out, key+"="+sanitizeParameterValue(value, roots...))
+			continue
+		}
 		if hasValue {
 			out = append(out, key+"="+sanitizeValue(value, roots...))
 			continue
 		}
 
 		out = append(out, arg)
+		// Split form: --parameter <k=v>. Consume the next token as the parameter
+		// value and redact by its inner key, mirroring the joined form above.
+		if isParameterFlag(arg) && i+1 < len(args) {
+			i++
+			out = append(out, sanitizeParameterValue(strings.TrimSpace(args[i]), roots...))
+			continue
+		}
 		if isSecretKey(arg) && i+1 < len(args) {
 			i++
 			out = append(out, "<redacted>")
 		}
 	}
 	return out
+}
+
+// isParameterFlag reports whether a flag token is the --parameter injection flag,
+// whose value is an inner key=value pair (not a path or a secret-shaped flag
+// value). Matches both --parameter and -parameter spellings.
+func isParameterFlag(key string) bool {
+	return strings.ToLower(strings.TrimLeft(strings.TrimSpace(key), "-")) == "parameter"
+}
+
+// sanitizeParameterValue redacts/normalizes a --parameter value, which is an
+// inner key=value pair. When the inner key is secret-shaped (token, secret,
+// password, credential, ...) the inner value is redacted while the parameter key
+// stays visible (so provenance still records WHICH parameter was set). A
+// non-secret inner value is path-sanitized like any other argv value. A value
+// with no inner "=" is malformed for --parameter; sanitize it as a plain value.
+func sanitizeParameterValue(value string, roots ...string) string {
+	innerKey, innerValue, ok := strings.Cut(value, "=")
+	if !ok {
+		return sanitizeValue(value, roots...)
+	}
+	if isSecretKey(innerKey) {
+		return innerKey + "=<redacted>"
+	}
+	return innerKey + "=" + sanitizeValue(innerValue, roots...)
 }
 
 func sanitizeValue(value string, roots ...string) string {

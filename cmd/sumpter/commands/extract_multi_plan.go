@@ -47,6 +47,14 @@ type multiSharedOptions struct {
 	NoManifest      bool
 	AllowLargeFiles bool
 
+	// Parameters is the shared run-level --parameter override layer applied to
+	// EVERY recipe in the pass. It is layered over each recipe's
+	// defaults.parameters with the same override/collision/typed-value semantics
+	// as single-recipe `recipes run extract --parameter` — per-recipe manifest
+	// params stay authoritative for per-recipe config; this carries only the
+	// genuinely run-level keys every recipe shares.
+	Parameters []string
+
 	// Shared cloud credentials (handle references only — never secrets). The
 	// input handle is shared because the input set is shared; each recipe's
 	// output handle still comes from its own manifest unless overridden here.
@@ -257,6 +265,12 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 	opts.SiteID = defaults.SiteID
 	opts.ManifestParameters = defaults.Parameters
 	opts.ParametersRequired = defaults.ParametersRequired
+	// Shared run-level --parameter override layer, applied to every recipe. Threaded
+	// in here so buildExternalFieldPlan does ALL parsing, last-wins override over
+	// defaults.parameters, typed (list) handling, required checks, and output-field
+	// collision checks — identical to single-recipe `recipes run extract`. No second
+	// parser or merge layer.
+	opts.Parameters = shared.Parameters
 	// Reference tables resolve against THIS recipe's workspace (per-recipe
 	// containment root); no cross-recipe root, no CLI override surface in v0.
 	opts.ReferenceTableDecls = defaults.ReferenceTables

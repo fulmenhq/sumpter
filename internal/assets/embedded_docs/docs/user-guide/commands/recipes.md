@@ -118,10 +118,21 @@ the read/parse cost is amortized from ~N× to 1× across N recipes — the domin
 cost at high file counts (many small files). Each recipe writes to its own
 `<output-path>/<recipe-id>/` subdirectory (records, `manifest.json`, and
 `dispositions.json` / `failures.json` when applicable); output, formats,
-parameters, reference tables, and credential handles are per recipe (from each
-manifest). The input set, `--output-path` root, and run-level controls
+`defaults.parameters`, reference tables, and credential handles are per recipe
+(from each manifest). The input set, `--output-path` root, and run-level controls
 (`--continue-on-error`, credentials, the shared run id resolved once from
 `--run-id` → `SUMPTER_RUN_ID` → generated) are shared.
+
+A repeatable `--parameter key=value` is a **shared run-level override** applied to
+every recipe in the pass: it layers over each recipe's `defaults.parameters` (CLI
+wins uniformly), satisfies each recipe's `parameters_required` independently,
+supports the same scalar/JSON-list typed values as single-recipe
+[`run extract --parameter`](#run-extract), and is injected into every
+recipe's records — use it for genuinely per-run keys every recipe shares (e.g. a
+per-run provenance stamp). A shared key colliding with any recipe's
+`field_mappings[].output_field` fails the run at plan-load preflight, before
+output is written. `--parameter` is not a credential transport; secret-shaped
+keys are redacted by key in the provenance argv.
 
 Failure handling follows the input-vs-recipe boundary: a read/parse/acquire
 failure is input-level (every recipe sees it); an applicability, signature,
