@@ -233,6 +233,55 @@ func TestSanitizePathAndArgv(t *testing.T) {
 	}
 }
 
+// TestSanitizeArgvParameter pins the --parameter inner-key redaction: a
+// --parameter value is itself a key=value pair, so the INNER key decides
+// redaction (not the literal "parameter" flag). Secret-shaped inner keys must
+// redact only the value (keeping which parameter was set visible); non-secret
+// parameters stay fully visible; path-looking inner values are normalized. Both
+// the joined (--parameter=k=v) and split (--parameter k=v) forms are covered.
+func TestSanitizeArgvParameter(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "inputs", "stamp.xml")
+
+	args := SanitizeArgv([]string{
+		"recipes", "run", "extract-multi", "ws",
+		"--parameter=api_token=supersecret", // joined, secret inner key
+		"--parameter", "password=hunter2",   // split, secret inner key
+		"--parameter=harness_version=v1.2.3",     // joined, non-secret -> visible
+		"--parameter=src_path=" + inside,         // joined, path-looking value -> normalized
+		"--parameter=prefixes=[\"NM_\",\"NR_\"]", // joined, list value -> visible verbatim
+	}, root)
+	joined := strings.Join(args, " ")
+
+	// Secret inner values are gone; their parameter keys remain (so provenance
+	// still records WHICH parameter was set).
+	if strings.Contains(joined, "supersecret") || strings.Contains(joined, "hunter2") {
+		t.Fatalf("SanitizeArgv leaked a secret-shaped --parameter value: %q", joined)
+	}
+	if !strings.Contains(joined, "--parameter=api_token=<redacted>") {
+		t.Fatalf("SanitizeArgv did not redact joined-form secret parameter by inner key: %q", joined)
+	}
+	if !strings.Contains(joined, "password=<redacted>") {
+		t.Fatalf("SanitizeArgv did not redact split-form secret parameter by inner key: %q", joined)
+	}
+	// Non-secret run-level parameters stay fully visible.
+	if !strings.Contains(joined, "--parameter=harness_version=v1.2.3") {
+		t.Fatalf("SanitizeArgv dropped/altered a non-secret parameter: %q", joined)
+	}
+	// A list parameter survives verbatim (no inner secret, no path).
+	if !strings.Contains(joined, `--parameter=prefixes=["NM_","NR_"]`) {
+		t.Fatalf("SanitizeArgv did not preserve a list parameter verbatim: %q", joined)
+	}
+	// Path-looking inner value is normalized to the root-relative form, not the
+	// absolute host path.
+	if strings.Contains(joined, root) {
+		t.Fatalf("SanitizeArgv leaked an absolute host path in a parameter value: %q", joined)
+	}
+	if !strings.Contains(joined, "src_path=inputs/stamp.xml") {
+		t.Fatalf("SanitizeArgv did not normalize a path-looking parameter value: %q", joined)
+	}
+}
+
 func TestBuildInputLedger(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "input.xml")

@@ -134,8 +134,9 @@ func TestExternalFieldPlanParameterPrecedence(t *testing.T) {
 // prove it survives flag parsing intact.
 func TestParameterFlagIsStringArray(t *testing.T) {
 	cmds := map[string]*cobra.Command{
-		"extract files":       newExtractFilesCommand(),
-		"recipes run extract": newRecipeRunExtractCommand(),
+		"extract files":             newExtractFilesCommand(),
+		"recipes run extract":       newRecipeRunExtractCommand(),
+		"recipes run extract-multi": newRecipeRunExtractMultiCommand(),
 	}
 	for name, cmd := range cmds {
 		flag := cmd.Flags().Lookup("parameter")

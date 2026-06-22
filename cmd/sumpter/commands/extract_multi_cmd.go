@@ -12,9 +12,13 @@ import (
 )
 
 // recipeRunExtractMultiOptions holds the shared, run-level flags for an
-// extract-multi run. Output destination, formats, parameters, reference tables,
-// and credential handles stay per recipe (from each recipe's manifest); only the
-// input set, the output ROOT, and run-level controls are shared here.
+// extract-multi run. Output destination, formats, reference tables, and
+// credential handles stay per recipe (from each recipe's manifest); the input
+// set, the output ROOT, run-level controls, and the shared --parameter override
+// layer are shared here. Per-recipe defaults.parameters stay authoritative for
+// recipe config; --parameter carries only the genuinely run-level keys every
+// recipe shares, layered over each recipe's defaults exactly as single-recipe
+// `recipes run extract --parameter` is.
 type recipeRunExtractMultiOptions struct {
 	Files                  string
 	FileList               string
@@ -28,6 +32,7 @@ type recipeRunExtractMultiOptions struct {
 	Progress               bool
 	RunID                  string
 	NoManifest             bool
+	Parameters             []string
 	CredentialsPath        string
 	CredentialOverrides    []string
 	InputCredentialsHandle string
@@ -46,9 +51,15 @@ dominant cost — instead of opening and parsing each file once per recipe.
 
 Each recipe writes to its own subdirectory under --output-path
 (<output-path>/<recipe-id>/): records, the provenance manifest, and (when
-applicable) dispositions.json / failures.json. Output, formats, parameters,
-reference tables, and credential handles are per recipe (from each recipe's
-manifest); the input set, the output root, and run-level controls are shared.
+applicable) dispositions.json / failures.json. Output, formats, reference
+tables, and credential handles are per recipe (from each recipe's manifest);
+the input set, the output root, and run-level controls are shared.
+
+Each recipe's defaults.parameters stay authoritative for per-recipe config. A
+shared run-level --parameter key=value (repeatable) is layered over every
+recipe's defaults.parameters with the same override/collision/typed-value
+semantics as single-recipe "recipes run extract", carrying the genuinely
+per-run keys every recipe shares (e.g. a per-run provenance stamp).
 
 Scope (v0): JSON/NDJSON output only — a recipe declaring another format is
 rejected; run it with single-recipe "recipes run extract" instead. The
@@ -84,6 +95,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				Progress:               opts.Progress,
 				RunID:                  runID,
 				NoManifest:             opts.NoManifest,
+				Parameters:             opts.Parameters,
 				AllowLargeFiles:        allowLargeFiles,
 				CredentialsPath:        opts.CredentialsPath,
 				CredentialOverrides:    opts.CredentialOverrides,
@@ -105,6 +117,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID); shared by every recipe")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
+	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable, overrides manifest defaults.parameters). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input")
@@ -133,6 +146,12 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 	appendFlag("--exclude-pattern", opts.ExcludePattern)
 	appendFlag("--output-path", opts.OutputPath)
 	appendFlag("--run-id", opts.RunID)
+	// Shared run-level parameters are part of the portable, replayable invocation
+	// (unlike the operator/environment-specific credential flags above). The common
+	// provenance sanitizer redacts secret-shaped --parameter values by inner key.
+	for _, parameter := range opts.Parameters {
+		appendFlag("--parameter", parameter)
+	}
 	if opts.MaxDepth > 0 {
 		appendFlag("--max-depth", fmt.Sprintf("%d", opts.MaxDepth))
 	}
