@@ -53,6 +53,11 @@ type multiSharedOptions struct {
 	CredentialsPath        string
 	CredentialOverrides    []string
 	InputCredentialsHandle string
+
+	// Argv is the sanitized `recipes run extract-multi ...` invocation recorded
+	// in every recipe's provenance manifest, so the sidecar reports the command
+	// the user actually ran (not the single-recipe fallback). Shared by all plans.
+	Argv []string
 }
 
 // RecipePlan is the fully-loaded, isolated per-recipe execution state for one
@@ -179,6 +184,7 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 		Progress:            shared.Progress,
 		DryRun:              shared.DryRun,
 		CommandName:         "sumpter recipes run extract-multi",
+		Argv:                shared.Argv,
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,

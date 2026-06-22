@@ -15,6 +15,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
 // dispatchLogger returns the process logger, or a no-op logger when none is
@@ -69,6 +70,21 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) error {
 	if err := requireOutputRoot(outputRoot); err != nil {
 		return err
 	}
+	// Normalize the shared output root before deriving per-recipe dirs, matching
+	// the single-recipe runner: a local file:// root resolves to its filesystem
+	// path; a cloud (s3://) root keeps its URI; an unsupported scheme (e.g. gs://)
+	// is rejected here. resolveRecipeOutputDirs then sees a clean local path or
+	// an s3:// URI, never a half-resolved file:// root.
+	if ref, cerr := uriio.Classify(outputRoot); cerr != nil {
+		return cerr
+	} else if !ref.IsCloud() {
+		local, lerr := uriio.LocalPath("output root", outputRoot)
+		if lerr != nil {
+			return lerr
+		}
+		outputRoot = local
+	}
+	shared.OutputPath = outputRoot
 
 	// Resolve ONE run id for the whole invocation so every recipe's provenance
 	// ties back to a single extract-multi run.
