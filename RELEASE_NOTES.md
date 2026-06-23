@@ -10,7 +10,7 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 **Multi-recipe throughput: apply many extract recipes to one input set in a single parse-once pass, plus the run-level parameters and derive-only capture fields that make it adoptable.**
 
-v0.2.2 is a feature minor driven by real-world dogfeeding of large multi-projection extraction runs. The headline is **`extract-multi`**: when several recipes extract different projections from the **same** input set, the engine now reads and parses each input file once and dispatches the parsed document to every recipe — amortizing the per-recipe re-parse (the dominant cost at high file counts) from ~N× to 1× across N recipes. Two ergonomics features make it adoptable for production pipelines: a shared run-level `--parameter` passthrough, and derive-only `source_extraction` captures. The v0.2.0/0.2.1 surface (cloud I/O, reference-table lookup, list/file-list inputs) is unchanged.
+v0.2.2 is a feature minor driven by real-world dogfooding of large multi-projection extraction runs. The headline is **`extract-multi`**: when several recipes extract different projections from the **same** input set, the engine now reads and parses each input file once and dispatches the parsed document to every recipe — amortizing the per-recipe re-parse (the dominant cost at high file counts) from ~N× to 1× across N recipes. Two ergonomics features make it adoptable for production pipelines: a shared run-level `--parameter` passthrough, and derive-only `source_extraction` captures. The v0.2.0/0.2.1 surface (cloud I/O, reference-table lookup, list/file-list inputs) is unchanged.
 
 ### What's new (summary)
 
