@@ -152,9 +152,15 @@ func TestAggregateOutput_SingleFileHappyPath(t *testing.T) {
 		}
 		total += *in.RecordCount
 	}
-	// R4: shard record_count == sum of per-input counts in its range.
-	if total != shard.RecordCount {
-		t.Errorf("shard record_count %d != sum per-input %d", shard.RecordCount, total)
+	// Global completeness invariant: Σ shard record_count == Σ input record_count.
+	// (Here there is one shard, so it equals this shard's count; see the boundary
+	// test for the multi-shard case where an input straddles a roll.)
+	shardTotal := 0
+	for _, s := range m.AggregateOutputs {
+		shardTotal += s.RecordCount
+	}
+	if total != shardTotal {
+		t.Errorf("Σ shard record_count %d != Σ input record_count %d", shardTotal, total)
 	}
 }
 
@@ -227,6 +233,45 @@ func TestAggregateOutput_ShardRolling(t *testing.T) {
 		if strings.HasSuffix(e.Name(), ".partial") {
 			t.Errorf("leftover staging file: %s", e.Name())
 		}
+	}
+}
+
+// TestAggregateOutput_InputStraddlesShardBoundary is the secrev-F1 repro: a single
+// input whose records straddle a record cap appears in two adjacent shards' ordinal
+// spans. Per-shard ordinal ranges are coverage, not a partition; only the GLOBAL
+// invariant holds (Σ shard record_count == the input's record_count). Records, byte
+// integrity, and ordering remain correct.
+func TestAggregateOutput_InputStraddlesShardBoundary(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 1)
+	// Rewrite the single input to hold three records.
+	mustWriteFile(t, filepath.Join(ws, "testdata", "in-a.xml"),
+		`<root><item><name>r1</name></item><item><name>r2</name></item><item><name>r3</name></item></root>`)
+	out := filepath.Join(t.TempDir(), "straddle")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", AggregateMaxRecords: 2}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+
+	if len(m.AggregateOutputs) != 2 {
+		t.Fatalf("3 records cap 2 -> want 2 shards, got %d", len(m.AggregateOutputs))
+	}
+	// Both shards' ordinal spans are [1,1] — the one input straddles the boundary.
+	for i, s := range m.AggregateOutputs {
+		if s.InputOrdinalStart != 1 || s.InputOrdinalEnd != 1 {
+			t.Errorf("shard %d ordinal span = [%d,%d], want [1,1] (single straddling input)", i, s.InputOrdinalStart, s.InputOrdinalEnd)
+		}
+	}
+	// Shard counts split 2 + 1; the per-shard sum-of-inputs check would be wrong here.
+	if m.AggregateOutputs[0].RecordCount != 2 || m.AggregateOutputs[1].RecordCount != 1 {
+		t.Errorf("shard counts = %d,%d, want 2,1", m.AggregateOutputs[0].RecordCount, m.AggregateOutputs[1].RecordCount)
+	}
+	// Global invariant: Σ shard == the single input's record_count (3) == 3.
+	shardTotal := m.AggregateOutputs[0].RecordCount + m.AggregateOutputs[1].RecordCount
+	if len(m.Inputs) != 1 || m.Inputs[0].RecordCount == nil || *m.Inputs[0].RecordCount != 3 {
+		t.Fatalf("want one input with record_count 3, got %+v", m.Inputs)
+	}
+	if shardTotal != *m.Inputs[0].RecordCount {
+		t.Errorf("Σ shard record_count %d != input record_count %d (global invariant)", shardTotal, *m.Inputs[0].RecordCount)
 	}
 }
 

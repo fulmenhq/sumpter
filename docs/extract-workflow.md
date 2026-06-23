@@ -95,8 +95,11 @@ emitted envelope as per-input output. Key properties:
   `manifest.json` records the resolved input inventory — each input's path, content
   `sha256`, `record_count`, and disposition (ordinal = position in `inputs[]`) — plus, per
   shard, an `aggregate_outputs[]` entry with the shard's own `sha256`, `record_count`, and
-  covered input-ordinal range. The manifest, not filename parsing, is authoritative for
-  shard order and coverage.
+  contributing input-ordinal span. The manifest, not filename parsing, is authoritative for
+  shard order. Completeness is a **global** invariant — Σ shard `record_count` == Σ input
+  `record_count` == the run's total — not a per-shard sum: a single multi-record input
+  whose records straddle a shard cap appears in **both** adjacent shards' ordinal spans, so
+  the spans locate coverage rather than partition the inputs.
 
 **Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
 rejected), **serial**, and requires `--output-path` and a manifest. It is **fail-fast**:

@@ -84,7 +84,7 @@
     },
     "aggregate_outputs": {
       "type": "array",
-      "description": "Per-shard summary in aggregate mode: path, format, record count, content digest, and the covered range of resolved input ordinals (1-based positions in inputs[]).",
+      "description": "Per-shard summary in aggregate mode: path, format, record count, content digest, and the contributing input-ordinal span (1-based positions in inputs[]). Completeness is global: the sum of shard record_count equals the sum of inputs[].record_count equals the counts_by_record_type total. Per-shard ordinal spans are not a partition and may overlap by one input at a roll boundary, so they cannot be summed per shard.",
       "items": {
         "$ref": "#/$defs/aggregate_output"
       }
@@ -127,11 +127,13 @@
         },
         "input_ordinal_start": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "description": "First resolved input ordinal (1-based inputs[] position) that contributed a record to this shard. Adjacent shards' spans may overlap by one input at a roll boundary; this locates coverage, it does not partition inputs."
         },
         "input_ordinal_end": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Last resolved input ordinal that contributed a record to this shard (0 only for an empty zero-record output)."
         }
       }
     },

@@ -42,9 +42,11 @@ type Manifest struct {
 	// otherwise, keeping existing manifests byte-identical.
 	OutputMode string `json:"output_mode,omitempty"`
 	// AggregateOutputs is the per-shard summary in aggregate mode (path, format,
-	// record count, content digest, covered input-ordinal range). Resolved input
-	// order is the inputs[] order; each input's record_count gives the per-shard
-	// completeness check.
+	// record count, content digest, contributing input-ordinal span). Resolved input
+	// order is the inputs[] order. Completeness is global — Σ shard record_count ==
+	// Σ inputs[].record_count == the counts_by_record_type total — not a per-shard
+	// sum, because a multi-record input can straddle a roll boundary and so appear in
+	// two adjacent shards' ordinal spans (see AggregateOutput).
 	AggregateOutputs []AggregateOutput `json:"aggregate_outputs,omitempty"`
 }
 
@@ -137,11 +139,18 @@ type Input struct {
 }
 
 // AggregateOutput summarizes one aggregate NDJSON output file (or rolled shard) in
-// aggregate output mode: which contiguous range of resolved input ordinals it
-// covers, how many records, and a content digest over the fully-written file
-// (R3 — a self-verifying integrity/tamper digest, NOT a cross-run determinism
+// aggregate output mode: the span of resolved input ordinals that contributed
+// records to it, how many records, and a content digest over the fully-written
+// file (R3 — a self-verifying integrity/tamper digest, NOT a cross-run determinism
 // check, which is payload-only and excludes _runtime). The manifest, not filename
-// parsing, is authoritative for shard order and input coverage.
+// parsing, is authoritative for shard order.
+//
+// Completeness is a GLOBAL invariant, not per-shard: Σ shard RecordCount equals
+// Σ input RecordCount equals the counts_by_record_type total. Per-shard ordinal
+// ranges are the first/last input that wrote ANY record to the shard and may
+// OVERLAP by one input at a roll boundary — a single multi-record input whose
+// records straddle a cap appears in both the closing and opening shard's range —
+// so they are not a per-shard partition and cannot be summed per shard.
 type AggregateOutput struct {
 	Path string `json:"path"`
 	// CredentialsHandle is the logical handle NAME for a cloud (s3://) shard object;
@@ -150,8 +159,12 @@ type AggregateOutput struct {
 	Format            string `json:"format"`
 	RecordCount       int    `json:"record_count"`
 	SHA256            string `json:"sha256"`
-	InputOrdinalStart int    `json:"input_ordinal_start"`
-	InputOrdinalEnd   int    `json:"input_ordinal_end"`
+	// InputOrdinalStart/End are the first and last resolved input ordinal (1-based
+	// inputs[] position) that contributed at least one record to this shard. Ranges
+	// of adjacent shards may overlap by one input at a roll boundary (see the type
+	// doc); they locate coverage, they do not partition the inputs.
+	InputOrdinalStart int `json:"input_ordinal_start"`
+	InputOrdinalEnd   int `json:"input_ordinal_end"`
 }
 
 // Output describes an output artifact written by the extract run.
