@@ -182,6 +182,7 @@ The public-data exemplars are deliberately drawn from **five different verticals
 - **Record Indexing**: Build seekable indexes for parallel extraction of multi-GB XML files
 - **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors
+- **Multi-recipe single-pass extraction**: apply many extract recipes to one input set in a single parse-once pass (`recipes run extract-multi`) — each input file is read and parsed once, then fanned to every recipe, with isolated per-recipe output trees. See [Run multiple recipes in one pass](docs/extract-workflow.md#run-multiple-recipes-in-one-pass-extract-multi).
 - **Encoding resilience**: Normalize to UTF-8, handle BOMs and legacy encodings
 - **Structure discovery**: `inspect` surfaces element paths, attributes, and samples
 - **Integrity verification**: SHA-256 checksums at file and record level
@@ -223,6 +224,7 @@ Available today:
 - ✅ Document-order `_runtime.record_num` semantics for single-selector extraction
 - ✅ Record-sink streaming contract and sequential sink primitives
 - ✅ Streaming record-index writers during index build
+- ✅ Multi-recipe single-pass extraction (`extract-multi`) — parse each input once, fan to every recipe
 - ✅ S3-compatible cloud (`s3://`) sources and outputs with named credential handles
 - ✅ External reference-table lookup (membership + key→value enrichment)
 - ✅ List-typed recipe parameters with set-classification predicates

@@ -134,6 +134,69 @@ Failure handling follows the input-vs-recipe boundary: a read/parse/acquire fail
 
 **Scope (v0).** `extract-multi` writes **JSON/NDJSON** output only; a recipe declaring another format (e.g. Parquet) is rejected — run it with single-recipe `recipes run extract` instead. The large-file **streaming** path is not supported: each file is parsed once into memory, so a file large enough to route to streaming is rejected (`--allow-large-files` does not relax this). Cross-recipe joins, ordering, and combined-record assembly are out of scope — the pass amortizes the read + parse, nothing more.
 
+#### Worked example: three projections in one pass
+
+Suppose each input is a synthetic order document, and three recipes each extract a
+**different projection** of it — an order-level summary, a flattened line-item
+view, and a per-order tax rollup:
+
+```xml
+<!-- ./orders/order-1001.xml -->
+<Order id="1001" placedAt="2026-06-20">
+  <Customer segment="wholesale"/>
+  <Lines>
+    <Line sku="NM-100" qty="3" unitPrice="4.00"/>
+    <Line sku="NR-205" qty="1" unitPrice="9.50"/>
+  </Lines>
+  <Tax rate="0.07" amount="1.51"/>
+</Order>
+```
+
+Each recipe is an ordinary extract workspace with its **own** `recipe.yaml`,
+signature, and `extract.yaml`; they differ only in what they project:
+
+| Recipe workspace    | `id`            | Record boundary | Projects                           |
+| ------------------- | --------------- | --------------- | ---------------------------------- |
+| `./recipes/summary` | `order-summary` | `//Order`       | one row per order (id, segment)    |
+| `./recipes/lines`   | `line-items`    | `//Line`        | one row per line (sku, qty, price) |
+| `./recipes/tax`     | `tax-rollup`    | `//Order`       | one row per order (id, tax amount) |
+
+Run all three over the one input set in a single parse-once pass:
+
+```bash
+sumpter recipes run extract-multi \
+  ./recipes/summary ./recipes/lines ./recipes/tax \
+  --input-path ./orders \
+  --output-path ./out
+```
+
+Each input file under `./orders` is read and parsed **once**, then the parsed
+document is dispatched to all three recipes. Each recipe writes to its own
+subdirectory under `--output-path`, keyed by its `id`:
+
+```text
+out/
+├── order-summary/
+│   ├── extract-order-1001.xml.json   # one summary row per order
+│   └── manifest.json                 # per-recipe provenance (shared run id)
+├── line-items/
+│   ├── extract-order-1001.xml.json   # one row per <Line>
+│   └── manifest.json
+└── tax-rollup/
+    ├── extract-order-1001.xml.json   # one tax row per order
+    └── manifest.json
+```
+
+Running these as three separate `recipes run extract` invocations would read and
+parse `order-1001.xml` (and every other input) **three times** — once per recipe.
+`extract-multi` parses it once and fans the in-memory document to all three, so
+the read/parse cost is **~N×→1×** in the number of recipes. Outputs are identical
+to running each recipe separately; only the redundant parse is removed. Add a
+shared run-level stamp to every recipe's records with `--parameter` (e.g.
+`--parameter harness_version=2026.06.3`), and keep a derive-only intermediate out
+of the records with a `source_extraction` pattern marked `internal: true` (see
+[Source Extraction](#source-extraction)).
+
 ### Input selection (batch lists, directories, large trees)
 
 Processing **many files in one invocation** is a supported, first-class workflow — it is much faster than a separate run per file, especially for many small files. Pick the input mode that scopes the run precisely; exactly one of these applies per run:

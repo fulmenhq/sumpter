@@ -8,6 +8,26 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-23
+
+**Multi-recipe throughput: apply many extract recipes to one input set in a single parse-once pass, plus the ergonomics — shared run-level parameters and derive-only capture fields — that make it adoptable.**
+
+See [`docs/releases/v0.2.2.md`](docs/releases/v0.2.2.md) for the full release narrative.
+
+### Added
+
+- **Multi-recipe single-pass extract (`extract-multi`)** - `recipes run extract-multi <workspace>...` reads and parses each input file **once**, then dispatches the parsed document to every signature-matched recipe, amortizing the per-recipe re-parse (the dominant cost at high file counts) from ~N× to 1× across N recipes. Each recipe writes to its own isolated `<output-path>/<recipe-id>/` subdirectory (records, provenance manifest, and `dispositions.json` / `failures.json` when applicable); per-recipe output, formats, `defaults.parameters`, reference tables, and credential handles come from each recipe's own manifest, while the input set, output root, and run-level controls are shared, with a single shared run id. Failure handling follows the input-vs-recipe boundary (a read/parse failure is input-level; applicability/signature/extraction/`min_occurrences`/output failures are recipe-level and isolated under `--continue-on-error`). JSON/NDJSON output only in v0; the streaming/large-file path is not supported (#104, #105, #106, #107, #108, #109).
+- **Shared run-level `--parameter` for `extract-multi` (`multi-parameter`)** - a repeatable `--parameter key=value` on `extract-multi` is a run-level override layered over **every** recipe's `defaults.parameters` with the same override / collision / typed-value (scalar or JSON-list) semantics as single-recipe `recipes run extract --parameter`. It satisfies each recipe's `parameters_required` independently and is injected into every recipe's records — for the genuinely per-run keys every recipe shares (e.g. a per-run provenance/runtime stamp). A shared key colliding with any recipe's `field_mappings[].output_field` fails the run at plan-load preflight; secret-shaped parameter values are redacted by key in the provenance argv (`--parameter` is not a credential transport) (#110).
+- **Derive-only `source_extraction` captures (`internal-fields`)** - a `source_extraction` pattern may declare `internal: true`, making its named captures visible in `field_mappings[].expression` scope but **never emitted** into the record body on any sink (JSON/NDJSON/Parquet) — a true intermediate with no stray column. The flag defaults to `false` (existing captures emit unchanged); internal captures still participate in `source_extraction_required` and in the capture↔`output_field` / capture↔`defaults.parameters` collision checks. A capture name declared on both an `internal: true` and a non-internal pattern is rejected at plan validation so emit visibility is unambiguous (#111).
+
+### Changed
+
+- **VERSION bumped to `0.2.2`** for this release.
+
+### Docs
+
+- **`source_extraction { source: filename }` grain/provenance tagging (`filename-derive`)** - documented the filename named-capture pattern for tagging every record by which file or grain produced it, and its relationship to derived (`expression`) fields (#103).
+
 ## [0.2.1] - 2026-06-20
 
 **Two dogfood-driven fixes: present-but-empty string elements bind `""` instead of erroring, and a batch file-list input that skips directory enumeration.**
@@ -21,7 +41,7 @@ See [`docs/releases/v0.2.1.md`](docs/releases/v0.2.1.md) for the full release na
 
 ### Changed
 
-- **Present-but-empty string elements bind `""` (`empty-element-bind`)** - an XPath *string* field over an element that is present but empty now binds the empty string (a defined value) in DSL scope, agreeing with what `boolean()` reports for the same node, so the `has_x ? f(string_x) : default` guard pattern no longer crashes with `undefined variable`. This is a behavior change for upgraders — see [`docs/releases/v0.2.1.md`](docs/releases/v0.2.1.md) (#100).
+- **Present-but-empty string elements bind `""` (`empty-element-bind`)** - an XPath _string_ field over an element that is present but empty now binds the empty string (a defined value) in DSL scope, agreeing with what `boolean()` reports for the same node, so the `has_x ? f(string_x) : default` guard pattern no longer crashes with `undefined variable`. This is a behavior change for upgraders — see [`docs/releases/v0.2.1.md`](docs/releases/v0.2.1.md) (#100).
 - **VERSION bumped to `0.2.1`** for this release.
 
 ## [0.2.0] - 2026-06-18
@@ -239,48 +259,3 @@ See [`docs/releases/v0.1.4.md`](docs/releases/v0.1.4.md) for the full release na
 ### Deferred
 
 - **Cloud URI I/O** (S3/GCS/Azure input/output paths) deferred beyond v0.1.4; still out of scope for v0.1.5.
-
-## [0.1.3] - 2026-05-18
-
-**v0.1.3 cycle shipped continuously to main without a tagged release. Its work is included in the v0.1.4 tag.**
-
-### Added
-
-- **Runtime provenance core** — every extract run produces a provenance record capturing recipe `content_version`, recipe parameters (resolved values, including CLI overrides), and per-output sidecar manifests (PR #11).
-- **Extract sidecar manifests** — `*.manifest.json` files ship alongside NDJSON/Parquet outputs, capturing per-output statistics, source attribution, and recipe lineage (PR #13).
-- **Recipe `content_version` + `migrate` subcommand** — recipes carry an explicit content-version field; `sumpter recipes migrate` migrates older recipes to current schema (ADR-0006 PR-A, PR #9).
-- **Recipe `defaults.parameters.*` declarations** — recipe authors declare per-recipe string constants that become output columns on every extracted record; CLI `--parameter <key>=<value>` overrides supported (PR #18).
-- **Source-path-derived parameters** — `defaults.source_extraction[]` extracts recipe parameters from regex matches against the source file path; `parameters_required[]` marks which keys must resolve to a non-empty value at extract time (PR #19).
-- **Derived field mappings** — `field_mappings[].expression` supports DSL expressions for derived column values (PR #17).
-- **Parquet secondary output** — `output.parquet` declares a Parquet sink alongside the default NDJSON output (PR #23).
-- **`sumpter inspect --generate-extract`** produces a starter `extract.yaml` from observed XML structure (PR #22).
-- **Examples harness** with OSS-clean replacement examples (PRs #20, #21).
-- **DSL ternary conditionals** — `cond ? a : b` syntax in expressions and filters (PR #26).
-
-### Changed
-
-- **`match_selectors[].min_occurrences` defaults to `0`** — non-zero floors are explicit opt-in enforcement (was: implicit positive floor). Per-selector floors are now enforced so aggregate record counts cannot mask a selector-specific violation.
-- **Successful zero-record extract runs emit empty output artifacts and manifest entries** instead of silently omitting payload files. Downstream consumers can no longer mistake a successful zero-record run for a failed run with missing files.
-- **XPath compile/evaluate** — extract now uses upstream `xpath.Compile`/`xpath.Evaluate` rather than an ad-hoc selector parser (PR #4).
-- **DSL reference consolidation** — canonical DSL reference at `docs/dsl-reference.md` v1.1 (PR #28).
-
-### Fixed
-
-- **DSL quoted-string-literal hardening** — DSL parsing now treats operator characters inside quoted string literals as literal content, not split points. Unterminated string literals fail loudly during parse. Applies across binary expressions, ternary expressions, simple filters, function arguments, and accumulation filter routing (PR #27).
-- **Grouped reconciliation hardening** — validator handling is safer against malformed input and clearer in error reporting (PR #24).
-- **YAML schema 3-space indent break repaired** (PR #3).
-
-### Security
-
-- **gosec scan scope tightened** — module cache, vendored deps, and generated code excluded from scans (PR #10).
-- **License compliance enforced** via `.goneat/dependencies.yaml`: no GPL-3.0/AGPL-3.0/MPL-2.0; permissive licenses (MIT/Apache-2.0/BSD/ISC/0BSD/Unlicense) allowed.
-
-### Docs
-
-- **OSS-clean sanitization** — genericized ADR examples, swept legacy persona names, added public-data examples index (PRs #7, #14).
-- **Dataeng role override** for downstream review workflows (PR #12).
-- **Agents-md alignment** with the role model (PR #6).
-
-### Removed
-
-- **Vestigial `BlindingConfig` types** removed from extract surface (PR #15).
