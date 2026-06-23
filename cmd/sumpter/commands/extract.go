@@ -2041,6 +2041,10 @@ type externalFieldPlan struct {
 	manifestParameters map[string]recipesmanifest.ParamValue
 	cliParameters      map[string]recipesmanifest.ParamValue
 	parametersRequired []string
+	// internalCaptures is the set of source_extraction capture names declared
+	// `internal: true`. build() wraps these in extract.InternalField so they reach
+	// expression scope but are not emitted into the record body.
+	internalCaptures map[string]struct{}
 }
 
 func buildExternalFields(opts *ExtractOptions, mappings []extract.FieldMapping) (map[string]interface{}, error) {
@@ -2056,9 +2060,26 @@ func buildExternalFieldPlan(opts *ExtractOptions, mappings []extract.FieldMappin
 		shimFields:         make(map[string]string),
 		manifestParameters: make(map[string]recipesmanifest.ParamValue),
 		cliParameters:      make(map[string]recipesmanifest.ParamValue),
+		internalCaptures:   make(map[string]struct{}),
 	}
 	if opts == nil {
 		return plan, nil
+	}
+
+	// Record which source_extraction capture names are derive-only (internal:true)
+	// so build() can wrap them. Collected per pattern from its named groups; a
+	// pattern's internal flag covers all of its captures.
+	for i := range opts.SourceExtraction {
+		pattern := &opts.SourceExtraction[i]
+		if !pattern.Internal || pattern.CompiledPattern == nil {
+			continue
+		}
+		for _, name := range pattern.CompiledPattern.SubexpNames() {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			plan.internalCaptures[name] = struct{}{}
+		}
 	}
 
 	if opts.ClientID != "" {
@@ -2126,6 +2147,12 @@ func (p *externalFieldPlan) build(sourceFields map[string]string) map[string]int
 		externalFields[key] = value
 	}
 	for key, value := range sourceFields {
+		if _, internal := p.internalCaptures[key]; internal {
+			// Derive-only: visible in expression scope (unwrapped there), skipped
+			// by the record-emission merge so it never reaches extract.data.
+			externalFields[key] = extract.InternalField{Value: value}
+			continue
+		}
 		externalFields[key] = value
 	}
 	for key, value := range p.manifestParameters {
@@ -2184,6 +2211,15 @@ func validateSourceExtractionDeclarations(opts *ExtractOptions, mappings []extra
 	}
 
 	captureNames := make(map[string]struct{})
+	// A capture name's emit visibility must be unambiguous. Source captures with a
+	// repeated name across patterns keep last-match-wins value semantics, but the
+	// internal (derive-only) flag is recorded by name in the field plan — so a name
+	// declared on both an internal and a non-internal pattern would make emission
+	// depend on declaration rather than on which pattern actually matched. Reject
+	// that mix up front (fail loud); same-name duplicates that agree on visibility
+	// stay allowed.
+	internalNames := make(map[string]struct{})
+	nonInternalNames := make(map[string]struct{})
 	for index, pattern := range opts.SourceExtraction {
 		if pattern.CompiledPattern == nil {
 			return fmt.Errorf("source_extraction pattern at index %d is not compiled", index)
@@ -2193,6 +2229,22 @@ func validateSourceExtractionDeclarations(opts *ExtractOptions, mappings []extra
 				continue
 			}
 			captureNames[name] = struct{}{}
+			if pattern.Internal {
+				internalNames[name] = struct{}{}
+			} else {
+				nonInternalNames[name] = struct{}{}
+			}
+		}
+	}
+
+	for name := range internalNames {
+		if _, both := nonInternalNames[name]; both {
+			return fmt.Errorf(
+				"source_extraction capture %q is declared on both an internal:true and a "+
+					"non-internal pattern; a capture name must have one emit visibility — mark all "+
+					"of its patterns internal or none of them",
+				name,
+			)
 		}
 	}
 

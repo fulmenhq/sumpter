@@ -38,6 +38,11 @@ func ExtractFieldsWithExternal(doc *xmlquery.Node, cfg *ExtractRecordMatch, exte
 func copyExternalFields(externalFields map[string]interface{}) map[string]interface{} {
 	fields := make(map[string]interface{}, len(externalFields))
 	for key, value := range externalFields {
+		// Internal (derive-only) captures are never emitted, including on the
+		// zero-record path where external fields are returned as the record.
+		if isInternalField(value) {
+			continue
+		}
 		fields[key] = value
 	}
 	return fields
