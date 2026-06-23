@@ -151,9 +151,16 @@ type ReferenceTableDecl struct {
 
 // SourceExtractionPattern extracts fields from a source file location.
 type SourceExtractionPattern struct {
-	ID              string         `yaml:"id,omitempty" json:"id,omitempty"`
-	Source          string         `yaml:"source" json:"source"`
-	Pattern         string         `yaml:"pattern" json:"pattern"`
+	ID      string `yaml:"id,omitempty" json:"id,omitempty"`
+	Source  string `yaml:"source" json:"source"`
+	Pattern string `yaml:"pattern" json:"pattern"`
+	// Internal marks every named capture of this pattern as derive-only: the
+	// captured value is visible in field_mappings[].expression scope but is NOT
+	// emitted into the record body (extract.data) on any sink. The zero value is
+	// false, so existing patterns keep emitting their captures unchanged. An
+	// internal capture still participates in source_extraction_required and in the
+	// capture↔output_field / capture↔defaults.parameters collision checks.
+	Internal        bool           `yaml:"internal,omitempty" json:"internal,omitempty"`
 	CompiledPattern *regexp.Regexp `yaml:"-" json:"-"`
 }
 

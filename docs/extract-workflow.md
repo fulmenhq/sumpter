@@ -242,7 +242,20 @@ defaults:
       pattern: '^(?P<grain>unit|batch)-.*\.xml$'
 ```
 
-The capture is emitted directly as a `grain` field on every record — when a single grain/provenance column is all you need, **name the capture as the final field** and add no `field_mappings` for it. To derive a _separate_ field from it, capture under an internal name like `source_grain` and add a `field_mappings` expression with a **different** `output_field` (e.g. `output_field: grain_class`, `expression: 'source_grain == "unit" ? "fine" : "coarse"'`). The raw capture is still emitted alongside the derived field — an expression _adds_ a column, it does not rename or suppress the capture — and a capture name must not collide with any `field_mappings[].output_field` (the collision rule above). Because `source: filename` needs no input root, this composes with `--files` / `--file-list` batches (no directory walk), and the captured field sits alongside the `_runtime.source_file` provenance already on each record.
+The capture is emitted directly as a `grain` field on every record — when a single grain/provenance column is all you need, **name the capture as the final field** and add no `field_mappings` for it. To derive a _separate_ field from it, capture under a name like `source_grain` and add a `field_mappings` expression with a **different** `output_field` (e.g. `output_field: grain_class`, `expression: 'source_grain == "unit" ? "fine" : "coarse"'`). By default the raw capture is still emitted alongside the derived field — an expression _adds_ a column, it does not rename or suppress the capture — and a capture name must not collide with any `field_mappings[].output_field` (the collision rule above). Because `source: filename` needs no input root, this composes with `--files` / `--file-list` batches (no directory walk), and the captured field sits alongside the `_runtime.source_file` provenance already on each record.
+
+**Derive-only captures (`internal: true`).** When a capture is wanted **only** as an intermediate — visible to a `field_mappings[].expression` but never emitted as its own column — mark the pattern `internal: true`:
+
+```yaml
+defaults:
+  source_extraction:
+    - id: grain-tag
+      source: filename
+      pattern: '^(?P<source_grain>unit|batch)-.*\.xml$'
+      internal: true # source_grain drives expressions but is not written to the record
+```
+
+An internal pattern's captures are available in expression scope (so `output_field: grain_class`, `expression: 'source_grain == "unit" ? "fine" : "coarse"'` resolves) but are stripped from the record body across **every** sink (JSON, NDJSON, Parquet) — no stray intermediate column. The flag defaults to `false`, so existing patterns keep emitting their captures unchanged. Internal captures still participate fully in `source_extraction_required` (a required internal capture still fails per file when absent) and in the capture↔`output_field` / capture↔`defaults.parameters` collision checks. This works identically under single-recipe `recipes run extract` and `recipes run extract-multi`. Use it for a true intermediate; when you actually want the raw value as a column, leave `internal` off (or omit it).
 
 ### Reference Tables
 

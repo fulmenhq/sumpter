@@ -1115,6 +1115,11 @@ func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecor
 				if _, exists := record[key]; exists {
 					return nil, nil, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
 				}
+				// Internal (derive-only) captures stay out of the emitted record:
+				// they were already in expression scope above.
+				if isInternalField(value) {
+					continue
+				}
 				record[key] = value
 			}
 			applyUniformSchema(record, cfg)
@@ -1202,6 +1207,11 @@ func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlqu
 			for key, value := range externalFields {
 				if _, exists := record[key]; exists {
 					return nil, emittedRecords, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
+				}
+				// Internal (derive-only) captures stay out of the emitted record:
+				// they were already in expression scope above.
+				if isInternalField(value) {
+					continue
 				}
 				record[key] = value
 			}
@@ -1722,7 +1732,9 @@ func buildExpressionScope(record map[string]interface{}, externalFields map[stri
 		if _, exists := scope[key]; exists {
 			return nil, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
 		}
-		scope[key] = value
+		// Internal (derive-only) captures are visible in expression scope with
+		// their real value; the record-emission merge is what skips them.
+		scope[key] = unwrapExternalFieldValue(value)
 	}
 	return scope, nil
 }

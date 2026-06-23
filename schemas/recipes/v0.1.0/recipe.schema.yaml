@@ -244,6 +244,17 @@ properties:
             pattern:
               type: string
               maxLength: 1024
+            internal:
+              type: boolean
+              default: false
+              description: |
+                When true, every named capture of this pattern is derive-only:
+                usable in field_mappings[].expression scope but never written to
+                the record body (extract.data) on any sink. Defaults to false, so
+                existing patterns keep emitting their captures. Internal captures
+                still participate in source_extraction_required and in the
+                capture/output_field and capture/defaults.parameters collision
+                checks.
       source_extraction_required:
         type: array
         description: |
