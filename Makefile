@@ -125,6 +125,26 @@ format-check-tree: ## Check WHOLE-TREE format drift (md/json/yaml/EOF); CI gate,
 	}
 	@echo "$(GREEN)✅ No whole-tree format drift$(NC)"
 
+.PHONY: version-check
+version-check: ## Guard: a no-ldflags build must report the VERSION-file version (catches hardcoded version drift)
+	@echo "$(BLUE)Verifying the binary version derives from the VERSION file...$(NC)"
+	@# `make build` injects Version via ldflags ($(VERSION)) so it is correct by
+	@# construction. This instead does a plain `go build` (no ldflags) to exercise the
+	@# in-source default + getVersion() fallback, so a hardcoded version literal that
+	@# diverges from the VERSION file fails CI loudly. VERSION stays the single source
+	@# of truth. Cheap: one quick build, no embed/clean.
+	@expected="$$(tr -d '[:space:]' < VERSION)"; \
+	tmpbin="$$(mktemp -t sumpter-vcheck.XXXXXX)"; \
+	go build -o "$$tmpbin" ./cmd/sumpter || { rm -f "$$tmpbin"; exit 1; }; \
+	got="$$("$$tmpbin" version 2>/dev/null | sed -n 's/^Sumpter v//p' | head -1)"; \
+	rm -f "$$tmpbin"; \
+	if [ "$$got" != "$$expected" ]; then \
+		echo "$(RED)❌ Version drift: a no-ldflags build reports '$$got' but VERSION says '$$expected'.$(NC)"; \
+		echo "$(RED)   The binary version must derive from the VERSION file — keep commands.Version defaulting to \"dev\" so getVersion() reads VERSION; do not hardcode a version literal.$(NC)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)✅ Binary version derives from VERSION ($$expected)$(NC)"
+
 # Document formatting (YAML, JSON, Markdown)
 .PHONY: fmt-docs
 fmt-docs: ## Format all documentation files (YAML, JSON, Markdown)

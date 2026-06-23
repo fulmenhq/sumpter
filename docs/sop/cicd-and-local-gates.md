@@ -34,12 +34,12 @@ that exploits the local-only gates to exercise real S3-compatible I/O.
 The GitHub Actions workflows under `.github/workflows/` invoke only these Make
 targets (audited 2026-06-12):
 
-| Workflow                        | Make targets invoked                                                                                                         |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`                        | `make check-all`, `make format-check-tree`, `make test`, `make build`, `make release-build`, `make release-verify-checksums` |
-| `release.yml`                   | `make lint`, `make test`, `make release-build`                                                                               |
-| `verify-embeds.yml`             | `make verify-embeds`                                                                                                         |
-| `seekable-zstd-integration.yml` | CGO seekable-zstd tests (`-tags seekablezstd`)                                                                               |
+| Workflow                        | Make targets invoked                                                                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`                        | `make check-all`, `make format-check-tree`, `make test`, `make build`, `make version-check`, `make release-build`, `make release-verify-checksums` |
+| `release.yml`                   | `make lint`, `make test`, `make release-build`                                                                                                     |
+| `verify-embeds.yml`             | `make verify-embeds`                                                                                                                               |
+| `seekable-zstd-integration.yml` | CGO seekable-zstd tests (`-tags seekablezstd`)                                                                                                     |
 
 `make test` runs the **default** Go test build — that is, every test **except**
 those behind a build tag. Build-tagged suites (`seekablezstd`, `s3integration`,
@@ -196,14 +196,15 @@ one backend never blocks the others.
 
 ## Gate summary
 
-| Gate                         | Where it runs                 | Cloud endpoint? | Notes                                                                                     |
-| ---------------------------- | ----------------------------- | --------------- | ----------------------------------------------------------------------------------------- |
-| `check-all`, `test`, `build` | Remote CI + local             | No (hermetic)   | Default Go build; build-tagged suites excluded                                            |
-| `format-check-tree`          | Remote CI + local             | No              | **Whole-tree** format gate (not `--new-issues-only`); fails on any md/json/yaml/EOF drift |
-| `seekablezstd` tests         | Dedicated CI workflow + local | No              | CGO; own build tag                                                                        |
-| `precommit` / `prepush`      | Local only                    | No              | Mirror CI checks; not invoked by CI                                                       |
-| `test-integration-s3`        | Local / on-demand             | **Yes** (S3)    | `s3integration` tag; BYO or ephemeral moto                                                |
-| `pr-final`                   | Local only                    | **Yes** (S3)    | Requires the S3 suite; never on CI                                                        |
+| Gate                         | Where it runs                 | Cloud endpoint? | Notes                                                                                                        |
+| ---------------------------- | ----------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `check-all`, `test`, `build` | Remote CI + local             | No (hermetic)   | Default Go build; build-tagged suites excluded                                                               |
+| `format-check-tree`          | Remote CI + local             | No              | **Whole-tree** format gate (not `--new-issues-only`); fails on any md/json/yaml/EOF drift                    |
+| `version-check`              | Remote CI + local             | No              | Drift guard: a no-ldflags build must report the `VERSION`-file version (catches a hardcoded version literal) |
+| `seekablezstd` tests         | Dedicated CI workflow + local | No              | CGO; own build tag                                                                                           |
+| `precommit` / `prepush`      | Local only                    | No              | Mirror CI checks; not invoked by CI                                                                          |
+| `test-integration-s3`        | Local / on-demand             | **Yes** (S3)    | `s3integration` tag; BYO or ephemeral moto                                                                   |
+| `pr-final`                   | Local only                    | **Yes** (S3)    | Requires the S3 suite; never on CI                                                                           |
 
 ### Whole-tree format gate (`format-check-tree`)
 

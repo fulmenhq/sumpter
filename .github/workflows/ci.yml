@@ -93,6 +93,10 @@ jobs:
         run: |
           set -euo pipefail
           make build
+      - name: Version drift guard
+        run: |
+          set -euo pipefail
+          make version-check
   # Job 2: Release-build dry-run
   #
   # Runs `make release-build` (multi-platform cross-compile + checksums) in
