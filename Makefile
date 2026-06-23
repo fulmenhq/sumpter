@@ -113,6 +113,18 @@ fmt-strict: ## Strictly check Go code formatting, fails if issues found
 	fi
 	@echo "$(GREEN)✅ Code formatting check passed$(NC)"
 
+.PHONY: format-check-tree
+format-check-tree: ## Check WHOLE-TREE format drift (md/json/yaml/EOF); CI gate, fails on any drift
+	@echo "$(BLUE)Checking whole-tree format drift...$(NC)"
+	@# SUM-060 (format-normalize): whole-tree, NOT --new-issues-only, so accumulated
+	@# md/json/yaml/EOF drift cannot silently land on main. The local pre-commit hook
+	@# stays changed-file scoped; this is the CI trust-boundary gate (entarch option a).
+	@goneat assess --categories format --fail-on low || { \
+		echo "$(RED)❌ Whole-tree format drift found. Fix with: goneat assess --categories format --fix$(NC)"; \
+		exit 1; \
+	}
+	@echo "$(GREEN)✅ No whole-tree format drift$(NC)"
+
 # Document formatting (YAML, JSON, Markdown)
 .PHONY: fmt-docs
 fmt-docs: ## Format all documentation files (YAML, JSON, Markdown)
