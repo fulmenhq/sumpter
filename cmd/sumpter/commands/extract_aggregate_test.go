@@ -1,0 +1,442 @@
+package commands
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// writeAggregateWorkspace builds a recipe workspace with n synthetic inputs, each
+// producing exactly one record (//item), and a JSON-output recipe. Input order is
+// the listed defaults.input.files order (the resolved aggregate ordinal order).
+func writeAggregateWorkspace(t *testing.T, n int) string {
+	t.Helper()
+	ws := createWorkingTempDir(t)
+	for _, d := range []string{"signature", "extract", "testdata", "outputs"} {
+		if err := os.MkdirAll(filepath.Join(ws, d), 0o750); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+	var fileLines strings.Builder
+	for i := 1; i <= n; i++ {
+		name := "in-" + string(rune('a'+i-1)) + ".xml"
+		mustWriteFile(t, filepath.Join(ws, "testdata", name),
+			`<root><item><name>val`+string(rune('a'+i-1))+`</name></item></root>`)
+		fileLines.WriteString("      - testdata/" + name + "\n")
+	}
+	mustWriteFile(t, filepath.Join(ws, "recipe.yaml"), `version: recipe/v0.1.0
+kind: extract
+id: aggregate_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/signature.yaml
+  extract: extract/extract.yaml
+defaults:
+  input:
+    mode: files
+    files:
+`+fileLines.String()+`  output:
+    format: json
+    path: outputs
+    pattern: extract-{}.json
+  workers: 1
+`)
+	mustWriteFile(t, filepath.Join(ws, "signature", "signature.yaml"), `signature_id: sample
+name: Sample
+match_patterns:
+  - pattern_id: root
+    name: Root
+    selector: /root
+    weight: 1
+confidence_threshold: 1
+`)
+	mustWriteFile(t, filepath.Join(ws, "extract", "extract.yaml"), `record_type: agg_record
+match_selectors:
+  - xpath: //item
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+	return ws
+}
+
+func runAggregateRecipe(t *testing.T, ws, outDir string, opts *recipeRunExtractOptions) error {
+	t.Helper()
+	initExtractManifestTestLogger(t)
+	if opts == nil {
+		opts = &recipeRunExtractOptions{}
+	}
+	opts.ManifestPath = "recipe.yaml"
+	opts.OutputPath = outDir
+	return executeExtractRecipe(recipeRunExtractTestCommand(), ws, opts)
+}
+
+func readNDJSONLines(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path) // #nosec G304 - test temp path
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	out := []string{}
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+var aggRuntimeRE = regexp.MustCompile(`"_runtime":\{[^}]*\}`)
+
+func TestAggregateOutput_SingleFileHappyPath(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 3)
+	out := filepath.Join(t.TempDir(), "agg")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate"}); err != nil {
+		t.Fatalf("aggregate run: %v", err)
+	}
+
+	// One records.jsonl, one line per single-record input, in listed order.
+	lines := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))
+	if len(lines) != 3 {
+		t.Fatalf("records.jsonl has %d lines, want 3", len(lines))
+	}
+	for i, want := range []string{"vala", "valb", "valc"} {
+		if !strings.Contains(lines[i], `"name":"`+want+`"`) {
+			t.Errorf("line %d = %s, want name %q (deterministic input order)", i, lines[i], want)
+		}
+	}
+
+	// No per-input files in aggregate mode.
+	if entries, _ := os.ReadDir(out); len(entries) > 0 {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "extract-") {
+				t.Errorf("aggregate mode wrote a per-input file: %s", e.Name())
+			}
+		}
+	}
+
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+	if m.OutputMode != "aggregate" {
+		t.Errorf("manifest output_mode = %q, want aggregate", m.OutputMode)
+	}
+	if len(m.AggregateOutputs) != 1 {
+		t.Fatalf("aggregate_outputs len = %d, want 1", len(m.AggregateOutputs))
+	}
+	shard := m.AggregateOutputs[0]
+	if shard.Path != "records.jsonl" || shard.RecordCount != 3 || shard.InputOrdinalStart != 1 || shard.InputOrdinalEnd != 3 {
+		t.Errorf("shard summary wrong: %+v", shard)
+	}
+	if !strings.HasPrefix(shard.SHA256, "sha256:") {
+		t.Errorf("shard sha256 missing/format: %q", shard.SHA256)
+	}
+	// Inventory: every input present once, with record_count + disposition.
+	if len(m.Inputs) != 3 {
+		t.Fatalf("inventory len = %d, want 3", len(m.Inputs))
+	}
+	total := 0
+	for _, in := range m.Inputs {
+		if in.RecordCount == nil || *in.RecordCount != 1 {
+			t.Errorf("input %s record_count = %v, want 1", in.Path, in.RecordCount)
+			continue
+		}
+		if in.Disposition == "" {
+			t.Errorf("input %s missing disposition", in.Path)
+		}
+		total += *in.RecordCount
+	}
+	// Global completeness invariant: Σ shard record_count == Σ input record_count.
+	// (Here there is one shard, so it equals this shard's count; see the boundary
+	// test for the multi-shard case where an input straddles a roll.)
+	shardTotal := 0
+	for _, s := range m.AggregateOutputs {
+		shardTotal += s.RecordCount
+	}
+	if total != shardTotal {
+		t.Errorf("Σ shard record_count %d != Σ input record_count %d", shardTotal, total)
+	}
+}
+
+func TestAggregateOutput_DefaultPerInputUnchanged(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 2)
+	out := filepath.Join(t.TempDir(), "perinput")
+	// Default mode (OutputMode empty) — per-input files, no aggregate manifest fields.
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{}); err != nil {
+		t.Fatalf("per-input run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "records.jsonl")); err == nil {
+		t.Error("per-input mode unexpectedly wrote records.jsonl")
+	}
+	if _, err := os.Stat(filepath.Join(out, "extract-in-a.xml.json")); err != nil {
+		t.Errorf("per-input mode did not write the expected per-input file: %v", err)
+	}
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+	if m.OutputMode != "" || len(m.AggregateOutputs) != 0 {
+		t.Errorf("per-input manifest should have no aggregate fields, got mode=%q outputs=%d", m.OutputMode, len(m.AggregateOutputs))
+	}
+	// Byte-stability: per-input inputs[] must not gain a record_count (the tri-state
+	// pointer stays nil → omitted), and no aggregate-only top-level fields appear.
+	// (outputs[].record_count is existing per-input behavior and is unaffected.)
+	for _, in := range m.Inputs {
+		if in.RecordCount != nil {
+			t.Errorf("per-input input %s gained a record_count (%d); should be omitted", in.Path, *in.RecordCount)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read raw manifest: %v", err)
+	}
+	if strings.Contains(string(raw), "output_mode") || strings.Contains(string(raw), "aggregate_outputs") {
+		t.Errorf("per-input manifest leaked an aggregate-only top-level field:\n%s", raw)
+	}
+}
+
+func TestAggregateOutput_ShardRolling(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 5)
+	out := filepath.Join(t.TempDir(), "shards")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", AggregateMaxRecords: 2}); err != nil {
+		t.Fatalf("sharded run: %v", err)
+	}
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+	// 5 records, cap 2 -> shards of 2,2,1.
+	if len(m.AggregateOutputs) != 3 {
+		t.Fatalf("want 3 shards, got %d: %+v", len(m.AggregateOutputs), m.AggregateOutputs)
+	}
+	wantCounts := []int{2, 2, 1}
+	wantNames := []string{"records-00001.jsonl", "records-00002.jsonl", "records-00003.jsonl"}
+	totalShardRecords := 0
+	for i, shard := range m.AggregateOutputs {
+		if shard.Path != wantNames[i] {
+			t.Errorf("shard %d path = %q, want %q (lexical order)", i, shard.Path, wantNames[i])
+		}
+		if shard.RecordCount != wantCounts[i] {
+			t.Errorf("shard %d record_count = %d, want %d", i, shard.RecordCount, wantCounts[i])
+		}
+		if lines := readNDJSONLines(t, filepath.Join(out, shard.Path)); len(lines) != wantCounts[i] {
+			t.Errorf("shard %d file has %d lines, want %d", i, len(lines), wantCounts[i])
+		}
+		totalShardRecords += shard.RecordCount
+	}
+	if totalShardRecords != 5 {
+		t.Errorf("total shard records = %d, want 5", totalShardRecords)
+	}
+	// No leftover .partial staging files.
+	entries, _ := os.ReadDir(out)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".partial") {
+			t.Errorf("leftover staging file: %s", e.Name())
+		}
+	}
+}
+
+// TestAggregateOutput_InputStraddlesShardBoundary is the secrev-F1 repro: a single
+// input whose records straddle a record cap appears in two adjacent shards' ordinal
+// spans. Per-shard ordinal ranges are coverage, not a partition; only the GLOBAL
+// invariant holds (Σ shard record_count == the input's record_count). Records, byte
+// integrity, and ordering remain correct.
+func TestAggregateOutput_InputStraddlesShardBoundary(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 1)
+	// Rewrite the single input to hold three records.
+	mustWriteFile(t, filepath.Join(ws, "testdata", "in-a.xml"),
+		`<root><item><name>r1</name></item><item><name>r2</name></item><item><name>r3</name></item></root>`)
+	out := filepath.Join(t.TempDir(), "straddle")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", AggregateMaxRecords: 2}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+
+	if len(m.AggregateOutputs) != 2 {
+		t.Fatalf("3 records cap 2 -> want 2 shards, got %d", len(m.AggregateOutputs))
+	}
+	// Both shards' ordinal spans are [1,1] — the one input straddles the boundary.
+	for i, s := range m.AggregateOutputs {
+		if s.InputOrdinalStart != 1 || s.InputOrdinalEnd != 1 {
+			t.Errorf("shard %d ordinal span = [%d,%d], want [1,1] (single straddling input)", i, s.InputOrdinalStart, s.InputOrdinalEnd)
+		}
+	}
+	// Shard counts split 2 + 1; the per-shard sum-of-inputs check would be wrong here.
+	if m.AggregateOutputs[0].RecordCount != 2 || m.AggregateOutputs[1].RecordCount != 1 {
+		t.Errorf("shard counts = %d,%d, want 2,1", m.AggregateOutputs[0].RecordCount, m.AggregateOutputs[1].RecordCount)
+	}
+	// Global invariant: Σ shard == the single input's record_count (3) == 3.
+	shardTotal := m.AggregateOutputs[0].RecordCount + m.AggregateOutputs[1].RecordCount
+	if len(m.Inputs) != 1 || m.Inputs[0].RecordCount == nil || *m.Inputs[0].RecordCount != 3 {
+		t.Fatalf("want one input with record_count 3, got %+v", m.Inputs)
+	}
+	if shardTotal != *m.Inputs[0].RecordCount {
+		t.Errorf("Σ shard record_count %d != input record_count %d (global invariant)", shardTotal, *m.Inputs[0].RecordCount)
+	}
+}
+
+func TestAggregateOutput_PayloadDeterminismStripRuntime(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 4)
+	read := func() string {
+		out := filepath.Join(t.TempDir(), "det")
+		if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate"}); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(out, "records.jsonl"))
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		// Strip volatile _runtime (run_id/timestamps) before comparing payload.
+		return aggRuntimeRE.ReplaceAllString(string(data), `"_runtime":{}`)
+	}
+	if a, b := read(), read(); a != b {
+		t.Errorf("aggregate payload not deterministic across runs:\n A: %s\n B: %s", a, b)
+	}
+}
+
+func TestAggregateOutput_PlanTimeRejections(t *testing.T) {
+	cases := []struct {
+		name string
+		opts *recipeRunExtractOptions
+		want string
+	}{
+		{"no-manifest", &recipeRunExtractOptions{OutputMode: "aggregate", NoManifest: true}, "cannot be combined with --no-manifest"},
+		{"invalid-mode", &recipeRunExtractOptions{OutputMode: "bogus"}, "invalid --output-mode"},
+		{"caps-without-aggregate", &recipeRunExtractOptions{AggregateMaxRecords: 5}, "require --output-mode aggregate"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := writeAggregateWorkspace(t, 1)
+			out := filepath.Join(t.TempDir(), "rej")
+			err := runAggregateRecipe(t, ws, out, tc.opts)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestAggregateOutput_RejectsMinOccurrencesFloor(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 2)
+	// Add a min_occurrences floor: aggregate cannot enforce a per-input floor before
+	// streamed records become published output, so it must reject the recipe.
+	mustWriteFile(t, filepath.Join(ws, "extract", "extract.yaml"), `record_type: agg_record
+match_selectors:
+  - xpath: //item
+    min_occurrences: 1
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+	out := filepath.Join(t.TempDir(), "floor")
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate"})
+	if err == nil || !strings.Contains(err.Error(), "min_occurrences") {
+		t.Fatalf("want min_occurrences rejection, got %v", err)
+	}
+	// Rejected before extraction — no output should be written.
+	if _, statErr := os.Stat(filepath.Join(out, "records.jsonl")); statErr == nil {
+		t.Errorf("floored aggregate wrote output despite rejection")
+	}
+}
+
+// TestAggregateOutput_RejectsContinueOnError pins the v0 safety guard: a per-input
+// failure can leave already-streamed rows in the shared shard that the writer
+// cannot retract, so aggregate refuses --continue-on-error at plan time (the
+// transactional per-input barrier is a later slice) rather than commit failed-input
+// rows with contradictory provenance.
+func TestAggregateOutput_RejectsContinueOnError(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 2)
+	out := filepath.Join(t.TempDir(), "coe")
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true})
+	if err == nil || !strings.Contains(err.Error(), "--continue-on-error") {
+		t.Fatalf("want continue-on-error rejection, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(out, "records.jsonl")); statErr == nil {
+		t.Errorf("aggregate + continue-on-error wrote output despite rejection")
+	}
+}
+
+func TestAggregateOutput_ManifestArgvRecordsMode(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 3)
+	out := filepath.Join(t.TempDir(), "argv")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", AggregateMaxRecords: 2}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+	argv := strings.Join(m.CLI.ArgvSanitized, " ")
+	if !strings.Contains(argv, "--output-mode=aggregate") {
+		t.Errorf("manifest argv missing --output-mode=aggregate: %s", argv)
+	}
+	if !strings.Contains(argv, "--aggregate-max-records=2") {
+		t.Errorf("manifest argv missing --aggregate-max-records=2: %s", argv)
+	}
+}
+
+func TestAggregateOutput_ByteCapRollsPerRecord(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 3)
+	out := filepath.Join(t.TempDir(), "bytecap")
+	// A tiny byte cap: each single-record line exceeds it, so every record lands in
+	// its own shard (one-record-over-cap rolls; no record is dropped or split).
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", AggregateMaxBytes: 10}); err != nil {
+		t.Fatalf("byte-cap run: %v", err)
+	}
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+	if len(m.AggregateOutputs) != 3 {
+		t.Fatalf("want 3 shards (one record each over the tiny cap), got %d", len(m.AggregateOutputs))
+	}
+	for i, shard := range m.AggregateOutputs {
+		if shard.RecordCount != 1 {
+			t.Errorf("shard %d record_count = %d, want 1", i, shard.RecordCount)
+		}
+		if lines := readNDJSONLines(t, filepath.Join(out, shard.Path)); len(lines) != 1 {
+			t.Errorf("shard %d file has %d lines, want 1", i, len(lines))
+		}
+	}
+}
+
+func TestAggregateOutput_ZeroRecord(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 2)
+	// Rewrite inputs so the signature matches (/root) but there is no //item -> zero records.
+	for _, name := range []string{"in-a.xml", "in-b.xml"} {
+		mustWriteFile(t, filepath.Join(ws, "testdata", name), `<root></root>`)
+	}
+	out := filepath.Join(t.TempDir(), "zero")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate"}); err != nil {
+		t.Fatalf("zero-record run: %v", err)
+	}
+	// One empty records.jsonl covering the input set.
+	data, err := os.ReadFile(filepath.Join(out, "records.jsonl"))
+	if err != nil {
+		t.Fatalf("read records.jsonl: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "" {
+		t.Errorf("zero-record aggregate should be empty, got: %q", data)
+	}
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+	if len(m.AggregateOutputs) != 1 || m.AggregateOutputs[0].RecordCount != 0 {
+		t.Errorf("want one zero-record shard, got %+v", m.AggregateOutputs)
+	}
+	if len(m.Inputs) != 2 {
+		t.Errorf("inventory should still record both zero-record inputs, got %d", len(m.Inputs))
+	}
+	// Per-input record_count must be an EXPLICIT 0 in aggregate mode (not dropped by
+	// omitempty) for zero-record inputs — assert on the raw JSON.
+	for _, in := range m.Inputs {
+		if in.RecordCount == nil || *in.RecordCount != 0 {
+			t.Errorf("zero-record input %s record_count = %v, want explicit 0", in.Path, in.RecordCount)
+		}
+	}
+	rawManifest, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read raw manifest: %v", err)
+	}
+	if !strings.Contains(string(rawManifest), `"record_count": 0`) {
+		t.Errorf("zero-record aggregate manifest must serialize explicit \"record_count\": 0:\n%s", rawManifest)
+	}
+}

@@ -74,9 +74,69 @@
         "type": "object",
         "additionalProperties": true
       }
+    },
+    "output_mode": {
+      "type": "string",
+      "enum": [
+        "aggregate"
+      ],
+      "description": "Record-file fan-out mode. Present and 'aggregate' when records were streamed to one NDJSON writer per invocation (rolled shards); omitted for the default per-input mode."
+    },
+    "aggregate_outputs": {
+      "type": "array",
+      "description": "Per-shard summary in aggregate mode: path, format, record count, content digest, and the contributing input-ordinal span (1-based positions in inputs[]). Completeness is global: the sum of shard record_count equals the sum of inputs[].record_count equals the counts_by_record_type total. Per-shard ordinal spans are not a partition and may overlap by one input at a roll boundary, so they cannot be summed per shard.",
+      "items": {
+        "$ref": "#/$defs/aggregate_output"
+      }
     }
   },
   "$defs": {
+    "aggregate_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "format",
+        "record_count",
+        "sha256",
+        "input_ordinal_start",
+        "input_ordinal_end"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "credentials_handle": {
+          "type": "string",
+          "description": "Logical credential handle name for a cloud (s3://) shard object; omitted for local outputs. Same non-secret, name-only posture as output.credentials_handle.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "format": {
+          "type": "string",
+          "minLength": 1
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Content digest over the fully-written shard file (within-artifact integrity/tamper digest, not a cross-run determinism check)."
+        },
+        "input_ordinal_start": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "First resolved input ordinal (1-based inputs[] position) that contributed a record to this shard. Adjacent shards' spans may overlap by one input at a roll boundary; this locates coverage, it does not partition inputs."
+        },
+        "input_ordinal_end": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Last resolved input ordinal that contributed a record to this shard (0 only for an empty zero-record output)."
+        }
+      }
+    },
     "reference_table": {
       "type": "object",
       "additionalProperties": false,
@@ -326,6 +386,11 @@
         },
         "disposition_detail": {
           "type": "string"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of records this input contributed. Recorded only in aggregate output mode; omitted in per-input mode. The input's ordinal is its 1-based position in the manifest inputs[] order."
         }
       }
     },
