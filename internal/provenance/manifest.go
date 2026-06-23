@@ -37,6 +37,15 @@ type Manifest struct {
 	CountsByRecordType map[string]int    `json:"counts_by_record_type"`
 	ReferenceTables    []ReferenceTable  `json:"reference_tables,omitempty"`
 	Attestations       []json.RawMessage `json:"attestations,omitempty"`
+	// OutputMode is "aggregate" when records were streamed to one NDJSON writer per
+	// invocation (rolled shards) instead of one file per input; omitted (per-input)
+	// otherwise, keeping existing manifests byte-identical.
+	OutputMode string `json:"output_mode,omitempty"`
+	// AggregateOutputs is the per-shard summary in aggregate mode (path, format,
+	// record count, content digest, covered input-ordinal range). Resolved input
+	// order is the inputs[] order; each input's record_count gives the per-shard
+	// completeness check.
+	AggregateOutputs []AggregateOutput `json:"aggregate_outputs,omitempty"`
 }
 
 // ReferenceTable records the logical identity of an external reference table loaded
@@ -118,6 +127,31 @@ type Input struct {
 	Disposition       string `json:"disposition,omitempty"`
 	DispositionReason string `json:"disposition_reason,omitempty"`
 	DispositionDetail string `json:"disposition_detail,omitempty"`
+	// RecordCount is the number of records this input contributed. It is a pointer
+	// so the value is tri-state: nil (omitted) in per-input mode, keeping those
+	// manifests byte-identical; an explicit value — including 0 for a zero-record
+	// success, a not-applicable, or a failed input — in aggregate mode, where the
+	// per-input count is part of the input-set provenance contract. The input's
+	// ordinal is its position (1-based) in the manifest's resolved inputs[] order.
+	RecordCount *int `json:"record_count,omitempty"`
+}
+
+// AggregateOutput summarizes one aggregate NDJSON output file (or rolled shard) in
+// aggregate output mode: which contiguous range of resolved input ordinals it
+// covers, how many records, and a content digest over the fully-written file
+// (R3 — a self-verifying integrity/tamper digest, NOT a cross-run determinism
+// check, which is payload-only and excludes _runtime). The manifest, not filename
+// parsing, is authoritative for shard order and input coverage.
+type AggregateOutput struct {
+	Path string `json:"path"`
+	// CredentialsHandle is the logical handle NAME for a cloud (s3://) shard object;
+	// empty for local. Same name-only posture as Output.CredentialsHandle.
+	CredentialsHandle string `json:"credentials_handle,omitempty"`
+	Format            string `json:"format"`
+	RecordCount       int    `json:"record_count"`
+	SHA256            string `json:"sha256"`
+	InputOrdinalStart int    `json:"input_ordinal_start"`
+	InputOrdinalEnd   int    `json:"input_ordinal_end"`
 }
 
 // Output describes an output artifact written by the extract run.

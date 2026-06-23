@@ -326,6 +326,9 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Override output formats (comma-separated or repeatable; json/ndjson/parquet)")
 	cmd.Flags().StringVar(&opts.OutputPath, "output-path", "", "Override output path")
 	cmd.Flags().StringVar(&opts.OutputPattern, "output-pattern", "", "Override output filename pattern")
+	cmd.Flags().StringVar(&opts.OutputMode, "output-mode", outputModePerInput, "Record-file fan-out: per-input (one file per input) or aggregate (stream all inputs to one NDJSON writer per invocation, rolling to numbered shards). Aggregate requires --output-path + a manifest and is JSON/NDJSON only")
+	cmd.Flags().IntVar(&opts.AggregateMaxRecords, "aggregate-max-records", 0, "Aggregate mode: roll to the next shard before exceeding this record count per shard (0 = uncapped)")
+	cmd.Flags().Int64Var(&opts.AggregateMaxBytes, "aggregate-max-bytes", 0, "Aggregate mode: roll to the next shard before exceeding this uncompressed byte count per shard (0 = uncapped)")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Blend client identifier into extracted records")
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Blend site identifier into extracted records")
 	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable, overrides manifest defaults.parameters). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
@@ -359,6 +362,9 @@ type recipeRunExtractOptions struct {
 	Formats                 []string
 	OutputPath              string
 	OutputPattern           string
+	OutputMode              string
+	AggregateMaxRecords     int
+	AggregateMaxBytes       int64
 	ClientID                string
 	SiteID                  string
 	Parameters              []string
@@ -571,6 +577,9 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		extractOpts.OutputPattern = defaults.Output.Pattern
 		extractOpts.OutputPatterns = defaults.Output.Patterns
 	}
+	extractOpts.OutputMode = opts.OutputMode
+	extractOpts.AggregateMaxRecords = opts.AggregateMaxRecords
+	extractOpts.AggregateMaxBytes = opts.AggregateMaxBytes
 
 	// Cloud credentials are handle references — no secrets in recipe YAML or on the
 	// CLI. The credentials config + handle selectors flow through to the extract
@@ -701,6 +710,15 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 	}
 	appendFlag("--output-path", extractOpts.OutputPath)
 	appendFlag("--output-pattern", extractOpts.OutputPattern)
+	if extractOpts.OutputMode != "" && extractOpts.OutputMode != outputModePerInput {
+		appendFlag("--output-mode", extractOpts.OutputMode)
+	}
+	if extractOpts.AggregateMaxRecords > 0 {
+		appendFlag("--aggregate-max-records", fmt.Sprintf("%d", extractOpts.AggregateMaxRecords))
+	}
+	if extractOpts.AggregateMaxBytes > 0 {
+		appendFlag("--aggregate-max-bytes", fmt.Sprintf("%d", extractOpts.AggregateMaxBytes))
+	}
 	appendFlag("--run-id", opts.RunID)
 	for _, parameter := range opts.Parameters {
 		appendFlag("--parameter", parameter)

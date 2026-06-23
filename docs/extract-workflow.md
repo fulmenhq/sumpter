@@ -55,6 +55,57 @@ global document order in v0.1.7. They currently iterate selector-major, so
 their `record_num` values are stable for the current recipe semantics but must
 not be interpreted as global source-document order across selectors.
 
+## Aggregate output mode (`--output-mode aggregate`)
+
+By default Sumpter writes **one output file per input** (`--output-mode per-input`).
+When a run extracts many small single-record inputs, that one-file-per-input fan-out
+makes output **file creation** — not parsing — the bottleneck. `--output-mode aggregate`
+removes it: every input's records are **streamed to one open NDJSON writer per
+invocation** instead of a file per input, so the per-input file-create cost drops from
+~N× to 1×.
+
+```bash
+sumpter recipes run extract ./recipes/orders \
+  --input-path ./orders \
+  --output-path ./out \
+  --output-mode aggregate
+```
+
+```text
+out/
+├── records.jsonl     # every input's records, one envelope per line
+└── manifest.json     # input-set provenance (see below)
+```
+
+`aggregate` changes **record-file fan-out, not record shape** — each line is the same
+emitted envelope as per-input output. Key properties:
+
+- **Streamed, bounded memory.** Records flow to the open writer as they are extracted;
+  there is no per-input staging and no buffer-all-then-flush, so memory stays bounded as
+  the input count grows.
+- **Deterministic order within an invocation.** Records appear in resolved
+  **input-list order × intra-input `record_num`**. For `--file-list` / `--files`, the
+  given order is authoritative; for `--input-path` discovery, inputs are sorted before
+  ordinals are assigned. Payload is byte-stable for the same input subset (runtime
+  provenance like `run_id`/timestamps still varies).
+- **Rolling shards.** `--aggregate-max-records <n>` and `--aggregate-max-bytes <bytes>`
+  roll to the next lexically ordered shard (`records-00001.jsonl`, `records-00002.jsonl`,
+  …) **before** a record would exceed the cap. Default is uncapped (single `records.jsonl`).
+- **Input-set provenance.** Because an aggregate file no longer maps to one input by name,
+  `manifest.json` records the resolved input inventory — each input's path, content
+  `sha256`, `record_count`, and disposition (ordinal = position in `inputs[]`) — plus, per
+  shard, an `aggregate_outputs[]` entry with the shard's own `sha256`, `record_count`, and
+  covered input-ordinal range. The manifest, not filename parsing, is authoritative for
+  shard order and coverage.
+
+**Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
+rejected), **serial**, and requires `--output-path` and a manifest. It is **fail-fast**:
+a recipe declaring `match_selectors[].min_occurrences` floors, a cloud (`s3://`)
+destination, and `--continue-on-error` are each rejected up front — those need
+per-input retraction the streamed writer cannot do in v0, so they are reserved for later
+increments. Any input failure aborts the whole run, leaving no partial output. Run such
+recipes in the default per-input mode.
+
 ## Recipe Controls
 
 ### Scaffold a Recipe Workspace

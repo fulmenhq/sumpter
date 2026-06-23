@@ -33,22 +33,34 @@ const runIDEnvVar = "SUMPTER_RUN_ID"
 var errJSONOutput = errors.New("json output failure")
 
 type ExtractOptions struct {
-	Files                    string
-	FileList                 string
-	InputPath                string
-	IncludePattern           string
-	ExcludePattern           string
-	MaxDepth                 int
-	FollowSymlinks           bool
-	Workers                  int
-	DryRun                   bool
-	ContinueOnError          bool
-	Progress                 bool
-	Format                   string
-	Formats                  []string
-	OutputPath               string
-	OutputPattern            string
-	OutputPatterns           map[string]string
+	Files           string
+	FileList        string
+	InputPath       string
+	IncludePattern  string
+	ExcludePattern  string
+	MaxDepth        int
+	FollowSymlinks  bool
+	Workers         int
+	DryRun          bool
+	ContinueOnError bool
+	Progress        bool
+	Format          string
+	Formats         []string
+	OutputPath      string
+	OutputPattern   string
+	OutputPatterns  map[string]string
+	// OutputMode selects record-file fan-out: "per-input" (default — one output
+	// file per input) or "aggregate" (stream all inputs' records to one NDJSON
+	// writer per invocation, rolling to numbered shards when a cap is hit). Empty
+	// means per-input. Aggregate is NDJSON/JSON only and requires --output-path
+	// and a manifest.
+	OutputMode string
+	// AggregateMaxRecords / AggregateMaxBytes roll the aggregate output to the next
+	// numbered shard before a cap would be exceeded (0 = uncapped). Bytes are
+	// measured on the uncompressed NDJSON stream. Cloud aggregate requires a byte
+	// cap <= the single-PUT limit, enforced at plan time.
+	AggregateMaxRecords      int
+	AggregateMaxBytes        int64
 	UniformSchema            bool
 	ParquetCompression       string
 	ParquetWithholdColumns   []string
@@ -179,6 +191,9 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Output formats (comma-separated or repeatable; json/ndjson/parquet)")
 	cmd.Flags().StringVarP(&opts.OutputPath, "output-path", "o", "", "Output destination path")
 	cmd.Flags().StringVar(&opts.OutputPattern, "output-pattern", "extract-{}.json", "Output filename pattern for files mode (use {} for input filename)")
+	cmd.Flags().StringVar(&opts.OutputMode, "output-mode", outputModePerInput, "Record-file fan-out: per-input (one file per input) or aggregate (stream all inputs to one NDJSON writer per invocation, rolling to numbered shards). Aggregate requires --output-path + a manifest and is JSON/NDJSON only")
+	cmd.Flags().IntVar(&opts.AggregateMaxRecords, "aggregate-max-records", 0, "Aggregate mode: roll to the next shard before exceeding this record count per shard (0 = uncapped)")
+	cmd.Flags().Int64Var(&opts.AggregateMaxBytes, "aggregate-max-bytes", 0, "Aggregate mode: roll to the next shard before exceeding this uncompressed byte count per shard (0 = uncapped)")
 	cmd.Flags().StringVar(&opts.SignatureConfig, "signature-config-path", "", "Path to signature configuration YAML file")
 	cmd.Flags().StringVar(&opts.ExtractConfig, "extract-config-path", "", "Path to extract configuration YAML file")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Client ID to blend into extracted records")
@@ -375,6 +390,9 @@ func runExtract(opts *ExtractOptions) error {
 	if opts.ContinueOnError && strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
 		return fmt.Errorf("--continue-on-error requires --output-path")
 	}
+	if err := validateAggregateOptions(opts, outputFormats); err != nil {
+		return err
+	}
 	if err := resolveLocalReferences(opts); err != nil {
 		return err
 	}
@@ -508,6 +526,24 @@ func runExtract(opts *ExtractOptions) error {
 			zap.Int("file_count", len(files)),
 			zap.String("signature", sigCfg.SignatureID),
 			zap.String("record_type", extCfg.RecordType))
+	}
+
+	// Aggregate output mode streams every input's records to one NDJSON writer
+	// (rolling to numbered shards) instead of one file per input. It is validated
+	// (validateAggregateOptions) to JSON/NDJSON + --output-path + manifest, and is
+	// serial in v0 (the win is eliminating file creation, not write concurrency).
+	if isAggregateMode(opts) {
+		// A match_selectors[].min_occurrences floor must be enforced BEFORE an input's
+		// records are published (ADR-0007). The streamed aggregate writer has already
+		// appended those records to a shared shard by the time the per-input count is
+		// known, so a failing floor cannot retract them from the interleaved stream
+		// (especially under --continue-on-error). Reject floored recipes in aggregate
+		// v0 — as the sequential streaming path skips them — rather than publish output
+		// that should have failed.
+		if hasDeclaredMinOccurrences(extCfg) {
+			return fmt.Errorf("--output-mode aggregate does not support recipes that declare match_selectors[].min_occurrences floors in this version: a selector floor must be enforced before output is published, which the streamed aggregate writer cannot retract; run this recipe with the default per-input output mode")
+		}
+		return runAggregateJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 
 	if shouldUseSequentialJSONStreaming(opts, extCfg, outputFormats) {
@@ -2017,6 +2053,15 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	}
 	appendFlag("--output-path", opts.OutputPath)
 	appendFlag("--output-pattern", opts.OutputPattern)
+	if opts.OutputMode != "" && opts.OutputMode != outputModePerInput {
+		appendFlag("--output-mode", opts.OutputMode)
+	}
+	if opts.AggregateMaxRecords > 0 {
+		appendFlag("--aggregate-max-records", fmt.Sprintf("%d", opts.AggregateMaxRecords))
+	}
+	if opts.AggregateMaxBytes > 0 {
+		appendFlag("--aggregate-max-bytes", fmt.Sprintf("%d", opts.AggregateMaxBytes))
+	}
 	appendFlag("--signature-config-path", opts.SignatureConfig)
 	appendFlag("--extract-config-path", opts.ExtractConfig)
 	appendFlag("--record-index", opts.RecordIndex)
