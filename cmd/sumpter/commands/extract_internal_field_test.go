@@ -21,6 +21,14 @@ import (
 // non-internal control.
 func writeInternalCaptureWorkspace(t *testing.T, internal bool) string {
 	t.Helper()
+	return writeInternalCaptureWorkspaceFormat(t, internal, "json")
+}
+
+// writeInternalCaptureWorkspaceFormat is writeInternalCaptureWorkspace with a
+// selectable record-sink format (json | ndjson), so the omit-but-derive behavior
+// can be asserted on the literal motivating NDJSON sink as well as JSON.
+func writeInternalCaptureWorkspaceFormat(t *testing.T, internal bool, format string) string {
+	t.Helper()
 	workspace := createWorkingTempDir(t)
 	for _, dir := range []string{
 		"signature", "extract",
@@ -50,9 +58,9 @@ defaults:
       - testdata/sites/store-17/unit-001.xml
       - testdata/sites/store-22/batch-002.xml
   output:
-    format: json
+    format: `+format+`
     path: outputs
-    pattern: extract-{}.json
+    pattern: extract-{}.`+format+`
   source_extraction:
     - id: grain-prefix
       source: filename
@@ -158,6 +166,46 @@ func TestInternalSourceCaptureNotEmitted(t *testing.T) {
 				t.Errorf("site_id = %#v, want %q", data["site_id"], tc.wantSiteID)
 			}
 		})
+	}
+}
+
+// TestInternalSourceCaptureNotEmittedNDJSON asserts the same omit-but-derive
+// behavior on the literal motivating sink — NDJSON — that the field report named.
+// (Structurally the skip is upstream of sink format, but the reported case
+// deserves a direct assertion.)
+func TestInternalSourceCaptureNotEmittedNDJSON(t *testing.T) {
+	initExtractManifestTestLogger(t)
+	workspace := writeInternalCaptureWorkspaceFormat(t, true, "ndjson")
+
+	if err := executeExtractRecipe(recipeRunExtractTestCommand(), workspace, &recipeRunExtractOptions{
+		ManifestPath: "recipe.yaml",
+		Progress:     false,
+	}); err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	// One record per file -> one NDJSON line; decode it and inspect extract.data.
+	raw := readFileString(t, filepath.Join(workspace, "outputs", "extract-unit-001.xml.ndjson"))
+	line := strings.TrimSpace(raw)
+	if line == "" {
+		t.Fatalf("NDJSON output is empty")
+	}
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i] // first record line
+	}
+	var record map[string]interface{}
+	if err := json.Unmarshal([]byte(line), &record); err != nil {
+		t.Fatalf("decode NDJSON line: %v\nline: %s", err, line)
+	}
+	data := extractData(t, record)
+	if data["grain_class"] != "fine_grain" {
+		t.Errorf("grain_class = %#v, want \"fine_grain\" (internal capture must drive the expression)", data["grain_class"])
+	}
+	if v, ok := data["grain"]; ok {
+		t.Errorf("internal capture grain leaked into NDJSON extract.data: %#v", v)
+	}
+	if data["site_id"] != "store-17" {
+		t.Errorf("site_id = %#v, want \"store-17\"", data["site_id"])
 	}
 }
 

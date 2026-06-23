@@ -257,6 +257,8 @@ defaults:
 
 An internal pattern's captures are available in expression scope (so `output_field: grain_class`, `expression: 'source_grain == "unit" ? "fine" : "coarse"'` resolves) but are stripped from the record body across **every** sink (JSON, NDJSON, Parquet) — no stray intermediate column. The flag defaults to `false`, so existing patterns keep emitting their captures unchanged. Internal captures still participate fully in `source_extraction_required` (a required internal capture still fails per file when absent) and in the capture↔`output_field` / capture↔`defaults.parameters` collision checks. This works identically under single-recipe `recipes run extract` and `recipes run extract-multi`. Use it for a true intermediate; when you actually want the raw value as a column, leave `internal` off (or omit it).
 
+> **`internal: true` is an output-shaping control, not a redaction or secrecy mechanism.** It removes the stray intermediate column, but the captured value still lives in expression scope, so a recipe author can deliberately re-emit it (or any value derived from it) to an `output_field`. Do not rely on it to keep a sensitive value out of output; for that, do not capture the value at all.
+
 ### Reference Tables
 
 A recipe can declare external **reference tables** loaded once per run to back the
