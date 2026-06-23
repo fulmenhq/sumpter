@@ -233,7 +233,7 @@ String function names are case-insensitive, like numeric function names.
 | `mask_middle`     | `mask_middle(string, head_n, tail_n, mask_char)` | Same as above, with a custom single-rune mask character.                                                                                                                          |
 | `string_length`   | `string_length(string)`                          | Unicode **rune** count (not byte count). A nil-valued argument is length `0`, so `string_length(x) >= N` is a clean `false` on a missing field rather than a comparison error.    |
 | `starts_with_any` | `starts_with_any(string, list)`                  | True when the string value begins with **any** member of the list (a list-typed parameter). Case sensitive. A nil/empty value is false; an empty list is false.                   |
-| `value_in`        | `value_in(string, list)`                         | True when the string value **exactly equals** any member of the list. Exact match only — a near miss is false. Case sensitive. A nil value is false; an empty list is false.       |
+| `value_in`        | `value_in(string, list)`                         | True when the string value **exactly equals** any member of the list. Exact match only — a near miss is false. Case sensitive. A nil value is false; an empty list is false.      |
 
 `starts_with_any` and `value_in` take a **list-of-strings** as their second
 argument — an ordinary bare-identifier parameter variable (see
@@ -277,10 +277,10 @@ These resolve a record field against an external **reference table** declared in
 the recipe (`defaults.reference_tables`) and loaded once per run. See
 [Reference Tables](extract-workflow.md#reference-tables) for the recipe surface.
 
-| Function           | Signature                            | Behavior                                                                                                                                                                |
-| ------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `in_reference`     | `in_reference(table, field)`         | Membership (Pattern A). True when `field`'s value is in the distinct set of the table's declared `column`. A nil/empty field is `false` (a miss, never an error).        |
-| `lookup_reference` | `lookup_reference(table, field, default)` | Key→value lookup (Pattern B). Returns the table's `value_column` entry for the `key_column` matching `field`; on a miss (or a nil/empty field) returns `default`.   |
+| Function           | Signature                                 | Behavior                                                                                                                                                          |
+| ------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `in_reference`     | `in_reference(table, field)`              | Membership (Pattern A). True when `field`'s value is in the distinct set of the table's declared `column`. A nil/empty field is `false` (a miss, never an error). |
+| `lookup_reference` | `lookup_reference(table, field, default)` | Key→value lookup (Pattern B). Returns the table's `value_column` entry for the `key_column` matching `field`; on a miss (or a nil/empty field) returns `default`. |
 
 The first argument **must be a string literal** — a table name, not a variable or
 expression. Record data must never select which run resource is read, so a
