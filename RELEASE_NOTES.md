@@ -6,6 +6,38 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.2.2 (2026-06-23)
+
+**Multi-recipe throughput: apply many extract recipes to one input set in a single parse-once pass, plus the run-level parameters and derive-only capture fields that make it adoptable.**
+
+v0.2.2 is a feature minor driven by real-world dogfeeding of large multi-projection extraction runs. The headline is **`extract-multi`**: when several recipes extract different projections from the **same** input set, the engine now reads and parses each input file once and dispatches the parsed document to every recipe — amortizing the per-recipe re-parse (the dominant cost at high file counts) from ~N× to 1× across N recipes. Two ergonomics features make it adoptable for production pipelines: a shared run-level `--parameter` passthrough, and derive-only `source_extraction` captures. The v0.2.0/0.2.1 surface (cloud I/O, reference-table lookup, list/file-list inputs) is unchanged.
+
+### What's new (summary)
+
+- **Multi-recipe single-pass extract (`extract-multi`)** - `recipes run extract-multi <workspace>...` parses each input file once, then fans the parsed document to every signature-matched recipe. Each recipe writes to its own isolated `<output-path>/<recipe-id>/` subdirectory; per-recipe output, formats, `defaults.parameters`, reference tables, and credential handles come from each recipe's own manifest, while the input set, output root, and run-level controls (and a single shared run id) are shared. Failure handling follows the input-vs-recipe boundary — a read/parse failure is input-level, while applicability/signature/extraction/`min_occurrences`/output failures are recipe-level and isolated under `--continue-on-error`. JSON/NDJSON output only in v0; the streaming/large-file path is not supported (a too-large file is rejected). See the worked example in [`docs/extract-workflow.md`](docs/extract-workflow.md).
+- **Shared run-level `--parameter` (`multi-parameter`)** - a repeatable `--parameter key=value` on `extract-multi` layers over **every** recipe's `defaults.parameters` with the same override / collision / typed-value (scalar or JSON-list) semantics as single-recipe `recipes run extract --parameter`, satisfies each recipe's `parameters_required` independently, and is injected into every recipe's records — for the per-run keys every recipe shares (e.g. a per-run provenance/runtime stamp). A shared key colliding with any recipe's `field_mappings[].output_field` fails the run at plan-load preflight; secret-shaped parameter values are redacted by key in the provenance argv.
+- **Derive-only `source_extraction` captures (`internal-fields`)** - a `source_extraction` pattern may set `internal: true`, making its named captures usable in `field_mappings[].expression` scope but **never emitted** into the record body on any sink — a true intermediate with no stray column. Defaults to `false`; internal captures still honor `source_extraction_required` and the collision checks. A capture name declared on both an internal and a non-internal pattern is rejected at plan validation.
+
+### Behavior changes (please review before upgrading)
+
+- **All-additive.** `extract-multi` is a new subcommand; the shared `--parameter` and `internal: true` are opt-in. Existing single-recipe `recipes run extract` behavior, output formats, and the provenance sidecar schema are unchanged. A recipe with no `internal: true` pattern and no `extract-multi` run behaves byte-for-byte as in 0.2.1.
+- **`internal: true` is an output-shaping control, not a redaction mechanism** - the captured value still lives in expression scope and a recipe author can deliberately re-emit it; do not rely on it to keep a sensitive value out of output.
+
+### Deferred / follow-ups
+
+- **Input-handle provenance in multi runs** (record the effective shared input handle) and a **`relative_path` log-message tidy** are tracked fast-follows.
+- **Parquet/other formats and the streaming/large-file path for `extract-multi`**, plus **cloud range-reads, cloud-side indexing, GCS/Azure providers, and repair modes**, remain roadmap items.
+
+### Release notes
+
+- `VERSION` is `0.2.2`. Binaries from this tag emit `v0.2.2` via `sumpter version`.
+- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.2` is the intended tag/version sanity check.
+- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
+
+See [`docs/releases/v0.2.2.md`](docs/releases/v0.2.2.md) for the full release narrative.
+
+---
+
 ## v0.2.1 (2026-06-20)
 
 **Two dogfood-driven fixes: present-but-empty string elements bind `""` instead of erroring, and a batch file-list input that skips directory enumeration.**
@@ -20,7 +52,7 @@ v0.2.1 is a focused patch off real-world v0.2.0 dogfood feedback. It carries two
 
 ### Behavior changes (please review before upgrading)
 
-- **Present-but-empty binding changed.** A recipe that previously errored `undefined variable` on a present-but-empty element now produces `""` for that field. Absent vs present-but-empty remains distinguishable (`boolean()` is `false` vs `true`); only the present-but-empty *string binding* changed from undefined to `""`. To reject empty elements, add an explicit guard (`string_length(field) > 0 ? … : …`).
+- **Present-but-empty binding changed.** A recipe that previously errored `undefined variable` on a present-but-empty element now produces `""` for that field. Absent vs present-but-empty remains distinguishable (`boolean()` is `false` vs `true`); only the present-but-empty _string binding_ changed from undefined to `""`. To reject empty elements, add an explicit guard (`string_length(field) > 0 ? … : …`).
 - **No other output-format changes.** The v0.2.0 cloud-I/O, reference-table, list-parameter, and provenance behavior is unchanged; the platform matrix is identical to 0.2.0.
 
 ### Deferred
@@ -70,35 +102,3 @@ v0.2.0 is the first minor release after the 0.1.x line. It makes S3-compatible c
 - The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
 
 See [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md) for the full release narrative.
-
----
-
-## v0.1.10 (2026-06-09)
-
-**Homebrew + Scoop distribution; Intel-Mac (`darwin-amd64`) prebuilt retired.**
-
-v0.1.10 makes Sumpter installable through Homebrew and Scoop, and trims the release matrix to the platforms worth shipping prebuilt. It is a distribution-ergonomics release — no product-code changes.
-
-### What's new (summary)
-
-- **Homebrew + Scoop install paths** - `brew install fulmenhq/tap/sumpter` and `scoop install fulmenhq/sumpter` install from the FulmenHQ tap/bucket using the raw-binary convention (no archives), building on v0.1.9's arch-complete matrix. Two thin delegation targets (`make update-homebrew-formula` / `make update-scoop-manifest`) refresh the sibling tap/bucket repos; RELEASE_CHECKLIST.md § Distribution documents the post-release housekeeping.
-- **README install sections** - dedicated Homebrew + Scoop quick-start sections above the direct-download block.
-
-### Behavior changes (please review before upgrading)
-
-- **`darwin-amd64` (Intel-Mac) prebuilt retired.** The release matrix is now five raw binaries: linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source (a source build on an Intel Mac produces a native `darwin-amd64`). Ecosystem-wide move off Intel-Mac prebuilts; not a CI-cost change (single-runner pure-Go cross-compile).
-- **`brew`/`scoop` are now first-class install paths** alongside direct download and `go install`.
-- **No product-code, output-format, or CLI changes.**
-
-### Deferred
-
-- **Cloud URI read/write (S3 and S3-compatible) I/O** remains the next major capability thread, tracked separately.
-- **DuckDB, Arrow, service health endpoints, Prometheus metrics, adaptive backpressure, and repair modes** remain roadmap items.
-
-### Release notes
-
-- `VERSION` is `0.1.10`. Binaries from this tag emit `v0.1.10` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.1.10` is the intended tag/version sanity check.
-- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication. Homebrew/Scoop PRs land as post-release housekeeping.
-
-See [`docs/releases/v0.1.10.md`](docs/releases/v0.1.10.md) for the full release narrative.
