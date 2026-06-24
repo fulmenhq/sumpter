@@ -338,10 +338,11 @@ func TestAggregateOutput_PlanTimeRejections(t *testing.T) {
 	}
 }
 
-func TestAggregateOutput_RejectsMinOccurrencesFloor(t *testing.T) {
-	ws := writeAggregateWorkspace(t, 2)
-	// Add a min_occurrences floor: aggregate cannot enforce a per-input floor before
-	// streamed records become published output, so it must reject the recipe.
+// writeFlooredAggregateWorkspace builds an aggregate workspace whose recipe declares a
+// min_occurrences floor on //item, with the middle input emptied so it misses the floor.
+func writeFlooredAggregateWorkspace(t *testing.T) string {
+	t.Helper()
+	ws := writeAggregateWorkspace(t, 3)
 	mustWriteFile(t, filepath.Join(ws, "extract", "extract.yaml"), `record_type: agg_record
 match_selectors:
   - xpath: //item
@@ -356,14 +357,51 @@ output_schema:
     name:
       type: string
 `)
-	out := filepath.Join(t.TempDir(), "floor")
+	// in-b.xml has zero //item → misses the floor; in-a/in-c each have one.
+	mustWriteFile(t, filepath.Join(ws, "testdata", "in-b.xml"), `<root></root>`)
+	return ws
+}
+
+// TestAggregateOutput_FloorMissContinueOnError pins folded-in floor support (4a): a
+// min_occurrences miss is enforced per input at completion and routed through the same
+// barrier — under --continue-on-error the floor-missing input is discarded (zero rows in
+// the shard) and recorded as failed, while inputs that meet the floor are committed.
+func TestAggregateOutput_FloorMissContinueOnError(t *testing.T) {
+	ws := writeFlooredAggregateWorkspace(t)
+	out := filepath.Join(t.TempDir(), "floor-coe")
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true})
+	if err == nil || !strings.Contains(err.Error(), "partial extraction failure") {
+		t.Fatalf("want partial-failure error, got %v", err)
+	}
+	lines := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))
+	if len(lines) != 2 {
+		t.Fatalf("records.jsonl has %d lines, want 2 (floor-missing input discarded)", len(lines))
+	}
+	for i, want := range []string{"vala", "valc"} {
+		if !strings.Contains(lines[i], `"name":"`+want+`"`) {
+			t.Errorf("line %d = %s, want name %q", i, lines[i], want)
+		}
+	}
+	failData, ferr := os.ReadFile(filepath.Join(out, "failures.json")) // #nosec G304 - test temp path
+	if ferr != nil {
+		t.Fatalf("read failures.json: %v", ferr)
+	}
+	if !strings.Contains(string(failData), "min_occurrences") {
+		t.Errorf("failures.json does not record the floor violation: %s", failData)
+	}
+}
+
+// TestAggregateOutput_FloorMissFailFast pins floor enforcement in fail-fast mode: a
+// floor miss aborts the whole run, leaving no committed output.
+func TestAggregateOutput_FloorMissFailFast(t *testing.T) {
+	ws := writeFlooredAggregateWorkspace(t)
+	out := filepath.Join(t.TempDir(), "floor-ff")
 	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate"})
 	if err == nil || !strings.Contains(err.Error(), "min_occurrences") {
-		t.Fatalf("want min_occurrences rejection, got %v", err)
+		t.Fatalf("want min_occurrences failure, got %v", err)
 	}
-	// Rejected before extraction — no output should be written.
 	if _, statErr := os.Stat(filepath.Join(out, "records.jsonl")); statErr == nil {
-		t.Errorf("floored aggregate wrote output despite rejection")
+		t.Error("fail-fast floor miss left committed output")
 	}
 }
 

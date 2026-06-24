@@ -532,6 +532,29 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			continue
 		}
 
+		// Enforce match_selectors[].min_occurrences floors at input completion (before the
+		// buffered rows are flushed): a floor miss is an input-level failure handled by the
+		// same per-input barrier — discard the buffered rows and record the input as failed,
+		// or (fail-fast) abort the run. The streamed shard never receives a floor-failing
+		// input's rows.
+		if result.Disposition != extract.DispositionNotApplicable {
+			if floorErr := enforceMinOccurrences(opts, extCfg, sigCfg, result.LogicalURI, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); floorErr != nil {
+				writer.discardInput()
+				if !opts.ContinueOnError {
+					return floorErr
+				}
+				reason := failureReasonForError(floorErr)
+				if reason == "" {
+					reason = extract.DispositionReasonMinOccurrencesViolation
+				}
+				result.Disposition = extract.DispositionFailed
+				result.DispositionReason = reason
+				result.DispositionDetail = floorErr.Error()
+				recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+				continue
+			}
+		}
+
 		// The input extracted cleanly: flush its buffered records into the shared shard
 		// (rolling/publishing as needed). recordCount is measured after the flush.
 		if cerr := writer.commitInput(); cerr != nil {

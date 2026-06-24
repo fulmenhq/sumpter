@@ -533,16 +533,10 @@ func runExtract(opts *ExtractOptions) error {
 	// (validateAggregateOptions) to JSON/NDJSON + --output-path + manifest, and is
 	// serial in v0 (the win is eliminating file creation, not write concurrency).
 	if isAggregateMode(opts) {
-		// A match_selectors[].min_occurrences floor must be enforced BEFORE an input's
-		// records are published (ADR-0007). The streamed aggregate writer has already
-		// appended those records to a shared shard by the time the per-input count is
-		// known, so a failing floor cannot retract them from the interleaved stream
-		// (especially under --continue-on-error). Reject floored recipes in aggregate
-		// v0 — as the sequential streaming path skips them — rather than publish output
-		// that should have failed.
-		if hasDeclaredMinOccurrences(extCfg) {
-			return fmt.Errorf("--output-mode aggregate does not support recipes that declare match_selectors[].min_occurrences floors in this version: a selector floor must be enforced before output is published, which the streamed aggregate writer cannot retract; run this recipe with the default per-input output mode")
-		}
+		// match_selectors[].min_occurrences floors are enforced per input at input
+		// completion (ADR-0007), before the input's buffered rows are flushed into the
+		// shared shard, so a floor miss discards the input's rows rather than publishing
+		// output that should have failed. See runAggregateJSONStreamingExtraction.
 		return runAggregateJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 

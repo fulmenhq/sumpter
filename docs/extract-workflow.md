@@ -104,18 +104,18 @@ emitted envelope as per-input output. Key properties:
 **Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
 rejected), **serial**, and requires `--output-path` and a manifest.
 
-**`--continue-on-error` (local).** Supported for **local** aggregate output. Each input's
-records are buffered and only flushed into the shared shard once the input extracts
-cleanly, so a failed input's rows are discarded before they ever reach the shard — the
-shared shard only ever holds whole, successful inputs. A failed input is recorded in
-`failures.json` and the manifest (disposition `failed`, `record_count` 0), and the run
-exits with a partial-failure error. Memory stays bounded by the largest single input's
-records (independent of input count). Without `--continue-on-error` aggregate is
-**fail-fast**: any input failure aborts the whole run, leaving no partial **local**
-output. `--continue-on-error` is **not** yet supported for **cloud** aggregate output
-(cloud shards publish incrementally), and recipes declaring
-`match_selectors[].min_occurrences` floors are still rejected in aggregate mode — run
-those in the default per-input mode.
+**`--continue-on-error` and `min_occurrences` floors (local).** Both are supported for
+**local** aggregate output via a per-input barrier. Each input's records are buffered and
+only flushed into the shared shard once the input extracts cleanly **and** meets its
+`match_selectors[].min_occurrences` floors, so a failed or floor-missing input's rows are
+discarded before they ever reach the shard — the shared shard only ever holds whole,
+qualifying inputs. A failed input is recorded in `failures.json` and the manifest
+(disposition `failed`, `record_count` 0), and the run exits with a partial-failure error.
+Memory stays bounded by the largest single input's records (independent of input count).
+Without `--continue-on-error` aggregate is **fail-fast**: any input failure (or floor
+miss) aborts the whole run, leaving no partial **local** output. `--continue-on-error` is
+**not** yet supported for **cloud** aggregate output (cloud shards publish
+incrementally).
 
 **Cloud (`s3://`) output.** Aggregate publishes each shard and the sidecar manifest to
 the object store through the same credential-handle write boundary as per-input cloud

@@ -16,15 +16,14 @@ import (
 // an extract-multi pass, before any output session opens. Each recipe inherits the
 // same single-recipe plan-time guardrails (json/ndjson + --output-path + manifest,
 // no record-index, non-negative caps; cloud requires a byte cap and rejects
-// --continue-on-error) and additionally must not declare match_selectors[].min_occurrences
-// floors — the streamed writer cannot retract an input's already-emitted rows when a
-// floor fails (floors stay rejected this slice; local --continue-on-error is supported
-// via the writer's per-input spool barrier).
+// --continue-on-error). Local --continue-on-error and match_selectors[].min_occurrences
+// floors are both supported via the writer's per-input spool barrier (a floor miss is
+// enforced at input completion and the buffered rows are discarded before the shared
+// shard changes).
 func validateAggregateMulti(shared *multiSharedOptions, plans []*RecipePlan) error {
 	if shared == nil {
 		return nil
 	}
-	aggregate := shared.OutputMode == outputModeAggregate
 	for _, plan := range plans {
 		formats, err := effectiveOutputFormats(plan.opts)
 		if err != nil {
@@ -37,12 +36,6 @@ func validateAggregateMulti(shared *multiSharedOptions, plans []*RecipePlan) err
 		// the real per-input/empty mode with no caps.
 		if verr := validateAggregateOptions(plan.opts, formats); verr != nil {
 			return fmt.Errorf("recipe %q: %w", plan.RecipeID, verr)
-		}
-		// Aggregate-only: a min_occurrences floor must be enforced before output is
-		// published, which the streamed writer cannot retract (per-input mode keeps
-		// floors).
-		if aggregate && hasDeclaredMinOccurrences(plan.extCfg) {
-			return fmt.Errorf("recipe %q: --output-mode aggregate does not support match_selectors[].min_occurrences floors in this version: a floor must be enforced before output is published, which the streamed aggregate writer cannot retract; run without aggregate mode", plan.RecipeID)
 		}
 	}
 	return nil
@@ -87,7 +80,7 @@ func (st *recipeRunState) dispatchParsedFileAggregate(ctx context.Context, file,
 			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, logical, err)
 		}
 		result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
-		_ = recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, dispatchLogger())
+		recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
 		return nil
 	}
 
@@ -114,13 +107,39 @@ func (st *recipeRunState) dispatchParsedFileAggregate(ctx context.Context, file,
 			st.dispositionErr = failureErrorForResult(result, st.sanitizeRoots)
 			return st.dispositionErr
 		}
-		_ = recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, dispatchLogger())
+		recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
 		return nil
 	}
 
-	// The input extracted cleanly: flush its buffered records into the shared shard.
+	// Enforce match_selectors[].min_occurrences floors at input completion (before the
+	// buffered rows are flushed): a floor miss is an input-level failure handled by the
+	// same per-input barrier — discard the buffered rows and record the input as failed,
+	// or (fail-fast) abort the run. The streamed shard never receives a floor-failing
+	// input's rows.
+	if result.Disposition != extract.DispositionNotApplicable {
+		if floorErr := enforceMinOccurrences(opts, cloned, st.plan.sigCfg, result.LogicalURI, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); floorErr != nil {
+			st.aggWriter.discardInput()
+			if !opts.ContinueOnError {
+				st.dispositionErr = floorErr
+				return floorErr
+			}
+			reason := failureReasonForError(floorErr)
+			if reason == "" {
+				reason = extract.DispositionReasonMinOccurrencesViolation
+			}
+			result.Disposition = extract.DispositionFailed
+			result.DispositionReason = reason
+			result.DispositionDetail = floorErr.Error()
+			recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
+			return nil
+		}
+	}
+
+	// The input extracted cleanly: flush its buffered records into the shared shard. A
+	// commit failure is a terminal output/sink error (ADR-0009): it must abort the whole
+	// run even under --continue-on-error, never be recorded as a recoverable input failure.
 	if cerr := st.aggWriter.commitInput(); cerr != nil {
-		return cerr
+		return terminalDispatch(fmt.Errorf("recipe %q: failed to commit aggregate output for %s: %w", st.plan.RecipeID, logical, cerr))
 	}
 	recordCount := st.aggWriter.totalRecords - before
 	st.failures.addApplied()
@@ -131,7 +150,7 @@ func (st *recipeRunState) dispatchParsedFileAggregate(ctx context.Context, file,
 	if st.manifestEnabled {
 		input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots...)
 		if err != nil {
-			return err
+			return terminalDispatch(fmt.Errorf("recipe %q: failed to build input ledger for %s: %w", st.plan.RecipeID, logical, err))
 		}
 		input.RecordType = st.plan.extCfg.RecordType
 		rc := recordCount
