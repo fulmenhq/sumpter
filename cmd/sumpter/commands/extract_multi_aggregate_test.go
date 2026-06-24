@@ -7,7 +7,31 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fulmenhq/sumpter/internal/provenance"
 )
+
+// TestExtractMultiAggregate_FinalizedRecipeNotOverwritten pins the per-recipe
+// isolation fix: when one recipe finalized cleanly (wrote its successful manifest)
+// and a SIBLING recipe later fails, the run-level failure handler must NOT rewrite
+// the finalized recipe's manifest as incomplete:true.
+func TestExtractMultiAggregate_FinalizedRecipeNotOverwritten(t *testing.T) {
+	outDir := t.TempDir()
+	st := &recipeRunState{
+		finalized: true, // this recipe already committed + wrote a successful manifest
+		aggWriter: &aggregateWriter{
+			cloud:  true,
+			shards: []provenance.AggregateOutput{{Path: "records-00001.jsonl", RecordCount: 1, SHA256: "sha256:" + strings.Repeat("0", 64)}},
+		},
+		plan: &RecipePlan{opts: &ExtractOptions{OutputPath: outDir}},
+	}
+	// Even though the run failed (handler invoked) and this recipe has committed cloud
+	// shards, a finalized recipe must be left untouched.
+	st.writeIncompleteAggregateManifestOnFailure(time.Now())
+	if _, err := os.Stat(filepath.Join(outDir, "manifest.json")); err == nil {
+		t.Error("a finalized recipe's manifest was overwritten with incomplete on a sibling's failure")
+	}
+}
 
 func TestExtractMultiAggregate_PerRecipeStreamAndProvenance(t *testing.T) {
 	wsA := writeMultiRecipeWorkspace(t, "summary")

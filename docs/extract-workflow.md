@@ -103,11 +103,21 @@ emitted envelope as per-input output. Key properties:
 
 **Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
 rejected), **serial**, and requires `--output-path` and a manifest. It is **fail-fast**:
-a recipe declaring `match_selectors[].min_occurrences` floors, a cloud (`s3://`)
-destination, and `--continue-on-error` are each rejected up front — those need
-per-input retraction the streamed writer cannot do in v0, so they are reserved for later
-increments. Any input failure aborts the whole run, leaving no partial output. Run such
-recipes in the default per-input mode.
+a recipe declaring `match_selectors[].min_occurrences` floors and `--continue-on-error`
+are each rejected up front — those need per-input retraction the streamed writer cannot
+do in v0. Any input failure aborts the whole run, leaving no partial **local** output.
+Run such recipes in the default per-input mode.
+
+**Cloud (`s3://`) output.** Aggregate publishes each shard and the sidecar manifest to
+the object store through the same credential-handle write boundary as per-input cloud
+output. Because each shard is one object subject to the single-PUT size limit (5 GiB), a
+cloud aggregate run **requires `--aggregate-max-bytes`** at or below that limit and
+rejects an uncapped or over-limit run **before any input is read**, so shards roll
+proactively rather than failing a multi-gigabyte upload. Cloud shards publish
+**incrementally** (each is a separate, atomic PUT) and cannot be un-published, so if a run
+fails after some shards are already uploaded the manifest is written with
+`incomplete: true` recording the committed shards — a manifest carrying that flag denotes
+a **failed** run whose listed objects are discoverable for cleanup or idempotent rerun.
 
 **With `extract-multi`.** `--output-mode aggregate` applies to
 [`recipes run extract-multi`](#run-multiple-recipes-in-one-pass-extract-multi) too: each
