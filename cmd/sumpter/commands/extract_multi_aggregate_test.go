@@ -156,15 +156,57 @@ func TestExtractMultiAggregate_ShardRollingPerRecipe(t *testing.T) {
 	}
 }
 
+// TestExtractMultiAggregate_ContinueOnError pins the slice-4 barrier for extract-multi:
+// under --continue-on-error a failed input contributes zero rows to the recipe's shared
+// shard (buffered then discarded), the surviving inputs' rows are preserved, the pass
+// exits with a partial-failure error, and failures.json + the manifest record the
+// failed input — all within the recipe's own <output-root>/<recipe-id>/ isolation.
+func TestExtractMultiAggregate_ContinueOnError(t *testing.T) {
+	fileList, inputs := writeMultiInputSet(t, 3)
+	// Make the middle input (inB.xml) fail mid-parse; inA + inC stay valid.
+	mustWriteFile(t, inputs[1], `<root><TargetElement><Name>valB`)
+
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	outRoot := filepath.Join(t.TempDir(), "out")
+	err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate", ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "partial failure") {
+		t.Fatalf("want partial-failure error, got %v", err)
+	}
+
+	recipeDir := filepath.Join(outRoot, "summary")
+	lines := readNDJSONLines(t, filepath.Join(recipeDir, "records.jsonl"))
+	if len(lines) != 2 {
+		t.Fatalf("records.jsonl has %d lines, want 2 (failed input discarded)", len(lines))
+	}
+	if strings.Contains(strings.Join(lines, "\n"), "valB") {
+		t.Error("failed input's row (valB) leaked into the committed shard")
+	}
+	for i, want := range []string{"valA", "valC"} {
+		if !strings.Contains(lines[i], `"name":"`+want+`"`) {
+			t.Errorf("line %d = %s, want name %q", i, lines[i], want)
+		}
+	}
+
+	failData, ferr := os.ReadFile(filepath.Join(recipeDir, "failures.json")) // #nosec G304 - test temp path
+	if ferr != nil {
+		t.Fatalf("read failures.json: %v", ferr)
+	}
+	if !strings.Contains(string(failData), "inB.xml") {
+		t.Errorf("failures.json does not record the failed input inB.xml: %s", failData)
+	}
+}
+
 func TestExtractMultiAggregate_Rejections(t *testing.T) {
 	fileList, _ := writeMultiInputSet(t, 2)
 
-	t.Run("continue-on-error", func(t *testing.T) {
+	// Local continue-on-error is now supported via the per-input spool barrier (see
+	// TestExtractMultiAggregate_ContinueOnError); only CLOUD continue-on-error is still
+	// rejected, because cloud shards publish incrementally (R8 interaction).
+	t.Run("cloud-continue-on-error", func(t *testing.T) {
 		ws := writeMultiRecipeWorkspace(t, "summary")
-		outRoot := filepath.Join(t.TempDir(), "out")
-		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate", ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
+		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: "s3://bucket/out/", RunID: testMultiRunID, OutputMode: "aggregate", AggregateMaxBytes: 1 << 20, ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
 		if err == nil || !strings.Contains(err.Error(), "--continue-on-error") {
-			t.Fatalf("want continue-on-error rejection, got %v", err)
+			t.Fatalf("want cloud continue-on-error rejection, got %v", err)
 		}
 	})
 

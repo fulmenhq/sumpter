@@ -15,9 +15,11 @@ import (
 // validateAggregateMulti enforces the aggregate-mode contract for every recipe in
 // an extract-multi pass, before any output session opens. Each recipe inherits the
 // same single-recipe plan-time guardrails (json/ndjson + --output-path + manifest,
-// no record-index, no cloud destination, non-negative caps, no --continue-on-error)
-// and additionally must not declare match_selectors[].min_occurrences floors — the
-// streamed writer cannot retract an input's already-emitted rows when a floor fails.
+// no record-index, non-negative caps; cloud requires a byte cap and rejects
+// --continue-on-error) and additionally must not declare match_selectors[].min_occurrences
+// floors — the streamed writer cannot retract an input's already-emitted rows when a
+// floor fails (floors stay rejected this slice; local --continue-on-error is supported
+// via the writer's per-input spool barrier).
 func validateAggregateMulti(shared *multiSharedOptions, plans []*RecipePlan) error {
 	if shared == nil {
 		return nil
@@ -66,16 +68,27 @@ func (st *recipeRunState) writeIncompleteAggregateManifestOnFailure(startedAt ti
 
 // dispatchParsedFileAggregate streams one already-parsed input's records into this
 // recipe's invocation-local aggregate writer (rolling shards), recording the
-// per-input inventory entry. Aggregate mode rejects --continue-on-error and floors,
-// so any extraction failure aborts the whole run (the deferred writer.abort in the
-// dispatcher discards every recipe's uncommitted staging) — no failed-input rows are
-// ever committed.
+// per-input inventory entry. Under --continue-on-error the writer buffers each input
+// (beginInput) and the records are only flushed into the shared shard on success
+// (commitInput); a failed input is discarded (discardInput) so its rows never reach
+// the shard, and is recorded as a failure. In fail-fast mode any extraction failure
+// aborts the whole run (the deferred writer.abort in the dispatcher discards every
+// recipe's uncommitted staging) — either way, no failed-input rows are committed.
 func (st *recipeRunState) dispatchParsedFileAggregate(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node) error {
 	opts := st.plan.opts
 
+	// Start this input's per-input buffer (no-op unless --continue-on-error).
+	st.aggWriter.beginInput()
+
 	externalFields, err := buildExternalFieldsForFile(logical, opts, st.plan.fieldPlan, st.plan.warnLimiter)
 	if err != nil {
-		return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, logical, err)
+		st.aggWriter.discardInput()
+		if !opts.ContinueOnError {
+			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, logical, err)
+		}
+		result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
+		_ = recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, dispatchLogger())
+		return nil
 	}
 
 	st.aggWriter.setCurrentInput(ordinal)
@@ -88,15 +101,29 @@ func (st *recipeRunState) dispatchParsedFileAggregate(ctx context.Context, file,
 	cloned := extract.CloneRecordMatch(st.plan.extCfg)
 	before := st.aggWriter.totalRecords
 	result := extract.ProcessParsedDocument(ctx, doc, file, st.plan.sigCfg, cloned, st.plan.appCfg, externalFields, rp, st.aggWriter)
-	recordCount := st.aggWriter.totalRecords - before
 
 	if result.Error != nil || result.Disposition == extract.DispositionFailed {
-		if result.Error != nil {
-			return fmt.Errorf("recipe %q: failed to process %s: %w", st.plan.RecipeID, logical, result.Error)
+		// Drop the failed input's buffered rows. Fail-fast: return; the deferred abort
+		// drops all staging. Continue-on-error: record the failure and move on — earlier
+		// inputs' committed rows are untouched because the failed input only ever buffered.
+		st.aggWriter.discardInput()
+		if !opts.ContinueOnError {
+			if result.Error != nil {
+				return fmt.Errorf("recipe %q: failed to process %s: %w", st.plan.RecipeID, logical, result.Error)
+			}
+			st.dispositionErr = failureErrorForResult(result, st.sanitizeRoots)
+			return st.dispositionErr
 		}
-		st.dispositionErr = failureErrorForResult(result, st.sanitizeRoots)
-		return st.dispositionErr
+		_ = recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, dispatchLogger())
+		return nil
 	}
+
+	// The input extracted cleanly: flush its buffered records into the shared shard.
+	if cerr := st.aggWriter.commitInput(); cerr != nil {
+		return cerr
+	}
+	recordCount := st.aggWriter.totalRecords - before
+	st.failures.addApplied()
 
 	if result.Disposition != "" {
 		st.dispositions.add(result, st.sanitizeRoots)
@@ -133,6 +160,14 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 		return err
 	}
 
+	// Under --continue-on-error, record which inputs failed so the partial run is
+	// auditable, mirroring the per-input recipe finalize.
+	if opts.ContinueOnError && st.failures.Failed > 0 {
+		if err := writeExtractFailureManifest(opts, outputRefJoin(opts.OutputPath, "failures.json"), st.failures); err != nil {
+			return err
+		}
+	}
+
 	manifestOutputs := make([]provenance.Output, 0, len(st.aggWriter.shards))
 	for _, shard := range st.aggWriter.shards {
 		manifestOutputs = append(manifestOutputs, provenanceOutput(shard.Path, recipesmanifest.OutputFormatNDJSON, shard.RecordCount, opts, st.sanitizeRoots...))
@@ -154,11 +189,18 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 		logger.Info("Provenance manifest written (aggregate)")
 	}
 
+	// This recipe committed its shards and wrote its own successful manifest, so the
+	// run-level failure handler must not later overwrite it with incomplete:true — set
+	// before any partial-failure return below.
+	st.finalized = true
+
 	if st.dispositionErr != nil {
 		return st.dispositionErr
 	}
-	// This recipe committed its shards and wrote its own successful manifest, so the
-	// run-level failure handler must not later overwrite it with incomplete:true.
-	st.finalized = true
+	// A continue-on-error recipe that committed its successful inputs still signals
+	// partial failure so the pass exits non-zero, mirroring per-input finalize.
+	if opts.ContinueOnError && st.failures.Failed > 0 {
+		return fmt.Errorf("recipe %q partial failure: applied=%d failed=%d", st.plan.RecipeID, st.failures.Applied, st.failures.Failed)
+	}
 	return nil
 }
