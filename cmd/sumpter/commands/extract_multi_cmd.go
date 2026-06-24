@@ -33,6 +33,9 @@ type recipeRunExtractMultiOptions struct {
 	RunID                  string
 	NoManifest             bool
 	Parameters             []string
+	OutputMode             string
+	AggregateMaxRecords    int
+	AggregateMaxBytes      int64
 	CredentialsPath        string
 	CredentialOverrides    []string
 	InputCredentialsHandle string
@@ -96,6 +99,9 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				RunID:                  runID,
 				NoManifest:             opts.NoManifest,
 				Parameters:             opts.Parameters,
+				OutputMode:             opts.OutputMode,
+				AggregateMaxRecords:    opts.AggregateMaxRecords,
+				AggregateMaxBytes:      opts.AggregateMaxBytes,
 				AllowLargeFiles:        allowLargeFiles,
 				CredentialsPath:        opts.CredentialsPath,
 				CredentialOverrides:    opts.CredentialOverrides,
@@ -118,6 +124,9 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID); shared by every recipe")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable, overrides manifest defaults.parameters). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
+	cmd.Flags().StringVar(&opts.OutputMode, "output-mode", outputModePerInput, "Record-file fan-out applied to every recipe: per-input (one file per input) or aggregate (each recipe streams to one NDJSON writer per invocation under its <recipe-id>/ dir, rolling to numbered shards). Aggregate is NDJSON only and requires a manifest")
+	cmd.Flags().IntVar(&opts.AggregateMaxRecords, "aggregate-max-records", 0, "Aggregate mode: roll each recipe's shards before exceeding this record count per shard (0 = uncapped)")
+	cmd.Flags().Int64Var(&opts.AggregateMaxBytes, "aggregate-max-bytes", 0, "Aggregate mode: roll each recipe's shards before exceeding this uncompressed byte count per shard (0 = uncapped)")
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input")
@@ -151,6 +160,15 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 	// provenance sanitizer redacts secret-shaped --parameter values by inner key.
 	for _, parameter := range opts.Parameters {
 		appendFlag("--parameter", parameter)
+	}
+	if opts.OutputMode != "" && opts.OutputMode != outputModePerInput {
+		appendFlag("--output-mode", opts.OutputMode)
+	}
+	if opts.AggregateMaxRecords > 0 {
+		appendFlag("--aggregate-max-records", fmt.Sprintf("%d", opts.AggregateMaxRecords))
+	}
+	if opts.AggregateMaxBytes > 0 {
+		appendFlag("--aggregate-max-bytes", fmt.Sprintf("%d", opts.AggregateMaxBytes))
 	}
 	if opts.MaxDepth > 0 {
 		appendFlag("--max-depth", fmt.Sprintf("%d", opts.MaxDepth))

@@ -55,6 +55,14 @@ type multiSharedOptions struct {
 	// genuinely run-level keys every recipe shares.
 	Parameters []string
 
+	// Aggregate output mode applied to EVERY recipe in the pass: each recipe streams
+	// its records to one NDJSON writer (rolling shards) under its own
+	// <output-root>/<recipe-id>/ instead of one file per input. Empty/"per-input" is
+	// the default. Caps roll each recipe's shards independently.
+	OutputMode          string
+	AggregateMaxRecords int
+	AggregateMaxBytes   int64
+
 	// Shared cloud credentials (handle references only — never secrets). The
 	// input handle is shared because the input set is shared; each recipe's
 	// output handle still comes from its own manifest unless overridden here.
@@ -271,6 +279,12 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 	// collision checks — identical to single-recipe `recipes run extract`. No second
 	// parser or merge layer.
 	opts.Parameters = shared.Parameters
+	// Aggregate output mode is shared run-level: each recipe's plan carries it so its
+	// per-recipe aggregate writer streams under opts.OutputPath (= the recipe's
+	// validated <output-root>/<recipe-id>/ dir).
+	opts.OutputMode = shared.OutputMode
+	opts.AggregateMaxRecords = shared.AggregateMaxRecords
+	opts.AggregateMaxBytes = shared.AggregateMaxBytes
 	// Reference tables resolve against THIS recipe's workspace (per-recipe
 	// containment root); no cross-recipe root, no CLI override surface in v0.
 	opts.ReferenceTableDecls = defaults.ReferenceTables

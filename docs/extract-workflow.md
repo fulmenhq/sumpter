@@ -109,6 +109,14 @@ per-input retraction the streamed writer cannot do in v0, so they are reserved f
 increments. Any input failure aborts the whole run, leaving no partial output. Run such
 recipes in the default per-input mode.
 
+**With `extract-multi`.** `--output-mode aggregate` applies to
+[`recipes run extract-multi`](#run-multiple-recipes-in-one-pass-extract-multi) too: each
+recipe gets its **own** aggregate writer and shard sequence under its
+`<output-path>/<recipe-id>/` directory (`records.jsonl` / `records-00001.jsonl…` +
+`manifest.json`). Per-recipe isolation is unchanged — one writer per recipe, never shared
+— and the shared input set is still parsed once. The same fail-fast contract is enforced
+per recipe across the pass.
+
 ## Recipe Controls
 
 ### Scaffold a Recipe Workspace
