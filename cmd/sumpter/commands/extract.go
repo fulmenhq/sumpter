@@ -536,7 +536,12 @@ func runExtract(opts *ExtractOptions) error {
 		// match_selectors[].min_occurrences floors are enforced per input at input
 		// completion (ADR-0007), before the input's buffered rows are flushed into the
 		// shared shard, so a floor miss discards the input's rows rather than publishing
-		// output that should have failed. See runAggregateJSONStreamingExtraction.
+		// output that should have failed. See runAggregateJSONStreamingExtraction. This
+		// holds for LOCAL only; cloud floors are rejected (they would publish before the
+		// floor is evaluated).
+		if err := rejectCloudAggregateFloors(opts, extCfg); err != nil {
+			return err
+		}
 		return runAggregateJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 

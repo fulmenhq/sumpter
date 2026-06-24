@@ -104,6 +104,23 @@ func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) erro
 	return nil
 }
 
+// rejectCloudAggregateFloors rejects match_selectors[].min_occurrences floors for a
+// CLOUD aggregate destination. Local aggregate enforces floors safely — a miss discards
+// the per-input buffer (continue-on-error) or the all-or-nothing local commit drops
+// every staged shard (fail-fast), so a floor-missing input's rows never become published
+// output. Cloud is different: shards publish incrementally and cannot be un-published, so
+// a mid-input shard roll could PUT a floor-missing input's rows before the floor is
+// evaluated (ADR-0007). The per-input spool barrier only engages under --continue-on-error
+// (rejected for cloud), so cloud floors take the unprotected direct-stream path. Defer
+// cloud floors to the cloud-continue follow-up where the same incremental-publish /
+// can't-retract interaction is reviewed.
+func rejectCloudAggregateFloors(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch) error {
+	if opts != nil && referenceIsCloud(opts.OutputPath) && hasDeclaredMinOccurrences(extCfg) {
+		return fmt.Errorf("--output-mode aggregate to a cloud (s3://) destination does not support match_selectors[].min_occurrences floors in this version: cloud shards publish incrementally and cannot retract a floor-missing input's already-published rows, so the floor cannot be enforced before output is published; run floored recipes to a local destination, or remove the floor")
+	}
+	return nil
+}
+
 // resolvedAggregateInputOrder returns the resolved input list in the deterministic
 // order aggregate ordinals are assigned from. For --file-list and --files the
 // caller-provided order is authoritative; for --input-path directory discovery the

@@ -113,9 +113,11 @@ qualifying inputs. A failed input is recorded in `failures.json` and the manifes
 (disposition `failed`, `record_count` 0), and the run exits with a partial-failure error.
 Memory stays bounded by the largest single input's records (independent of input count).
 Without `--continue-on-error` aggregate is **fail-fast**: any input failure (or floor
-miss) aborts the whole run, leaving no partial **local** output. `--continue-on-error` is
-**not** yet supported for **cloud** aggregate output (cloud shards publish
-incrementally).
+miss) aborts the whole run, leaving no partial **local** output. For **cloud** (`s3://`)
+aggregate output, neither `--continue-on-error` nor `min_occurrences` floors are supported
+yet — cloud shards publish incrementally and cannot retract a failed or floor-missing
+input's already-published rows, so both are deferred to a follow-up. Run such recipes to a
+local destination.
 
 **Cloud (`s3://`) output.** Aggregate publishes each shard and the sidecar manifest to
 the object store through the same credential-handle write boundary as per-input cloud

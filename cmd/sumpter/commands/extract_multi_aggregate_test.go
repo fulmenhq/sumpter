@@ -225,21 +225,26 @@ func TestExtractMultiAggregate_ContinueOnError(t *testing.T) {
 }
 
 // TestExtractMultiAggregate_TerminalOutputErrorAborts pins the Finding-1 fix: a terminal
-// output/sink error (here an output directory pre-created as a regular FILE so the writer
-// cannot create the recipe's output dir) must abort the run even under --continue-on-error
-// (ADR-0009), never be swallowed as a recoverable input failure.
+// output/sink error from inside the shard writer must abort the run even under
+// --continue-on-error (ADR-0009), never be swallowed as a recoverable input failure. The
+// failure is injected INSIDE commitInput by pre-creating the shard's staging path
+// (records.jsonl.partial) as a directory so openShard's OpenFile fails — directly
+// exercising the terminalDispatch sentinel path (per entarch's test-quality note).
 func TestExtractMultiAggregate_TerminalOutputErrorAborts(t *testing.T) {
 	fileList, _ := writeMultiInputSet(t, 2)
 	ws := writeMultiRecipeWorkspace(t, "summary")
 	outRoot := t.TempDir()
-	// Pre-create <output-root>/summary as a FILE, so opening the recipe's aggregate
-	// shard under that path fails with a terminal os error.
-	if err := os.WriteFile(filepath.Join(outRoot, "summary"), []byte("x"), 0o600); err != nil {
+	// <output-root>/summary/records.jsonl.partial exists as a DIRECTORY, so when the
+	// writer flushes (commitInput → openShard → OpenFile of that path) it fails terminally.
+	if err := os.MkdirAll(filepath.Join(outRoot, "summary", "records.jsonl.partial"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate", ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
 	if err == nil {
 		t.Fatal("a terminal output error under --continue-on-error must abort the run, not be swallowed")
+	}
+	if !strings.Contains(err.Error(), "commit aggregate output") {
+		t.Errorf("error did not come through the aggregate commit/terminal-dispatch path: %v", err)
 	}
 }
 
@@ -281,6 +286,16 @@ func TestExtractMultiAggregate_Rejections(t *testing.T) {
 		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: "s3://bucket/out/", RunID: testMultiRunID, OutputMode: "aggregate", AggregateMaxBytes: 1 << 20, ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
 		if err == nil || !strings.Contains(err.Error(), "--continue-on-error") {
 			t.Fatalf("want cloud continue-on-error rejection, got %v", err)
+		}
+	})
+
+	// Cloud aggregate cannot enforce floors before incremental publish, so a floored
+	// cloud recipe is rejected at plan time (local floors are supported).
+	t.Run("cloud-min-occurrences-floor", func(t *testing.T) {
+		ws := writeMinOccursRecipe(t, "strict", 1)
+		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: "s3://bucket/out/", RunID: testMultiRunID, OutputMode: "aggregate", AggregateMaxBytes: 1 << 20}, []string{ws}, io.Discard, time.Now())
+		if err == nil || !strings.Contains(err.Error(), "min_occurrences") {
+			t.Fatalf("want cloud floor rejection, got %v", err)
 		}
 	})
 

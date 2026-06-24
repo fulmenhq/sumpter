@@ -37,6 +37,12 @@ func validateAggregateMulti(shared *multiSharedOptions, plans []*RecipePlan) err
 		if verr := validateAggregateOptions(plan.opts, formats); verr != nil {
 			return fmt.Errorf("recipe %q: %w", plan.RecipeID, verr)
 		}
+		// Cloud aggregate floors are rejected (local floors are supported via the
+		// per-input barrier; cloud would publish a floor-missing input's rows before the
+		// floor is evaluated — deferred to the cloud-continue follow-up).
+		if ferr := rejectCloudAggregateFloors(plan.opts, plan.extCfg); ferr != nil {
+			return fmt.Errorf("recipe %q: %w", plan.RecipeID, ferr)
+		}
 	}
 	return nil
 }
