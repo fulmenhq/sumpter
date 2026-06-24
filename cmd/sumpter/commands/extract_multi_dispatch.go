@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/antchfx/xmlquery"
@@ -85,6 +87,14 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) error {
 		outputRoot = local
 	}
 	shared.OutputPath = outputRoot
+	// Normalize the output mode ONCE so every downstream check agrees on the canonical
+	// value: plan opts (threaded from shared), isAggregateMode (writer selection),
+	// validateAggregateMulti's aggregate-only gate, and the --input-path determinism
+	// sort. The shared single-recipe validator and isAggregateMode already trim; without
+	// this, a padded "aggregate" would run the aggregate writer while the multi-only
+	// guards (min_occurrences rejection, input ordering) compared the raw string and
+	// silently skipped.
+	shared.OutputMode = strings.TrimSpace(shared.OutputMode)
 
 	// Resolve ONE run id for the whole invocation so every recipe's provenance
 	// ties back to a single extract-multi run.
@@ -121,6 +131,14 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) error {
 			return err
 		}
 		plans = append(plans, plan)
+	}
+
+	// Validate aggregate output mode for the whole pass BEFORE any output session is
+	// opened: each recipe must satisfy the same fail-fast contract as single-recipe
+	// (json/ndjson + manifest, no cloud, no min_occurrences floors), and aggregate
+	// rejects --continue-on-error.
+	if err := validateAggregateMulti(shared, plans); err != nil {
+		return err
 	}
 
 	// Now (after the preflight) set up each recipe's output: create its
@@ -161,13 +179,31 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) error {
 		}()
 	}
 
+	// Aggregate determinism: assign input ordinals in a stable order. For --file-list
+	// / --files the resolved order is authoritative; --input-path discovery order is
+	// not guaranteed stable, so sort before assigning ordinals (and the shared parse
+	// order follows, identical for every recipe).
+	if shared.OutputMode == outputModeAggregate && strings.TrimSpace(shared.InputPath) != "" {
+		sort.Strings(files)
+	}
+
 	states := make([]*recipeRunState, 0, len(plans))
 	for _, plan := range plans {
 		states = append(states, newRecipeRunState(plan, len(files)))
 	}
+	// Discard any uncommitted aggregate staging on an early return (parse/recipe
+	// failure): abort is idempotent and a no-op once finalize has committed+renamed.
+	defer func() {
+		for _, st := range states {
+			if st.aggWriter != nil {
+				st.aggWriter.abort()
+			}
+		}
+	}()
 
 	ctx := context.Background()
-	for _, file := range files {
+	for fileIdx, file := range files {
+		ordinal := fileIdx + 1
 		logical := logicalIdentity(file, logicalByLocal)
 		doc, perr := d.parseFile(file, shared.AllowLargeFiles)
 		if perr != nil {
@@ -184,7 +220,7 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) error {
 		for _, st := range states {
 			// Extraction/applicability/signature/output failure is RECIPE-level:
 			// isolated to that recipe, never aborting the others for this file.
-			if rerr := st.dispatchParsedFile(ctx, file, logical, doc); rerr != nil && !shared.ContinueOnError {
+			if rerr := st.dispatchParsedFile(ctx, file, logical, ordinal, doc); rerr != nil && !shared.ContinueOnError {
 				return rerr
 			}
 		}
@@ -261,10 +297,16 @@ type recipeRunState struct {
 	failures        *extractFailureManifestFile
 	sanitizeRoots   []string
 	dispositionErr  error
+	// aggWriter is this recipe's invocation-local aggregate NDJSON writer when the
+	// run is in aggregate output mode (nil in per-input mode). It spans every input
+	// in the pass under the recipe's own <output-root>/<recipe-id>/ dir, so per-recipe
+	// isolation holds (one writer per recipe, never shared).
+	aggWriter  *aggregateWriter
+	inputCount int // resolved input count, for the aggregate zero-record shard range
 }
 
 func newRecipeRunState(plan *RecipePlan, fileCount int) *recipeRunState {
-	return &recipeRunState{
+	st := &recipeRunState{
 		plan:            plan,
 		manifestEnabled: shouldWriteManifest(plan.opts),
 		manifestInputs:  make([]provenance.Input, 0, fileCount),
@@ -274,6 +316,11 @@ func newRecipeRunState(plan *RecipePlan, fileCount int) *recipeRunState {
 		failures:        newExtractFailureManifest(fileCount),
 		sanitizeRoots:   manifestSanitizeRoots(plan.opts),
 	}
+	if isAggregateMode(plan.opts) {
+		st.aggWriter = newAggregateWriter(plan.opts)
+		st.inputCount = fileCount
+	}
+	return st
 }
 
 // recordInputFailure records an input-level (read/parse) failure for this recipe.
@@ -285,7 +332,10 @@ func (st *recipeRunState) recordInputFailure(file, logical string, cause error) 
 // dispatchParsedFile runs this recipe against an already-parsed document, writing
 // to the recipe's own output target. A recipe-level failure is recorded (and,
 // without continue-on-error, returned) but never affects the other recipes.
-func (st *recipeRunState) dispatchParsedFile(ctx context.Context, file, logical string, doc *xmlquery.Node) error {
+func (st *recipeRunState) dispatchParsedFile(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node) error {
+	if st.aggWriter != nil {
+		return st.dispatchParsedFileAggregate(ctx, file, logical, ordinal, doc)
+	}
 	opts := st.plan.opts
 	logger := dispatchLogger()
 
@@ -387,6 +437,9 @@ func (st *recipeRunState) dispatchParsedFile(ctx context.Context, file, logical 
 // finalize writes this recipe's failures, dispositions, and provenance manifest
 // to its own output directory.
 func (st *recipeRunState) finalize(startedAt time.Time) error {
+	if st.aggWriter != nil {
+		return st.finalizeAggregate(startedAt)
+	}
 	opts := st.plan.opts
 	logger := dispatchLogger()
 
