@@ -57,7 +57,7 @@ func runExtractMulti(shared *multiSharedOptions, workspaces []string, warnOut io
 	return newMultiDispatcher(shared, warnOut).run(workspaces, startedAt)
 }
 
-func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) error {
+func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err error) {
 	shared := d.shared
 	if shared == nil {
 		return fmt.Errorf("extract-multi: shared options are required")
@@ -191,13 +191,22 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) error {
 	for _, plan := range plans {
 		states = append(states, newRecipeRunState(plan, len(files)))
 	}
-	// Discard any uncommitted aggregate staging on an early return (parse/recipe
-	// failure): abort is idempotent and a no-op once finalize has committed+renamed.
+	// On an early return (parse/recipe failure): for a cloud recipe that already
+	// published shards, record them in an incomplete (R8) manifest so the orphaned
+	// objects are discoverable; then discard any un-published staging (idempotent and a
+	// no-op once finalize has committed+renamed).
 	defer func() {
 		for _, st := range states {
-			if st.aggWriter != nil {
-				st.aggWriter.abort()
+			if st.aggWriter == nil {
+				continue
 			}
+			// Only a recipe that did NOT finalize cleanly gets an incomplete manifest:
+			// a sibling recipe failing later must never overwrite a recipe that already
+			// committed and wrote its own successful manifest (per-recipe isolation).
+			if err != nil && !st.finalized {
+				st.writeIncompleteAggregateManifestOnFailure(startedAt)
+			}
+			st.aggWriter.abort()
 		}
 	}()
 
@@ -302,7 +311,8 @@ type recipeRunState struct {
 	// in the pass under the recipe's own <output-root>/<recipe-id>/ dir, so per-recipe
 	// isolation holds (one writer per recipe, never shared).
 	aggWriter  *aggregateWriter
-	inputCount int // resolved input count, for the aggregate zero-record shard range
+	inputCount int  // resolved input count, for the aggregate zero-record shard range
+	finalized  bool // aggregate: this recipe's finalize committed + wrote its manifest
 }
 
 func newRecipeRunState(plan *RecipePlan, fileCount int) *recipeRunState {

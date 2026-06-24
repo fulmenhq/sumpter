@@ -215,6 +215,12 @@ const outputStagingDirName = "out"
 // clearly instead; large/multipart cloud output is a follow-on (SUM-006).
 const maxSinglePutBytes = 5 * 1024 * 1024 * 1024
 
+// MaxSinglePutBytes is the S3 single-PUT object-size limit (5 GiB), exported so
+// callers (e.g. aggregate output) can enforce it PROACTIVELY at plan time — rolling
+// or rejecting before gigabytes are streamed to a staging file — rather than only at
+// publish via publishSizeWithinLimit.
+const MaxSinglePutBytes = maxSinglePutBytes
+
 // DescribeOutputHandle validates that an output handle resolves (an unknown
 // non-default handle errors here, before any write) and returns a redacted,
 // log-safe description of the resolved destination: bucket, endpoint, region, and

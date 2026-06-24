@@ -46,6 +46,24 @@ func validateAggregateMulti(shared *multiSharedOptions, plans []*RecipePlan) err
 	return nil
 }
 
+// writeIncompleteAggregateManifestOnFailure records this recipe's already-published
+// cloud shards (R8) in an incomplete manifest when the pass fails, so the orphaned
+// objects are discoverable. No-op for local or when no shard was committed.
+func (st *recipeRunState) writeIncompleteAggregateManifestOnFailure(startedAt time.Time) {
+	// A recipe that finalized cleanly already wrote its own SUCCESSFUL manifest; a
+	// sibling recipe failing later must never overwrite it with incomplete:true
+	// (per-recipe isolation). Local writers never publish orphans, so they are skipped
+	// too — only committed cloud shards need an incomplete record.
+	if st.aggWriter == nil || st.finalized || !st.aggWriter.cloud {
+		return
+	}
+	committed := st.aggWriter.committedShards()
+	if len(committed) == 0 {
+		return
+	}
+	writeIncompleteAggregateManifest(st.plan.opts, st.plan.runtimeProvenance, startedAt, st.manifestInputs, committed, st.counts, st.sanitizeRoots)
+}
+
 // dispatchParsedFileAggregate streams one already-parsed input's records into this
 // recipe's invocation-local aggregate writer (rolling shards), recording the
 // per-input inventory entry. Aggregate mode rejects --continue-on-error and floors,
@@ -139,5 +157,8 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 	if st.dispositionErr != nil {
 		return st.dispositionErr
 	}
+	// This recipe committed its shards and wrote its own successful manifest, so the
+	// run-level failure handler must not later overwrite it with incomplete:true.
+	st.finalized = true
 	return nil
 }

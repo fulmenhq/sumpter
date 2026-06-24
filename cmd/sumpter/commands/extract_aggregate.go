@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
 // Output modes for --output-mode.
@@ -87,10 +89,18 @@ func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) erro
 	if opts.AggregateMaxBytes < 0 {
 		return fmt.Errorf("--aggregate-max-bytes must be >= 0 (0 = uncapped)")
 	}
-	// Cloud aggregate (publish through OpenOutput/Publish + the proactive ≤5 GiB
-	// plan-time cap, R1/R7) lands in a later slice; reject it cleanly for now.
+	// Cloud aggregate: each shard is one published object subject to the single-PUT
+	// limit. Enforce the byte cap PROACTIVELY at plan time (R7) — a cloud run must be
+	// capped at or below the limit so the streamed byte count rolls a shard BEFORE it
+	// could exceed it, never discovering an over-limit object only at publish after
+	// gigabytes were staged.
 	if referenceIsCloud(opts.OutputPath) {
-		return fmt.Errorf("--output-mode aggregate to a cloud (s3://) destination is not yet supported; use a local --output-path")
+		if opts.AggregateMaxBytes <= 0 {
+			return fmt.Errorf("--output-mode aggregate to a cloud (s3://) destination requires --aggregate-max-bytes: each shard is one object subject to the %d-byte (5 GiB) single-PUT limit, so the stream must be capped to roll shards proactively", uriio.MaxSinglePutBytes)
+		}
+		if opts.AggregateMaxBytes > uriio.MaxSinglePutBytes {
+			return fmt.Errorf("--aggregate-max-bytes %d exceeds the cloud single-PUT limit of %d bytes (5 GiB); each aggregate shard is one object and must stay at or below it", opts.AggregateMaxBytes, uriio.MaxSinglePutBytes)
+		}
 	}
 	return nil
 }
@@ -118,12 +128,18 @@ func resolvedAggregateInputOrder(opts *ExtractOptions, files []string) []string 
 // removed so a failed run never leaves successful-looking output.
 type aggregateWriter struct {
 	mu         sync.Mutex
+	opts       *ExtractOptions
 	outputPath string
 	maxRecords int
 	maxBytes   int64
 	// sharded is true when any cap is set: output is numbered records-NNNNN.jsonl;
 	// otherwise a single records.jsonl that never rolls.
 	sharded bool
+	// cloud routes each shard through the output session (openOutputTarget/Publish,
+	// R1) and publishes shards INCREMENTALLY (each shard is one object — they cannot
+	// be renamed all-at-once like local). Local stays all-or-nothing (.partial +
+	// rename at commit). Cloud is always sharded (R7 requires a byte cap).
+	cloud bool
 
 	currentInputOrdinal int
 
@@ -136,19 +152,22 @@ type aggregateWriter struct {
 	recordCount int
 	inputStart  int
 	inputEnd    int
+	curTgt      *uriio.OutputTarget // cloud only: the open shard's publish target
 
 	shards       []provenance.AggregateOutput
-	stagePaths   []string // ".partial" staging paths, in shard order (for commit/abort)
-	finalPaths   []string // final paths, parallel to stagePaths
+	stagePaths   []string // local: ".partial" staging paths, in shard order
+	finalPaths   []string // local: final paths, parallel to stagePaths
 	totalRecords int
 }
 
 func newAggregateWriter(opts *ExtractOptions) *aggregateWriter {
 	return &aggregateWriter{
+		opts:       opts,
 		outputPath: opts.OutputPath,
 		maxRecords: opts.AggregateMaxRecords,
 		maxBytes:   opts.AggregateMaxBytes,
 		sharded:    opts.AggregateMaxRecords > 0 || opts.AggregateMaxBytes > 0,
+		cloud:      referenceIsCloud(opts.OutputPath),
 	}
 }
 
@@ -170,14 +189,37 @@ func (w *aggregateWriter) setCurrentInput(ordinal int) {
 func (w *aggregateWriter) openShard() error {
 	w.shardOrd++
 	name := w.shardFileName(w.shardOrd)
-	finalPath := outputRefJoin(w.outputPath, name)
-	stagePath := finalPath + ".partial"
-	if err := os.MkdirAll(w.outputPath, 0o750); err != nil {
-		return fmt.Errorf("create aggregate output directory: %w", err)
-	}
-	f, err := os.OpenFile(stagePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 - tool-generated shard name under the validated output dir
-	if err != nil {
-		return fmt.Errorf("open aggregate shard %s: %w", name, err)
+	var f *os.File
+	if w.cloud {
+		// Route the shard object through the output session (R1): a cloud target
+		// stages to a session-managed local file that Publish (in finalizeShard)
+		// uploads through the SUM-005 write boundary; the staging file is the byte
+		// source we hash and size-cap.
+		tgt, err := openOutputTarget(context.Background(), w.opts, outputRefJoin(w.outputPath, name))
+		if err != nil {
+			return fmt.Errorf("open aggregate cloud shard %s: %w", name, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(tgt.LocalPath), 0o750); err != nil {
+			return fmt.Errorf("create aggregate staging directory: %w", err)
+		}
+		f, err = os.OpenFile(tgt.LocalPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 - session-managed staging path
+		if err != nil {
+			return fmt.Errorf("open aggregate cloud shard staging %s: %w", name, err)
+		}
+		w.curTgt = tgt
+	} else {
+		finalPath := outputRefJoin(w.outputPath, name)
+		stagePath := finalPath + ".partial"
+		if err := os.MkdirAll(w.outputPath, 0o750); err != nil {
+			return fmt.Errorf("create aggregate output directory: %w", err)
+		}
+		var err error
+		f, err = os.OpenFile(stagePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 - tool-generated shard name under the validated output dir
+		if err != nil {
+			return fmt.Errorf("open aggregate shard %s: %w", name, err)
+		}
+		w.stagePaths = append(w.stagePaths, stagePath)
+		w.finalPaths = append(w.finalPaths, finalPath)
 	}
 	w.open = true
 	w.file = f
@@ -186,8 +228,6 @@ func (w *aggregateWriter) openShard() error {
 	w.recordCount = 0
 	w.inputStart = 0
 	w.inputEnd = 0
-	w.stagePaths = append(w.stagePaths, stagePath)
-	w.finalPaths = append(w.finalPaths, finalPath)
 	return nil
 }
 
@@ -200,22 +240,38 @@ func (w *aggregateWriter) finalizeShard() error {
 	if err := w.file.Close(); err != nil {
 		return fmt.Errorf("close aggregate shard: %w", err)
 	}
-	w.shards = append(w.shards, provenance.AggregateOutput{
+	shard := provenance.AggregateOutput{
 		Path:              w.shardFileName(w.shardOrd),
 		Format:            recipesmanifest.OutputFormatNDJSON,
 		RecordCount:       w.recordCount,
 		SHA256:            "sha256:" + hex.EncodeToString(w.hasher.Sum(nil)),
 		InputOrdinalStart: w.inputStart,
 		InputOrdinalEnd:   w.inputEnd,
-	})
+	}
+	if w.cloud {
+		// Publish the completed shard NOW (incremental, R1): each shard is one object.
+		// Record the credential-handle NAME (S8) so the committed object is auditable.
+		shard.CredentialsHandle = w.opts.outputHandle
+		if err := w.curTgt.Publish(context.Background()); err != nil {
+			return fmt.Errorf("publish aggregate shard %s: %w", shard.Path, err)
+		}
+		w.curTgt = nil
+	}
+	// A finalized shard is a committed shard: local will be renamed at commit, cloud
+	// is already published. w.shards is therefore the committed-shard ledger an
+	// incomplete (R8) manifest reports on failure.
+	w.shards = append(w.shards, shard)
 	w.open = false
 	w.file = nil
 	return nil
 }
 
 // OnRecord appends one extracted record to the current shard, rolling first if the
-// record would push the shard past a configured cap. A single record larger than
-// the byte cap is written to its own shard rather than dropped or split.
+// record would push the shard past a configured cap. Locally, a single record larger
+// than the byte cap is written to its own shard rather than dropped or split. For
+// CLOUD output that record could never publish (each shard is one object subject to
+// the single-PUT limit), so it is rejected here — before any staging work — rather
+// than discovered at Publish (R7).
 func (w *aggregateWriter) OnRecord(ctx context.Context, record extract.EmittedRecord) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -228,6 +284,10 @@ func (w *aggregateWriter) OnRecord(ctx context.Context, record extract.EmittedRe
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	if w.cloud && w.maxBytes > 0 && int64(len(data)) > w.maxBytes {
+		return fmt.Errorf("aggregate cloud record is %d bytes, larger than --aggregate-max-bytes %d: a single record cannot fit in a shard within the cloud single-PUT limit, so it can never be published; raise --aggregate-max-bytes (up to %d) or split the source", len(data), w.maxBytes, uriio.MaxSinglePutBytes)
+	}
 
 	if !w.open {
 		if err := w.openShard(); err != nil {
@@ -291,22 +351,44 @@ func (w *aggregateWriter) commit(totalInputs int) error {
 	if err := w.finalizeShard(); err != nil {
 		return err
 	}
-	for i, stage := range w.stagePaths {
-		if err := os.Rename(stage, w.finalPaths[i]); err != nil {
-			return fmt.Errorf("commit aggregate shard %s: %w", w.finalPaths[i], err)
+	// Cloud shards were each published in finalizeShard (incremental, R1); only local
+	// defers to an all-or-nothing rename here so a failed local run leaves nothing.
+	if !w.cloud {
+		for i, stage := range w.stagePaths {
+			if err := os.Rename(stage, w.finalPaths[i]); err != nil {
+				return fmt.Errorf("commit aggregate shard %s: %w", w.finalPaths[i], err)
+			}
 		}
 	}
 	return nil
 }
 
-// abort discards all staged shard files so a failed run leaves no successful-looking
-// output.
+// committedShards returns the shards already finalized (local: staged+renamed-pending;
+// cloud: PUBLISHED). On a failed cloud run these are the orphaned objects an incomplete
+// manifest (R8) must record. Caller holds no lock; used after the run loop returns.
+func (w *aggregateWriter) committedShards() []provenance.AggregateOutput {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]provenance.AggregateOutput(nil), w.shards...)
+}
+
+// abort discards un-published staging so a failed run leaves no successful-looking
+// output. Already-PUBLISHED cloud shards cannot be un-published — they are recorded by
+// an incomplete (R8) manifest instead; only the open shard's un-published staging is
+// dropped.
 func (w *aggregateWriter) abort() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.open && w.file != nil {
 		_ = w.file.Close()
 		w.open = false
+	}
+	if w.cloud {
+		if w.curTgt != nil {
+			_ = os.Remove(w.curTgt.LocalPath)
+			w.curTgt = nil
+		}
+		return
 	}
 	for _, stage := range w.stagePaths {
 		_ = os.Remove(stage)
@@ -316,7 +398,7 @@ func (w *aggregateWriter) abort() {
 // runAggregateJSONStreamingExtraction streams every input's records to one NDJSON
 // writer (rolling shards) in deterministic resolved-input order, recording the
 // per-input inventory and per-shard integrity digests in the provenance manifest.
-func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
+func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) (err error) {
 	logger := logging.GetLogger()
 	ctx := context.Background()
 	sanitizeRoots := manifestSanitizeRoots(opts)
@@ -327,15 +409,27 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	countsByRecordType := make(map[string]int)
 	dispositionSummary := newDispositionSummary(len(ordered))
 
+	// On any failure: drop un-published staging, and — if a cloud run already published
+	// shards — write an incomplete (R8) manifest recording those committed objects so
+	// the orphans are discoverable for cleanup / idempotent rerun.
+	defer func() {
+		if err == nil {
+			return
+		}
+		if committed := writer.committedShards(); writer.cloud && len(committed) > 0 {
+			writeIncompleteAggregateManifest(opts, runtimeProvenance, startedAt, manifestInputs, committed, countsByRecordType, sanitizeRoots)
+		}
+		writer.abort()
+	}()
+
 	for i, file := range ordered {
 		ordinal := i + 1
 		logical := logicalIdentity(file, logicalByLocal)
 		writer.setCurrentInput(ordinal)
 
-		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
-		if err != nil {
-			writer.abort()
-			return fmt.Errorf("failed to build external fields for file %s: %w", logical, err)
+		externalFields, ferr := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
+		if ferr != nil {
+			return fmt.Errorf("failed to build external fields for file %s: %w", logical, ferr)
 		}
 
 		rp := runtimeProvenance
@@ -350,7 +444,6 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		// input failure aborts the whole run: already-streamed rows are discarded
 		// (writer.abort) so no failed-input rows are ever committed.
 		if result.Error != nil || result.Disposition == extract.DispositionFailed {
-			writer.abort()
 			if result.Error != nil {
 				logger.Error("Failed to process file", zap.String("file", result.LogicalURI), zap.Error(result.Error))
 				return fmt.Errorf("failed to process file %s: %w", result.LogicalURI, result.Error)
@@ -361,10 +454,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		if result.Disposition != "" {
 			dispositionSummary.add(result, sanitizeRoots)
 		}
-		input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
-		if err != nil {
-			writer.abort()
-			return err
+		input, lerr := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+		if lerr != nil {
+			return lerr
 		}
 		input.RecordType = extCfg.RecordType
 		rc := recordCount
@@ -383,9 +475,8 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		}
 	}
 
-	if err := writer.commit(len(ordered)); err != nil {
-		writer.abort()
-		return err
+	if cerr := writer.commit(len(ordered)); cerr != nil {
+		return cerr
 	}
 
 	// Per-shard provenance Output entries (one Output per aggregate shard).
@@ -409,4 +500,27 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	}
 	logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	return nil
+}
+
+// writeIncompleteAggregateManifest records the shards a failed aggregate run had
+// already published (R8) in an incomplete manifest, so the orphaned cloud objects are
+// discoverable for cleanup / idempotent rerun. Best-effort on the failure path: a
+// write failure is logged, never masking the original run error.
+func writeIncompleteAggregateManifest(opts *ExtractOptions, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time, inputs []provenance.Input, committed []provenance.AggregateOutput, counts map[string]int, sanitizeRoots []string) {
+	if !shouldWriteManifest(opts) {
+		return
+	}
+	outputs := make([]provenance.Output, 0, len(committed))
+	for _, shard := range committed {
+		outputs = append(outputs, provenanceOutput(shard.Path, recipesmanifest.OutputFormatNDJSON, shard.RecordCount, opts, sanitizeRoots...))
+	}
+	manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), inputs, outputs, counts, sanitizeRoots)
+	manifest.OutputMode = outputModeAggregate
+	manifest.AggregateOutputs = committed
+	manifest.Incomplete = true
+	manifestPath := outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
+	if werr := writeProvenanceManifest(opts, manifestPath, manifest); werr != nil {
+		logging.GetLogger().Error("Failed to write incomplete aggregate manifest; committed cloud shards may be orphaned",
+			zap.String("path", manifestPath), zap.Error(werr))
+	}
 }

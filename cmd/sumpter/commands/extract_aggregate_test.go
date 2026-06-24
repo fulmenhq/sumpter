@@ -1,12 +1,31 @@
 package commands
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/fulmenhq/sumpter/internal/extract"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 )
+
+func TestAggregateWriter_CloudRejectsOversizedRecord(t *testing.T) {
+	// A single cloud record larger than the byte cap can never be published (each
+	// shard is one object under the single-PUT limit), so OnRecord must reject it
+	// before any staging work (R7), not discover it at Publish.
+	w := &aggregateWriter{cloud: true, maxBytes: 5, sharded: true, opts: &ExtractOptions{}}
+	rec := extract.NewEmittedRecord(map[string]interface{}{"name": "much-larger-than-five-bytes"})
+	err := w.OnRecord(context.Background(), rec)
+	if err == nil || !strings.Contains(err.Error(), "single record cannot fit") {
+		t.Fatalf("want oversized cloud-record rejection from OnRecord, got %v", err)
+	}
+	if w.open || w.shardOrd != 0 {
+		t.Errorf("oversized cloud record opened a shard (open=%v shardOrd=%d); must reject before any staging", w.open, w.shardOrd)
+	}
+}
 
 // writeAggregateWorkspace builds a recipe workspace with n synthetic inputs, each
 // producing exactly one record (//item), and a JSON-output recipe. Input order is
@@ -397,6 +416,29 @@ func TestAggregateOutput_ByteCapRollsPerRecord(t *testing.T) {
 		if lines := readNDJSONLines(t, filepath.Join(out, shard.Path)); len(lines) != 1 {
 			t.Errorf("shard %d file has %d lines, want 1", i, len(lines))
 		}
+	}
+}
+
+func TestAggregateOutput_CloudPlanTimeCap(t *testing.T) {
+	cloudOpts := func(maxBytes int64) *ExtractOptions {
+		return &ExtractOptions{OutputMode: "aggregate", OutputPath: "s3://bucket/prefix/", AggregateMaxBytes: maxBytes}
+	}
+	// R7: cloud aggregate without a byte cap is rejected at plan time (each shard is
+	// one object subject to the single-PUT limit).
+	if err := validateAggregateOptions(cloudOpts(0), []string{"json"}); err == nil || !strings.Contains(err.Error(), "requires --aggregate-max-bytes") {
+		t.Fatalf("uncapped cloud aggregate must be rejected, got %v", err)
+	}
+	// R7: a cap above the 5 GiB single-PUT limit is rejected.
+	if err := validateAggregateOptions(cloudOpts(uriio.MaxSinglePutBytes+1), []string{"json"}); err == nil || !strings.Contains(err.Error(), "exceeds the cloud single-PUT limit") {
+		t.Fatalf(">5GiB cloud aggregate must be rejected, got %v", err)
+	}
+	// A cap at or below the limit passes the cloud check.
+	if err := validateAggregateOptions(cloudOpts(uriio.MaxSinglePutBytes), []string{"json"}); err != nil {
+		t.Fatalf("cloud aggregate at the limit should pass plan-time validation, got %v", err)
+	}
+	// Local aggregate has no mandatory cap (uncapped local is allowed).
+	if err := validateAggregateOptions(&ExtractOptions{OutputMode: "aggregate", OutputPath: t.TempDir()}, []string{"json"}); err != nil {
+		t.Fatalf("uncapped local aggregate should pass, got %v", err)
 	}
 }
 

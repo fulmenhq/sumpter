@@ -88,6 +88,10 @@
       "items": {
         "$ref": "#/$defs/aggregate_output"
       }
+    },
+    "incomplete": {
+      "type": "boolean",
+      "description": "Marks a FAILED aggregate run that had already published one or more cloud shards before failing. Those objects cannot be un-published, so this manifest is written on the failure path to make the committed shards (in aggregate_outputs) discoverable for cleanup or idempotent rerun. Present only on a failed partial run. A manifest carrying incomplete:true must be treated as a failed run, not as successful output."
     }
   },
   "$defs": {

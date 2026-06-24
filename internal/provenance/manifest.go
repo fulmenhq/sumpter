@@ -48,6 +48,14 @@ type Manifest struct {
 	// sum, because a multi-record input can straddle a roll boundary and so appear in
 	// two adjacent shards' ordinal spans (see AggregateOutput).
 	AggregateOutputs []AggregateOutput `json:"aggregate_outputs,omitempty"`
+	// Incomplete marks a FAILED aggregate run that had already published one or more
+	// cloud shards before failing (R8). Those objects cannot be un-published, so this
+	// manifest is written on the failure path to make the committed shards (in
+	// AggregateOutputs) discoverable for cleanup / idempotent rerun. Present only on a
+	// failed partial run; omitted (false) on success and per-input mode, so successful
+	// manifests stay byte-identical. A run whose manifest carries incomplete:true must
+	// be treated as failed, not as successful output.
+	Incomplete bool `json:"incomplete,omitempty"`
 }
 
 // ReferenceTable records the logical identity of an external reference table loaded
