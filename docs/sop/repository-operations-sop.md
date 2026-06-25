@@ -279,6 +279,41 @@ The local pre-push hook runs `goneat assess --new-issues-only --new-issues-base
 main` so pre-existing tech debt does not block new work; CI / PR review is the
 authoritative scan.
 
+### Reviewing a Pull Request Locally
+
+**Default to inspecting without checking out.** Most review needs nothing on
+disk:
+
+```bash
+gh pr diff <number>                 # the diff
+gh pr view <number> --files         # changed files
+git fetch origin && git diff origin/main...origin/<branch>
+```
+
+**If you must check out the branch** (to build, run, or execute tests), do
+**not** `git checkout` it in your existing working tree — that disrupts any
+work in progress there and leaves the tree parked on the wrong branch. Create a
+**throwaway worktree** in a sibling path, and remove it when the review is done:
+
+```bash
+git fetch origin
+git worktree add ../sumpter-review-<branch> origin/<branch>
+cd ../sumpter-review-<branch>
+# ... build / run / test ...
+cd -                                # back to your original working tree
+git worktree remove ../sumpter-review-<branch>
+```
+
+Notes:
+
+- Put the worktree **outside the repo tree** (a sibling path) so it never shows
+  up in `git status` or gets staged by accident.
+- A fresh worktree does not inherit the repo-local build cache, so the first
+  `make build` / `make test` there runs cold (re-fetches modules). That is
+  expected.
+- `git worktree list` shows active worktrees; `git worktree prune` cleans up any
+  you forgot to remove.
+
 ### Working on Embedded SSOT
 
 When changes touch `docs/`, `schemas/`, `examples/`, or `templates/` (the SSOT

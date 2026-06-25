@@ -8,6 +8,27 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-25
+
+**Aggregate output: stream one NDJSON file per recipe across many inputs (local and cloud) with deterministic ordering, rolling shards, and per-shard provenance; plus a schema-backed record envelope and a whole-tree format gate.**
+
+See [`docs/releases/v0.2.3.md`](docs/releases/v0.2.3.md) for the full release narrative.
+
+### Added
+
+- **Aggregate output mode (`aggregate-output`)** - `--output-mode aggregate` streams all of a recipe's records into a **single** NDJSON file per invocation instead of one output file per input, so a run over many small inputs is bounded by one streamed write rather than per-input file fan-out. Records emit in **input order × intra-input `record_num`** (deterministic for a fixed input subset); `--aggregate-max-records <n>` / `--aggregate-max-bytes <bytes>` roll the stream into sequential shards proactively on the running count. The provenance manifest is authoritative (not filename parsing): a gap-free `inputs[]` inventory (per-input `sha256`, `record_count`, disposition) plus a per-shard `aggregate_outputs[]` entry (shard `sha256`, `record_count`, contributing input-ordinal span; a record-straddling input appears in both adjacent spans). `--continue-on-error` and recipe `min_occurrences` floors are supported for **both local and cloud** via a per-input spool barrier — an input's records commit to the shard only on success, so a failed/floor-missing input never contributes partial records and is recorded in `failures.json`. Cloud aggregate writes each shard via the existing stage-and-publish single-PUT boundary, **requires `--aggregate-max-bytes` ≤ 5 GiB** at plan time, and on partial publish marks the manifest `incomplete:true` enumerating exactly the committed shards. Applies to `extract-multi` per-recipe (own writer and shard sequence under `<output-path>/<recipe-id>/`) (#114, #115, #116, #117, #118, #119).
+- **Batch input selection on `extract-multi` (`--file-list` / `--files` / `--input-path`)** - `extract-multi` accepts the same mutually-exclusive input-selection set as single-recipe `extract`. `--file-list` is the batch input for large or precisely-scoped sets (newline-delimited references, no directory walk, no argv ceiling, listed order preserved). For aggregate runs the order is load-bearing: **aggregate ordinals are assigned in `--file-list` / `--files` order** (and `--input-path` sorts before assigning), so output ordering is operator-controlled and reproducible (#114, #115).
+- **Schema-backed record envelope (`record-envelope`)** - a Draft 2020-12 JSON Schema (`schemas/extract/v0.1.0/extract-record-envelope.schema.json`) validates one emitted NDJSON row: a closed top-level envelope (`_runtime` + `extract`, `extract.data` required) over an open, additively-extensible `_runtime`/payload. Each row self-identifies via the additive `_runtime.envelope_schema = "extract-record-envelope/v0"` (major-only, so additive schema revisions do not churn rows). A build-time meta-validation target (`make extract-output-contract-check`, wired into `make check-all`) validates fixture rows and a round-trip test validates a live-emitted record. Contract-independent: schematizes existing output, no behavior change (#120).
+
+### Changed
+
+- **Whole-tree format normalization + full-tree format gate (`format-normalize`)** - a one-time repository-wide format sweep (Markdown / JSON / YAML via `goneat format` plus an EOF-newline pass) normalizes accumulated whitespace drift, and a full-tree format gate plus a VERSION-drift guard now run in CI. Previously the format check compared only changed-vs-`main`, so unrelated drift could ride into an unrelated PR; the full-tree gate means every branch forks from a clean tree (#113).
+- **VERSION bumped to `0.2.3`** for this release.
+
+### Docs
+
+- **Reviewing a Pull Request locally (`review-worktree-hygiene`)** - the Repository Operations SOP gains a "Reviewing a Pull Request Locally" section (inspect-without-checkout first; otherwise a throwaway sibling `git worktree` removed after review), with short pointers from `CONTRIBUTING.md` and `AGENTS.md`. Documents the reviewer-side local workflow that was previously a gap.
+
 ## [0.2.2] - 2026-06-23
 
 **Multi-recipe throughput: apply many extract recipes to one input set in a single parse-once pass, plus the ergonomics — shared run-level parameters and derive-only capture fields — that make it adoptable.**
@@ -230,32 +251,3 @@ See [`docs/releases/v0.1.5.md`](docs/releases/v0.1.5.md) for the full release na
 
 - **Cloud URI I/O** remains deferred to a future cycle; v0.1.5 focuses on release hardening and local/multi-file extraction resilience.
 - **Shell shfmt baseline cleanup** remains visible as nine medium goneat lint findings in release scripts. It is non-blocking under the current hook policy and is intentionally deferred to a separate housekeeping PR.
-
-## [0.1.4] - 2026-05-23
-
-**First tagged release since v0.1.1 OSS-clean; introduces the signed-release pipeline and brings the prior development cycle under a tag.**
-
-See [`docs/releases/v0.1.4.md`](docs/releases/v0.1.4.md) for the full release narrative.
-
-### Added
-
-- **Recipe parameters in DSL expression scope** — `defaults.parameters.<key>` values are now readable as variables in `field_mappings[].expression` evaluation, in addition to their existing record-map column emission. Name collisions with XPath-extracted (or previously-evaluated) fields fail loud with an explicit error (PR #34).
-- **Recipe cadence metadata** — `defaults.cadence` accepts a free-form string (`daily-rolling`, `weekly`, `weekly-2x`, `on-demand`, or operator-chosen vocabulary) that flows into the per-extract provenance record (PR #31).
-- **Parquet withhold columns** — `defaults.output.parquet.withhold_columns` declares columns that flow through the substrate/partition path but are omitted from the Parquet output body (PR #30).
-- **DSL string functions** — `lower(s)`, `upper(s)`, `normalize_space(s)` (null-propagating) (PR #32).
-- **Signed release pipeline** — `.github/workflows/release.yml`, `RELEASE_CHECKLIST.md`, `RELEASE_NOTES.md`, hand-rolled minisign + optional PGP signing ceremony, `make release-*` targets, 10 new release scripts (generate-checksums, sign-release-manifests, verify-checksums, verify-public-key, verify-minisign-public-key, release-download, release-upload-provenance, release-upload, export-release-keys, sign-release-artifacts). Multi-platform CGO-free release artifacts (linux/{amd64,arm64}, darwin/{amd64,arm64}, windows/amd64).
-
-### Changed
-
-- **`SilenceUsage` on root command** — runtime errors (extract-time contract violations, schema failures, missing parameters) no longer dump full cobra usage help. Genuine flag-parse errors still emit usage (PR #29).
-- **Direct dependency refresh** — minor-version bumps; pre-1.0 minor-bump risk evaluated per-bump; SBOM regenerated out-of-tree under gitignored `sbom/` (PR #33).
-- **VERSION bumped to `0.1.4`** for this release.
-
-### Security
-
-- **`--fail-on high`** is the new default for `goneat dependencies` vulnerability gating (stricter than the goneat default of `critical`) and is applied in CI.
-- **`sbom/` is gitignored and never committed.** SBOMs are operator-local artifacts; the OSS-surface artifact is the package-change summary in PR descriptions and release notes.
-
-### Deferred
-
-- **Cloud URI I/O** (S3/GCS/Azure input/output paths) deferred beyond v0.1.4; still out of scope for v0.1.5.
