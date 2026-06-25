@@ -119,7 +119,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", 0, "Max directory depth for --input-path discovery (0 = unlimited)")
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symlinks during --input-path discovery")
 	cmd.Flags().StringVar(&opts.OutputPath, "output-path", "", "Required output root; each recipe writes to <output-path>/<recipe-id>/")
-	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file/per-recipe failures; each recipe records its own failures.json")
+	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file/per-recipe failures instead of aborting; the run still exits non-zero and each recipe lists its dropped inputs in failures.json — reconcile it so inputs are not silently dropped")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID); shared by every recipe")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")

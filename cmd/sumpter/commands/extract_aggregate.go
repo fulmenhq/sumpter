@@ -65,15 +65,6 @@ func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) erro
 	if opts.NoManifest {
 		return fmt.Errorf("--output-mode aggregate cannot be combined with --no-manifest: the input-set provenance manifest is required to keep consolidated output traceable")
 	}
-	if opts.ContinueOnError && referenceIsCloud(opts.OutputPath) {
-		// Local continue-on-error is safe via the per-input spool barrier (a failed
-		// input's records are buffered and discarded before they ever reach the shared
-		// shard — see aggregateWriter.buffering). Cloud is held back one slice: each
-		// shard publishes incrementally, so continue-on-error interacts with R8
-		// partial-publish auditability and warrants its own focused review. Reject it
-		// here rather than silently stream a failed input toward a published object.
-		return fmt.Errorf("--output-mode aggregate to a cloud (s3://) destination does not support --continue-on-error in this version: cloud shards publish incrementally, so a failed input's auditability interacts with partial-publish (R8); run without --continue-on-error (any input failure aborts the whole aggregate run), or use a local destination where per-input continue-on-error is supported")
-	}
 	for _, f := range outputFormats {
 		if f != recipesmanifest.OutputFormatJSON && f != recipesmanifest.OutputFormatNDJSON {
 			return fmt.Errorf("--output-mode aggregate supports only json/ndjson output, not %q; aggregate emits NDJSON (one record envelope per line)", f)
@@ -100,23 +91,6 @@ func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) erro
 		if opts.AggregateMaxBytes > uriio.MaxSinglePutBytes {
 			return fmt.Errorf("--aggregate-max-bytes %d exceeds the cloud single-PUT limit of %d bytes (5 GiB); each aggregate shard is one object and must stay at or below it", opts.AggregateMaxBytes, uriio.MaxSinglePutBytes)
 		}
-	}
-	return nil
-}
-
-// rejectCloudAggregateFloors rejects match_selectors[].min_occurrences floors for a
-// CLOUD aggregate destination. Local aggregate enforces floors safely — a miss discards
-// the per-input buffer (continue-on-error) or the all-or-nothing local commit drops
-// every staged shard (fail-fast), so a floor-missing input's rows never become published
-// output. Cloud is different: shards publish incrementally and cannot be un-published, so
-// a mid-input shard roll could PUT a floor-missing input's rows before the floor is
-// evaluated (ADR-0007). The per-input spool barrier only engages under --continue-on-error
-// (rejected for cloud), so cloud floors take the unprotected direct-stream path. Defer
-// cloud floors to the cloud-continue follow-up where the same incremental-publish /
-// can't-retract interaction is reviewed.
-func rejectCloudAggregateFloors(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch) error {
-	if opts != nil && referenceIsCloud(opts.OutputPath) && hasDeclaredMinOccurrences(extCfg) {
-		return fmt.Errorf("--output-mode aggregate to a cloud (s3://) destination does not support match_selectors[].min_occurrences floors in this version: cloud shards publish incrementally and cannot retract a floor-missing input's already-published rows, so the floor cannot be enforced before output is published; run floored recipes to a local destination, or remove the floor")
 	}
 	return nil
 }
@@ -157,14 +131,17 @@ type aggregateWriter struct {
 	// rename at commit). Cloud is always sharded (R7 requires a byte cap).
 	cloud bool
 
-	// buffering engages the per-input transactional barrier (continue-on-error only):
+	// buffering engages the per-input transactional barrier (set when --continue-on-error
+	// is used OR the recipe declares min_occurrences floors — see aggregateBuffering):
 	// records accumulate in pending instead of streaming straight to the shard, so a
-	// failed input's rows are discarded (discardInput) before they ever touch the
-	// shared shard, and a successful input is flushed atomically (commitInput). The
-	// shared shard therefore only ever receives whole, successful inputs — no
-	// committed bytes/digest/shards ever need rolling back. Bounded by one input's
-	// records (independent of input count). Off (direct streaming) by default, keeping
-	// the audited fail-fast path byte-identical.
+	// failed/floor-missing input's rows are discarded (discardInput) before they ever
+	// touch the shared shard, and a successful input is flushed atomically (commitInput).
+	// The shared shard therefore only ever receives whole, qualifying inputs — no
+	// committed bytes/digest/shards ever need rolling back. For CLOUD this is the
+	// mechanism that makes continue-on-error and floors safe: publish happens only at the
+	// per-input flush on success, so a discarded input is never PUT. Bounded by one
+	// input's records (independent of input count). Off (direct streaming) by default,
+	// keeping the audited fail-fast path byte-identical.
 	buffering bool
 	pending   [][]byte
 
@@ -187,7 +164,12 @@ type aggregateWriter struct {
 	totalRecords int
 }
 
-func newAggregateWriter(opts *ExtractOptions) *aggregateWriter {
+// newAggregateWriter builds the writer. buffering engages the per-input spool barrier
+// (a failed/floor-missing input is discarded before it touches the shared shard) — the
+// caller passes true when --continue-on-error is set OR the recipe declares
+// min_occurrences floors, so both work locally AND for cloud (a failed input is never
+// published, since publish happens only at the per-input flush on success).
+func newAggregateWriter(opts *ExtractOptions, buffering bool) *aggregateWriter {
 	return &aggregateWriter{
 		opts:       opts,
 		outputPath: opts.OutputPath,
@@ -195,11 +177,16 @@ func newAggregateWriter(opts *ExtractOptions) *aggregateWriter {
 		maxBytes:   opts.AggregateMaxBytes,
 		sharded:    opts.AggregateMaxRecords > 0 || opts.AggregateMaxBytes > 0,
 		cloud:      referenceIsCloud(opts.OutputPath),
-		// Continue-on-error needs the per-input barrier so a failed input's rows never
-		// reach the shared shard. Cloud continue-on-error is rejected at plan time
-		// (validateAggregateOptions), so buffering ∧ cloud never co-occur in this slice.
-		buffering: opts.ContinueOnError,
+		buffering:  buffering,
 	}
+}
+
+// aggregateBuffering reports whether the per-input spool barrier must engage: under
+// --continue-on-error (a failed input is discarded + recorded) or whenever the recipe
+// declares min_occurrences floors (a floor miss must discard the input's rows before
+// they are flushed/published). For cloud this is the mechanism that makes both safe.
+func aggregateBuffering(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch) bool {
+	return opts.ContinueOnError || hasDeclaredMinOccurrences(extCfg)
 }
 
 // shardFileName returns the lexically ordered shard name for the given 1-based
@@ -483,20 +470,24 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	sanitizeRoots := manifestSanitizeRoots(opts)
 	ordered := resolvedAggregateInputOrder(opts, files)
 
-	writer := newAggregateWriter(opts)
+	writer := newAggregateWriter(opts, aggregateBuffering(opts, extCfg))
 	manifestInputs := make([]provenance.Input, 0, len(ordered))
 	countsByRecordType := make(map[string]int)
 	dispositionSummary := newDispositionSummary(len(ordered))
 	failureManifest := newExtractFailureManifest(len(ordered))
-	committed := false
+	// manifestFinalized is set only after the run's shards AND its normal manifest +
+	// sidecars are durably written (see end of function). Until then, any terminal output
+	// failure — including one AFTER shards are committed but BEFORE the manifest is written
+	// — must fall through to the incomplete:true (R8) path below, so committed cloud
+	// objects are never left undiscoverable.
+	manifestFinalized := false
 
 	// On a genuine failure: drop un-published staging, and — if a cloud run already
 	// published shards — write an incomplete (R8) manifest recording those committed
-	// objects so the orphans are discoverable. A run that reached commit (success, or
-	// a continue-on-error partial) keeps its output: commit renamed the staging away,
-	// so abort would be a no-op anyway, but the committed guard makes that explicit.
+	// objects so the orphans are discoverable. A fully-finalized run (success, or a
+	// continue-on-error partial that wrote its normal manifest) keeps its output.
 	defer func() {
-		if err == nil || committed {
+		if err == nil || manifestFinalized {
 			return
 		}
 		if c := writer.committedShards(); writer.cloud && len(c) > 0 {
@@ -607,7 +598,6 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	if cerr := writer.commit(len(ordered)); cerr != nil {
 		return cerr
 	}
-	committed = true
 
 	// Under --continue-on-error, record which inputs failed so the partial run is
 	// auditable (mirrors per-input mode's failures.json + non-zero exit).
@@ -637,6 +627,13 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		return err
 	}
 	logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+
+	// Only now is the run fully finalized: shards committed AND the normal manifest +
+	// sidecars durably written. Setting the guard here (not right after shard commit)
+	// means a terminal output failure between shard PUT and the normal manifest — e.g. a
+	// failures.json or manifest publish error on a cloud run — still triggers the deferred
+	// incomplete:true (R8) path, so committed shards are never left without a manifest.
+	manifestFinalized = true
 
 	// A continue-on-error run that committed its successful inputs still signals partial
 	// failure (non-zero exit) so callers do not treat it as a clean run.

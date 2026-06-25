@@ -11,7 +11,6 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
-	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
@@ -391,29 +390,6 @@ func TestAggregateOutput_FloorMissContinueOnError(t *testing.T) {
 	}
 }
 
-// TestAggregateOutput_RejectsCloudFloors pins the secrev finding: a cloud aggregate
-// destination cannot enforce min_occurrences floors (it would publish a floor-missing
-// input's rows before the floor is evaluated), so a floored cloud recipe is rejected at
-// plan time. Local floors are unaffected.
-func TestAggregateOutput_RejectsCloudFloors(t *testing.T) {
-	floored := &extract.ExtractRecordMatch{MatchSelectors: []extract.MatchSelector{{XPath: "//item", MinOccurrences: 1}}}
-	unfloored := &extract.ExtractRecordMatch{MatchSelectors: []extract.MatchSelector{{XPath: "//item"}}}
-
-	cloud := &ExtractOptions{OutputMode: outputModeAggregate, OutputPath: "s3://bucket/prefix/", AggregateMaxBytes: 1 << 20}
-	if err := rejectCloudAggregateFloors(cloud, floored); err == nil || !strings.Contains(err.Error(), "min_occurrences") {
-		t.Fatalf("want cloud-floor rejection, got %v", err)
-	}
-	// A cloud run WITHOUT floors is fine.
-	if err := rejectCloudAggregateFloors(cloud, unfloored); err != nil {
-		t.Errorf("cloud aggregate without floors should be allowed, got %v", err)
-	}
-	// A LOCAL floored run is allowed (enforced via the barrier).
-	local := &ExtractOptions{OutputMode: outputModeAggregate, OutputPath: t.TempDir()}
-	if err := rejectCloudAggregateFloors(local, floored); err != nil {
-		t.Errorf("local aggregate floors should be allowed, got %v", err)
-	}
-}
-
 // TestAggregateOutput_FloorMissFailFast pins floor enforcement in fail-fast mode: a
 // floor miss aborts the whole run, leaving no committed output.
 func TestAggregateOutput_FloorMissFailFast(t *testing.T) {
@@ -425,23 +401,6 @@ func TestAggregateOutput_FloorMissFailFast(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(out, "records.jsonl")); statErr == nil {
 		t.Error("fail-fast floor miss left committed output")
-	}
-}
-
-// TestAggregateOutput_RejectsCloudContinueOnError pins the one remaining
-// continue-on-error guard: cloud shards publish incrementally, so continue-on-error
-// interacts with R8 partial-publish and is held back a slice. Local continue-on-error
-// is supported (see TestAggregateOutput_ContinueOnErrorDiscardsFailedInput).
-func TestAggregateOutput_RejectsCloudContinueOnError(t *testing.T) {
-	opts := &ExtractOptions{
-		OutputMode:        outputModeAggregate,
-		OutputPath:        "s3://bucket/prefix/",
-		AggregateMaxBytes: 1 << 20,
-		ContinueOnError:   true,
-	}
-	err := validateAggregateOptions(opts, []string{recipesmanifest.OutputFormatJSON})
-	if err == nil || !strings.Contains(err.Error(), "--continue-on-error") {
-		t.Fatalf("want cloud continue-on-error rejection, got %v", err)
 	}
 }
 

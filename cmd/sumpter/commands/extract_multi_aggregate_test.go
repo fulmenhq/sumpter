@@ -278,27 +278,6 @@ func TestExtractMultiAggregate_FloorMissContinueOnError(t *testing.T) {
 func TestExtractMultiAggregate_Rejections(t *testing.T) {
 	fileList, _ := writeMultiInputSet(t, 2)
 
-	// Local continue-on-error is now supported via the per-input spool barrier (see
-	// TestExtractMultiAggregate_ContinueOnError); only CLOUD continue-on-error is still
-	// rejected, because cloud shards publish incrementally (R8 interaction).
-	t.Run("cloud-continue-on-error", func(t *testing.T) {
-		ws := writeMultiRecipeWorkspace(t, "summary")
-		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: "s3://bucket/out/", RunID: testMultiRunID, OutputMode: "aggregate", AggregateMaxBytes: 1 << 20, ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
-		if err == nil || !strings.Contains(err.Error(), "--continue-on-error") {
-			t.Fatalf("want cloud continue-on-error rejection, got %v", err)
-		}
-	})
-
-	// Cloud aggregate cannot enforce floors before incremental publish, so a floored
-	// cloud recipe is rejected at plan time (local floors are supported).
-	t.Run("cloud-min-occurrences-floor", func(t *testing.T) {
-		ws := writeMinOccursRecipe(t, "strict", 1)
-		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: "s3://bucket/out/", RunID: testMultiRunID, OutputMode: "aggregate", AggregateMaxBytes: 1 << 20}, []string{ws}, io.Discard, time.Now())
-		if err == nil || !strings.Contains(err.Error(), "min_occurrences") {
-			t.Fatalf("want cloud floor rejection, got %v", err)
-		}
-	})
-
 	// A typo in the mode (or a cap without aggregate) must FAIL, never silently run
 	// per-input — the exact high-file-count fan-out aggregate exists to avoid.
 	t.Run("invalid-mode", func(t *testing.T) {

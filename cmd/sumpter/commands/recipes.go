@@ -319,7 +319,7 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", -1, "Override manifest max depth")
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symlinks (overrides manifest)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview files without processing")
-	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue processing sibling files after recoverable per-file failures; requires --output-path")
+	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file failures instead of aborting; the run still exits non-zero and lists every dropped input in failures.json — reconcile it so inputs are not silently dropped. Requires --output-path")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 0, "Number of parallel workers (overrides manifest)")
 	cmd.Flags().StringVar(&opts.Format, "format", "", "Override output format")

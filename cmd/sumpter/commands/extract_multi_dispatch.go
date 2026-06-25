@@ -334,7 +334,7 @@ func newRecipeRunState(plan *RecipePlan, fileCount int) *recipeRunState {
 		sanitizeRoots:   manifestSanitizeRoots(plan.opts),
 	}
 	if isAggregateMode(plan.opts) {
-		st.aggWriter = newAggregateWriter(plan.opts)
+		st.aggWriter = newAggregateWriter(plan.opts, aggregateBuffering(plan.opts, plan.extCfg))
 		st.inputCount = fileCount
 	}
 	return st
