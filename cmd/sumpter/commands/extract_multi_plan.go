@@ -36,8 +36,15 @@ type multiSharedOptions struct {
 	// Run level.
 	ContinueOnError bool
 	Workers         int
-	Progress        bool
-	DryRun          bool
+	// ParseWorkers is the intra-invocation parse concurrency for the shared input
+	// set: N input files are read+parsed across N workers and fanned into the
+	// single ordered drain that owns all extraction, writing, and finalization.
+	// Default 1 is byte-identical to the audited serial path. It is deliberately a
+	// distinct surface from Workers (never silently repurposed — see the SUM-066
+	// brief). Validated >= 1 by the dispatcher.
+	ParseWorkers int
+	Progress     bool
+	DryRun       bool
 	// RunID must be resolved ONCE for the whole multi run — the caller resolves
 	// or generates it before loading any plan — and is shared by every plan so
 	// each recipe's provenance ties back to a single invocation. loadRecipePlan

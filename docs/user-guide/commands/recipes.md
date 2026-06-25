@@ -134,6 +134,15 @@ per-run provenance stamp). A shared key colliding with any recipe's
 output is written. `--parameter` is not a credential transport; secret-shaped
 keys are redacted by key in the provenance argv.
 
+`--parse-workers N` (default `1`) parses the shared input set across N workers
+within the one invocation, fanning parsed inputs into the single ordered writer to
+speed up the parse (CPU) cost at high file counts. Output is identical to a
+single-worker run — records emit in resolved input order and the per-invocation
+manifest is unchanged — because only the parse is concurrent; extraction, writing,
+and finalization stay on one ordered drain. A value below `1` is rejected;
+`--parse-workers > 1` is local-only for now (run a cloud `s3://` destination with
+`--parse-workers 1`).
+
 Failure handling follows the input-vs-recipe boundary: a read/parse/acquire
 failure is input-level (every recipe sees it); an applicability, signature,
 extraction, `min_occurrences`, or output failure is recipe-level — isolated to

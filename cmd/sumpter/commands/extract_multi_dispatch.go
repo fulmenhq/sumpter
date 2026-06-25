@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/antchfx/xmlquery"
@@ -78,9 +79,12 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	// path; a cloud (s3://) root keeps its URI; an unsupported scheme (e.g. gs://)
 	// is rejected here. resolveRecipeOutputDirs then sees a clean local path or
 	// an s3:// URI, never a half-resolved file:// root.
+	outputRootIsCloud := false
 	if ref, cerr := uriio.Classify(outputRoot); cerr != nil {
 		return cerr
-	} else if !ref.IsCloud() {
+	} else if ref.IsCloud() {
+		outputRootIsCloud = true
+	} else {
 		local, lerr := uriio.LocalPath("output root", outputRoot)
 		if lerr != nil {
 			return lerr
@@ -88,6 +92,18 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		outputRoot = local
 	}
 	shared.OutputPath = outputRoot
+
+	// Validate and normalize parse concurrency BEFORE any output session opens. A
+	// zero value (internal callers / unset) means the serial default; a negative
+	// value is a programming error. Cloud aggregate parallelism is deferred to a
+	// later slice (the cloud publish/digest/ordering invariants are proven under
+	// concurrency separately), so reject >1 with a cloud destination for now.
+	if shared.ParseWorkers < 0 {
+		return fmt.Errorf("extract-multi: --parse-workers must be >= 1 (got %d)", shared.ParseWorkers)
+	}
+	if shared.ParseWorkers > 1 && outputRootIsCloud {
+		return fmt.Errorf("extract-multi: --parse-workers > 1 is not supported with a cloud (s3://) output destination yet; run cloud aggregate with --parse-workers 1")
+	}
 	// Normalize the output mode ONCE so every downstream check agrees on the canonical
 	// value: plan opts (threaded from shared), isAggregateMode (writer selection),
 	// validateAggregateMulti's aggregate-only gate, and the --input-path determinism
@@ -212,34 +228,8 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	}()
 
 	ctx := context.Background()
-	for fileIdx, file := range files {
-		ordinal := fileIdx + 1
-		logical := logicalIdentity(file, logicalByLocal)
-		doc, perr := d.parseFile(file, shared.AllowLargeFiles)
-		if perr != nil {
-			// Read/parse failure is INPUT-level: it affects every recipe's view
-			// of this file. Record it per recipe; honor continue-on-error.
-			for _, st := range states {
-				st.recordInputFailure(file, logical, perr)
-			}
-			if !shared.ContinueOnError {
-				return fmt.Errorf("failed to process file %s: %w", logical, perr)
-			}
-			continue
-		}
-		for _, st := range states {
-			// Extraction/applicability/signature/output failure is RECIPE-level:
-			// isolated to that recipe, never aborting the others for this file.
-			// dispatchParsedFile records recoverable per-input failures internally and
-			// returns nil under --continue-on-error; a non-nil error is therefore either
-			// a fail-fast failure OR a terminal output/sink/ledger failure that ADR-0009
-			// says must abort even under --continue-on-error (never silently suppressed).
-			if rerr := st.dispatchParsedFile(ctx, file, logical, ordinal, doc); rerr != nil {
-				if !shared.ContinueOnError || isTerminalDispatchError(rerr) {
-					return rerr
-				}
-			}
-		}
+	if perr := d.processInputs(ctx, files, logicalByLocal, states, shared); perr != nil {
+		return perr
 	}
 
 	var firstErr error
@@ -249,6 +239,192 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		}
 	}
 	return firstErr
+}
+
+// parsedInputOutcome carries one input's read+parse result from a parse worker to
+// the ordered drain. Exactly one of doc/err is meaningful: err set means an
+// input-level read/parse failure (recorded against every recipe), doc set means a
+// parsed document to dispatch to every recipe. idx is the 0-based resolved-input
+// position; ordinal is idx+1, the authoritative emit order.
+type parsedInputOutcome struct {
+	idx     int
+	ordinal int
+	file    string
+	logical string
+	doc     *xmlquery.Node
+	err     error
+}
+
+// processInputs walks the resolved input set, parsing each input and dispatching the
+// parsed document to every recipe state in input-ordinal order. With ParseWorkers <= 1
+// it is the audited serial loop, byte-identical to single-worker behavior. With
+// ParseWorkers > 1 it parses inputs concurrently across workers and fans them into a
+// single ordered drain — the drain owns ALL extraction, writing, manifest accounting,
+// and finalization, so per-recipe isolation, the per-input spool barrier, deterministic
+// emit order, and the per-invocation manifest are unchanged from serial.
+func (d *multiDispatcher) processInputs(ctx context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
+	if shared.ParseWorkers <= 1 {
+		return d.processInputsSerial(ctx, files, logicalByLocal, states, shared)
+	}
+	return d.processInputsConcurrent(ctx, files, logicalByLocal, states, shared)
+}
+
+// processInputsSerial is the original serial dispatch loop: parse each input in order
+// and apply it before parsing the next. This is the default (ParseWorkers <= 1) path
+// and stays byte-identical to pre-SUM-066 behavior.
+func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
+	for fileIdx, file := range files {
+		o := parsedInputOutcome{idx: fileIdx, ordinal: fileIdx + 1, file: file, logical: logicalIdentity(file, logicalByLocal)}
+		o.doc, o.err = d.parseFile(file, shared.AllowLargeFiles)
+		if err := d.applyOutcome(ctx, o, states, shared); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyOutcome applies one input's parse outcome to every recipe state, exactly as the
+// serial loop did. It is the single shared dispatch body for both the serial and the
+// concurrent (ordered-drain) paths, so they cannot diverge in behavior. A non-nil
+// return aborts the run: either a fail-fast input/recipe failure, or a terminal
+// output/sink/ledger failure that ADR-0009 says must abort even under
+// --continue-on-error. Always runs on a single goroutine (serial loop or drain), so it
+// retains sole ownership of every recipe's writers, ledgers, and manifests.
+func (d *multiDispatcher) applyOutcome(ctx context.Context, o parsedInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
+	if o.err != nil {
+		// Read/parse failure is INPUT-level: it affects every recipe's view of this
+		// file. Record it per recipe; honor continue-on-error.
+		for _, st := range states {
+			st.recordInputFailure(o.file, o.logical, o.err)
+		}
+		if !shared.ContinueOnError {
+			return fmt.Errorf("failed to process file %s: %w", o.logical, o.err)
+		}
+		return nil
+	}
+	for _, st := range states {
+		// Extraction/applicability/signature/output failure is RECIPE-level: isolated
+		// to that recipe, never aborting the others for this file. dispatchParsedFile
+		// records recoverable per-input failures internally and returns nil under
+		// --continue-on-error; a non-nil error is therefore either a fail-fast failure
+		// OR a terminal output/sink/ledger failure that ADR-0009 says must abort even
+		// under --continue-on-error (never silently suppressed).
+		if rerr := st.dispatchParsedFile(ctx, o.file, o.logical, o.ordinal, o.doc); rerr != nil {
+			if !shared.ContinueOnError || isTerminalDispatchError(rerr) {
+				return rerr
+			}
+		}
+	}
+	return nil
+}
+
+// processInputsConcurrent parses the input set across ParseWorkers workers and drains
+// the outcomes in strict input-ordinal order. Workers ONLY read+parse (no shared
+// recipe/writer state); the single drain runs applyOutcome, so all the SUM-063
+// integrity invariants (per-input barrier, deterministic emit order, per-shard digests,
+// manifest accounting) are preserved unchanged. A bounded look-ahead window caps
+// scheduled-but-not-drained inputs so a slow early input cannot let later workers buffer
+// unboundedly (head-of-line) — backpressure blocks the feeder until the drain advances.
+func (d *multiDispatcher) processInputsConcurrent(parent context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
+	workers := shared.ParseWorkers
+	// Scheduled-but-not-drained inputs are bounded to window: one slot is acquired
+	// per scheduled input and released only after the drain has consumed (and freed)
+	// that input's parsed document. The in-flight memory bound is therefore
+	// window × (largest single input's parsed document) — independent of input count.
+	window := workers * 2
+
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	workChan := make(chan int)
+	resultChan := make(chan parsedInputOutcome, window)
+	slots := make(chan struct{}, window)
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range workChan {
+				o := parsedInputOutcome{idx: idx, ordinal: idx + 1, file: files[idx], logical: logicalIdentity(files[idx], logicalByLocal)}
+				o.doc, o.err = d.parseInputContained(files[idx], shared.AllowLargeFiles)
+				select {
+				case resultChan <- o:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Feeder: acquire a window slot then schedule the next input. Both selects honor
+	// cancellation so a fail-fast drain never leaves the feeder blocked.
+	go func() {
+		defer close(workChan)
+		for idx := range files {
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case workChan <- idx:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Drain: consume outcomes, reorder into strict ordinal order, and apply each input
+	// exactly once in order. Out-of-order outcomes wait in pending (bounded by window).
+	pending := make(map[int]parsedInputOutcome, window)
+	next := 0
+	var runErr error
+	for next < len(files) {
+		o, ok := <-resultChan
+		if !ok {
+			break
+		}
+		pending[o.idx] = o
+		for {
+			cur, ready := pending[next]
+			if !ready {
+				break
+			}
+			delete(pending, next)
+			if err := d.applyOutcome(ctx, cur, states, shared); err != nil {
+				runErr = err
+				break
+			}
+			next++
+			<-slots // release the drained input's window slot so the feeder advances
+		}
+		if runErr != nil {
+			break
+		}
+	}
+
+	// Stop the world: cancel unblocks the feeder and any worker blocked on send, then
+	// wait for every goroutine to exit before returning (no leaked goroutines, no
+	// further parsing). Workers select on ctx.Done(), so they need no further drain.
+	cancel()
+	wg.Wait()
+	return runErr
+}
+
+// parseInputContained parses one input for a concurrent worker, recovering a panic into
+// an input-level error so a single malformed/pathological input cannot crash the whole
+// invocation or corrupt the shared drain. The serial path intentionally does NOT recover
+// (default behavior is byte-identical to pre-SUM-066); containment is a concurrency
+// concern only.
+func (d *multiDispatcher) parseInputContained(filePath string, allowLargeFiles bool) (node *xmlquery.Node, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			node = nil
+			err = fmt.Errorf("panic while parsing input: %v", r)
+		}
+	}()
+	return d.parseFile(filePath, allowLargeFiles)
 }
 
 func recipeManifestPath(workspace string) string {

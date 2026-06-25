@@ -102,7 +102,11 @@ emitted envelope as per-input output. Key properties:
   the spans locate coverage rather than partition the inputs.
 
 **Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
-rejected), **serial**, and requires `--output-path` and a manifest.
+rejected), and requires `--output-path` and a manifest. The aggregate **writer** is a
+single serial, deterministic streamed sink (records are emitted in input-ordinal order,
+one ordered drain owns every durable write) — that ordering is the load-bearing contract
+and is never parallelized. The **parse** step, however, can be parallelized within one
+`extract-multi` invocation; see [`--parse-workers`](#parallel-parsing-with---parse-workers).
 
 **`--continue-on-error` and `min_occurrences` floors.** Both are supported for **local
 and cloud** aggregate output via a per-input barrier. Each input's records are buffered and
@@ -250,6 +254,20 @@ sumpter recipes run extract-multi \
 Failure handling follows the input-vs-recipe boundary: a read/parse/acquire failure is **input-level** (it affects every recipe's view of that file), while an applicability, signature, extraction, `min_occurrences`, or output failure is **recipe-level** — isolated to that recipe and recorded in its own `failures.json` (under `--continue-on-error`) without aborting the others.
 
 **Scope (v0).** `extract-multi` writes **JSON/NDJSON** output only; a recipe declaring another format (e.g. Parquet) is rejected — run it with single-recipe `recipes run extract` instead. The large-file **streaming** path is not supported: each file is parsed once into memory, so a file large enough to route to streaming is rejected (`--allow-large-files` does not relax this). Cross-recipe joins, ordering, and combined-record assembly are out of scope — the pass amortizes the read + parse, nothing more.
+
+#### Parallel parsing with `--parse-workers`
+
+Once the per-recipe re-parse is amortized, the remaining per-invocation cost at high file counts is the **parse itself**, which is single-threaded by default — one `extract-multi` invocation pins roughly one core regardless of how many inputs it has. `--parse-workers N` parses the shared input set across **N workers within the single invocation** and fans the parsed inputs into the same ordered writer, so a large batch can scale toward the available cores / the parse-I/O ceiling instead of running single-file.
+
+```bash
+sumpter recipes run extract-multi \
+  ./recipes/summary ./recipes/line-items \
+  --file-list ./inputs.txt \
+  --output-path ./out \
+  --parse-workers 8
+```
+
+The concurrency is in the **parse only** — extraction, writing, the per-input spool barrier, manifest accounting, and shard rolling stay on a single ordered drain. Output is therefore **identical** to a single-worker run: records emit in resolved input order (`--file-list`/`--files` order, or sorted `--input-path` discovery order) regardless of which worker parsed which input, with the same per-invocation provenance manifest and the same per-input/per-recipe failure attribution. The default is `1` (serial, byte-identical to earlier releases); a value below `1` is rejected. Pick a worker count near your core count for a large batch; small batches see little benefit. In this release `--parse-workers > 1` is supported for **local** aggregate and per-input output; combine it with a cloud (`s3://`) destination by leaving `--parse-workers` at `1` for now.
 
 #### Worked example: three projections in one pass
 

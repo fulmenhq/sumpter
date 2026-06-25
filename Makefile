@@ -273,6 +273,7 @@ test-race-parallel: ## Race gate (-race -count=1) on parallel-extract + index pa
 	$(GOTEST) -race -count=1 ./internal/extract/parallel/... ./internal/index/...
 	$(GOTEST) -race -count=1 ./internal/extract/ -run 'TestCloneRecordMatchGivesPerHolderXPathState'
 	$(GOTEST) -race -count=1 ./cmd/sumpter/commands -run 'TestRunExtractManifestRecordsEffectiveParallelFormat'
+	$(GOTEST) -race -count=3 ./cmd/sumpter/commands -run 'TestExtractMulti_ParseWorkers'
 	@echo "$(GREEN)Race gate passed$(NC)"
 # Scoped to -count=1 by design: the separate, pre-existing -count>1 command
 # global-state test pollution is NOT part of this gate (see race-fix).
