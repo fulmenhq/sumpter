@@ -104,20 +104,18 @@ emitted envelope as per-input output. Key properties:
 **Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
 rejected), **serial**, and requires `--output-path` and a manifest.
 
-**`--continue-on-error` and `min_occurrences` floors (local).** Both are supported for
-**local** aggregate output via a per-input barrier. Each input's records are buffered and
+**`--continue-on-error` and `min_occurrences` floors.** Both are supported for **local
+and cloud** aggregate output via a per-input barrier. Each input's records are buffered and
 only flushed into the shared shard once the input extracts cleanly **and** meets its
 `match_selectors[].min_occurrences` floors, so a failed or floor-missing input's rows are
-discarded before they ever reach the shard — the shared shard only ever holds whole,
-qualifying inputs. A failed input is recorded in `failures.json` and the manifest
-(disposition `failed`, `record_count` 0), and the run exits with a partial-failure error.
-Memory stays bounded by the largest single input's records (independent of input count).
-Without `--continue-on-error` aggregate is **fail-fast**: any input failure (or floor
-miss) aborts the whole run, leaving no partial **local** output. For **cloud** (`s3://`)
-aggregate output, neither `--continue-on-error` nor `min_occurrences` floors are supported
-yet — cloud shards publish incrementally and cannot retract a failed or floor-missing
-input's already-published rows, so both are deferred to a follow-up. Run such recipes to a
-local destination.
+discarded before they ever reach (or, for cloud, are published to) the shard — the shared
+shard only ever holds whole, qualifying inputs. A failed input is recorded in
+`failures.json` and the manifest (disposition `failed`, `record_count` 0), and the run
+exits with a partial-failure error. Memory stays bounded by the largest single input's
+records (independent of input count). Without `--continue-on-error` aggregate is
+**fail-fast**: any input failure (or floor miss) aborts the whole run, leaving no partial
+**local** output (for cloud, already-published shards are recorded `incomplete: true`; see
+below).
 
 **Cloud (`s3://`) output.** Aggregate publishes each shard and the sidecar manifest to
 the object store through the same credential-handle write boundary as per-input cloud
@@ -125,10 +123,45 @@ output. Because each shard is one object subject to the single-PUT size limit (5
 cloud aggregate run **requires `--aggregate-max-bytes`** at or below that limit and
 rejects an uncapped or over-limit run **before any input is read**, so shards roll
 proactively rather than failing a multi-gigabyte upload. Cloud shards publish
-**incrementally** (each is a separate, atomic PUT) and cannot be un-published, so if a run
-fails after some shards are already uploaded the manifest is written with
-`incomplete: true` recording the committed shards — a manifest carrying that flag denotes
-a **failed** run whose listed objects are discoverable for cleanup or idempotent rerun.
+**incrementally** (each is a separate, atomic PUT) and cannot be un-published. A
+**terminal output failure** (a shard PUT or finalize error — fatal even under
+`--continue-on-error`, per ADR-0009) after some shards are already uploaded writes the
+manifest with `incomplete: true` recording the committed shards — a manifest carrying that
+flag denotes a **failed** run whose listed objects are discoverable for cleanup or
+idempotent rerun. A run that **completes** with some inputs failed under
+`--continue-on-error` is different: it writes a **normal** manifest (no `incomplete` flag)
+plus `failures.json`, because the published shards hold only the successful inputs' rows.
+`incomplete: true` therefore means "hard output failure / possible orphans", **not** "some
+inputs failed" — see the completeness contract below.
+
+### Knowing a multi-input run completed — and not silently dropping inputs
+
+A common aggregate use case is a single operation over **many small inputs** (dozens to
+hundreds). Use these signals to verify every input was applied, in order of authority:
+
+1. **Exit code — authoritative.** A zero exit means **every resolved input was applied**
+   (no failures, no hard error). Any non-zero exit means inspect further. The simplest,
+   safest pipeline gate is `sumpter … || handle_failure` — never assume success without
+   checking it.
+2. **Fail-fast (the default) is the never-silently-drop mode.** Without
+   `--continue-on-error`, the first input failure (or floor miss) aborts the whole run and
+   exits non-zero — there is **no partial local output**, so you cannot accidentally
+   consume a short dataset. Use the default when completeness is non-negotiable.
+3. **`--continue-on-error` is an explicit opt-in to drop-tolerance**, and it moves the
+   completeness burden to you. The run still exits non-zero if anything failed;
+   `failures.json` enumerates **every** dropped input (path + reason); and the manifest
+   `inputs[]` inventory is **gap-free** — every resolved input ordinal appears exactly once
+   with a `disposition` (`applied` / `failed`) and a `record_count`. A pipeline can assert
+   completeness positively: `len(inputs)` equals the expected count and no input has
+   `disposition: failed`.
+4. **`incomplete: true` is not the completeness signal.** It flags a hard output failure
+   with possibly-orphaned cloud objects (R8), a different condition from "some inputs
+   failed". Do not gate completeness on this flag alone.
+
+> A first-class manifest completeness summary (e.g. a `status` field or
+> `inputs_applied` / `inputs_failed` counts) is planned for the durable data-artifact
+> contract so a consumer can check a single field; until then, use the exit code plus the
+> `inputs[]` inventory above.
 
 **With `extract-multi`.** `--output-mode aggregate` applies to
 [`recipes run extract-multi`](#run-multiple-recipes-in-one-pass-extract-multi) too: each

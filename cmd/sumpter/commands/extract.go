@@ -185,7 +185,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symbolic links")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 1, "Number of parallel workers")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview operation without execution")
-	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue processing sibling files after recoverable per-file failures; requires --output-path")
+	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file failures instead of aborting; the run still exits non-zero and lists every dropped input in failures.json — reconcile it so inputs are not silently dropped. Requires --output-path")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "json", "Output format")
 	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Output formats (comma-separated or repeatable; json/ndjson/parquet)")
@@ -536,12 +536,9 @@ func runExtract(opts *ExtractOptions) error {
 		// match_selectors[].min_occurrences floors are enforced per input at input
 		// completion (ADR-0007), before the input's buffered rows are flushed into the
 		// shared shard, so a floor miss discards the input's rows rather than publishing
-		// output that should have failed. See runAggregateJSONStreamingExtraction. This
-		// holds for LOCAL only; cloud floors are rejected (they would publish before the
-		// floor is evaluated).
-		if err := rejectCloudAggregateFloors(opts, extCfg); err != nil {
-			return err
-		}
+		// output that should have failed. When floors are declared (or --continue-on-error
+		// is set) the writer buffers per input, so this holds for cloud too — a discarded
+		// input is never published. See runAggregateJSONStreamingExtraction.
 		return runAggregateJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 

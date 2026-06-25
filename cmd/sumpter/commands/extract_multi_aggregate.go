@@ -15,11 +15,11 @@ import (
 // validateAggregateMulti enforces the aggregate-mode contract for every recipe in
 // an extract-multi pass, before any output session opens. Each recipe inherits the
 // same single-recipe plan-time guardrails (json/ndjson + --output-path + manifest,
-// no record-index, non-negative caps; cloud requires a byte cap and rejects
-// --continue-on-error). Local --continue-on-error and match_selectors[].min_occurrences
-// floors are both supported via the writer's per-input spool barrier (a floor miss is
-// enforced at input completion and the buffered rows are discarded before the shared
-// shard changes).
+// no record-index, non-negative caps; cloud requires a byte cap). --continue-on-error
+// and match_selectors[].min_occurrences floors are supported on both local and cloud
+// destinations via the writer's per-input spool barrier (a failed or floor-missing input
+// is discarded at input completion, before its rows are flushed/published to the shared
+// shard).
 func validateAggregateMulti(shared *multiSharedOptions, plans []*RecipePlan) error {
 	if shared == nil {
 		return nil
@@ -36,12 +36,6 @@ func validateAggregateMulti(shared *multiSharedOptions, plans []*RecipePlan) err
 		// the real per-input/empty mode with no caps.
 		if verr := validateAggregateOptions(plan.opts, formats); verr != nil {
 			return fmt.Errorf("recipe %q: %w", plan.RecipeID, verr)
-		}
-		// Cloud aggregate floors are rejected (local floors are supported via the
-		// per-input barrier; cloud would publish a floor-missing input's rows before the
-		// floor is evaluated — deferred to the cloud-continue follow-up).
-		if ferr := rejectCloudAggregateFloors(plan.opts, plan.extCfg); ferr != nil {
-			return fmt.Errorf("recipe %q: %w", plan.RecipeID, ferr)
 		}
 	}
 	return nil
