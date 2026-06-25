@@ -171,6 +171,78 @@ func TestMotoAggregateCloudContinuePublishFailureStillFatal(t *testing.T) {
 	assertStagingCleanedUp(t, home)
 }
 
+// TestMotoAggregateCloudContinueSidecarPublishFailureIsFatal pins the devrev finding: a
+// terminal output failure AFTER shards are committed but BEFORE the normal manifest — here
+// a failures.json PUT failure on a cloud --continue-on-error run — must still be fatal and
+// leave the committed shards discoverable via an incomplete:true (R8) manifest, never
+// orphaned without any manifest. A reverse proxy fails only the failures.json PUT.
+func TestMotoAggregateCloudContinueSidecarPublishFailureIsFatal(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	dir := createExtractManifestFixture(t)
+	a := filepath.Join(dir, "in-a.xml")
+	b := filepath.Join(dir, "in-b.xml")
+	c := filepath.Join(dir, "in-c.xml")
+	mustWriteFile(t, a, `<root><item><name>valA</name></item></root>`)
+	mustWriteFile(t, b, `<root><item><name>valB`) // malformed → input failure → failures.json
+	mustWriteFile(t, c, `<root><item><name>valC</name></item></root>`)
+
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+
+	upstream, err := url.Parse(m.endpoint)
+	if err != nil {
+		t.Fatalf("parse endpoint: %v", err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(upstream)
+	var failFired atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "failures.json") {
+			failFired.Store(true)
+			http.Error(w, "injected failures.json publish failure", http.StatusInternalServerError)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	viaProxy := m
+	viaProxy.endpoint = srv.URL
+	credPath := viaProxy.writeCredentialsConfig(t, dir)
+
+	prefix := runKeyPrefix() + "agg-coe-sidecar/"
+	outURI := "s3://" + m.bucket + "/" + prefix
+
+	opts := cloudOutputExtractOptions(dir, outURI, credPath, "json")
+	opts.Files = strings.Join([]string{a, b, c}, ",")
+	opts.OutputMode = "aggregate"
+	opts.AggregateMaxBytes = 1 << 20
+	opts.ContinueOnError = true
+
+	if err := runExtract(opts); err == nil {
+		t.Fatal("a failures.json publish failure must be fatal, got nil")
+	}
+	if !failFired.Load() {
+		t.Fatal("the injected failures.json PUT never fired; test did not exercise the sidecar failure")
+	}
+	// The committed shards must be discoverable via an incomplete:true manifest (R8) —
+	// not left without any manifest. The manifest PUT itself is allowed through the proxy.
+	manData, ok := m.getObject(t, prefix+"manifest.json")
+	if !ok {
+		t.Fatal("no manifest published after the sidecar failure — committed shards are orphaned")
+	}
+	var man provenance.Manifest
+	if err := json.Unmarshal(manData, &man); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if !man.Incomplete {
+		t.Error("manifest is not incomplete:true after a terminal sidecar publish failure")
+	}
+	if len(man.AggregateOutputs) == 0 {
+		t.Error("incomplete manifest lists no committed shards")
+	}
+	assertStagingCleanedUp(t, home)
+}
+
 // TestMotoAggregateCloudFloorMissDiscarded pins cloud min_occurrences floors (4b): a
 // floored cloud aggregate run with --continue-on-error discards a floor-missing input
 // (its rows never PUT) while publishing the inputs that meet the floor, with a normal

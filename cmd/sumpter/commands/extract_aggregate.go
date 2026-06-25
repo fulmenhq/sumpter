@@ -475,15 +475,19 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	countsByRecordType := make(map[string]int)
 	dispositionSummary := newDispositionSummary(len(ordered))
 	failureManifest := newExtractFailureManifest(len(ordered))
-	committed := false
+	// manifestFinalized is set only after the run's shards AND its normal manifest +
+	// sidecars are durably written (see end of function). Until then, any terminal output
+	// failure — including one AFTER shards are committed but BEFORE the manifest is written
+	// — must fall through to the incomplete:true (R8) path below, so committed cloud
+	// objects are never left undiscoverable.
+	manifestFinalized := false
 
 	// On a genuine failure: drop un-published staging, and — if a cloud run already
 	// published shards — write an incomplete (R8) manifest recording those committed
-	// objects so the orphans are discoverable. A run that reached commit (success, or
-	// a continue-on-error partial) keeps its output: commit renamed the staging away,
-	// so abort would be a no-op anyway, but the committed guard makes that explicit.
+	// objects so the orphans are discoverable. A fully-finalized run (success, or a
+	// continue-on-error partial that wrote its normal manifest) keeps its output.
 	defer func() {
-		if err == nil || committed {
+		if err == nil || manifestFinalized {
 			return
 		}
 		if c := writer.committedShards(); writer.cloud && len(c) > 0 {
@@ -594,7 +598,6 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	if cerr := writer.commit(len(ordered)); cerr != nil {
 		return cerr
 	}
-	committed = true
 
 	// Under --continue-on-error, record which inputs failed so the partial run is
 	// auditable (mirrors per-input mode's failures.json + non-zero exit).
@@ -624,6 +627,13 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		return err
 	}
 	logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+
+	// Only now is the run fully finalized: shards committed AND the normal manifest +
+	// sidecars durably written. Setting the guard here (not right after shard commit)
+	// means a terminal output failure between shard PUT and the normal manifest — e.g. a
+	// failures.json or manifest publish error on a cloud run — still triggers the deferred
+	// incomplete:true (R8) path, so committed shards are never left without a manifest.
+	manifestFinalized = true
 
 	// A continue-on-error run that committed its successful inputs still signals partial
 	// failure (non-zero exit) so callers do not treat it as a clean run.
