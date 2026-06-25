@@ -51,6 +51,10 @@ make pr-final                 # full PR-finalization gate (incl. drift check)
 
 The `make pr-final` gate includes a **drift check**: if the gate mutates any tracked file (most commonly via `go mod tidy` writing back to `go.mod` / `go.sum`), it fails and asks you to land those mutations as a separate PR before requesting review on the current one. Running `pr-final` on a ready PR should always be a no-op.
 
+### Reviewing changes locally
+
+You usually don't need to check a branch out to review it — `gh pr diff <n>` or `git diff origin/main...origin/<branch>` is enough. When you do need to build or run a branch, prefer a temporary `git worktree` in a sibling path and remove it afterward, rather than checking the branch out in your working tree (which disrupts work in progress and parks the tree on the wrong branch). See the [Repository Operations SOP](docs/sop/repository-operations-sop.md), "Reviewing a Pull Request Locally."
+
 ## Code quality
 
 - **Tests**: Include unit and/or integration tests where practical. New CLI surface needs a corresponding test under the same package.

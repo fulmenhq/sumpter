@@ -6,6 +6,40 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.2.3 (2026-06-25)
+
+**Aggregate output: stream one NDJSON file per recipe across many inputs — local and cloud — with deterministic ordering, rolling shards, and per-shard provenance; plus a schema-backed record envelope and a whole-tree format gate.**
+
+v0.2.3 is a feature minor driven by dogfooding of large many-small-input extraction runs. The headline is **aggregate output**: instead of one output file per input, a run can stream **one** NDJSON file per recipe per invocation, turning per-input file fan-out into a single streamed write — with deterministic record ordering, rolling shards, and per-shard provenance digests, for both local and `s3://` destinations. Around it, the emitted **record envelope** is now schema-backed, `extract-multi` gains the full `--file-list` / `--files` / `--input-path` input set with deterministic aggregate ordering, and a one-time whole-tree format normalization plus a full-tree format gate stop documentation/config drift from silently re-accumulating. The v0.2.0–0.2.2 surface (cloud I/O, reference-table lookup, multi-recipe single-pass extract) is unchanged.
+
+### What's new (summary)
+
+- **Aggregate output mode (`aggregate-output`)** - `--output-mode aggregate` streams all of a recipe's records into a **single** NDJSON file per invocation instead of one file per input. Records emit in **input order × intra-input `record_num`** (deterministic for a fixed input subset); `--aggregate-max-records` / `--aggregate-max-bytes` roll the stream into sequential shards proactively. The provenance manifest is authoritative (not filename parsing): a gap-free `inputs[]` inventory plus a per-shard `aggregate_outputs[]` entry (shard `sha256`, `record_count`, contributing input-ordinal span). `--continue-on-error` and recipe `min_occurrences` floors work for **both local and cloud** via a per-input spool barrier — an input commits to the shard only on success, so a failed/floor-missing input never contributes partial records. Cloud aggregate publishes each shard via the existing single-PUT boundary, **requires `--aggregate-max-bytes` ≤ 5 GiB**, and on partial publish marks the manifest `incomplete:true` enumerating the committed shards. Applies per-recipe under `extract-multi`. See [`docs/extract-workflow.md`](docs/extract-workflow.md) "Aggregate output mode."
+- **Batch input selection on `extract-multi` (`--file-list` / `--files` / `--input-path`)** - `extract-multi` accepts the same mutually-exclusive input set as single-recipe `extract`. `--file-list` is the batch input for large or precisely-scoped sets (no directory walk, no argv ceiling, listed order preserved). For aggregate runs the order is load-bearing — **aggregate ordinals are assigned in `--file-list` / `--files` order** — so output ordering is operator-controlled and reproducible.
+- **Schema-backed record envelope (`record-envelope`)** - a Draft 2020-12 JSON Schema validates one emitted NDJSON row (closed top-level envelope over an open, additively-extensible `_runtime`/payload), and each row self-identifies via the additive `_runtime.envelope_schema = "extract-record-envelope/v0"`. A build-time meta-validation target (wired into `make check-all`) and a live-row round-trip test keep the schema honest. Contract-independent: schematizes existing output, no behavior change.
+
+### Behavior changes (please review before upgrading)
+
+- **All-additive.** `--output-mode aggregate` and the aggregate cap flags are opt-in; the default remains one output file per input, byte-for-byte as in 0.2.2. The record-envelope schema describes existing output (the new `_runtime.envelope_schema` field is additive). The format sweep touches only whitespace/EOF, not content.
+- **Aggregate is NDJSON-only**; JSON-array and Parquet outputs continue to write per-input files. Cloud aggregate requires `--aggregate-max-bytes` ≤ 5 GiB.
+- **Provenance sidecar (`sumpter.provenance/v1`)** gains an additive `aggregate_outputs[]` block and a gap-free `inputs[]` inventory on aggregate runs; existing manifests remain valid.
+
+### Deferred / follow-ups
+
+- **An aggregate-output performance follow-on**, the **`json` / `ndjson` naming** clarification, and a **manifest-completeness signal** are sequenced for later (v0.2.4 / a separate follow-up).
+- **Optional runtime envelope validation** (a `--validate-output` mode and the full validation ladder) is deferred to the v0.3.0 data-artifact-contract work.
+- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, DuckDB/Arrow, service health endpoints, and repair modes** remain roadmap items.
+
+### Release notes
+
+- `VERSION` is `0.2.3`. Binaries from this tag emit `v0.2.3` via `sumpter version`.
+- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.3` is the intended tag/version sanity check.
+- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
+
+See [`docs/releases/v0.2.3.md`](docs/releases/v0.2.3.md) for the full release narrative.
+
+---
+
 ## v0.2.2 (2026-06-23)
 
 **Multi-recipe throughput: apply many extract recipes to one input set in a single parse-once pass, plus the run-level parameters and derive-only capture fields that make it adoptable.**
@@ -67,38 +101,3 @@ v0.2.1 is a focused patch off real-world v0.2.0 dogfood feedback. It carries two
 - The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
 
 See [`docs/releases/v0.2.1.md`](docs/releases/v0.2.1.md) for the full release narrative.
-
----
-
-## v0.2.0 (2026-06-18)
-
-**S3-compatible cloud I/O, external reference-table lookup, list-typed recipe parameters, and a parallel-extract correctness fix.**
-
-v0.2.0 is the first minor release after the 0.1.x line. It makes S3-compatible cloud I/O first-class across the engine, adds external reference-table lookups and list-typed recipe parameters for richer recipe-driven classification and enrichment, and fixes a parallel-extraction data race — backed by a new race-detector gate in CI. The cloud URI read/write thread deferred since v0.1.8 lands here.
-
-### What's new (summary)
-
-- **Cloud URI I/O (S3-compatible)** - `s3://` sources and outputs (and the provenance sidecar) across `extract`, `index`, recipe runs, and `inspect`, using named credential handles (references, never secrets). Includes parallel/record-index cloud sources, anonymous public-bucket reads (read-only), a truly-dry `--dry-run` (no acquire/stage), and classify+redact of cloud-I/O errors at a single seam. Provenance records the logical source/destination and handle name only.
-- **External reference-table lookup** - recipes load reference tables once per run and query them with the `in_reference` (membership) and `lookup_reference` (key→value) DSL functions, from a contained local path or an `s3://` object; CSV/TSV/NDJSON, `max_rows`/`max_bytes` caps, with local-path containment, a cloud pre-read size cap, config-validation pre-flight, and sidecar-only provenance (no row values).
-- **List-typed recipe parameters** - parameters may be lists of strings with the `starts_with_any`, `value_in`, and `string_length` predicates; a `--parameter key='["a","b"]'` override supplies a list without a recipe edit.
-- **Scoped race-detector CI gate** - `make test-race-parallel` is wired into CI over the parallel-extract and index packages plus the canonical repro.
-
-### Behavior changes (please review before upgrading)
-
-- **Cloud I/O is opt-in and back-compatible.** A run that references no `s3://` URI does no credential or network work; local/bare paths behave byte-for-byte as before.
-- **Parallel-extract data races fixed** (detached index-header snapshot + per-worker XPath plans); no output/provenance behavior change, no hot-path locks.
-- **Provenance sidecar schema (`sumpter.provenance/v1`)** gained an additive `reference_tables` block; existing manifests remain valid.
-- **No output-format changes** to existing local extraction/index paths.
-
-### Deferred
-
-- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, and >5 GiB multipart cloud output** remain follow-on work (an unsupported URI returns an actionable error today).
-- **DuckDB, Arrow, service health endpoints, Prometheus metrics, adaptive backpressure, and repair modes** remain roadmap items.
-
-### Release notes
-
-- `VERSION` is `0.2.0`. Binaries from this tag emit `v0.2.0` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.0` is the intended tag/version sanity check.
-- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
-
-See [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md) for the full release narrative.
