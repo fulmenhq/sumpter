@@ -169,8 +169,8 @@ recipe gets its **own** aggregate writer and shard sequence under its
 `<output-path>/<recipe-id>/` directory (`records.jsonl` / `records-00001.jsonl…` +
 `manifest.json`). Per-recipe isolation is unchanged — one writer per recipe, never shared
 — and the shared input set is still parsed once. The same contract is enforced per recipe
-across the pass: fail-fast by default, or local `--continue-on-error` where each recipe
-discards a failed input's buffered rows and records it in its own `failures.json`.
+across the pass: fail-fast by default, or `--continue-on-error` (local and cloud) where each
+recipe discards a failed input's buffered rows and records it in its own `failures.json`.
 
 ## Recipe Controls
 
