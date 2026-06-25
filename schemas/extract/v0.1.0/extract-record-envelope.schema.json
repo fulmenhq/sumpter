@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sumpter.fulmenhq.dev/extract/v0.1.0/extract-record-envelope.schema.json",
+  "title": "Sumpter Extract Record Envelope",
+  "description": "Validates one emitted extract record row (a single NDJSON line in records.jsonl). The envelope wraps the recipe-owned payload (extract.data) with runtime provenance (_runtime) and optional validation/summary blocks. The structural envelope (top-level keys, the extract block) is sumpter-owned and closed; the payload (extract.data), summaries, validation report, and _runtime provenance set are additively extensible. Rows self-identify via _runtime.envelope_schema so future contract mappings stay additive.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_runtime",
+    "extract"
+  ],
+  "properties": {
+    "_runtime": {
+      "type": "object",
+      "description": "Runtime provenance attached to every record. The required set is the always-emitted minimum; provenance fields are added when available and the object stays open for additive growth.",
+      "additionalProperties": true,
+      "required": [
+        "envelope_schema",
+        "generated_at",
+        "source_file",
+        "record_type"
+      ],
+      "properties": {
+        "envelope_schema": {
+          "description": "Self-identifying envelope contract id. Major-only so additive minor schema revisions do not churn the per-row value.",
+          "type": "string",
+          "const": "extract-record-envelope/v0"
+        },
+        "generated_at": {
+          "description": "Record emission timestamp (RFC 3339, UTC).",
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_file": {
+          "description": "Logical source identity (bare path, file:// URI, or s3:// URI) of the input that produced this record.",
+          "type": "string",
+          "minLength": 1
+        },
+        "record_type": {
+          "description": "Recipe-declared record type for this stream.",
+          "type": "string"
+        },
+        "summaries_included": {
+          "type": "boolean"
+        },
+        "validation_included": {
+          "type": "boolean"
+        },
+        "record_num": {
+          "description": "1-based pre-filter position of this record in its source document. Emitted only when the extraction path assigns it.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "signature_id": {
+          "type": "string"
+        },
+        "signature_name": {
+          "type": "string"
+        },
+        "validation_enabled": {
+          "type": "boolean"
+        },
+        "validation_array_path": {
+          "type": "string"
+        },
+        "validation_record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "sumpter_version": {
+          "type": "string"
+        },
+        "recipe_version": {
+          "type": "string"
+        },
+        "recipe_content_hash": {
+          "type": "string"
+        }
+      }
+    },
+    "_validation": {
+      "type": "object",
+      "description": "Optional validation report. Present only when validation metadata is enabled and surfaced. Shape is validation-owned and intentionally open here.",
+      "additionalProperties": true
+    },
+    "extract": {
+      "type": "object",
+      "description": "The sumpter-owned extract block: the recipe payload plus optional summaries.",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "description": "Recipe-owned extracted payload. Open by default; a strict mode (out of scope here) may validate it against the recipe output_schema.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "summary": {
+          "description": "Optional recipe-declared summaries for this record.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}
