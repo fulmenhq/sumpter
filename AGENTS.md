@@ -66,8 +66,8 @@ This section is the canonical source of truth;
 
 **Reviewing a branch (worktree hygiene):**
 
-- ✅ Prefer inspecting a PR without checkout (`gh pr diff`, `git diff
-origin/main...origin/<branch>`).
+- ✅ Prefer inspecting a PR without checkout — `gh pr diff` or
+  `git diff origin/main...origin/<branch>`.
 - ✅ If you must check out a branch to build/run/test it, create a **temporary
   `git worktree`** in a sibling path and remove it when done — never check out a
   PR branch in your existing/shared working tree (it disrupts work in progress
