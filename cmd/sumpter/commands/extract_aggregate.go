@@ -65,15 +65,14 @@ func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) erro
 	if opts.NoManifest {
 		return fmt.Errorf("--output-mode aggregate cannot be combined with --no-manifest: the input-set provenance manifest is required to keep consolidated output traceable")
 	}
-	if opts.ContinueOnError {
-		// A per-input failure can occur AFTER some of that input's records have already
-		// been streamed into the shared shard, and the streamed writer cannot retract
-		// them — so continuing would commit failed-input rows while manifesting the
-		// input as record_count: 0, breaking the shard == Σ per-input invariant. v0
-		// fails the whole run on any input failure instead. Safe per-input continue
-		// needs a transactional barrier (per-input spool/truncate/hash rollback) — a
-		// later slice.
-		return fmt.Errorf("--output-mode aggregate does not support --continue-on-error in this version: a per-input failure cannot retract rows already streamed into the shared shard, so a failed input would publish rows with contradictory provenance; run without --continue-on-error (any input failure aborts the whole aggregate run) or use the default per-input output mode")
+	if opts.ContinueOnError && referenceIsCloud(opts.OutputPath) {
+		// Local continue-on-error is safe via the per-input spool barrier (a failed
+		// input's records are buffered and discarded before they ever reach the shared
+		// shard — see aggregateWriter.buffering). Cloud is held back one slice: each
+		// shard publishes incrementally, so continue-on-error interacts with R8
+		// partial-publish auditability and warrants its own focused review. Reject it
+		// here rather than silently stream a failed input toward a published object.
+		return fmt.Errorf("--output-mode aggregate to a cloud (s3://) destination does not support --continue-on-error in this version: cloud shards publish incrementally, so a failed input's auditability interacts with partial-publish (R8); run without --continue-on-error (any input failure aborts the whole aggregate run), or use a local destination where per-input continue-on-error is supported")
 	}
 	for _, f := range outputFormats {
 		if f != recipesmanifest.OutputFormatJSON && f != recipesmanifest.OutputFormatNDJSON {
@@ -101,6 +100,23 @@ func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) erro
 		if opts.AggregateMaxBytes > uriio.MaxSinglePutBytes {
 			return fmt.Errorf("--aggregate-max-bytes %d exceeds the cloud single-PUT limit of %d bytes (5 GiB); each aggregate shard is one object and must stay at or below it", opts.AggregateMaxBytes, uriio.MaxSinglePutBytes)
 		}
+	}
+	return nil
+}
+
+// rejectCloudAggregateFloors rejects match_selectors[].min_occurrences floors for a
+// CLOUD aggregate destination. Local aggregate enforces floors safely — a miss discards
+// the per-input buffer (continue-on-error) or the all-or-nothing local commit drops
+// every staged shard (fail-fast), so a floor-missing input's rows never become published
+// output. Cloud is different: shards publish incrementally and cannot be un-published, so
+// a mid-input shard roll could PUT a floor-missing input's rows before the floor is
+// evaluated (ADR-0007). The per-input spool barrier only engages under --continue-on-error
+// (rejected for cloud), so cloud floors take the unprotected direct-stream path. Defer
+// cloud floors to the cloud-continue follow-up where the same incremental-publish /
+// can't-retract interaction is reviewed.
+func rejectCloudAggregateFloors(opts *ExtractOptions, extCfg *extract.ExtractRecordMatch) error {
+	if opts != nil && referenceIsCloud(opts.OutputPath) && hasDeclaredMinOccurrences(extCfg) {
+		return fmt.Errorf("--output-mode aggregate to a cloud (s3://) destination does not support match_selectors[].min_occurrences floors in this version: cloud shards publish incrementally and cannot retract a floor-missing input's already-published rows, so the floor cannot be enforced before output is published; run floored recipes to a local destination, or remove the floor")
 	}
 	return nil
 }
@@ -141,6 +157,17 @@ type aggregateWriter struct {
 	// rename at commit). Cloud is always sharded (R7 requires a byte cap).
 	cloud bool
 
+	// buffering engages the per-input transactional barrier (continue-on-error only):
+	// records accumulate in pending instead of streaming straight to the shard, so a
+	// failed input's rows are discarded (discardInput) before they ever touch the
+	// shared shard, and a successful input is flushed atomically (commitInput). The
+	// shared shard therefore only ever receives whole, successful inputs — no
+	// committed bytes/digest/shards ever need rolling back. Bounded by one input's
+	// records (independent of input count). Off (direct streaming) by default, keeping
+	// the audited fail-fast path byte-identical.
+	buffering bool
+	pending   [][]byte
+
 	currentInputOrdinal int
 
 	// open shard state
@@ -168,6 +195,10 @@ func newAggregateWriter(opts *ExtractOptions) *aggregateWriter {
 		maxBytes:   opts.AggregateMaxBytes,
 		sharded:    opts.AggregateMaxRecords > 0 || opts.AggregateMaxBytes > 0,
 		cloud:      referenceIsCloud(opts.OutputPath),
+		// Continue-on-error needs the per-input barrier so a failed input's rows never
+		// reach the shared shard. Cloud continue-on-error is rejected at plan time
+		// (validateAggregateOptions), so buffering ∧ cloud never co-occur in this slice.
+		buffering: opts.ContinueOnError,
 	}
 }
 
@@ -285,6 +316,21 @@ func (w *aggregateWriter) OnRecord(ctx context.Context, record extract.EmittedRe
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	if w.buffering {
+		// Per-input barrier: hold the record until the input commits (flush) or fails
+		// (discard). data is a fresh allocation per call, so retaining it is safe.
+		w.pending = append(w.pending, data)
+		return nil
+	}
+	return w.writeRecordLocked(data)
+}
+
+// writeRecordLocked appends one fully-marshaled record (with trailing newline) to the
+// current shard, rolling to a new shard first if the record would push it past a
+// configured cap. The caller holds w.mu. It is the single point where bytes, digest,
+// and counters are committed to a shard — both the direct (fail-fast) path and the
+// per-input flush (commitInput) route through it.
+func (w *aggregateWriter) writeRecordLocked(data []byte) error {
 	if w.cloud && w.maxBytes > 0 && int64(len(data)) > w.maxBytes {
 		return fmt.Errorf("aggregate cloud record is %d bytes, larger than --aggregate-max-bytes %d: a single record cannot fit in a shard within the cloud single-PUT limit, so it can never be published; raise --aggregate-max-bytes (up to %d) or split the source", len(data), w.maxBytes, uriio.MaxSinglePutBytes)
 	}
@@ -319,6 +365,39 @@ func (w *aggregateWriter) OnRecord(ctx context.Context, record extract.EmittedRe
 	}
 	w.inputEnd = w.currentInputOrdinal
 	return nil
+}
+
+// beginInput starts a fresh per-input buffer. No-op when not buffering (pending stays
+// nil and commitInput/discardInput are no-ops), so the fail-fast path is unchanged.
+func (w *aggregateWriter) beginInput() {
+	w.mu.Lock()
+	w.pending = w.pending[:0]
+	w.mu.Unlock()
+}
+
+// commitInput flushes the current input's buffered records into the shared shard
+// (rolling/publishing as needed), making them part of the committed output. Called
+// only after the input extracted successfully, so the shard never receives a failed
+// input's rows. No-op when not buffering.
+func (w *aggregateWriter) commitInput() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, data := range w.pending {
+		if err := w.writeRecordLocked(data); err != nil {
+			return err
+		}
+	}
+	w.pending = w.pending[:0]
+	return nil
+}
+
+// discardInput drops the current input's buffered records so a failed input (or a
+// min_occurrences floor miss) never contributes a row to the shared shard. No-op when
+// not buffering.
+func (w *aggregateWriter) discardInput() {
+	w.mu.Lock()
+	w.pending = w.pending[:0]
+	w.mu.Unlock()
 }
 
 // OnFileBoundary is a no-op for the aggregate sink: aggregate output deliberately
@@ -408,16 +487,20 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	manifestInputs := make([]provenance.Input, 0, len(ordered))
 	countsByRecordType := make(map[string]int)
 	dispositionSummary := newDispositionSummary(len(ordered))
+	failureManifest := newExtractFailureManifest(len(ordered))
+	committed := false
 
-	// On any failure: drop un-published staging, and — if a cloud run already published
-	// shards — write an incomplete (R8) manifest recording those committed objects so
-	// the orphans are discoverable for cleanup / idempotent rerun.
+	// On a genuine failure: drop un-published staging, and — if a cloud run already
+	// published shards — write an incomplete (R8) manifest recording those committed
+	// objects so the orphans are discoverable. A run that reached commit (success, or
+	// a continue-on-error partial) keeps its output: commit renamed the staging away,
+	// so abort would be a no-op anyway, but the committed guard makes that explicit.
 	defer func() {
-		if err == nil {
+		if err == nil || committed {
 			return
 		}
-		if committed := writer.committedShards(); writer.cloud && len(committed) > 0 {
-			writeIncompleteAggregateManifest(opts, runtimeProvenance, startedAt, manifestInputs, committed, countsByRecordType, sanitizeRoots)
+		if c := writer.committedShards(); writer.cloud && len(c) > 0 {
+			writeIncompleteAggregateManifest(opts, runtimeProvenance, startedAt, manifestInputs, c, countsByRecordType, sanitizeRoots)
 		}
 		writer.abort()
 	}()
@@ -426,9 +509,19 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		ordinal := i + 1
 		logical := logicalIdentity(file, logicalByLocal)
 		writer.setCurrentInput(ordinal)
+		// Start this input's per-input buffer (no-op unless --continue-on-error). Its
+		// records stay buffered until the input commits (flush) or fails (discard), so a
+		// failed input never reaches the shared shard.
+		writer.beginInput()
 
 		externalFields, ferr := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if ferr != nil {
+			if opts.ContinueOnError {
+				writer.discardInput()
+				failResult := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", ferr), extract.DispositionReasonValidationError)
+				recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+				continue
+			}
 			return fmt.Errorf("failed to build external fields for file %s: %w", logical, ferr)
 		}
 
@@ -438,18 +531,54 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		}
 		before := writer.totalRecords
 		result := extract.ProcessFileWithApplicabilityToSink(ctx, file, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp, writer)
-		recordCount := writer.totalRecords - before
 
-		// Aggregate v0 rejects --continue-on-error (validateAggregateOptions), so any
-		// input failure aborts the whole run: already-streamed rows are discarded
-		// (writer.abort) so no failed-input rows are ever committed.
 		if result.Error != nil || result.Disposition == extract.DispositionFailed {
-			if result.Error != nil {
-				logger.Error("Failed to process file", zap.String("file", result.LogicalURI), zap.Error(result.Error))
-				return fmt.Errorf("failed to process file %s: %w", result.LogicalURI, result.Error)
+			// Drop the failed input's buffered rows so they never reach the shared shard.
+			// Fail-fast (default): return and let the deferred abort drop all staging.
+			// Continue-on-error: record the failure and move on; earlier inputs' committed
+			// rows are untouched because the failed input's rows were only ever buffered.
+			writer.discardInput()
+			if !opts.ContinueOnError {
+				if result.Error != nil {
+					logger.Error("Failed to process file", zap.String("file", result.LogicalURI), zap.Error(result.Error))
+					return fmt.Errorf("failed to process file %s: %w", result.LogicalURI, result.Error)
+				}
+				return fmt.Errorf("failed to process file %s", result.LogicalURI)
 			}
-			return fmt.Errorf("failed to process file %s", result.LogicalURI)
+			recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+			continue
 		}
+
+		// Enforce match_selectors[].min_occurrences floors at input completion (before the
+		// buffered rows are flushed): a floor miss is an input-level failure handled by the
+		// same per-input barrier — discard the buffered rows and record the input as failed,
+		// or (fail-fast) abort the run. The streamed shard never receives a floor-failing
+		// input's rows.
+		if result.Disposition != extract.DispositionNotApplicable {
+			if floorErr := enforceMinOccurrences(opts, extCfg, sigCfg, result.LogicalURI, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); floorErr != nil {
+				writer.discardInput()
+				if !opts.ContinueOnError {
+					return floorErr
+				}
+				reason := failureReasonForError(floorErr)
+				if reason == "" {
+					reason = extract.DispositionReasonMinOccurrencesViolation
+				}
+				result.Disposition = extract.DispositionFailed
+				result.DispositionReason = reason
+				result.DispositionDetail = floorErr.Error()
+				recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+				continue
+			}
+		}
+
+		// The input extracted cleanly: flush its buffered records into the shared shard
+		// (rolling/publishing as needed). recordCount is measured after the flush.
+		if cerr := writer.commitInput(); cerr != nil {
+			return cerr
+		}
+		recordCount := writer.totalRecords - before
+		failureManifest.addApplied()
 
 		if result.Disposition != "" {
 			dispositionSummary.add(result, sanitizeRoots)
@@ -478,6 +607,15 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	if cerr := writer.commit(len(ordered)); cerr != nil {
 		return cerr
 	}
+	committed = true
+
+	// Under --continue-on-error, record which inputs failed so the partial run is
+	// auditable (mirrors per-input mode's failures.json + non-zero exit).
+	if opts.ContinueOnError && failureManifest.Failed > 0 {
+		if werr := writeExtractFailureManifest(opts, outputRefJoin(opts.OutputPath, "failures.json"), failureManifest); werr != nil {
+			return werr
+		}
+	}
 
 	// Per-shard provenance Output entries (one Output per aggregate shard).
 	manifestOutputs := make([]provenance.Output, 0, len(writer.shards))
@@ -499,7 +637,49 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		return err
 	}
 	logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+
+	// A continue-on-error run that committed its successful inputs still signals partial
+	// failure (non-zero exit) so callers do not treat it as a clean run.
+	if opts.ContinueOnError && failureManifest.Failed > 0 {
+		return fmt.Errorf("partial extraction failure: applied=%d failed=%d failures=%s", failureManifest.Applied, failureManifest.Failed, outputRefJoin(opts.OutputPath, "failures.json"))
+	}
 	return nil
+}
+
+// recordFailedAggregateInput records a failed input under --continue-on-error. Its
+// buffered rows were already discarded (discardInput), so it contributes zero rows to
+// the shared shard. It is added to the disposition summary, the failures manifest, and
+// the per-input inventory (record_count 0, disposition failed) so aggregate provenance
+// stays gap-free (R5) and the shard == Σ per-input invariant holds (R4).
+func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string) {
+	if result.Disposition == "" {
+		result.Disposition = extract.DispositionFailed
+	}
+	if result.DispositionReason == "" {
+		result.DispositionReason = failureReasonForError(result.Error)
+	}
+	if result.DispositionReason == "" {
+		result.DispositionReason = extract.DispositionReasonInternalError
+	}
+	if result.DispositionDetail == "" && result.Error != nil {
+		result.DispositionDetail = result.Error.Error()
+	}
+	dispositionSummary.add(result, sanitizeRoots)
+	failureManifest.add(result.LogicalURI, result.DispositionReason, result.DispositionDetail, sanitizeRoots)
+	input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+	if err != nil {
+		logging.GetLogger().Warn("Skipping provenance input ledger for failed aggregate input",
+			zap.String("file", result.LogicalURI), zap.Error(err))
+		return
+	}
+	input.RecordType = extCfg.RecordType
+	zero := 0
+	input.RecordCount = &zero
+	applyInputDisposition(&input, result, sanitizeRoots)
+	if input.Disposition == "" {
+		input.Disposition = string(extract.DispositionFailed)
+	}
+	*manifestInputs = append(*manifestInputs, input)
 }
 
 // writeIncompleteAggregateManifest records the shards a failed aggregate run had

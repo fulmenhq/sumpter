@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -229,8 +230,14 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		for _, st := range states {
 			// Extraction/applicability/signature/output failure is RECIPE-level:
 			// isolated to that recipe, never aborting the others for this file.
-			if rerr := st.dispatchParsedFile(ctx, file, logical, ordinal, doc); rerr != nil && !shared.ContinueOnError {
-				return rerr
+			// dispatchParsedFile records recoverable per-input failures internally and
+			// returns nil under --continue-on-error; a non-nil error is therefore either
+			// a fail-fast failure OR a terminal output/sink/ledger failure that ADR-0009
+			// says must abort even under --continue-on-error (never silently suppressed).
+			if rerr := st.dispatchParsedFile(ctx, file, logical, ordinal, doc); rerr != nil {
+				if !shared.ContinueOnError || isTerminalDispatchError(rerr) {
+					return rerr
+				}
 			}
 		}
 	}
@@ -333,9 +340,38 @@ func newRecipeRunState(plan *RecipePlan, fileCount int) *recipeRunState {
 	return st
 }
 
-// recordInputFailure records an input-level (read/parse) failure for this recipe.
+// terminalDispatchError marks a dispatch failure that must abort the whole run even
+// under --continue-on-error (ADR-0009: write/finalize/output/ledger failures are fatal
+// and are never suppressed by continue-on-error, unlike recoverable per-input
+// extraction failures which are recorded and skipped).
+type terminalDispatchError struct{ err error }
+
+func (e *terminalDispatchError) Error() string { return e.err.Error() }
+func (e *terminalDispatchError) Unwrap() error { return e.err }
+
+// terminalDispatch wraps err so the dispatcher aborts on it regardless of
+// --continue-on-error. nil stays nil.
+func terminalDispatch(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &terminalDispatchError{err: err}
+}
+
+func isTerminalDispatchError(err error) bool {
+	var t *terminalDispatchError
+	return errors.As(err, &t)
+}
+
+// recordInputFailure records an input-level (read/parse) failure for this recipe. In
+// aggregate mode it routes through recordFailedAggregateInput so the failed input
+// carries record_count 0 (part of the aggregate input-set provenance contract, R4/R5).
 func (st *recipeRunState) recordInputFailure(file, logical string, cause error) {
 	result := recoverableFailureResult(file, logical, fmt.Errorf("failed to read/parse input: %w", cause), extract.DispositionReasonParseError)
+	if st.aggWriter != nil {
+		recordFailedAggregateInput(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
+		return
+	}
 	_ = recordFailedSequentialResult(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, dispatchLogger())
 }
 

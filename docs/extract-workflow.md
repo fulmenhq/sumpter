@@ -102,11 +102,22 @@ emitted envelope as per-input output. Key properties:
   the spans locate coverage rather than partition the inputs.
 
 **Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
-rejected), **serial**, and requires `--output-path` and a manifest. It is **fail-fast**:
-a recipe declaring `match_selectors[].min_occurrences` floors and `--continue-on-error`
-are each rejected up front — those need per-input retraction the streamed writer cannot
-do in v0. Any input failure aborts the whole run, leaving no partial **local** output.
-Run such recipes in the default per-input mode.
+rejected), **serial**, and requires `--output-path` and a manifest.
+
+**`--continue-on-error` and `min_occurrences` floors (local).** Both are supported for
+**local** aggregate output via a per-input barrier. Each input's records are buffered and
+only flushed into the shared shard once the input extracts cleanly **and** meets its
+`match_selectors[].min_occurrences` floors, so a failed or floor-missing input's rows are
+discarded before they ever reach the shard — the shared shard only ever holds whole,
+qualifying inputs. A failed input is recorded in `failures.json` and the manifest
+(disposition `failed`, `record_count` 0), and the run exits with a partial-failure error.
+Memory stays bounded by the largest single input's records (independent of input count).
+Without `--continue-on-error` aggregate is **fail-fast**: any input failure (or floor
+miss) aborts the whole run, leaving no partial **local** output. For **cloud** (`s3://`)
+aggregate output, neither `--continue-on-error` nor `min_occurrences` floors are supported
+yet — cloud shards publish incrementally and cannot retract a failed or floor-missing
+input's already-published rows, so both are deferred to a follow-up. Run such recipes to a
+local destination.
 
 **Cloud (`s3://`) output.** Aggregate publishes each shard and the sidecar manifest to
 the object store through the same credential-handle write boundary as per-input cloud
@@ -124,8 +135,9 @@ a **failed** run whose listed objects are discoverable for cleanup or idempotent
 recipe gets its **own** aggregate writer and shard sequence under its
 `<output-path>/<recipe-id>/` directory (`records.jsonl` / `records-00001.jsonl…` +
 `manifest.json`). Per-recipe isolation is unchanged — one writer per recipe, never shared
-— and the shared input set is still parsed once. The same fail-fast contract is enforced
-per recipe across the pass.
+— and the shared input set is still parsed once. The same contract is enforced per recipe
+across the pass: fail-fast by default, or local `--continue-on-error` where each recipe
+discards a failed input's buffered rows and records it in its own `failures.json`.
 
 ## Recipe Controls
 

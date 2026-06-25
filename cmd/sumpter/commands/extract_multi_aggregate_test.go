@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
@@ -156,28 +158,144 @@ func TestExtractMultiAggregate_ShardRollingPerRecipe(t *testing.T) {
 	}
 }
 
+// TestExtractMultiAggregate_ContinueOnError pins the slice-4 barrier for extract-multi:
+// under --continue-on-error a failed input contributes zero rows to the recipe's shared
+// shard (buffered then discarded), the surviving inputs' rows are preserved, the pass
+// exits with a partial-failure error, and failures.json + the manifest record the
+// failed input — all within the recipe's own <output-root>/<recipe-id>/ isolation.
+func TestExtractMultiAggregate_ContinueOnError(t *testing.T) {
+	fileList, inputs := writeMultiInputSet(t, 3)
+	// Make the middle input (inB.xml) fail mid-parse; inA + inC stay valid.
+	mustWriteFile(t, inputs[1], `<root><TargetElement><Name>valB`)
+
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	outRoot := filepath.Join(t.TempDir(), "out")
+	err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate", ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "partial failure") {
+		t.Fatalf("want partial-failure error, got %v", err)
+	}
+
+	recipeDir := filepath.Join(outRoot, "summary")
+	lines := readNDJSONLines(t, filepath.Join(recipeDir, "records.jsonl"))
+	if len(lines) != 2 {
+		t.Fatalf("records.jsonl has %d lines, want 2 (failed input discarded)", len(lines))
+	}
+	if strings.Contains(strings.Join(lines, "\n"), "valB") {
+		t.Error("failed input's row (valB) leaked into the committed shard")
+	}
+	for i, want := range []string{"valA", "valC"} {
+		if !strings.Contains(lines[i], `"name":"`+want+`"`) {
+			t.Errorf("line %d = %s, want name %q", i, lines[i], want)
+		}
+	}
+
+	failData, ferr := os.ReadFile(filepath.Join(recipeDir, "failures.json")) // #nosec G304 - test temp path
+	if ferr != nil {
+		t.Fatalf("read failures.json: %v", ferr)
+	}
+	if !strings.Contains(string(failData), "inB.xml") {
+		t.Errorf("failures.json does not record the failed input inB.xml: %s", failData)
+	}
+
+	// The manifest records the failed input with an explicit record_count: 0 — part of
+	// the aggregate input-set provenance contract (R4/R5), not omitted.
+	var man provenance.Manifest
+	manData, merr := os.ReadFile(filepath.Join(recipeDir, "manifest.json")) // #nosec G304 - test temp path
+	if merr != nil {
+		t.Fatalf("read manifest: %v", merr)
+	}
+	if err := json.Unmarshal(manData, &man); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	var failed *provenance.Input
+	for i := range man.Inputs {
+		if strings.Contains(man.Inputs[i].Path, "inB.xml") {
+			failed = &man.Inputs[i]
+		}
+	}
+	if failed == nil {
+		t.Fatal("manifest is missing the failed input inB.xml")
+	}
+	if failed.RecordCount == nil || *failed.RecordCount != 0 {
+		t.Errorf("failed input record_count = %v, want explicit 0 (R4/R5)", failed.RecordCount)
+	}
+	if failed.Disposition != string(extract.DispositionFailed) {
+		t.Errorf("failed input disposition = %q, want failed", failed.Disposition)
+	}
+}
+
+// TestExtractMultiAggregate_TerminalOutputErrorAborts pins the Finding-1 fix: a terminal
+// output/sink error from inside the shard writer must abort the run even under
+// --continue-on-error (ADR-0009), never be swallowed as a recoverable input failure. The
+// failure is injected INSIDE commitInput by pre-creating the shard's staging path
+// (records.jsonl.partial) as a directory so openShard's OpenFile fails — directly
+// exercising the terminalDispatch sentinel path (per entarch's test-quality note).
+func TestExtractMultiAggregate_TerminalOutputErrorAborts(t *testing.T) {
+	fileList, _ := writeMultiInputSet(t, 2)
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	outRoot := t.TempDir()
+	// <output-root>/summary/records.jsonl.partial exists as a DIRECTORY, so when the
+	// writer flushes (commitInput → openShard → OpenFile of that path) it fails terminally.
+	if err := os.MkdirAll(filepath.Join(outRoot, "summary", "records.jsonl.partial"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate", ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
+	if err == nil {
+		t.Fatal("a terminal output error under --continue-on-error must abort the run, not be swallowed")
+	}
+	if !strings.Contains(err.Error(), "commit aggregate output") {
+		t.Errorf("error did not come through the aggregate commit/terminal-dispatch path: %v", err)
+	}
+}
+
+// TestExtractMultiAggregate_FloorMissContinueOnError pins folded-in floor support (4a)
+// for extract-multi: a min_occurrences miss discards the input's buffered rows and
+// records it as failed under --continue-on-error, while inputs that meet the floor commit.
+func TestExtractMultiAggregate_FloorMissContinueOnError(t *testing.T) {
+	fileList, inputs := writeMultiInputSet(t, 3)
+	// inB has zero //TargetElement → misses the floor; inA/inC each have one.
+	mustWriteFile(t, inputs[1], `<root></root>`)
+
+	ws := writeMinOccursRecipe(t, "strict", 1)
+	outRoot := filepath.Join(t.TempDir(), "out")
+	err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate", ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "partial failure") {
+		t.Fatalf("want partial-failure error, got %v", err)
+	}
+	lines := readNDJSONLines(t, filepath.Join(outRoot, "strict", "records.jsonl"))
+	if len(lines) != 2 {
+		t.Fatalf("records.jsonl has %d lines, want 2 (floor-missing input discarded)", len(lines))
+	}
+	failData, ferr := os.ReadFile(filepath.Join(outRoot, "strict", "failures.json")) // #nosec G304 - test temp path
+	if ferr != nil {
+		t.Fatalf("read failures.json: %v", ferr)
+	}
+	if !strings.Contains(string(failData), "min_occurrences") {
+		t.Errorf("failures.json does not record the floor violation: %s", failData)
+	}
+}
+
 func TestExtractMultiAggregate_Rejections(t *testing.T) {
 	fileList, _ := writeMultiInputSet(t, 2)
 
-	t.Run("continue-on-error", func(t *testing.T) {
+	// Local continue-on-error is now supported via the per-input spool barrier (see
+	// TestExtractMultiAggregate_ContinueOnError); only CLOUD continue-on-error is still
+	// rejected, because cloud shards publish incrementally (R8 interaction).
+	t.Run("cloud-continue-on-error", func(t *testing.T) {
 		ws := writeMultiRecipeWorkspace(t, "summary")
-		outRoot := filepath.Join(t.TempDir(), "out")
-		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate", ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
+		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: "s3://bucket/out/", RunID: testMultiRunID, OutputMode: "aggregate", AggregateMaxBytes: 1 << 20, ContinueOnError: true}, []string{ws}, io.Discard, time.Now())
 		if err == nil || !strings.Contains(err.Error(), "--continue-on-error") {
-			t.Fatalf("want continue-on-error rejection, got %v", err)
+			t.Fatalf("want cloud continue-on-error rejection, got %v", err)
 		}
 	})
 
-	t.Run("min-occurrences-floor", func(t *testing.T) {
+	// Cloud aggregate cannot enforce floors before incremental publish, so a floored
+	// cloud recipe is rejected at plan time (local floors are supported).
+	t.Run("cloud-min-occurrences-floor", func(t *testing.T) {
 		ws := writeMinOccursRecipe(t, "strict", 1)
-		outRoot := filepath.Join(t.TempDir(), "out")
-		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate"}, []string{ws}, io.Discard, time.Now())
+		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: "s3://bucket/out/", RunID: testMultiRunID, OutputMode: "aggregate", AggregateMaxBytes: 1 << 20}, []string{ws}, io.Discard, time.Now())
 		if err == nil || !strings.Contains(err.Error(), "min_occurrences") {
-			t.Fatalf("want min_occurrences rejection, got %v", err)
-		}
-		// Rejected before any output session — no records written.
-		if _, statErr := os.Stat(filepath.Join(outRoot, "strict", "records.jsonl")); statErr == nil {
-			t.Error("floored aggregate recipe wrote output despite rejection")
+			t.Fatalf("want cloud floor rejection, got %v", err)
 		}
 	})
 
@@ -202,16 +320,23 @@ func TestExtractMultiAggregate_Rejections(t *testing.T) {
 	})
 
 	// A whitespace-padded "aggregate" must be treated as aggregate everywhere — it must
-	// NOT run the writer while skipping the aggregate-only floor rejection.
-	t.Run("padded-mode-still-rejects-floor", func(t *testing.T) {
-		ws := writeMinOccursRecipe(t, "strict", 1)
+	// select the aggregate writer (one records.jsonl), never silently fall through to
+	// per-input fan-out (extract-*.json).
+	t.Run("padded-mode-runs-aggregate", func(t *testing.T) {
+		ws := writeMultiRecipeWorkspace(t, "summary")
 		outRoot := filepath.Join(t.TempDir(), "out")
-		err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "  aggregate  "}, []string{ws}, io.Discard, time.Now())
-		if err == nil || !strings.Contains(err.Error(), "min_occurrences") {
-			t.Fatalf("padded aggregate mode must still reject floors, got %v", err)
+		if err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "  aggregate  "}, []string{ws}, io.Discard, time.Now()); err != nil {
+			t.Fatalf("padded aggregate mode should run, got %v", err)
 		}
-		if _, statErr := os.Stat(filepath.Join(outRoot, "strict", "records.jsonl")); statErr == nil {
-			t.Error("padded aggregate + floor wrote output despite rejection")
+		recipeDir := filepath.Join(outRoot, "summary")
+		if _, statErr := os.Stat(filepath.Join(recipeDir, "records.jsonl")); statErr != nil {
+			t.Errorf("padded aggregate mode did not produce records.jsonl (not normalized to aggregate): %v", statErr)
+		}
+		entries, _ := os.ReadDir(recipeDir)
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "extract-") {
+				t.Errorf("padded aggregate mode wrote per-input file %s (fell through to per-input)", e.Name())
+			}
 		}
 	})
 }

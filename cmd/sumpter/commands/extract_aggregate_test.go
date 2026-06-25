@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
+	"github.com/fulmenhq/sumpter/internal/provenance"
+	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
@@ -335,10 +338,11 @@ func TestAggregateOutput_PlanTimeRejections(t *testing.T) {
 	}
 }
 
-func TestAggregateOutput_RejectsMinOccurrencesFloor(t *testing.T) {
-	ws := writeAggregateWorkspace(t, 2)
-	// Add a min_occurrences floor: aggregate cannot enforce a per-input floor before
-	// streamed records become published output, so it must reject the recipe.
+// writeFlooredAggregateWorkspace builds an aggregate workspace whose recipe declares a
+// min_occurrences floor on //item, with the middle input emptied so it misses the floor.
+func writeFlooredAggregateWorkspace(t *testing.T) string {
+	t.Helper()
+	ws := writeAggregateWorkspace(t, 3)
 	mustWriteFile(t, filepath.Join(ws, "extract", "extract.yaml"), `record_type: agg_record
 match_selectors:
   - xpath: //item
@@ -353,31 +357,184 @@ output_schema:
     name:
       type: string
 `)
-	out := filepath.Join(t.TempDir(), "floor")
-	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate"})
-	if err == nil || !strings.Contains(err.Error(), "min_occurrences") {
-		t.Fatalf("want min_occurrences rejection, got %v", err)
+	// in-b.xml has zero //item → misses the floor; in-a/in-c each have one.
+	mustWriteFile(t, filepath.Join(ws, "testdata", "in-b.xml"), `<root></root>`)
+	return ws
+}
+
+// TestAggregateOutput_FloorMissContinueOnError pins folded-in floor support (4a): a
+// min_occurrences miss is enforced per input at completion and routed through the same
+// barrier — under --continue-on-error the floor-missing input is discarded (zero rows in
+// the shard) and recorded as failed, while inputs that meet the floor are committed.
+func TestAggregateOutput_FloorMissContinueOnError(t *testing.T) {
+	ws := writeFlooredAggregateWorkspace(t)
+	out := filepath.Join(t.TempDir(), "floor-coe")
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true})
+	if err == nil || !strings.Contains(err.Error(), "partial extraction failure") {
+		t.Fatalf("want partial-failure error, got %v", err)
 	}
-	// Rejected before extraction — no output should be written.
-	if _, statErr := os.Stat(filepath.Join(out, "records.jsonl")); statErr == nil {
-		t.Errorf("floored aggregate wrote output despite rejection")
+	lines := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))
+	if len(lines) != 2 {
+		t.Fatalf("records.jsonl has %d lines, want 2 (floor-missing input discarded)", len(lines))
+	}
+	for i, want := range []string{"vala", "valc"} {
+		if !strings.Contains(lines[i], `"name":"`+want+`"`) {
+			t.Errorf("line %d = %s, want name %q", i, lines[i], want)
+		}
+	}
+	failData, ferr := os.ReadFile(filepath.Join(out, "failures.json")) // #nosec G304 - test temp path
+	if ferr != nil {
+		t.Fatalf("read failures.json: %v", ferr)
+	}
+	if !strings.Contains(string(failData), "min_occurrences") {
+		t.Errorf("failures.json does not record the floor violation: %s", failData)
 	}
 }
 
-// TestAggregateOutput_RejectsContinueOnError pins the v0 safety guard: a per-input
-// failure can leave already-streamed rows in the shared shard that the writer
-// cannot retract, so aggregate refuses --continue-on-error at plan time (the
-// transactional per-input barrier is a later slice) rather than commit failed-input
-// rows with contradictory provenance.
-func TestAggregateOutput_RejectsContinueOnError(t *testing.T) {
-	ws := writeAggregateWorkspace(t, 2)
-	out := filepath.Join(t.TempDir(), "coe")
-	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true})
-	if err == nil || !strings.Contains(err.Error(), "--continue-on-error") {
-		t.Fatalf("want continue-on-error rejection, got %v", err)
+// TestAggregateOutput_RejectsCloudFloors pins the secrev finding: a cloud aggregate
+// destination cannot enforce min_occurrences floors (it would publish a floor-missing
+// input's rows before the floor is evaluated), so a floored cloud recipe is rejected at
+// plan time. Local floors are unaffected.
+func TestAggregateOutput_RejectsCloudFloors(t *testing.T) {
+	floored := &extract.ExtractRecordMatch{MatchSelectors: []extract.MatchSelector{{XPath: "//item", MinOccurrences: 1}}}
+	unfloored := &extract.ExtractRecordMatch{MatchSelectors: []extract.MatchSelector{{XPath: "//item"}}}
+
+	cloud := &ExtractOptions{OutputMode: outputModeAggregate, OutputPath: "s3://bucket/prefix/", AggregateMaxBytes: 1 << 20}
+	if err := rejectCloudAggregateFloors(cloud, floored); err == nil || !strings.Contains(err.Error(), "min_occurrences") {
+		t.Fatalf("want cloud-floor rejection, got %v", err)
+	}
+	// A cloud run WITHOUT floors is fine.
+	if err := rejectCloudAggregateFloors(cloud, unfloored); err != nil {
+		t.Errorf("cloud aggregate without floors should be allowed, got %v", err)
+	}
+	// A LOCAL floored run is allowed (enforced via the barrier).
+	local := &ExtractOptions{OutputMode: outputModeAggregate, OutputPath: t.TempDir()}
+	if err := rejectCloudAggregateFloors(local, floored); err != nil {
+		t.Errorf("local aggregate floors should be allowed, got %v", err)
+	}
+}
+
+// TestAggregateOutput_FloorMissFailFast pins floor enforcement in fail-fast mode: a
+// floor miss aborts the whole run, leaving no committed output.
+func TestAggregateOutput_FloorMissFailFast(t *testing.T) {
+	ws := writeFlooredAggregateWorkspace(t)
+	out := filepath.Join(t.TempDir(), "floor-ff")
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate"})
+	if err == nil || !strings.Contains(err.Error(), "min_occurrences") {
+		t.Fatalf("want min_occurrences failure, got %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(out, "records.jsonl")); statErr == nil {
-		t.Errorf("aggregate + continue-on-error wrote output despite rejection")
+		t.Error("fail-fast floor miss left committed output")
+	}
+}
+
+// TestAggregateOutput_RejectsCloudContinueOnError pins the one remaining
+// continue-on-error guard: cloud shards publish incrementally, so continue-on-error
+// interacts with R8 partial-publish and is held back a slice. Local continue-on-error
+// is supported (see TestAggregateOutput_ContinueOnErrorDiscardsFailedInput).
+func TestAggregateOutput_RejectsCloudContinueOnError(t *testing.T) {
+	opts := &ExtractOptions{
+		OutputMode:        outputModeAggregate,
+		OutputPath:        "s3://bucket/prefix/",
+		AggregateMaxBytes: 1 << 20,
+		ContinueOnError:   true,
+	}
+	err := validateAggregateOptions(opts, []string{recipesmanifest.OutputFormatJSON})
+	if err == nil || !strings.Contains(err.Error(), "--continue-on-error") {
+		t.Fatalf("want cloud continue-on-error rejection, got %v", err)
+	}
+}
+
+// TestAggregateOutput_ContinueOnErrorDiscardsFailedInput is the headline slice-4
+// safety test: under --continue-on-error a failed input contributes ZERO rows to the
+// shared shard (its records are buffered and discarded, never committed), while the
+// surrounding successful inputs' rows are preserved in deterministic order, the run
+// exits with a partial-failure error, and failures.json + the manifest record the
+// failed input.
+func TestAggregateOutput_ContinueOnErrorDiscardsFailedInput(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 3)
+	// Make the middle input (in-b.xml) fail mid-parse; a + c stay valid.
+	mustWriteFile(t, filepath.Join(ws, "testdata", "in-b.xml"), `<root><item><name>valb`)
+
+	out := filepath.Join(t.TempDir(), "coe")
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true})
+	if err == nil || !strings.Contains(err.Error(), "partial extraction failure") {
+		t.Fatalf("want partial-failure error, got %v", err)
+	}
+
+	// The shared shard holds ONLY the two successful inputs' rows, in listed order —
+	// the failed input's rows were discarded, never committed.
+	lines := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))
+	if len(lines) != 2 {
+		t.Fatalf("records.jsonl has %d lines, want 2 (failed input discarded)", len(lines))
+	}
+	for i, want := range []string{"vala", "valc"} {
+		if !strings.Contains(lines[i], `"name":"`+want+`"`) {
+			t.Errorf("line %d = %s, want name %q", i, lines[i], want)
+		}
+	}
+	if strings.Contains(strings.Join(lines, "\n"), "valb") {
+		t.Error("failed input's row (valb) leaked into the committed shard")
+	}
+
+	// failures.json records the failed input.
+	failData, ferr := os.ReadFile(filepath.Join(out, "failures.json")) // #nosec G304 - test temp path
+	if ferr != nil {
+		t.Fatalf("read failures.json: %v", ferr)
+	}
+	if !strings.Contains(string(failData), "in-b.xml") {
+		t.Errorf("failures.json does not record the failed input in-b.xml: %s", failData)
+	}
+
+	// The manifest records the failed input with a failed disposition, and shard
+	// record counts sum to the successful rows only (R4).
+	var man provenance.Manifest
+	manData, merr := os.ReadFile(filepath.Join(out, "manifest.json")) // #nosec G304 - test temp path
+	if merr != nil {
+		t.Fatalf("read manifest: %v", merr)
+	}
+	if err := json.Unmarshal(manData, &man); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	shardTotal := 0
+	for _, s := range man.AggregateOutputs {
+		shardTotal += s.RecordCount
+	}
+	if shardTotal != 2 {
+		t.Errorf("Σ shard record_count = %d, want 2 (only successful inputs)", shardTotal)
+	}
+	failed := 0
+	for _, in := range man.Inputs {
+		if in.Disposition == string(extract.DispositionFailed) {
+			failed++
+		}
+	}
+	if failed != 1 {
+		t.Errorf("manifest records %d failed inputs, want 1", failed)
+	}
+}
+
+// TestAggregateOutput_ContinueOnErrorHappyPathTransparent proves the per-input spool
+// barrier is transparent when nothing fails: a --continue-on-error run with all-valid
+// inputs produces the same rows in the same order as the fail-fast path, writes no
+// failures.json, and exits cleanly (no partial-failure error).
+func TestAggregateOutput_ContinueOnErrorHappyPathTransparent(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 3)
+	out := filepath.Join(t.TempDir(), "coe-ok")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true}); err != nil {
+		t.Fatalf("continue-on-error happy path should exit cleanly, got %v", err)
+	}
+	lines := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))
+	if len(lines) != 3 {
+		t.Fatalf("records.jsonl has %d lines, want 3", len(lines))
+	}
+	for i, want := range []string{"vala", "valb", "valc"} {
+		if !strings.Contains(lines[i], `"name":"`+want+`"`) {
+			t.Errorf("line %d = %s, want name %q (buffering must preserve order)", i, lines[i], want)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(out, "failures.json")); statErr == nil {
+		t.Error("a clean continue-on-error run wrote failures.json")
 	}
 }
 
