@@ -1299,6 +1299,13 @@ func enrichRecordsWithRecordNums(records []map[string]interface{}, recordNums []
 	return nil
 }
 
+// RecordEnvelopeSchemaID self-identifies an emitted extract record row. It is
+// emitted as _runtime.envelope_schema and matches the const in
+// schemas/extract/v0.1.0/extract-record-envelope.schema.json. The id is
+// major-only so additive minor revisions of the envelope schema do not churn
+// the per-row value (consumers key on the major contract, not the file version).
+const RecordEnvelopeSchemaID = "extract-record-envelope/v0"
+
 // EnrichRecord wraps a raw extracted record in Sumpter's standard output
 // envelope and attaches safe runtime provenance fields.
 func EnrichRecord(record map[string]interface{}, sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtimeProvenance provenance.RuntimeOptions) error {
@@ -1590,6 +1597,7 @@ func coerceToFloat(value interface{}) (float64, error) {
 
 func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *ExtractRecordMatch, runtime *dsl.ValidationRuntime, summariesIncluded, validationIncluded bool, runtimeProvenance provenance.RuntimeOptions, recordNum int) map[string]interface{} {
 	metadata := map[string]interface{}{
+		"envelope_schema":     RecordEnvelopeSchemaID,
 		"generated_at":        time.Now().UTC().Format(time.RFC3339),
 		"source_file":         runtimeProvenance.SourceIdentity(sourceFile),
 		"record_type":         cfg.RecordType,

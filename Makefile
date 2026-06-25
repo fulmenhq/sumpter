@@ -88,7 +88,7 @@ dev: ## Set up development environment
 
 # Quality checks
 .PHONY: check-all
-check-all: fmt-strict vet lint safety-check schema-validate ## Run all quality checks (fast)
+check-all: fmt-strict vet lint safety-check schema-validate extract-output-contract-check ## Run all quality checks (fast)
 	@echo "$(GREEN)✅ All quality checks passed!$(NC)"
 
 # Schema validation
@@ -97,6 +97,20 @@ schema-validate: ## Validate JSON schemas using goneat
 	@echo "$(BLUE)Validating JSON schemas...$(NC)"
 	@goneat validate --include schemas/ --exclude "schemas/extract/v0.1.0/file-signature-schema.yaml" --format json --fail-on high
 	@echo "$(GREEN)✅ Schema validation passed!$(NC)"
+
+# Extract record-envelope contract (meta-validation of emitted-row fixtures)
+.PHONY: extract-output-contract-check
+extract-output-contract-check: ## Meta-validate extract record-envelope fixtures against the envelope schema
+	@echo "$(BLUE)Validating extract record-envelope fixtures...$(NC)"
+	@schema="schemas/extract/v0.1.0/extract-record-envelope.schema.json"; \
+	count=0; \
+	for f in tests/fixtures/extract-record-envelope/*.json; do \
+		goneat validate data --schema-file "$$schema" --data "$$f" >/dev/null 2>&1 || { echo "$(RED)❌ $$f failed envelope validation$(NC)"; goneat validate data --schema-file "$$schema" --data "$$f"; exit 1; }; \
+		echo "  ✓ $$f"; \
+		count=$$((count + 1)); \
+	done; \
+	if [ "$$count" -lt 4 ]; then echo "$(RED)❌ expected ≥4 fixtures, found $$count$(NC)"; exit 1; fi; \
+	echo "$(GREEN)✅ Extract record-envelope contract check passed ($$count fixtures)$(NC)"
 
 # Code formatting
 .PHONY: fmt

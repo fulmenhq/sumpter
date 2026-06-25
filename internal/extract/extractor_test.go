@@ -220,6 +220,55 @@ func TestProcessFileWithProvenanceAddsRuntimeFields(t *testing.T) {
 	if got := runtimeBlock["record_num"]; got != 1 {
 		t.Fatalf("_runtime.record_num = %#v, want 1", got)
 	}
+	if got := runtimeBlock["envelope_schema"]; got != RecordEnvelopeSchemaID {
+		t.Fatalf("_runtime.envelope_schema = %#v, want %q", got, RecordEnvelopeSchemaID)
+	}
+}
+
+// TestEmittedRecordValidatesAgainstEnvelopeSchema keeps the emitted record
+// envelope honest against schemas/extract/v0.1.0/extract-record-envelope.schema.json:
+// a live-enriched record must validate, and must self-identify via
+// _runtime.envelope_schema. This catches code/schema drift in `make test`,
+// complementing the fixture meta-validation in `make extract-output-contract-check`.
+func TestEmittedRecordValidatesAgainstEnvelopeSchema(t *testing.T) {
+	schemaPath := filepath.Join("..", "..", "schemas", "extract", "v0.1.0", "extract-record-envelope.schema.json")
+	schemaBytes, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read envelope schema: %v", err)
+	}
+	validator, err := schema.NewValidatorFromBytes(schemaBytes)
+	if err != nil {
+		t.Fatalf("compile envelope schema: %v", err)
+	}
+
+	cfg := &ExtractRecordMatch{RecordType: "sample_record"}
+	sig := &FileSignature{SignatureID: "sample-signature", Name: "Sample Signature"}
+	prov := provenance.RuntimeOptions{
+		RunID:             "0190a3f4-1c2d-7abc-9def-0123456789ab",
+		SumpterVersion:    "0.2.3-test",
+		RecipeVersion:     "0.1.0",
+		RecipeContentHash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	record := map[string]interface{}{"id": "R-0001", "amount": int64(42)}
+	if err := EnrichRecordWithRecordNum(record, "file:///data/sample/filing.xml", sig, cfg, prov, 3); err != nil {
+		t.Fatalf("EnrichRecordWithRecordNum: %v", err)
+	}
+
+	runtimeBlock, ok := record["_runtime"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("_runtime block missing or wrong type: %#v", record["_runtime"])
+	}
+	if got := runtimeBlock["envelope_schema"]; got != RecordEnvelopeSchemaID {
+		t.Fatalf("_runtime.envelope_schema = %#v, want %q", got, RecordEnvelopeSchemaID)
+	}
+
+	res, err := validator.Validate(record)
+	if err != nil {
+		t.Fatalf("validate emitted record: %v", err)
+	}
+	if !res.Valid {
+		t.Fatalf("emitted record failed envelope schema:\n%s", formatValidationErrors(res.Errors))
+	}
 }
 
 func TestEnrichRecordOmittedRecordNumForLegacyHelper(t *testing.T) {

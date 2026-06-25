@@ -1,0 +1,1 @@
+{"_runtime":{"envelope_schema":"extract-record-envelope/v0","generated_at":"2026-06-25T00:00:00Z","source_file":"file:///data/sample/filing.xml","record_type":"sample_record","summaries_included":false,"validation_included":false},"extract":{"data":{"id":"R-0001","amount":42}}}
