@@ -29,6 +29,7 @@ type recipeRunExtractMultiOptions struct {
 	FollowSymlinks         bool
 	OutputPath             string
 	ContinueOnError        bool
+	ParseWorkers           int
 	Progress               bool
 	RunID                  string
 	NoManifest             bool
@@ -78,6 +79,11 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 			if err != nil {
 				return fmt.Errorf("failed to get allow-large-files flag: %w", err)
 			}
+			// --parse-workers is an explicit count; a value below 1 is a user error
+			// (it does NOT silently mean "CPU count"). The default is 1 (serial).
+			if opts.ParseWorkers < 1 {
+				return fmt.Errorf("--parse-workers must be >= 1 (got %d); 1 is the serial default", opts.ParseWorkers)
+			}
 			// Resolve one run id (flag > SUMPTER_RUN_ID env > generated) shared by
 			// every recipe so all per-recipe provenance ties to one invocation.
 			runID, err := provenance.ResolveRunID(opts.RunID, os.Getenv("SUMPTER_RUN_ID"))
@@ -95,6 +101,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				FollowSymlinks:         opts.FollowSymlinks,
 				OutputPath:             opts.OutputPath,
 				ContinueOnError:        opts.ContinueOnError,
+				ParseWorkers:           opts.ParseWorkers,
 				Progress:               opts.Progress,
 				RunID:                  runID,
 				NoManifest:             opts.NoManifest,
@@ -120,6 +127,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symlinks during --input-path discovery")
 	cmd.Flags().StringVar(&opts.OutputPath, "output-path", "", "Required output root; each recipe writes to <output-path>/<recipe-id>/")
 	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file/per-recipe failures instead of aborting; the run still exits non-zero and each recipe lists its dropped inputs in failures.json — reconcile it so inputs are not silently dropped")
+	cmd.Flags().IntVar(&opts.ParseWorkers, "parse-workers", 1, "Parse the shared input set across N workers within this one invocation, fanning parsed inputs into the single ordered writer (default 1 = serial, byte-identical to today). Speeds up the parse (CPU) long pole at high file counts; output, record order, and the per-invocation manifest are unchanged. Distinct from any --workers surface")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID); shared by every recipe")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
@@ -172,6 +180,11 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 	}
 	if opts.MaxDepth > 0 {
 		appendFlag("--max-depth", fmt.Sprintf("%d", opts.MaxDepth))
+	}
+	// Parse concurrency is a performance knob, not a data-shape input — record it in
+	// the replayable argv only when it deviates from the default serial behavior.
+	if opts.ParseWorkers > 1 {
+		appendFlag("--parse-workers", fmt.Sprintf("%d", opts.ParseWorkers))
 	}
 	if opts.FollowSymlinks {
 		args = append(args, "--follow-symlinks")
