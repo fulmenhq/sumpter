@@ -56,6 +56,68 @@ type Manifest struct {
 	// manifests stay byte-identical. A run whose manifest carries incomplete:true must
 	// be treated as failed, not as successful output.
 	Incomplete bool `json:"incomplete,omitempty"`
+	// InputsTotal, InputsApplied, InputsNotApplicable, and InputsFailed are the
+	// optional input-accounting integers: a single-field completeness answer
+	// derived from the gap-free inputs[] inventory, mirroring the closed input
+	// disposition enum (applied / not_applicable / failed) exactly. They are
+	// emitted only on aggregate manifests with an authoritative input inventory
+	// (SetInputAccounting is the sole producer) and are pointers so the tri-state
+	// holds: nil (omitted) on per-input/default and incomplete:true manifests,
+	// keeping those byte-identical; an explicit value — including 0, e.g.
+	// inputs_failed:0 on an all-applied run — in aggregate mode. The reconciliation
+	// invariant inputs_applied + inputs_failed + inputs_not_applicable ==
+	// inputs_total == len(inputs) holds by construction. The semantic status enum
+	// (complete / partial / incomplete) is deferred to the ratified data-artifact
+	// contract and is intentionally not part of this set.
+	InputsTotal         *int `json:"inputs_total,omitempty"`
+	InputsApplied       *int `json:"inputs_applied,omitempty"`
+	InputsNotApplicable *int `json:"inputs_not_applicable,omitempty"`
+	InputsFailed        *int `json:"inputs_failed,omitempty"`
+}
+
+// Input disposition wire values, mirroring internal/extract's Disposition enum.
+// They are duplicated here (not imported) because internal/extract imports this
+// package; referencing it back would create an import cycle. The set is closed
+// and stable as the v1 provenance contract, so the duplication is safe.
+const (
+	dispositionApplied       = "applied"
+	dispositionNotApplicable = "not_applicable"
+	dispositionFailed        = "failed"
+)
+
+// SetInputAccounting computes the optional input-accounting integers
+// (inputs_total / inputs_applied / inputs_not_applicable / inputs_failed) from
+// the manifest's inputs[] and sets them. It is the single producer of those
+// fields and is called only by aggregate finalize paths that hold an
+// authoritative, gap-free input inventory.
+//
+// It counts strictly from inputs[].disposition over the closed set
+// {applied, not_applicable, failed}; any input carrying a disposition outside
+// that set (including an empty one) returns an error rather than guessing, so a
+// producer can never emit completeness counts it cannot substantiate. By
+// construction the invariant inputs_applied + inputs_failed +
+// inputs_not_applicable == inputs_total == len(inputs) holds.
+func (m *Manifest) SetInputAccounting() error {
+	total := len(m.Inputs)
+	var applied, notApplicable, failed int
+	for i := range m.Inputs {
+		switch m.Inputs[i].Disposition {
+		case dispositionApplied:
+			applied++
+		case dispositionNotApplicable:
+			notApplicable++
+		case dispositionFailed:
+			failed++
+		default:
+			return fmt.Errorf("input %d (%s): cannot compute input accounting for unaccounted disposition %q",
+				i+1, m.Inputs[i].Path, m.Inputs[i].Disposition)
+		}
+	}
+	m.InputsTotal = &total
+	m.InputsApplied = &applied
+	m.InputsNotApplicable = &notApplicable
+	m.InputsFailed = &failed
+	return nil
 }
 
 // ReferenceTable records the logical identity of an external reference table loaded

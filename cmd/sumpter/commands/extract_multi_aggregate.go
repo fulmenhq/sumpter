@@ -201,6 +201,11 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 		manifest := buildProvenanceManifest(opts, st.plan.runtimeProvenance, startedAt, time.Now().UTC(), st.manifestInputs, manifestOutputs, st.counts, st.sanitizeRoots)
 		manifest.OutputMode = outputModeAggregate
 		manifest.AggregateOutputs = st.aggWriter.shards
+		// Per-recipe input accounting from this recipe's own gap-free inputs[]
+		// inventory; counts stay isolated per recipe, like the rest of the manifest.
+		if err := manifest.SetInputAccounting(); err != nil {
+			return fmt.Errorf("recipe %q: compute input accounting for aggregate manifest: %w", st.plan.RecipeID, err)
+		}
 		manifestPath := outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err

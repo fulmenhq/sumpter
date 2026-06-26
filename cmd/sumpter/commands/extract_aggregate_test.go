@@ -183,6 +183,10 @@ func TestAggregateOutput_SingleFileHappyPath(t *testing.T) {
 	if total != shardTotal {
 		t.Errorf("Σ shard record_count %d != Σ input record_count %d", shardTotal, total)
 	}
+
+	// Input-accounting integers: all-applied run emits 3/3/0/0 with explicit zeros
+	// (pointer fields), satisfying applied+failed+not_applicable == total == len(inputs).
+	assertInputAccounting(t, m, 3, 3, 0, 0)
 }
 
 func TestAggregateOutput_DefaultPerInputUnchanged(t *testing.T) {
@@ -210,12 +214,17 @@ func TestAggregateOutput_DefaultPerInputUnchanged(t *testing.T) {
 			t.Errorf("per-input input %s gained a record_count (%d); should be omitted", in.Path, *in.RecordCount)
 		}
 	}
+	if m.InputsTotal != nil || m.InputsApplied != nil || m.InputsNotApplicable != nil || m.InputsFailed != nil {
+		t.Error("per-input manifest gained input-accounting counts; they are aggregate-only")
+	}
 	raw, err := os.ReadFile(filepath.Join(out, "manifest.json"))
 	if err != nil {
 		t.Fatalf("read raw manifest: %v", err)
 	}
-	if strings.Contains(string(raw), "output_mode") || strings.Contains(string(raw), "aggregate_outputs") {
-		t.Errorf("per-input manifest leaked an aggregate-only top-level field:\n%s", raw)
+	for _, field := range []string{"output_mode", "aggregate_outputs", "inputs_total", "inputs_applied", "inputs_not_applicable", "inputs_failed"} {
+		if strings.Contains(string(raw), field) {
+			t.Errorf("per-input manifest leaked an aggregate-only top-level field %q:\n%s", field, raw)
+		}
 	}
 }
 
@@ -388,6 +397,11 @@ func TestAggregateOutput_FloorMissContinueOnError(t *testing.T) {
 	if !strings.Contains(string(failData), "min_occurrences") {
 		t.Errorf("failures.json does not record the floor violation: %s", failData)
 	}
+
+	// A floor miss stays counted in inputs_failed (disposition failed +
+	// disposition_reason min_occurrences_violation) — no separate floored count.
+	m := readManifest(t, filepath.Join(out, "manifest.json"))
+	assertInputAccounting(t, m, 3, 2, 0, 1)
 }
 
 // TestAggregateOutput_FloorMissFailFast pins floor enforcement in fail-fast mode: a
@@ -470,6 +484,32 @@ func TestAggregateOutput_ContinueOnErrorDiscardsFailedInput(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Errorf("manifest records %d failed inputs, want 1", failed)
+	}
+
+	// Input-accounting: a completed continue-on-error run with one failed input
+	// emits applied+failed counts (3 total, 2 applied, 1 failed, 0 not_applicable).
+	assertInputAccounting(t, man, 3, 2, 0, 1)
+}
+
+// assertInputAccounting checks the four input-accounting integers are present
+// (pointer fields, so explicit zeros count) and match the expected counts, and
+// that the reconciliation invariant holds.
+func assertInputAccounting(t *testing.T, m provenance.Manifest, total, applied, notApplicable, failed int) {
+	t.Helper()
+	if m.InputsTotal == nil || m.InputsApplied == nil || m.InputsNotApplicable == nil || m.InputsFailed == nil {
+		t.Fatalf("input-accounting counts missing: total=%v applied=%v not_applicable=%v failed=%v",
+			m.InputsTotal, m.InputsApplied, m.InputsNotApplicable, m.InputsFailed)
+	}
+	if *m.InputsTotal != total || *m.InputsApplied != applied || *m.InputsNotApplicable != notApplicable || *m.InputsFailed != failed {
+		t.Errorf("input-accounting = total %d applied %d not_applicable %d failed %d; want %d/%d/%d/%d",
+			*m.InputsTotal, *m.InputsApplied, *m.InputsNotApplicable, *m.InputsFailed, total, applied, notApplicable, failed)
+	}
+	if *m.InputsApplied+*m.InputsFailed+*m.InputsNotApplicable != *m.InputsTotal {
+		t.Errorf("invariant violated: applied %d + failed %d + not_applicable %d != total %d",
+			*m.InputsApplied, *m.InputsFailed, *m.InputsNotApplicable, *m.InputsTotal)
+	}
+	if *m.InputsTotal != len(m.Inputs) {
+		t.Errorf("inputs_total %d != len(inputs) %d", *m.InputsTotal, len(m.Inputs))
 	}
 }
 

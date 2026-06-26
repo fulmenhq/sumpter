@@ -92,6 +92,26 @@
     "incomplete": {
       "type": "boolean",
       "description": "Marks a FAILED aggregate run that had already published one or more cloud shards before failing. Those objects cannot be un-published, so this manifest is written on the failure path to make the committed shards (in aggregate_outputs) discoverable for cleanup or idempotent rerun. Present only on a failed partial run. A manifest carrying incomplete:true must be treated as a failed run, not as successful output."
+    },
+    "inputs_total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional input-accounting count: total resolved inputs, equal to len(inputs). Emitted only on aggregate manifests with an authoritative gap-free inputs[] inventory; omitted on per-input/default manifests and on incomplete:true manifests. Reconciliation invariant: inputs_applied + inputs_failed + inputs_not_applicable == inputs_total == len(inputs)."
+    },
+    "inputs_applied": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional input-accounting count: inputs with disposition 'applied' (including zero-record successes). Counted strictly from inputs[].disposition. Present together with inputs_total/inputs_not_applicable/inputs_failed on aggregate manifests; omitted otherwise."
+    },
+    "inputs_not_applicable": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional input-accounting count: inputs with disposition 'not_applicable' (skipped by signature/applicability dispatch). One of the three closed top-level dispositions, distinct from a 'failed' min_occurrences miss. Counted strictly from inputs[].disposition; present together with the other input-accounting integers on aggregate manifests."
+    },
+    "inputs_failed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional input-accounting count: inputs with disposition 'failed' (including min_occurrences-floor misses, which remain disposition 'failed' with disposition_reason 'min_occurrences_violation' — no separate count). Counted strictly from inputs[].disposition; present together with the other input-accounting integers on aggregate manifests."
     }
   },
   "$defs": {
