@@ -624,9 +624,13 @@ defaults:
     pattern: extract-{}.jsonl
 ```
 
-`json` and `ndjson` are aliases for the same newline-delimited JSON records:
-one JSON object per line. JSONL remains the canonical extract output because it
-contains the full record envelope, including `_runtime`, `_validation`, and
+`json` is the legacy/canonical recipe token for this writer family, and
+`ndjson` is a first-class accepted alias for it: both emit the same
+newline-delimited JSON records — one JSON object per line — and are
+behavior-identical, so a recipe may use either token interchangeably. Neither
+token produces a single-file JSON array or object; the output is always
+NDJSON/JSONL. JSONL remains the canonical extract output because it contains the
+full record envelope, including `_runtime`, `_validation`, and
 `extract.summary`.
 
 ### RecordSink Streaming Contract
