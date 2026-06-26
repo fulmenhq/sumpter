@@ -9,3 +9,15 @@ linters:
     - ineffassign
     - errcheck
     - misspell
+    - forbidigo
+  settings:
+    forbidigo:
+      # A custom forbid list REPLACES forbidigo's defaults (which would flag fmt.Print*),
+      # so only the rule below is active.
+      forbid:
+        # logging.GetLogger() is for obtaining the *zap.Logger to pass around; calling a
+        # log method directly on it is the house anti-pattern. GetLogger() now returns a
+        # no-op logger when unset (so this is no longer a nil panic), but the nil-safe
+        # package-level helpers remain the style for direct logging.
+        - pattern: 'logging\.GetLogger\(\)\.(Info|Warn|Error|Debug|Fatal|Panic)'
+          msg: "use the nil-safe package-level logging.Info/Warn/Error/Debug instead of logging.GetLogger().Method()"

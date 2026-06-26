@@ -665,7 +665,7 @@ func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptio
 	failureManifest.add(result.LogicalURI, result.DispositionReason, result.DispositionDetail, sanitizeRoots)
 	input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
 	if err != nil {
-		logging.GetLogger().Warn("Skipping provenance input ledger for failed aggregate input",
+		logging.Warn("Skipping provenance input ledger for failed aggregate input",
 			zap.String("file", result.LogicalURI), zap.Error(err))
 		return
 	}
@@ -697,7 +697,7 @@ func writeIncompleteAggregateManifest(opts *ExtractOptions, runtimeProvenance pr
 	manifest.Incomplete = true
 	manifestPath := outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	if werr := writeProvenanceManifest(opts, manifestPath, manifest); werr != nil {
-		logging.GetLogger().Error("Failed to write incomplete aggregate manifest; committed cloud shards may be orphaned",
+		logging.Error("Failed to write incomplete aggregate manifest; committed cloud shards may be orphaned",
 			zap.String("path", manifestPath), zap.Error(werr))
 	}
 }
