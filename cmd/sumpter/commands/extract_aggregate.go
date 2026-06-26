@@ -622,6 +622,12 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
 	manifest.OutputMode = outputModeAggregate
 	manifest.AggregateOutputs = writer.shards
+	// Emit the input-accounting integers from the gap-free inputs[] inventory this
+	// completed aggregate run holds (R5). An unaccounted disposition would be a
+	// producer bug, so fail rather than emit unsubstantiated counts.
+	if err := manifest.SetInputAccounting(); err != nil {
+		return fmt.Errorf("compute input accounting for aggregate manifest: %w", err)
+	}
 	manifestPath := outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 		return err

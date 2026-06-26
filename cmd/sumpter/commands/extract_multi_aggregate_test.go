@@ -87,6 +87,9 @@ func TestExtractMultiAggregate_PerRecipeStreamAndProvenance(t *testing.T) {
 		if len(m.Inputs) != 3 {
 			t.Errorf("recipe %q inventory len = %d, want 3", id, len(m.Inputs))
 		}
+		// Per-recipe input accounting: each recipe applies to all 3 inputs and the
+		// counts stay isolated per recipe (3/3/0/0).
+		assertInputAccounting(t, m, 3, 3, 0, 0)
 		// Manifest argv records the aggregate mode.
 		if !strings.Contains(strings.Join(m.CLI.ArgvSanitized, " "), "--output-mode=aggregate") {
 			t.Errorf("recipe %q manifest argv missing --output-mode=aggregate", id)
@@ -318,6 +321,49 @@ func TestExtractMultiAggregate_Rejections(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestExtractMultiAggregate_NotApplicableCountedPerRecipe exercises the primary
+// extract-multi use case for input accounting: applicability dispatch legitimately
+// skips some inputs, so not_applicable must be its own count and the invariant
+// applied + failed + not_applicable == total must hold. The recipe's applicability
+// predicate (count(//TargetElement) > 0) is true for two inputs (applied) and false
+// for the third (not_applicable), with no failures.
+func TestExtractMultiAggregate_NotApplicableCountedPerRecipe(t *testing.T) {
+	ws := writeApplicabilityRecipe(t, "summary", "count(//TargetElement) > 0")
+	dir := t.TempDir()
+	inputs := []struct {
+		name, body string
+	}{
+		{"inA.xml", `<root><TargetElement><Name>valA</Name></TargetElement></root>`}, // predicate true -> applied
+		{"inB.xml", `<root><TargetElement><Name>valB</Name></TargetElement></root>`}, // predicate true -> applied
+		{"inC.xml", `<root><Other><Name>valC</Name></Other></root>`},                 // /root matches, predicate false -> not_applicable
+	}
+	var paths []string
+	for _, in := range inputs {
+		p := filepath.Join(dir, in.name)
+		if err := os.WriteFile(p, []byte(in.body), 0o600); err != nil {
+			t.Fatalf("write input %s: %v", in.name, err)
+		}
+		paths = append(paths, p)
+	}
+	fileList := filepath.Join(dir, "files.txt")
+	if err := os.WriteFile(fileList, []byte(strings.Join(paths, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write file list: %v", err)
+	}
+
+	outRoot := filepath.Join(t.TempDir(), "out")
+	if err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate"}, []string{ws}, io.Discard, time.Now()); err != nil {
+		t.Fatalf("aggregate extract-multi: %v", err)
+	}
+
+	m := readManifest(t, filepath.Join(outRoot, "summary", "manifest.json"))
+	if len(m.Inputs) != 3 {
+		t.Fatalf("inventory len = %d, want 3 (gap-free, including not_applicable)", len(m.Inputs))
+	}
+	// 3 total, 2 applied, 1 not_applicable, 0 failed — not_applicable is counted,
+	// never silently folded into applied or failed.
+	assertInputAccounting(t, m, 3, 2, 1, 0)
 }
 
 func readFileOrFail(t *testing.T, path string) string {

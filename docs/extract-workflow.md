@@ -162,10 +162,26 @@ hundreds). Use these signals to verify every input was applied, in order of auth
    with possibly-orphaned cloud objects (R8), a different condition from "some inputs
    failed". Do not gate completeness on this flag alone.
 
-> A first-class manifest completeness summary (e.g. a `status` field or
-> `inputs_applied` / `inputs_failed` counts) is planned for the durable data-artifact
-> contract so a consumer can check a single field; until then, use the exit code plus the
-> `inputs[]` inventory above.
+**Input-accounting summary (aggregate manifests).** A completed aggregate
+manifest carries four optional top-level integers derived from the gap-free
+`inputs[]` inventory, so a consumer can reconcile completeness from a single
+place rather than walking every entry. They mirror the closed input-disposition
+enum exactly:
+
+- `inputs_total` — total resolved inputs, equal to `len(inputs)`.
+- `inputs_applied` — inputs with disposition `applied` (including zero-record successes).
+- `inputs_not_applicable` — inputs skipped by signature/applicability dispatch.
+- `inputs_failed` — inputs with disposition `failed`. A floor miss stays here
+  (disposition `failed`, reason `min_occurrences_violation`), not a separate count.
+
+The reconciliation invariant is `applied + failed + not_applicable == total == len(inputs)`.
+These counts are present only on aggregate manifests with an authoritative
+inventory — omitted on per-input/default manifests and on `incomplete: true`
+manifests, which are not a completeness signal. The exit code remains
+authoritative; the counts are a convenience over the `inputs[]` inventory, not a
+replacement for checking it. A semantic `status` field
+(`complete` / `partial` / `incomplete`) is deferred to the ratified durable
+data-artifact contract.
 
 **With `extract-multi`.** `--output-mode aggregate` applies to
 [`recipes run extract-multi`](#run-multiple-recipes-in-one-pass-extract-multi) too: each
