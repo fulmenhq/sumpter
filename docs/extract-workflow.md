@@ -271,6 +271,13 @@ The concurrency is in the **parse only** — extraction, writing, the per-input 
 
 `--parse-workers > 1` works with **local and cloud (`s3://`)** aggregate and per-input output. Cloud shard publishes stay on the same single ordered drain (deterministic shard order, one object per shard), and cloud inputs are staged before any worker starts, so concurrency never changes the cloud publish, proactive byte-cap (`--aggregate-max-bytes`), partial-publish, or publish-fatal semantics — it only parallelizes the parse.
 
+**Choosing a worker count.** The win is **parse-bound**: only the read+parse runs across workers, while extraction, writing, and manifest bookkeeping stay on a single ordered drain (that serialization is what keeps the output deterministic). So the speedup tracks how much of each input's cost is parsing:
+
+- **Largest on parse-heavy inputs** — large or deeply-structured documents, especially with sparse extraction (a few records pulled from a big document). These scale toward your core count.
+- **Modest when extraction dominates** — recipes that emit many records per input, or very small inputs where per-file overhead outweighs the parse, gain little because the serial drain is the bottleneck.
+
+Start with a worker count near your physical core count and measure on your own inputs; because the output is identical at every worker count, you can tune `--parse-workers` freely without changing results. Going well beyond core count rarely helps (the drain, not parse, becomes the limit).
+
 #### Worked example: three projections in one pass
 
 Suppose each input is a synthetic order document, and three recipes each extract a
