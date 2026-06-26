@@ -68,19 +68,9 @@ func TestExtractMulti_ParseWorkersValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects >1 with cloud output", func(t *testing.T) {
-		shared := &multiSharedOptions{
-			FileList:          fileList,
-			OutputPath:        "s3://bucket/out",
-			OutputMode:        outputModeAggregate,
-			AggregateMaxBytes: 1024,
-			ParseWorkers:      4,
-		}
-		err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now())
-		if err == nil || !strings.Contains(err.Error(), "parse-workers") {
-			t.Errorf("expected a parse-workers/cloud rejection, got %v", err)
-		}
-	})
+	// Note: --parse-workers > 1 with a cloud (s3://) destination is supported as of the
+	// cloud slice; the concurrency × cloud-publish invariants are covered by the
+	// s3integration moto suite (extract_multi_aggregate_cloud_moto_test.go), not here.
 }
 
 // TestExtractMulti_ParseWorkersConcurrencyProof uses the injectable parseFile seam to

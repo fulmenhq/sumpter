@@ -79,12 +79,9 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	// path; a cloud (s3://) root keeps its URI; an unsupported scheme (e.g. gs://)
 	// is rejected here. resolveRecipeOutputDirs then sees a clean local path or
 	// an s3:// URI, never a half-resolved file:// root.
-	outputRootIsCloud := false
 	if ref, cerr := uriio.Classify(outputRoot); cerr != nil {
 		return cerr
-	} else if ref.IsCloud() {
-		outputRootIsCloud = true
-	} else {
+	} else if !ref.IsCloud() {
 		local, lerr := uriio.LocalPath("output root", outputRoot)
 		if lerr != nil {
 			return lerr
@@ -93,16 +90,15 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	}
 	shared.OutputPath = outputRoot
 
-	// Validate and normalize parse concurrency BEFORE any output session opens. A
-	// zero value (internal callers / unset) means the serial default; a negative
-	// value is a programming error. Cloud aggregate parallelism is deferred to a
-	// later slice (the cloud publish/digest/ordering invariants are proven under
-	// concurrency separately), so reject >1 with a cloud destination for now.
+	// Validate parse concurrency BEFORE any output session opens. A zero value
+	// (internal callers / unset) means the serial default; a negative value is a
+	// programming error. Cloud (s3://) destinations are supported under concurrency:
+	// parse workers never touch the aggregate writer — durable shard publishes stay on
+	// the single ordered drain, in deterministic shard order, and cloud input staging
+	// is resolved upstream-serial before any worker starts, so concurrency multiplies
+	// neither cloud PUTs nor concurrent GETs (the R1/R7/R8/S9 invariants are unchanged).
 	if shared.ParseWorkers < 0 {
 		return fmt.Errorf("extract-multi: --parse-workers must be >= 1 (got %d)", shared.ParseWorkers)
-	}
-	if shared.ParseWorkers > 1 && outputRootIsCloud {
-		return fmt.Errorf("extract-multi: --parse-workers > 1 is not supported with a cloud (s3://) output destination yet; run cloud aggregate with --parse-workers 1")
 	}
 	// Normalize the output mode ONCE so every downstream check agrees on the canonical
 	// value: plan opts (threaded from shared), isAggregateMode (writer selection),

@@ -267,7 +267,9 @@ sumpter recipes run extract-multi \
   --parse-workers 8
 ```
 
-The concurrency is in the **parse only** — extraction, writing, the per-input spool barrier, manifest accounting, and shard rolling stay on a single ordered drain. Output is therefore **identical** to a single-worker run: records emit in resolved input order (`--file-list`/`--files` order, or sorted `--input-path` discovery order) regardless of which worker parsed which input, with the same per-invocation provenance manifest and the same per-input/per-recipe failure attribution. The default is `1` (serial, byte-identical to earlier releases); a value below `1` is rejected. Pick a worker count near your core count for a large batch; small batches see little benefit. In this release `--parse-workers > 1` is supported for **local** aggregate and per-input output; combine it with a cloud (`s3://`) destination by leaving `--parse-workers` at `1` for now.
+The concurrency is in the **parse only** — extraction, writing, the per-input spool barrier, manifest accounting, and shard rolling stay on a single ordered drain. Output is therefore **identical** to a single-worker run: records emit in resolved input order (`--file-list`/`--files` order, or sorted `--input-path` discovery order) regardless of which worker parsed which input, with the same per-invocation provenance manifest and the same per-input/per-recipe failure attribution. The default is `1` (serial, byte-identical to earlier releases); a value below `1` is rejected. Pick a worker count near your core count for a large batch; small batches see little benefit.
+
+`--parse-workers > 1` works with **local and cloud (`s3://`)** aggregate and per-input output. Cloud shard publishes stay on the same single ordered drain (deterministic shard order, one object per shard), and cloud inputs are staged before any worker starts, so concurrency never changes the cloud publish, proactive byte-cap (`--aggregate-max-bytes`), partial-publish, or publish-fatal semantics — it only parallelizes the parse.
 
 #### Worked example: three projections in one pass
 
