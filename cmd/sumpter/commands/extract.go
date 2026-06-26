@@ -1932,7 +1932,7 @@ func writeRecordsForFormat(outputFile, format string, records []map[string]inter
 		return writeRecordsToFile(opts, outputFile, records)
 	case recipesmanifest.OutputFormatParquet:
 		if opts == nil || opts.Recipe == nil {
-			logging.GetLogger().Warn("Parquet output without recipe.yaml; recipe provenance metadata will be omitted",
+			logging.Warn("Parquet output without recipe.yaml; recipe provenance metadata will be omitted",
 				zap.String("file", outputFile))
 		}
 		// The parquet writer needs a local seekable file. Resolve the destination
@@ -2677,7 +2677,7 @@ func setupOutputSession(opts *ExtractOptions, runID string) error {
 	opts.outputSession = session
 	opts.outputHandle = handle
 
-	logging.GetLogger().Info("Publishing extraction output to cloud destination",
+	logging.Info("Publishing extraction output to cloud destination",
 		zap.String("destination", ref.LogicalURI),
 		zap.String("handle", handle),
 		zap.String("resolved", confirmation))
@@ -2691,7 +2691,7 @@ func closeOutputSession(opts *ExtractOptions) {
 		return
 	}
 	if err := opts.outputSession.Close(); err != nil {
-		logging.GetLogger().Warn("Failed to clean up cloud output staging directory", zap.Error(err))
+		logging.Warn("Failed to clean up cloud output staging directory", zap.Error(err))
 	}
 	opts.outputSession = nil
 }

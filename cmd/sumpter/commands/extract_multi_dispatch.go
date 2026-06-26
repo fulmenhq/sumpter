@@ -22,13 +22,11 @@ import (
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
-// dispatchLogger returns the process logger, or a no-op logger when none is
-// configured (e.g. in tests), so logging never panics on a nil logger.
+// dispatchLogger returns the process logger. logging.GetLogger() is nil-safe (it
+// returns a no-op logger when none is configured, e.g. in tests), so this is a thin
+// alias kept for call-site readability.
 func dispatchLogger() *zap.Logger {
-	if l := logging.GetLogger(); l != nil {
-		return l
-	}
-	return zap.NewNop()
+	return logging.GetLogger()
 }
 
 // multiDispatcher runs the parse-once, multi-recipe extraction. parseFile is

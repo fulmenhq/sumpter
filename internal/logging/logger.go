@@ -134,8 +134,21 @@ func isTerminal() bool {
 
 // Global logging functions with PII sanitization
 
-// GetLogger returns the global logger instance
+// nopLogger is returned by GetLogger when no global logger has been configured, so
+// callers that hold the returned *zap.Logger and call methods on it (e.g.
+// GetLogger().Info(...) or `l := GetLogger(); l.Warn(...)`) never panic on a nil
+// logger. The package-level Info/Warn/Error/Debug helpers already nil-guard; this
+// extends the same safety to the accessor. A no-op logger drops all output, matching
+// the unconfigured-logger intent.
+var nopLogger = zap.NewNop()
+
+// GetLogger returns the global logger instance, or a no-op logger when none has been
+// configured. It never returns nil, so callers can invoke methods on the result
+// directly without a nil check.
 func GetLogger() *zap.Logger {
+	if globalLogger == nil {
+		return nopLogger
+	}
 	return globalLogger
 }
 
