@@ -19,6 +19,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/runstats"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
@@ -57,6 +58,24 @@ func runExtractMulti(shared *multiSharedOptions, workspaces []string, warnOut io
 	return newMultiDispatcher(shared, warnOut).run(workspaces, startedAt)
 }
 
+// sumLocalFileSizes totals the on-disk size of the resolved input read paths
+// (local sources or staged-cloud copies) using cheap stat calls only — no file
+// reads and no cloud/object-store requests. allKnown is false if any size could
+// not be determined, so the caller reports input bytes as unavailable rather than
+// a misleading partial total. It never fails the run.
+func sumLocalFileSizes(files []string) (total int64, allKnown bool) {
+	allKnown = true
+	for _, f := range files {
+		info, statErr := os.Stat(f)
+		if statErr != nil || info.IsDir() {
+			allKnown = false
+			continue
+		}
+		total += info.Size()
+	}
+	return total, allKnown
+}
+
 func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err error) {
 	shared := d.shared
 	if shared == nil {
@@ -65,6 +84,28 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	if len(workspaces) == 0 {
 		return fmt.Errorf("extract-multi requires at least one recipe workspace")
 	}
+
+	// Opt-in run stats: capture the wall/CPU baseline now and emit a diagnostic
+	// summary to stderr on the way out (success or failure, once the input set has
+	// been resolved). Purely observational — it never touches records, output, or
+	// the manifest, and is deferred FIRST so it prints after all other teardown.
+	var (
+		statsCollector  *runstats.Collector
+		statsInputs     int
+		statsInputBytes int64
+		statsBytesKnown bool
+		statsReady      bool
+	)
+	if shared.Stats {
+		statsCollector = runstats.Start(shared.ParseWorkers)
+		defer func() {
+			if !statsReady {
+				return
+			}
+			_, _ = io.WriteString(d.warnOut, runstats.Format(statsCollector.Sample(statsInputs, statsInputBytes, statsBytesKnown)))
+		}()
+	}
+
 	if err := validateSharedInputMode(shared); err != nil {
 		return err
 	}
@@ -181,6 +222,13 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	files, logicalByLocal, inputSession, err := resolveInputSources(context.Background(), inputOpts, shared.RunID)
 	if err != nil {
 		return err
+	}
+	if shared.Stats {
+		// Counters are taken from the resolved read paths (local or staged-cloud
+		// copies) using cheap stat calls only — no extra file reads, no cloud calls.
+		statsInputs = len(files)
+		statsInputBytes, statsBytesKnown = sumLocalFileSizes(files)
+		statsReady = true
 	}
 	if inputSession != nil {
 		defer func() {

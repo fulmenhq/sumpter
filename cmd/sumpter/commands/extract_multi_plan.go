@@ -81,6 +81,13 @@ type multiSharedOptions struct {
 	// in every recipe's provenance manifest, so the sidecar reports the command
 	// the user actually ran (not the single-recipe fallback). Shared by all plans.
 	Argv []string
+
+	// Stats opts into an end-of-run diagnostic summary on stderr (effective CPU vs
+	// --parse-workers, throughput) to help tune parse concurrency. It is purely
+	// observational: it is NOT threaded into Argv / cli.argv_sanitized and never
+	// touches records, aggregate output, or the provenance manifest, so the
+	// SUM-066 byte-identical contract holds with stats on or off.
+	Stats bool
 }
 
 // RecipePlan is the fully-loaded, isolated per-recipe execution state for one

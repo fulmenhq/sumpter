@@ -294,6 +294,26 @@ The concurrency is in the **parse only** — extraction, writing, the per-input 
 
 Start with a worker count near your physical core count and measure on your own inputs; because the output is identical at every worker count, you can tune `--parse-workers` freely without changing results. Going well beyond core count rarely helps (the drain, not parse, becomes the limit).
 
+**Measuring with `--stats`.** Add `--stats` to print an end-of-run diagnostic block to **stderr** (stdout and the record/manifest output are unchanged). It reports observed counters only — it does not recommend a worker count:
+
+```text
+extract-multi --stats (diagnostic; observed counters, not a recommendation)
+  wall:          12.4s
+  inputs:        50000 (4032.3/s)
+  input bytes:   1430.2 MiB (115.3 MiB/s)
+  parse-workers: 4
+  GOMAXPROCS:    8 (logical CPUs: 8)
+  effective CPU: 3.10 cores (~78% of 4 parse-workers)
+```
+
+`effective CPU` is process user+sys CPU divided by wall time, shown as cores and as a fraction of `--parse-workers`. Read it together with throughput across runs rather than as a target:
+
+- **Low effective CPU + throughput still rising as N grows** — workers are waiting and more may help; raise N and re-measure.
+- **Low effective CPU + throughput flat as N grows** — the ceiling is elsewhere (storage bytes/s, IOPS or object-store/API quota, decompression/acquisition throttling, or the serial output drain), not CPU; more workers won't help.
+- **High effective CPU near `GOMAXPROCS` + throughput flat** — you are CPU-bound; you are near the useful limit for this workload.
+
+The practical loop: run `--parse-workers 1`, then `N`, then `2N`, and stop when inputs/s (or MiB/s) plateaus. `input bytes`/MiB/s is best-effort from already-resolved source sizes and shows `unavailable` when sizes are not cheaply available; CPU shows `unavailable` on platforms where process CPU cannot be read. Stats are nondeterministic, so they are never written to records or the manifest.
+
 #### Worked example: three projections in one pass
 
 Suppose each input is a synthetic order document, and three recipes each extract a
