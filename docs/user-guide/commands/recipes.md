@@ -139,9 +139,10 @@ within the one invocation, fanning parsed inputs into the single ordered writer 
 speed up the parse (CPU) cost at high file counts. Output is identical to a
 single-worker run — records emit in resolved input order and the per-invocation
 manifest is unchanged — because only the parse is concurrent; extraction, writing,
-and finalization stay on one ordered drain. A value below `1` is rejected;
-`--parse-workers > 1` is local-only for now (run a cloud `s3://` destination with
-`--parse-workers 1`).
+and finalization stay on one ordered drain. A value below `1` is rejected. It works
+with both local and cloud (`s3://`) destinations: cloud shard publishes stay on the
+ordered drain, so concurrency leaves the cloud publish/byte-cap/partial-publish
+semantics unchanged.
 
 Failure handling follows the input-vs-recipe boundary: a read/parse/acquire
 failure is input-level (every recipe sees it); an applicability, signature,
