@@ -231,7 +231,7 @@ defaults:
 - **`assets`** points at the core configuration files required to run the recipe.
 - **`defaults.output.uniform_schema`** optionally emits every declared `output_schema.properties` key on each record, using JSON `null` for absent values.
 - **`defaults.input`** defines how the runner discovers XML (directory scanning or explicit file list).
-- **`defaults.output`** controls output formatting and destination, allowing NDJSON/structured JSON switches later.
+- **`defaults.output`** controls output formatting and destination. For the record stream, `format: json` is the legacy/canonical token and `format: ndjson` is an accepted alias for it — both emit the same newline-delimited JSON (NDJSON/JSONL) record envelopes and are behavior-identical (neither produces a single-file JSON array). `parquet` selects the columnar secondary projection.
 - **`defaults.cadence`** records operator-readable run cadence intent such as `daily-rolling`, `weekly`, `weekly-2x`, `on-demand`, `hourly`, `monthly`, or `quarterly`.
 - **`defaults.client_id` / `site_id`** pre-populate metadata for downstream consumers.
 - **`defaults.parameters`** injects parameters into every record — each value is a string or a list of strings; **`defaults.parameters_required`** fails the run if a required key does not resolve from the manifest or CLI (an empty list counts as provided; an empty scalar string does not).

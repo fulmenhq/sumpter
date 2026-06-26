@@ -152,12 +152,16 @@ properties:
           format:
             type: string
             enum: ["json", "ndjson", "parquet"]
+            description: >-
+              Record output format. `json` is the legacy/canonical recipe token and `ndjson` is an accepted alias for the same writer family: both emit newline-delimited JSON (NDJSON/JSONL) record envelopes — one JSON object per line — and are behavior-identical. Neither token produces a single-file JSON array or object. `parquet` selects the columnar secondary projection.
           formats:
             type: array
             items:
               type: string
               enum: ["json", "ndjson", "parquet"]
             uniqueItems: true
+            description: >-
+              Multi-format list form. `json` and `ndjson` name the same newline-delimited JSON (NDJSON/JSONL) writer family (see `format`); `parquet` is the columnar secondary projection.
           path:
             type: string
           credentials_handle:
