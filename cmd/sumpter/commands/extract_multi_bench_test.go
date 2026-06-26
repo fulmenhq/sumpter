@@ -70,6 +70,78 @@ func BenchmarkExtractMultiParseAmortization(b *testing.B) {
 	})
 }
 
+// BenchmarkExtractMultiParseWorkers quantifies parse-parallelism scaling: one
+// extract-multi aggregate invocation over a PARSE-BOUND input set, run at increasing
+// --parse-workers. Each input is a large, deeply-structured document (lots of filler
+// nodes) from which the recipe extracts only a few records — a common real shape (big
+// documents, sparse records of interest) where DOM construction is the dominant per-input
+// cost. That is exactly what this feature parallelizes.
+//
+// Why this shape: the conservative v0.2.4 cut parallelizes the READ+PARSE only;
+// extraction, writing, and manifest bookkeeping stay serial on the ordered drain. So the
+// wall-clock win is workload-dependent — large on parse-bound inputs (here), modest when
+// extraction dominates (dense recipes) or when per-file drain overhead dominates (many
+// tiny files). Aggregate mode keeps output-file-creation noise out of the measurement.
+//
+// It reports only ns/op; absolute throughput numbers are intentionally NOT asserted or
+// committed (machine-dependent; field scale figures stay off the public surface). A human
+// reads the ns/op trend across worker counts to see scaling toward the available cores /
+// parse-I/O ceiling. There is deliberately no wall-clock gate (it would be flaky).
+func BenchmarkExtractMultiParseWorkers(b *testing.B) {
+	const (
+		kFiles      = 200
+		fillerNodes = 4000 // big DOM per input; the recipe extracts only the lone TargetElement
+	)
+	ws := writeBenchRecipeWorkspace(b, "proj0")
+	fileList := writeBenchParseBoundInputSet(b, kFiles, fillerNodes)
+
+	for _, workers := range []int{1, 2, 4, 8} {
+		b.Run(fmt.Sprintf("parse_workers_%d", workers), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				shared := &multiSharedOptions{
+					FileList:     fileList,
+					OutputPath:   filepath.Join(b.TempDir(), fmt.Sprintf("w%d_%d", workers, i)),
+					OutputMode:   outputModeAggregate,
+					RunID:        testMultiRunID,
+					ParseWorkers: workers,
+				}
+				if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err != nil {
+					b.Fatalf("workers=%d: %v", workers, err)
+				}
+			}
+		})
+	}
+}
+
+// writeBenchParseBoundInputSet writes n parse-bound inputs: each carries fillerNodes
+// filler elements (so the DOM build is the dominant cost) plus a single TargetElement
+// the recipe extracts (so extraction stays cheap and the parse is the long pole).
+func writeBenchParseBoundInputSet(b *testing.B, n, fillerNodes int) string {
+	b.Helper()
+	dir := b.TempDir()
+	var body strings.Builder
+	body.WriteString("<root>")
+	for j := 0; j < fillerNodes; j++ {
+		fmt.Fprintf(&body, `<Filler id="%d"><a><b>x</b></a></Filler>`, j)
+	}
+	body.WriteString(`<TargetElement><Name>only</Name></TargetElement></root>`)
+	payload := []byte(body.String())
+
+	inputs := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("in%04d.xml", i))
+		if err := os.WriteFile(p, payload, 0o600); err != nil {
+			b.Fatal(err)
+		}
+		inputs = append(inputs, p)
+	}
+	fileList := filepath.Join(dir, "files.txt")
+	if err := os.WriteFile(fileList, []byte(strings.Join(inputs, "\n")+"\n"), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	return fileList
+}
+
 func writeBenchRecipeWorkspace(b *testing.B, id string) string {
 	b.Helper()
 	ws := b.TempDir()
