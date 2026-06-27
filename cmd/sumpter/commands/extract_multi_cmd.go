@@ -40,6 +40,7 @@ type recipeRunExtractMultiOptions struct {
 	CredentialsPath        string
 	CredentialOverrides    []string
 	InputCredentialsHandle string
+	Stats                  bool
 }
 
 func newRecipeRunExtractMultiCommand() *cobra.Command {
@@ -113,6 +114,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				CredentialsPath:        opts.CredentialsPath,
 				CredentialOverrides:    opts.CredentialOverrides,
 				InputCredentialsHandle: opts.InputCredentialsHandle,
+				Stats:                  opts.Stats,
 			}
 			return runExtractMulti(shared, args, cmd.ErrOrStderr(), time.Now().UTC())
 		},
@@ -138,6 +140,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input")
+	cmd.Flags().BoolVar(&opts.Stats, "stats", false, "Print an end-of-run diagnostic summary (wall, inputs/s, effective CPU vs --parse-workers, GOMAXPROCS) to stderr to help tune --parse-workers. Observed counters only; does not change records, output, or the provenance manifest")
 
 	return cmd
 }
