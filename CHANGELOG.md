@@ -8,6 +8,24 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-27
+
+**Parallel parsing for high-volume `extract-multi`, the `--stats` instrumentation to tune it by measuring rather than by core count, plus contract-independent output hardening — all additive, with byte-for-byte unchanged defaults.**
+
+See [`docs/releases/v0.2.4.md`](docs/releases/v0.2.4.md) for the full release narrative.
+
+### Added
+
+- **Parallel parsing — `--parse-workers N` (`parse-parallelism`)** - `recipes run extract-multi --parse-workers N` parses one invocation's shared input set across N workers and fans the parsed inputs into the single ordered aggregate writer, so the parse (CPU) long pole at high file counts scales toward available cores instead of running single-file. Output is **byte-identical at every worker count** (the load-bearing guarantee): records emit in resolved input order, the per-invocation provenance manifest is unchanged, and every aggregate determinism/isolation/cloud invariant holds — only the read+parse is parallelized, while extraction, writing, manifest accounting, and shard rolling stay on a single ordered drain. Works with local and cloud (`s3://`) aggregate and per-input output. Default `1` is serial and byte-identical to earlier releases; a value below 1 is rejected. Biggest on parse-bound runs (large or deeply-structured inputs with sparse extraction); modest when extraction dominates or storage caps concurrent reads (#122, #123, #124, #125).
+- **Run statistics — `--stats` (`run-stats`)** - opt-in `recipes run extract-multi --stats` prints an end-of-run diagnostic summary to **stderr** so `--parse-workers` can be tuned from Sumpter's own output: wall clock, inputs and inputs/s, best-effort input bytes + MiB/s, the parse-workers value, `GOMAXPROCS` + logical CPU count, and **effective CPU** (process user+sys CPU ÷ wall) shown as cores and as a percentage of parse-workers. Observed counters only — never a recommendation. It is entirely off the deterministic artifact path: no record fields, no provenance manifest fields, no schema change, and `--stats` is not recorded in `cli.argv_sanitized`, so records and the manifest are byte-identical with stats on or off. Process CPU is read via `getrusage` / `GetProcessTimes` and degrades to `unavailable` rather than failing the run (#129).
+- **Manifest input-accounting integers (`manifest-completeness`)** - aggregate provenance manifests gain four optional top-level integers — `inputs_total`, `inputs_applied`, `inputs_not_applicable`, `inputs_failed` — so a consumer can reconcile completeness from a single place rather than walking the `inputs[]` inventory. They mirror the closed input-disposition enum exactly and satisfy `inputs_applied + inputs_failed + inputs_not_applicable == inputs_total == len(inputs)`. Emitted only on aggregate manifests with an authoritative gap-free inventory; omitted on per-input/default and `incomplete:true` manifests, so existing manifests stay byte-identical. The required schema set is unchanged; the semantic `status` enum is deferred to the v0.3.0 data-artifact contract (#128).
+
+### Changed
+
+- **`json` / `ndjson` format-name clarity (`format-naming`)** - the recipe output `format` token is now documented unambiguously: `json` is the legacy/canonical token and `ndjson` is a first-class accepted alias for the same writer family — both emit newline-delimited JSON (NDJSON/JSONL) record envelopes and are behavior-identical, and neither produces a single-file JSON array. Docs and recipe-schema descriptions only; zero breakage, no code-path change, no deprecation warning (#127).
+- **Logging hardening** - `logging.GetLogger()` now returns a no-op logger when none is configured, closing a latent nil-logger panic class in tests and non-CLI entrypoints, and a `forbidigo` lint rule bans the `GetLogger().Method()` call pattern so the package-level `logging.Info/Warn/Error` house style is enforced as a gate (#126).
+- **VERSION bumped to `0.2.4`** for this release.
+
 ## [0.2.3] - 2026-06-25
 
 **Aggregate output: stream one NDJSON file per recipe across many inputs (local and cloud) with deterministic ordering, rolling shards, and per-shard provenance; plus a schema-backed record envelope and a whole-tree format gate.**
@@ -216,38 +234,3 @@ See [`docs/releases/v0.1.6.md`](docs/releases/v0.1.6.md) for the full release na
 ### Deferred
 
 - **Record-sink output streaming and index streaming** are deferred to v0.1.7 or later; v0.1.6 keeps the honest memory contract that extracted records are buffered per file before output.
-
-## [0.1.5] - 2026-05-26
-
-**Release-readiness hardening, recipe applicability gates, and resilient multi-file extraction.**
-
-See [`docs/releases/v0.1.5.md`](docs/releases/v0.1.5.md) for the full release narrative.
-
-### Added
-
-- **Recipe applicability gates** - recipes may reference an `assets.applicability` YAML asset with an XPath predicate. Applicability runs before signature matching; false predicates mark inputs `not_applicable` without counting them as extraction failures (PR #39).
-- **Schema-backed extraction dispositions** - applicability-aware runs add per-input provenance dispositions and write `dispositions.json` summaries backed by `schemas/extract/v0.1.0/dispositions.schema.json` (PR #39).
-- **Per-file failure manifests** - `sumpter extract files` and `sumpter recipes run extract` support `--continue-on-error` for multi-file cohorts. Recoverable per-input failures are written to `failures.json`, backed by `schemas/extract/v0.1.0/failures.schema.json` (PR #40).
-- **PR-time release-build dry run** - CI now runs normal quality gates plus a `make release-build` dry run in the same container shape used by the tag-triggered release workflow, catching release-container drift before tag time (PR #38).
-
-### Changed
-
-- **Release workflow hardening** - tag-triggered releases publish as drafts first, so signing manifests and provenance assets can be attached before the release is made public (PR #37).
-- **Release tag guardrails** - release ceremony targets prefer `SUMPTER_RELEASE_TAG` and fail loud if the requested tag does not match `VERSION`; `RELEASE_TAG` remains available for one-off invocations (PR #37).
-- **Go toolchain pin** - CI and release workflows now use Go `1.26.3`, and CI installs `golangci-lint` `v2.11.2` so linting can analyze Go 1.26 source (PR #41).
-- **VERSION bumped to `0.1.5`** for this release.
-
-### Fixed
-
-- **PGP verification ceremony** - release signature verification now checks for both minisign and PGP output when both signatures are present, preventing a silent skipped-verification path (PR #37).
-- **Signature mismatch routing** - inputs that miss a recipe signature and then encounter declared `min_occurrences` floors now report `signature_mismatch` with confidence details instead of a misleading `min_occurrences` violation (PR #40).
-
-### Security
-
-- **No unsigned public-release window** - GitHub Releases remain drafts until checksum manifests, signatures, public keys, and release notes are attached and verified by the operator ceremony (PR #37).
-- **Go standard-library vulnerability fix path** - the local and CI toolchains are aligned on Go `1.26.3`, resolving the Go 1.26.1 standard-library vulnerability findings that blocked local `govulncheck` during validation (PR #41).
-
-### Deferred
-
-- **Cloud URI I/O** remains deferred to a future cycle; v0.1.5 focuses on release hardening and local/multi-file extraction resilience.
-- **Shell shfmt baseline cleanup** remains visible as nine medium goneat lint findings in release scripts. It is non-blocking under the current hook policy and is intentionally deferred to a separate housekeeping PR.
