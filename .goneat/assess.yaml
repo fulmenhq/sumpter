@@ -89,6 +89,9 @@ format:
       - ".cache/**"
       - "**/vendor/**"
       - "**/node_modules/**"
+      # Test fixtures are byte-exact (e.g. single-line NDJSON record envelopes
+      # checked by `make extract-output-contract-check`); never auto-reflow them.
+      - "tests/fixtures/**"
   yaml:
     enabled: true
     paths:
