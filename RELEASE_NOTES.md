@@ -6,6 +6,41 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.2.4 (2026-06-27)
+
+**A performance + tunability minor for high-volume `extract-multi`: configurable parallel input processing across thousands of input files and beyond, the instrumentation to tune it, and contract-independent output hardening — all additive, with defaults byte-for-byte unchanged.**
+
+v0.2.4 builds on v0.2.3's aggregate output with the performance follow-on it flagged. The headline is **configurable parallel input processing**: a single run over **thousands of input files and beyond** spreads each input's read+parse **plus** its full per-recipe application across N workers via `--input-workers N`, with a single ordered committer applying results in input order and **byte-identical output at every worker count**. Paired with it, **`--stats`** prints an end-of-run effective-CPU + throughput summary so you size `--input-workers` by measuring your own workload rather than guessing from core count. Around those, two contract-independent hardening items — `json`/`ndjson` naming clarity and additive manifest input-accounting integers — plus logging hardening round out the release. The v0.2.0–0.2.3 surface (cloud I/O, reference-table lookup, multi-recipe single-pass extract, aggregate output) is unchanged, and the supported platform matrix is identical to 0.2.3.
+
+### What's new (summary)
+
+- **Parallel input processing — `--input-workers N` (`input-parallelism`)** - run each `extract-multi` input's read+parse **plus** its full per-recipe application (signature/applicability, extraction, `min_occurrences`) across N workers, with a single ordered committer applying the worker-local bundles in input order so high file counts scale toward available cores. Output is **byte-identical at every worker count** — records emit in resolved input order and the per-invocation manifest is unchanged, because only the durable commit (writing, spool barrier, ledgers, manifest, shard rolling, cloud publish) stays single-owner. Memory is bounded (an over-limit input fails deterministically with guidance; records are never dropped). Local + cloud; default `1` is unchanged.
+- **Tune by measuring — `--stats` (`run-stats`)** - opt-in end-of-run diagnostic summary to stderr (wall, inputs/s, best-effort MiB/s, input-workers, `GOMAXPROCS`/logical CPUs, and **effective CPU** as cores and % of input-workers) so you size `--input-workers` from Sumpter's own output. Observed counters only, off the deterministic path — no record, manifest, or `cli.argv_sanitized` change.
+- **`json` / `ndjson` naming clarity (`format-naming`)** - `json` is documented as the canonical/legacy token and `ndjson` as a first-class accepted alias for the same newline-delimited JSON writer family; behavior-identical, zero breakage, no deprecation.
+- **Manifest input-accounting integers (`manifest-completeness`)** - aggregate provenance manifests gain optional `inputs_total` / `inputs_applied` / `inputs_not_applicable` / `inputs_failed`, mirroring the closed disposition enum (`applied + failed + not_applicable == total == len(inputs)`). Required set unchanged; the `status` enum is deferred to v0.3.0.
+- **Logging hardening** - nil-safe `logging.GetLogger()` (no-op when unconfigured) plus a `forbidigo` rule enforcing the package-level logging house style.
+
+### Tuning `--input-workers` (the standout)
+
+Input-parallelism and `--stats` are built to be used together: rather than setting N to your core count, run `--input-workers 1`, then `N`, then `2N` with `--stats` and stop when throughput plateaus. The right N depends on where your workload bottlenecks — CPU, storage bytes/sec, IOPS, or object-store/API quota — and **can exceed core count** for stall/latency-bound work; a low effective-CPU reading is headroom to test, not proof you should add workers. See the `--input-workers` tuning guidance in [`docs/extract-workflow.md`](docs/extract-workflow.md).
+
+### Compatibility & notes
+
+- **All-additive.** `--input-workers` defaults to `1` (serial, byte-identical to 0.2.3) and `--stats` is opt-in and off the deterministic path, so records and the provenance manifest are byte-identical with either on or off. `json`/`ndjson` behavior is unchanged. The manifest required set is unchanged; the new input-accounting integers are optional and appear only on aggregate manifests.
+- **`--input-workers` is a throughput knob**, not a blanket speedup — it parallelizes per-input read+parse and application, while only the durable commit (writing, spool barrier, ledgers, manifest accounting, shard rolling, cloud publish) stays single-owner on the ordered committer to preserve byte-identical output. Gains track how CPU-bound per-input work is and whether storage serves concurrent reads.
+- **Platforms:** unchanged from 0.2.0–0.2.3 — linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source.
+- **Alpha:** interfaces may still change between minor releases; external pull requests are welcome.
+
+### Release notes
+
+- `VERSION` is `0.2.4`. Binaries from this tag emit `v0.2.4` via `sumpter version`.
+- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.4` is the intended tag/version sanity check.
+- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
+
+See [`docs/releases/v0.2.4.md`](docs/releases/v0.2.4.md) for the full release narrative.
+
+---
+
 ## v0.2.3 (2026-06-25)
 
 **Aggregate output: stream one NDJSON file per recipe across many inputs — local and cloud — with deterministic ordering, rolling shards, and per-shard provenance; plus a schema-backed record envelope and a whole-tree format gate.**
@@ -69,35 +104,3 @@ v0.2.2 is a feature minor driven by real-world dogfooding of large multi-project
 - The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
 
 See [`docs/releases/v0.2.2.md`](docs/releases/v0.2.2.md) for the full release narrative.
-
----
-
-## v0.2.1 (2026-06-20)
-
-**Two dogfood-driven fixes: present-but-empty string elements bind `""` instead of erroring, and a batch file-list input that skips directory enumeration.**
-
-v0.2.1 is a focused patch off real-world v0.2.0 dogfood feedback. It carries two independent fixes — a present-but-empty XML string element now binds a defined `""` instead of an undefined value, and a new batch file-list input hands the engine an exact file set with no directory walk. The v0.2.0 surface (cloud I/O, reference-table lookup, list-typed parameters) is unchanged.
-
-### What's new (summary)
-
-- **Present-but-empty string elements bind `""` (`empty-element-bind`)** - an XPath string field over a present-but-empty element now binds the empty string (a defined value) instead of undefined, agreeing with `boolean()` presence, so the `has_x ? f(string_x) : default` guard pattern no longer crashes with `undefined variable`. The v0.2.0 doc-note workaround already shipped; this is the real fix.
-- **Batch file-list input (`input-prune`)** - `extract --file-list <path>` and recipe `defaults.input.files_from` read a newline-delimited list of input references (local paths or `s3://`/`file://` URIs; `#` comments and blanks ignored), feeding the existing batch path with **no directory walk** and without the `--files` argv ceiling. Relative local entries resolve against the list file's directory; order preserved; unsupported scheme / empty list fail loud with line context. Mutually exclusive with `--files` / `--input-path`. Cloud entries are verified end to end (moto).
-- **`--input-path` discovery visibility (`input-prune`)** - directory enumeration now announces its start, reports matched count + elapsed, and warns loudly past a slow threshold; no change to discovery results.
-
-### Behavior changes (please review before upgrading)
-
-- **Present-but-empty binding changed.** A recipe that previously errored `undefined variable` on a present-but-empty element now produces `""` for that field. Absent vs present-but-empty remains distinguishable (`boolean()` is `false` vs `true`); only the present-but-empty _string binding_ changed from undefined to `""`. To reject empty elements, add an explicit guard (`string_length(field) > 0 ? … : …`).
-- **No other output-format changes.** The v0.2.0 cloud-I/O, reference-table, list-parameter, and provenance behavior is unchanged; the platform matrix is identical to 0.2.0.
-
-### Deferred
-
-- **File-list single-read refactor**, **`files_from`/`mode` precedence docs-or-validation**, and **directory-prune + streaming discovery** (plus a secondary `--input-glob` shortcut) are tracked follow-ups.
-- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, DuckDB/Arrow, service health endpoints, Prometheus metrics, and repair modes** remain roadmap items.
-
-### Release notes
-
-- `VERSION` is `0.2.1`. Binaries from this tag emit `v0.2.1` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.1` is the intended tag/version sanity check.
-- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
-
-See [`docs/releases/v0.2.1.md`](docs/releases/v0.2.1.md) for the full release narrative.

@@ -179,10 +179,10 @@ fmt-yaml: ## Format YAML files using yamlfmt
 	fi
 
 .PHONY: fmt-json
-fmt-json: ## Format JSON files using yq
+fmt-json: ## Format JSON files using yq (test fixtures are byte-exact; excluded)
 	@echo "  📄 Formatting JSON files..."
 	@if command -v yq >/dev/null 2>&1; then \
-		git ls-files --cached --others --exclude-standard | grep -E '\.json$$' | while IFS= read -r file; do \
+		git ls-files --cached --others --exclude-standard | grep -E '\.json$$' | grep -vE '^tests/fixtures/' | while IFS= read -r file; do \
 			echo "    Formatting: $$file"; \
 			yq eval '.' "$$file" --output-format=json --indent=2 > "$$file.tmp" && mv "$$file.tmp" "$$file" || rm -f "$$file.tmp"; \
 		done; \
