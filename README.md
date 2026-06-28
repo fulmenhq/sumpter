@@ -184,6 +184,7 @@ The public-data exemplars are deliberately drawn from **five different verticals
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors
 - **Multi-recipe single-pass extraction**: apply many extract recipes to one input set in a single parse-once pass (`recipes run extract-multi`) — each input file is read and parsed once, then fanned to every recipe, with isolated per-recipe output trees. See [Run multiple recipes in one pass](docs/extract-workflow.md#run-multiple-recipes-in-one-pass-extract-multi).
 - **Aggregate output mode**: stream one NDJSON file per recipe across many inputs (`--output-mode aggregate`) instead of one file per input — deterministic ordering (aggregate ordinals follow `--file-list` order), rolling shards (`--aggregate-max-records` / `--aggregate-max-bytes`), and per-shard provenance digests, for both local and `s3://` destinations. See [Aggregate output mode](docs/extract-workflow.md#aggregate-output-mode---output-mode-aggregate).
+- **Parallel input processing at scale**: spread an `extract-multi` run across N workers with `--input-workers N` to process **thousands of input files and beyond** concurrently — each worker handles an input's parse plus its full per-recipe application, while a single ordered committer keeps output **byte-identical at every worker count**. Size it by measuring with `--stats` rather than by core count. See [Parallel input processing](docs/extract-workflow.md#parallel-input-processing-with---input-workers).
 - **Encoding resilience**: Normalize to UTF-8, handle BOMs and legacy encodings
 - **Structure discovery**: `inspect` surfaces element paths, attributes, and samples
 - **Integrity verification**: SHA-256 checksums at file and record level
@@ -196,7 +197,7 @@ The public-data exemplars are deliberately drawn from **five different verticals
 
 ## 📐 Design Principles
 
-- **Performance & Scale**: built for 100MB–10GB XML without DOM crashes.
+- **Performance & Scale**: built for 100MB–10GB XML without DOM crashes, and for high-volume runs over thousands of input files with configurable worker parallelism.
 - **Resilience & Simplicity**: tolerant of malformed and variant-heavy XML.
 - **Clarity**: reports and outputs easy for humans and tooling.
 - **Observability**: progress, metrics, and logging from Day 1.
@@ -226,6 +227,7 @@ Available today:
 - ✅ Record-sink streaming contract and sequential sink primitives
 - ✅ Streaming record-index writers during index build
 - ✅ Multi-recipe single-pass extraction (`extract-multi`) — parse each input once, fan to every recipe
+- ✅ Parallel input processing for `extract-multi` (`--input-workers`) — concurrent across many inputs, byte-identical at every worker count, tunable with `--stats`
 - ✅ Aggregate output mode (`--output-mode aggregate`) — one streamed NDJSON file per recipe, local or `s3://`, with rolling shards + per-shard digests
 - ✅ S3-compatible cloud (`s3://`) sources and outputs with named credential handles
 - ✅ External reference-table lookup (membership + key→value enrichment)
