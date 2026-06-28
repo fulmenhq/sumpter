@@ -1,5 +1,5 @@
 // Package runstats collects and formats opt-in, observed-only run statistics for
-// diagnostic output. It exists to help a user tune --parse-workers empirically by
+// diagnostic output. It exists to help a user tune --input-workers empirically by
 // comparing runs, not to prescribe a worker count.
 //
 // It is deliberately free of any run identity: no input paths, logical URIs,
@@ -24,7 +24,7 @@ type Sample struct {
 	Inputs       int           // resolved inputs processed
 	InputBytes   int64         // best-effort total source bytes (see BytesKnown)
 	BytesKnown   bool          // false when source sizes were not cheaply available
-	ParseWorkers int           // configured --parse-workers value
+	InputWorkers int           // configured --input-workers value
 	GOMAXPROCS   int           // runtime.GOMAXPROCS(0) at sample time
 	NumCPU       int           // runtime.NumCPU()
 	CPU          time.Duration // process user+sys CPU consumed during the run
@@ -58,14 +58,14 @@ func Format(s Sample) string {
 		b.WriteString("  input bytes:   unavailable\n")
 	}
 
-	fmt.Fprintf(&b, "  parse-workers: %d\n", s.ParseWorkers)
+	fmt.Fprintf(&b, "  input-workers: %d\n", s.InputWorkers)
 	fmt.Fprintf(&b, "  GOMAXPROCS:    %d (logical CPUs: %d)\n", s.GOMAXPROCS, s.NumCPU)
 
 	if s.CPUKnown && wallSec > 0 {
 		cores := s.CPU.Seconds() / wallSec
-		if s.ParseWorkers > 0 {
-			pct := cores / float64(s.ParseWorkers) * 100
-			fmt.Fprintf(&b, "  effective CPU: %s cores (~%.0f%% of %d parse-workers)\n", trimFloat(cores), pct, s.ParseWorkers)
+		if s.InputWorkers > 0 {
+			pct := cores / float64(s.InputWorkers) * 100
+			fmt.Fprintf(&b, "  effective CPU: %s cores (~%.0f%% of %d input-workers)\n", trimFloat(cores), pct, s.InputWorkers)
 		} else {
 			fmt.Fprintf(&b, "  effective CPU: %s cores\n", trimFloat(cores))
 		}

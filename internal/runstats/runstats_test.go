@@ -12,7 +12,7 @@ func TestFormatFullSample(t *testing.T) {
 		Inputs:       1000,
 		InputBytes:   45 * 1024 * 1024,
 		BytesKnown:   true,
-		ParseWorkers: 4,
+		InputWorkers: 4,
 		GOMAXPROCS:   8,
 		NumCPU:       8,
 		CPU:          2800 * time.Millisecond, // 2.8 CPU-seconds over 2s wall => 1.4 cores
@@ -23,9 +23,9 @@ func TestFormatFullSample(t *testing.T) {
 		"wall:          2s",
 		"inputs:        1000 (500/s)",
 		"input bytes:   45 MiB (22.5 MiB/s)",
-		"parse-workers: 4",
+		"input-workers: 4",
 		"GOMAXPROCS:    8 (logical CPUs: 8)",
-		"effective CPU: 1.4 cores (~35% of 4 parse-workers)",
+		"effective CPU: 1.4 cores (~35% of 4 input-workers)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Format output missing %q:\n%s", want, out)
@@ -34,7 +34,7 @@ func TestFormatFullSample(t *testing.T) {
 }
 
 func TestFormatCPUUnavailable(t *testing.T) {
-	s := Sample{Wall: time.Second, Inputs: 10, BytesKnown: false, ParseWorkers: 2, CPUKnown: false}
+	s := Sample{Wall: time.Second, Inputs: 10, BytesKnown: false, InputWorkers: 2, CPUKnown: false}
 	out := Format(s)
 	if !strings.Contains(out, "effective CPU: unavailable") {
 		t.Errorf("want CPU unavailable line:\n%s", out)
@@ -46,7 +46,7 @@ func TestFormatCPUUnavailable(t *testing.T) {
 
 // A sub-microsecond wall must not divide-by-zero or emit a per-second rate.
 func TestFormatZeroWallNoDivideByZero(t *testing.T) {
-	s := Sample{Wall: 0, Inputs: 5, BytesKnown: true, InputBytes: 1024, ParseWorkers: 4, CPU: time.Second, CPUKnown: true}
+	s := Sample{Wall: 0, Inputs: 5, BytesKnown: true, InputBytes: 1024, InputWorkers: 4, CPU: time.Second, CPUKnown: true}
 	out := Format(s)
 	if strings.Contains(out, "/s)") {
 		t.Errorf("zero wall must not emit a per-second rate:\n%s", out)
@@ -59,12 +59,12 @@ func TestFormatZeroWallNoDivideByZero(t *testing.T) {
 	}
 }
 
-// ParseWorkers == 0 must not divide-by-zero or print a percent.
+// InputWorkers == 0 must not divide-by-zero or print a percent.
 func TestFormatZeroWorkersNoPercent(t *testing.T) {
-	s := Sample{Wall: time.Second, Inputs: 1, ParseWorkers: 0, CPU: 500 * time.Millisecond, CPUKnown: true}
+	s := Sample{Wall: time.Second, Inputs: 1, InputWorkers: 0, CPU: 500 * time.Millisecond, CPUKnown: true}
 	out := Format(s)
 	if strings.Contains(out, "% of") {
-		t.Errorf("zero parse-workers must not print a percent:\n%s", out)
+		t.Errorf("zero input-workers must not print a percent:\n%s", out)
 	}
 	if !strings.Contains(out, "effective CPU: 0.5 cores") {
 		t.Errorf("want bare cores line:\n%s", out)
@@ -74,7 +74,7 @@ func TestFormatZeroWorkersNoPercent(t *testing.T) {
 // The formatted block must carry no identity — only labels, counts, and units.
 // This is structurally guaranteed (Sample has no string fields), but pin it.
 func TestFormatCarriesNoIdentity(t *testing.T) {
-	out := Format(Sample{Wall: time.Second, Inputs: 3, BytesKnown: true, InputBytes: 10, ParseWorkers: 1, CPUKnown: true, CPU: time.Second})
+	out := Format(Sample{Wall: time.Second, Inputs: 3, BytesKnown: true, InputBytes: 10, InputWorkers: 1, CPUKnown: true, CPU: time.Second})
 	for _, forbidden := range []string{"/Users", "/tmp", "s3://", "recipe", ".xml", "credential"} {
 		if strings.Contains(out, forbidden) {
 			t.Errorf("stats block leaked %q:\n%s", forbidden, out)
@@ -97,7 +97,7 @@ func TestCollectorSampleObservesRuntime(t *testing.T) {
 	if s.GOMAXPROCS <= 0 || s.NumCPU <= 0 {
 		t.Errorf("GOMAXPROCS/NumCPU should be positive, got %d/%d", s.GOMAXPROCS, s.NumCPU)
 	}
-	if s.Inputs != 10 || s.InputBytes != 2048 || !s.BytesKnown || s.ParseWorkers != 4 {
+	if s.Inputs != 10 || s.InputBytes != 2048 || !s.BytesKnown || s.InputWorkers != 4 {
 		t.Errorf("sample carried wrong counters: %+v", s)
 	}
 	// On darwin/linux (CI), process CPU is available and the delta is non-negative.

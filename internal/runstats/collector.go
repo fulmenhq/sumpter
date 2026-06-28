@@ -16,7 +16,7 @@ type Collector struct {
 	cpuStartOK   bool
 }
 
-// Start captures the baseline. parseWorkers is the configured --parse-workers
+// Start captures the baseline. parseWorkers is the configured --input-workers
 // value, used only to express effective CPU as a fraction of workers. A failed
 // CPU read here is remembered so Sample reports CPU as unavailable rather than a
 // wrong delta.
@@ -42,7 +42,7 @@ func (c *Collector) Sample(inputs int, inputBytes int64, bytesKnown bool) Sample
 		Inputs:       inputs,
 		InputBytes:   inputBytes,
 		BytesKnown:   bytesKnown,
-		ParseWorkers: c.parseWorkers,
+		InputWorkers: c.parseWorkers,
 		GOMAXPROCS:   runtime.GOMAXPROCS(0),
 		NumCPU:       runtime.NumCPU(),
 	}

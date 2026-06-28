@@ -36,13 +36,13 @@ type multiSharedOptions struct {
 	// Run level.
 	ContinueOnError bool
 	Workers         int
-	// ParseWorkers is the intra-invocation parse concurrency for the shared input
-	// set: N input files are read+parsed across N workers and fanned into the
-	// single ordered drain that owns all extraction, writing, and finalization.
-	// Default 1 is byte-identical to the audited serial path. It is deliberately a
-	// distinct surface from Workers (never silently repurposed — see the SUM-066
-	// brief). Validated >= 1 by the dispatcher.
-	ParseWorkers int
+	// InputWorkers is the intra-invocation worker concurrency for the shared input
+	// set: each of N workers parses AND runs its input's full per-recipe application
+	// into a worker-local bundle, fanned into the single ordered committer that owns
+	// all durable writing, ledgers, and finalization. Default 1 is byte-identical to
+	// the audited serial path. It is deliberately a distinct surface from Workers
+	// (never silently repurposed — see the SUM-066 brief). Validated >= 1 by the dispatcher.
+	InputWorkers int
 	Progress     bool
 	DryRun       bool
 	// RunID must be resolved ONCE for the whole multi run — the caller resolves
@@ -83,7 +83,7 @@ type multiSharedOptions struct {
 	Argv []string
 
 	// Stats opts into an end-of-run diagnostic summary on stderr (effective CPU vs
-	// --parse-workers, throughput) to help tune parse concurrency. It is purely
+	// --input-workers, throughput) to help size input-worker concurrency. It is purely
 	// observational: it is NOT threaded into Argv / cli.argv_sanitized and never
 	// touches records, aggregate output, or the provenance manifest, so the
 	// SUM-066 byte-identical contract holds with stats on or off.

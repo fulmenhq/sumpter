@@ -104,9 +104,10 @@ emitted envelope as per-input output. Key properties:
 **Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
 rejected), and requires `--output-path` and a manifest. The aggregate **writer** is a
 single serial, deterministic streamed sink (records are emitted in input-ordinal order,
-one ordered drain owns every durable write) — that ordering is the load-bearing contract
-and is never parallelized. The **parse** step, however, can be parallelized within one
-`extract-multi` invocation; see [`--parse-workers`](#parallel-parsing-with---parse-workers).
+one ordered committer owns every durable write) — that ordering is the load-bearing
+contract and is never parallelized. The **per-input processing** (parse + per-recipe
+application), however, can be parallelized within one `extract-multi` invocation; see
+[`--input-workers`](#parallel-input-processing-with---input-workers).
 
 **`--continue-on-error` and `min_occurrences` floors.** Both are supported for **local
 and cloud** aggregate output via a per-input barrier. Each input's records are buffered and
@@ -271,28 +272,28 @@ Failure handling follows the input-vs-recipe boundary: a read/parse/acquire fail
 
 **Scope (v0).** `extract-multi` writes **JSON/NDJSON** output only; a recipe declaring another format (e.g. Parquet) is rejected — run it with single-recipe `recipes run extract` instead. The large-file **streaming** path is not supported: each file is parsed once into memory, so a file large enough to route to streaming is rejected (`--allow-large-files` does not relax this). Cross-recipe joins, ordering, and combined-record assembly are out of scope — the pass amortizes the read + parse, nothing more.
 
-#### Parallel parsing with `--parse-workers`
+#### Parallel input processing with `--input-workers`
 
-Once the per-recipe re-parse is amortized, the remaining per-invocation cost at high file counts is the **parse itself**, which is single-threaded by default — one `extract-multi` invocation pins roughly one core regardless of how many inputs it has. `--parse-workers N` parses the shared input set across **N workers within the single invocation** and fans the parsed inputs into the same ordered writer, so a large batch can scale toward the available cores / the parse-I/O ceiling instead of running single-file.
+Once the per-recipe re-parse is amortized, the remaining per-invocation cost at high file counts is **per-input processing** — read+parse **plus** each recipe's application to that input (signature/applicability matching, extraction, `min_occurrences` checks). By default that runs single-threaded: one `extract-multi` invocation pins roughly one core regardless of how many inputs it has. `--input-workers N` runs that work across **N workers within the single invocation** — each worker parses an input and runs its full per-recipe application into a worker-local bundle — and a single ordered committer applies the bundles in input order. A large batch can then scale toward the available cores / the workload's ceiling instead of running single-file.
 
 ```bash
 sumpter recipes run extract-multi \
   ./recipes/summary ./recipes/line-items \
   --file-list ./inputs.txt \
   --output-path ./out \
-  --parse-workers 8
+  --input-workers 8
 ```
 
-The concurrency is in the **parse only** — extraction, writing, the per-input spool barrier, manifest accounting, and shard rolling stay on a single ordered drain. Output is therefore **identical** to a single-worker run: records emit in resolved input order (`--file-list`/`--files` order, or sorted `--input-path` discovery order) regardless of which worker parsed which input, with the same per-invocation provenance manifest and the same per-input/per-recipe failure attribution. The default is `1` (serial, byte-identical to earlier releases); a value below `1` is rejected. Pick a worker count near your core count for a large batch; small batches see little benefit.
+The workers do parse **and** per-input recipe application; only the **durable commit** — writing records, the per-input spool barrier, manifest accounting, and shard rolling — stays on a single ordered committer. Output is therefore **identical** to a single-worker run: records emit in resolved input order (`--file-list`/`--files` order, or sorted `--input-path` discovery order) regardless of which worker processed which input, with the same per-invocation provenance manifest and the same per-input/per-recipe failure attribution. The default is `1` (serial, byte-identical to earlier releases); a value below `1` is rejected.
 
-`--parse-workers > 1` works with **local and cloud (`s3://`)** aggregate and per-input output. Cloud shard publishes stay on the same single ordered drain (deterministic shard order, one object per shard), and cloud inputs are staged before any worker starts, so concurrency never changes the cloud publish, proactive byte-cap (`--aggregate-max-bytes`), partial-publish, or publish-fatal semantics — it only parallelizes the parse.
+`--input-workers > 1` works with **local and cloud (`s3://`)** aggregate and per-input output. Cloud shard publishes stay on the single ordered committer (deterministic shard order, one object per shard), and cloud inputs are staged before any worker starts, so concurrency never changes the cloud publish, proactive byte-cap (`--aggregate-max-bytes`), partial-publish, or publish-fatal semantics.
 
-**Choosing a worker count.** The win is **parse-bound**: only the read+parse runs across workers, while extraction, writing, and manifest bookkeeping stay on a single ordered drain (that serialization is what keeps the output deterministic). So the speedup tracks how much of each input's cost is parsing:
+**Choosing a worker count.** Because both parse and per-input application run on the workers, the knob helps two common high-file-count shapes:
 
-- **Largest on parse-heavy inputs** — large or deeply-structured documents, especially with sparse extraction (a few records pulled from a big document). These scale toward your core count.
-- **Modest when extraction dominates** — recipes that emit many records per input, or very small inputs where per-file overhead outweighs the parse, gain little because the serial drain is the bottleneck.
+- **Parse-bound inputs** — large or deeply-structured documents, especially with sparse extraction (a few records from a big document), where DOM construction dominates. These scale toward your core count.
+- **Tiny-file, high-count batches** — tens of thousands of small inputs, often with several recipes applied per file, where parse is cheap but the per-input application (repeated across recipes) is the long pole. Parallelizing that application is what lets these batches scale instead of plateauing near one core.
 
-Start with a worker count near your physical core count and measure on your own inputs; because the output is identical at every worker count, you can tune `--parse-workers` freely without changing results. Going well beyond core count rarely helps (the drain, not parse, becomes the limit).
+The throughput gain still depends on the workload: it flattens once the single ordered committer (or an external ceiling — storage bytes/s, IOPS, an object-store/API quota) becomes the limit, and very dense recipes that emit large per-input record sets are bounded by an in-memory per-input limit (split such inputs or reduce per-input output; streaming/spill for very large per-input outputs is planned). Because the output is identical at every worker count, you can tune `--input-workers` freely without changing results.
 
 **Measuring with `--stats`.** Add `--stats` to print an end-of-run diagnostic block to **stderr** (stdout and the record/manifest output are unchanged). It reports observed counters only — it does not recommend a worker count:
 
@@ -301,18 +302,18 @@ extract-multi --stats (diagnostic; observed counters, not a recommendation)
   wall:          12.4s
   inputs:        50000 (4032.3/s)
   input bytes:   1430.2 MiB (115.3 MiB/s)
-  parse-workers: 4
+  input-workers: 4
   GOMAXPROCS:    8 (logical CPUs: 8)
-  effective CPU: 3.10 cores (~78% of 4 parse-workers)
+  effective CPU: 3.10 cores (~78% of 4 input-workers)
 ```
 
-`effective CPU` is process user+sys CPU divided by wall time, shown as cores and as a fraction of `--parse-workers`. Read it together with throughput across runs rather than as a target:
+`effective CPU` is process user+sys CPU divided by wall time, shown as cores and as a fraction of `--input-workers`. Read it together with throughput across runs rather than as a target:
 
 - **Low effective CPU + throughput still rising as N grows** — workers are waiting and more may help; raise N and re-measure.
-- **Low effective CPU + throughput flat as N grows** — the ceiling is elsewhere (storage bytes/s, IOPS or object-store/API quota, decompression/acquisition throttling, or the serial output drain), not CPU; more workers won't help.
+- **Low effective CPU + throughput flat as N grows** — the ceiling is elsewhere (storage bytes/s, IOPS or object-store/API quota, decompression/acquisition throttling, or the ordered committer), not CPU; more workers won't help.
 - **High effective CPU near `GOMAXPROCS` + throughput flat** — you are CPU-bound; you are near the useful limit for this workload.
 
-The practical loop: run `--parse-workers 1`, then `N`, then `2N`, and stop when inputs/s (or MiB/s) plateaus. `input bytes`/MiB/s is best-effort from already-resolved source sizes and shows `unavailable` when sizes are not cheaply available; CPU shows `unavailable` on platforms where process CPU cannot be read. Stats are nondeterministic, so they are never written to records or the manifest.
+The practical loop: run `--input-workers 1`, then `N`, then `2N`, and stop when inputs/s (or MiB/s) plateaus. `input bytes`/MiB/s is best-effort from already-resolved source sizes and shows `unavailable` when sizes are not cheaply available; CPU shows `unavailable` on platforms where process CPU cannot be read. Stats are nondeterministic, so they are never written to records or the manifest.
 
 #### Worked example: three projections in one pass
 

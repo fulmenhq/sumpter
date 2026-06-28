@@ -114,6 +114,30 @@ func (s *JSONLRecordSink) OnRecord(ctx context.Context, record EmittedRecord) er
 	return nil
 }
 
+// WriteMarshaled writes one already-marshaled record verbatim. data must be exactly what
+// OnRecord would have written — a single JSON object plus its trailing newline — i.e.
+// json.Marshal(record) followed by '\n' (which is byte-identical to json.Encoder.Encode,
+// the encoding OnRecord uses). It exists so callers that marshal upstream (extract-multi
+// marshals each record on its worker) can replay the bytes here without re-marshaling,
+// producing output identical to streaming the records through OnRecord.
+func (s *JSONLRecordSink) WriteMarshaled(data []byte) error {
+	if s == nil || s.writer == nil {
+		return fmt.Errorf("jsonl record sink writer is nil")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return fmt.Errorf("jsonl record sink is closed")
+	}
+	if _, err := s.writer.Write(data); err != nil {
+		return fmt.Errorf("write jsonl record: %w", err)
+	}
+	s.count++
+	return nil
+}
+
 // OnFileBoundary records the boundary contract for JSONL. The current JSONL
 // sink has no per-file flush state, so this validates cancellation only.
 func (s *JSONLRecordSink) OnFileBoundary(ctx context.Context, _ FileEmissionSummary) error {

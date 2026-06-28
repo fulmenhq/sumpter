@@ -1,10 +1,12 @@
 package commands
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,24 +72,26 @@ func BenchmarkExtractMultiParseAmortization(b *testing.B) {
 	})
 }
 
-// BenchmarkExtractMultiParseWorkers quantifies parse-parallelism scaling: one
-// extract-multi aggregate invocation over a PARSE-BOUND input set, run at increasing
-// --parse-workers. Each input is a large, deeply-structured document (lots of filler
-// nodes) from which the recipe extracts only a few records — a common real shape (big
-// documents, sparse records of interest) where DOM construction is the dominant per-input
-// cost. That is exactly what this feature parallelizes.
+// BenchmarkExtractMultiInputWorkers quantifies input-worker scaling on the PARSE-BOUND
+// shape — one of the two shapes the feature speeds up (the other is the tiny-file regime in
+// BenchmarkExtractMultiTinyFile). One extract-multi aggregate invocation over inputs that
+// are each a large, deeply-structured document (lots of filler nodes) from which the recipe
+// extracts only a few records — a common real shape (big documents, sparse records of
+// interest) where DOM construction dominates each input's cost.
 //
-// Why this shape: the conservative v0.2.4 cut parallelizes the READ+PARSE only;
-// extraction, writing, and manifest bookkeeping stay serial on the ordered drain. So the
-// wall-clock win is workload-dependent — large on parse-bound inputs (here), modest when
-// extraction dominates (dense recipes) or when per-file drain overhead dominates (many
-// tiny files). Aggregate mode keeps output-file-creation noise out of the measurement.
+// Why this shape: the input workers run each input's full per-input processing — parse AND
+// per-recipe application — so the wall-clock win is workload-dependent. Here DOM construction
+// is the long pole, so it scales toward the core count; tiny-file batches scale on the
+// application long pole instead (see BenchmarkExtractMultiTinyFile). Only the durable commit
+// (writing, ledgers/manifest, finalization) stays single-owner on the ordered committer, and
+// that is the eventual ceiling. Aggregate mode keeps output-file-creation noise out of the
+// measurement.
 //
 // It reports only ns/op; absolute throughput numbers are intentionally NOT asserted or
 // committed (machine-dependent; field scale figures stay off the public surface). A human
 // reads the ns/op trend across worker counts to see scaling toward the available cores /
-// parse-I/O ceiling. There is deliberately no wall-clock gate (it would be flaky).
-func BenchmarkExtractMultiParseWorkers(b *testing.B) {
+// I/O ceiling. There is deliberately no wall-clock gate (it would be flaky).
+func BenchmarkExtractMultiInputWorkers(b *testing.B) {
 	const (
 		kFiles      = 200
 		fillerNodes = 4000 // big DOM per input; the recipe extracts only the lone TargetElement
@@ -96,14 +100,14 @@ func BenchmarkExtractMultiParseWorkers(b *testing.B) {
 	fileList := writeBenchParseBoundInputSet(b, kFiles, fillerNodes)
 
 	for _, workers := range []int{1, 2, 4, 8} {
-		b.Run(fmt.Sprintf("parse_workers_%d", workers), func(b *testing.B) {
+		b.Run(fmt.Sprintf("input_workers_%d", workers), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				shared := &multiSharedOptions{
 					FileList:     fileList,
 					OutputPath:   filepath.Join(b.TempDir(), fmt.Sprintf("w%d_%d", workers, i)),
 					OutputMode:   outputModeAggregate,
 					RunID:        testMultiRunID,
-					ParseWorkers: workers,
+					InputWorkers: workers,
 				}
 				if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err != nil {
 					b.Fatalf("workers=%d: %v", workers, err)
@@ -142,17 +146,17 @@ func writeBenchParseBoundInputSet(b *testing.B, n, fillerNodes int) string {
 	return fileList
 }
 
-func writeBenchRecipeWorkspace(b *testing.B, id string) string {
-	b.Helper()
-	ws := b.TempDir()
+func writeBenchRecipeWorkspace(tb testing.TB, id string) string {
+	tb.Helper()
+	ws := tb.TempDir()
 	for _, d := range []string{"signature", "extract"} {
 		if err := os.MkdirAll(filepath.Join(ws, d), 0o750); err != nil {
-			b.Fatal(err)
+			tb.Fatal(err)
 		}
 	}
 	write := func(rel, content string) {
 		if err := os.WriteFile(filepath.Join(ws, rel), []byte(content), 0o600); err != nil {
-			b.Fatal(err)
+			tb.Fatal(err)
 		}
 	}
 	write("recipe.yaml", `version: recipe/v0.1.0
@@ -197,21 +201,111 @@ output_schema:
 	return ws
 }
 
-func writeBenchInputSet(b *testing.B, n int) string {
-	b.Helper()
-	dir := b.TempDir()
+func writeBenchInputSet(tb testing.TB, n int) string {
+	tb.Helper()
+	dir := tb.TempDir()
 	var inputs []string
 	for i := 0; i < n; i++ {
-		p := filepath.Join(dir, fmt.Sprintf("in%04d.xml", i))
+		p := filepath.Join(dir, fmt.Sprintf("in%06d.xml", i))
 		body := fmt.Sprintf(`<root><TargetElement><Name>val%d</Name></TargetElement></root>`, i)
 		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-			b.Fatal(err)
+			tb.Fatal(err)
 		}
 		inputs = append(inputs, p)
 	}
 	fileList := filepath.Join(dir, "files.txt")
 	if err := os.WriteFile(fileList, []byte(strings.Join(inputs, "\n")+"\n"), 0o600); err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
 	return fileList
+}
+
+// benchEnvInt reads a positive integer from env var name, falling back to def. It lets the
+// on-demand large-population perf runs scale the generated corpus / recipe count / worker
+// set without code changes (e.g. SUMPTER_BENCH_TINY_FILES=10000).
+func benchEnvInt(name string, def int) int {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+// BenchmarkExtractMultiTinyFile quantifies input-worker scaling in the TINY-FILE regime:
+// many small inputs, several recipes. Per-file parse is cheap, so the per-input recipe
+// APPLICATION (M recipes x signature/applicability/extraction) is the long pole — exactly
+// the regime SUM-068 targets and which SUM-066's parse-only workers could not speed up.
+// Contrast BenchmarkExtractMultiInputWorkers (parse-bound, big DOMs). Sterile generated
+// corpus; reports ns/op trend only (no committed absolute/throughput figures — those are
+// machine-dependent and stay off the public surface). File count and recipe count are
+// env-configurable for the on-demand large-population run.
+func BenchmarkExtractMultiTinyFile(b *testing.B) {
+	n := benchEnvInt("SUMPTER_BENCH_TINY_FILES", 2000)
+	mRecipes := benchEnvInt("SUMPTER_BENCH_RECIPES", 3)
+	workspaces := make([]string, mRecipes)
+	for i := range workspaces {
+		workspaces[i] = writeBenchRecipeWorkspace(b, fmt.Sprintf("proj%d", i))
+	}
+	fileList := writeBenchInputSet(b, n)
+
+	for _, workers := range []int{1, 2, 4, 8} {
+		b.Run(fmt.Sprintf("input_workers_%d", workers), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				shared := &multiSharedOptions{
+					FileList:     fileList,
+					OutputPath:   filepath.Join(b.TempDir(), fmt.Sprintf("w%d_%d", workers, i)),
+					OutputMode:   outputModeAggregate,
+					RunID:        testMultiRunID,
+					InputWorkers: workers,
+				}
+				if err := runExtractMulti(shared, workspaces, io.Discard, time.Now()); err != nil {
+					b.Fatalf("workers=%d: %v", workers, err)
+				}
+			}
+		})
+	}
+}
+
+// TestExtractMultiTinyFilePerf is the on-demand (never-CI) tiny-file proof-of-difference /
+// tuning harness @3leapsdave asked for: it generates a large population of small inputs and
+// runs extract-multi at increasing --input-workers, printing each run's wall time, derived
+// inputs/s, and the tool's own --stats summary (effective CPU vs input-workers). It is gated
+// behind SUMPTER_PERF so it never runs in CI (no timing gate; runner-noise-flaky), and is
+// trend-only — a human reads the wall/effective-CPU trend to size --input-workers. Throughput
+// figures stay OOB (operator console), never committed to docs or the PR.
+//
+//	SUMPTER_PERF=1 SUMPTER_BENCH_TINY_FILES=10000 go test -tags '' \
+//	  -run TestExtractMultiTinyFilePerf -v ./cmd/sumpter/commands/
+func TestExtractMultiTinyFilePerf(t *testing.T) {
+	if os.Getenv("SUMPTER_PERF") == "" {
+		t.Skip("on-demand tiny-file perf harness; set SUMPTER_PERF=1 to run (never in CI)")
+	}
+	n := benchEnvInt("SUMPTER_BENCH_TINY_FILES", 10000)
+	mRecipes := benchEnvInt("SUMPTER_BENCH_RECIPES", 3)
+	workspaces := make([]string, mRecipes)
+	for i := range workspaces {
+		workspaces[i] = writeBenchRecipeWorkspace(t, fmt.Sprintf("proj%d", i))
+	}
+	fileList := writeBenchInputSet(t, n)
+
+	t.Logf("tiny-file perf: %d files x %d recipes (sterile corpus; trend-only, OOB figures)", n, mRecipes)
+	for _, workers := range []int{1, 2, 4, 8} {
+		var stats bytes.Buffer
+		shared := &multiSharedOptions{
+			FileList:     fileList,
+			OutputPath:   filepath.Join(t.TempDir(), fmt.Sprintf("w%d", workers)),
+			OutputMode:   outputModeAggregate,
+			RunID:        testMultiRunID,
+			InputWorkers: workers,
+			Stats:        true,
+		}
+		start := time.Now()
+		if err := runExtractMulti(shared, workspaces, &stats, time.Now()); err != nil {
+			t.Fatalf("workers=%d: %v", workers, err)
+		}
+		wall := time.Since(start)
+		t.Logf("\n=== input-workers=%d ===\nwall=%s  inputs/s=%.0f\n%s",
+			workers, wall.Round(time.Millisecond), float64(n)/wall.Seconds(), strings.TrimSpace(stats.String()))
+	}
 }

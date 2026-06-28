@@ -299,7 +299,16 @@ func (w *aggregateWriter) OnRecord(ctx context.Context, record extract.EmittedRe
 		return fmt.Errorf("marshal aggregate record: %w", err)
 	}
 	data = append(data, '\n')
+	return w.writeMarshaled(data)
+}
 
+// writeMarshaled appends one already-marshaled record (one JSON object + trailing newline)
+// following the same per-input buffering and shard cap/roll rules as OnRecord. OnRecord
+// marshals then calls it (single-recipe streaming path); the extract-multi input-worker
+// path marshals on the worker and replays the bytes here, so marshaling is parallelized and
+// the per-input bundle budget is exact — and because the bytes are identical to what
+// OnRecord would produce, the committed shard is byte-identical to streaming the records.
+func (w *aggregateWriter) writeMarshaled(data []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 

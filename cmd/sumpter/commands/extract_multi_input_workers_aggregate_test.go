@@ -23,19 +23,19 @@ func newExtractMultiRoot() *cobra.Command {
 	return root
 }
 
-// TestExtractMulti_ParseWorkersValidation covers the --parse-workers surface contract:
+// TestExtractMulti_InputWorkersValidation covers the --input-workers surface contract:
 // below 1 is a user error at the CLI, a negative value is rejected by the dispatcher,
 // and >1 with a cloud destination is deferred (rejected) until the cloud slice lands.
-func TestExtractMulti_ParseWorkersValidation(t *testing.T) {
+func TestExtractMulti_InputWorkersValidation(t *testing.T) {
 	ws := writeMultiRecipeWorkspace(t, "summary")
 	fileList, _ := writeMultiInputSet(t, 2)
 
 	t.Run("cli rejects below 1", func(t *testing.T) {
 		for _, n := range []string{"0", "-1"} {
 			root := newExtractMultiRoot()
-			root.SetArgs([]string{"extract-multi", ws, "--file-list", fileList, "--output-path", filepath.Join(t.TempDir(), "o"), "--parse-workers", n})
+			root.SetArgs([]string{"extract-multi", ws, "--file-list", fileList, "--output-path", filepath.Join(t.TempDir(), "o"), "--input-workers", n})
 			if err := root.Execute(); err == nil {
-				t.Errorf("--parse-workers %s: expected validation error, got nil", n)
+				t.Errorf("--input-workers %s: expected validation error, got nil", n)
 			}
 		}
 	})
@@ -43,12 +43,12 @@ func TestExtractMulti_ParseWorkersValidation(t *testing.T) {
 	t.Run("cli accepts >1", func(t *testing.T) {
 		root := newExtractMultiRoot()
 		out := filepath.Join(t.TempDir(), "o")
-		root.SetArgs([]string{"extract-multi", ws, "--file-list", fileList, "--output-path", out, "--parse-workers", "4"})
+		root.SetArgs([]string{"extract-multi", ws, "--file-list", fileList, "--output-path", out, "--input-workers", "4"})
 		if err := root.Execute(); err != nil {
-			t.Fatalf("--parse-workers 4: %v", err)
+			t.Fatalf("--input-workers 4: %v", err)
 		}
 		if entries, err := os.ReadDir(filepath.Join(out, "summary")); err != nil || len(entries) == 0 {
-			t.Errorf("--parse-workers 4 produced no output (err=%v)", err)
+			t.Errorf("--input-workers 4 produced no output (err=%v)", err)
 		}
 	})
 
@@ -57,31 +57,31 @@ func TestExtractMulti_ParseWorkersValidation(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "o")
 		root.SetArgs([]string{"extract-multi", ws, "--file-list", fileList, "--output-path", out})
 		if err := root.Execute(); err != nil {
-			t.Fatalf("default --parse-workers: %v", err)
+			t.Fatalf("default --input-workers: %v", err)
 		}
 	})
 
 	t.Run("dispatcher rejects negative", func(t *testing.T) {
-		shared := &multiSharedOptions{FileList: fileList, OutputPath: filepath.Join(t.TempDir(), "o"), ParseWorkers: -2}
+		shared := &multiSharedOptions{FileList: fileList, OutputPath: filepath.Join(t.TempDir(), "o"), InputWorkers: -2}
 		if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err == nil {
-			t.Error("expected dispatcher to reject negative ParseWorkers, got nil")
+			t.Error("expected dispatcher to reject negative InputWorkers, got nil")
 		}
 	})
 
-	// Note: --parse-workers > 1 with a cloud (s3://) destination is supported as of the
+	// Note: --input-workers > 1 with a cloud (s3://) destination is supported as of the
 	// cloud slice; the concurrency × cloud-publish invariants are covered by the
 	// s3integration moto suite (extract_multi_aggregate_cloud_moto_test.go), not here.
 }
 
-// TestExtractMulti_ParseWorkersConcurrencyProof uses the injectable parseFile seam to
-// prove that more than one parse worker is active when --parse-workers > 1, and that
-// --parse-workers 1 never overlaps parse calls. This is a counting/structural proof,
+// TestExtractMulti_InputWorkersConcurrencyProof uses the injectable parseFile seam to
+// prove that more than one parse worker is active when --input-workers > 1, and that
+// --input-workers 1 never overlaps parse calls. This is a counting/structural proof,
 // not a wall-clock throughput assertion (kept out of the mandatory gate per the brief).
-func TestExtractMulti_ParseWorkersConcurrencyProof(t *testing.T) {
+func TestExtractMulti_InputWorkersConcurrencyProof(t *testing.T) {
 	maxConcurrentParses := func(workers, n int) int {
 		ws := writeMultiRecipeWorkspace(t, "summary")
 		fileList, _ := writeMultiInputSet(t, n)
-		shared := &multiSharedOptions{FileList: fileList, OutputPath: filepath.Join(t.TempDir(), "o"), ParseWorkers: workers, RunID: testMultiRunID}
+		shared := &multiSharedOptions{FileList: fileList, OutputPath: filepath.Join(t.TempDir(), "o"), InputWorkers: workers, RunID: testMultiRunID}
 		d := newMultiDispatcher(shared, io.Discard)
 		realParse := d.parseFile
 
@@ -119,17 +119,17 @@ func TestExtractMulti_ParseWorkersConcurrencyProof(t *testing.T) {
 	}
 
 	if got := maxConcurrentParses(1, 3); got != 1 {
-		t.Errorf("--parse-workers 1: max concurrent parses = %d, want exactly 1 (serial)", got)
+		t.Errorf("--input-workers 1: max concurrent parses = %d, want exactly 1 (serial)", got)
 	}
 	if got := maxConcurrentParses(2, 4); got < 2 {
-		t.Errorf("--parse-workers 2: max concurrent parses = %d, want >= 2", got)
+		t.Errorf("--input-workers 2: max concurrent parses = %d, want >= 2", got)
 	}
 }
 
-// TestExtractMulti_ParseWorkersDeterministic proves the load-bearing contract: aggregate
+// TestExtractMulti_InputWorkersDeterministic proves the load-bearing contract: aggregate
 // records.jsonl is byte-identical across worker counts 1/2/4/8 under a fixed run id, even
 // when parse completion is forced out of scheduling order (later inputs parse faster).
-func TestExtractMulti_ParseWorkersDeterministic(t *testing.T) {
+func TestExtractMulti_InputWorkersDeterministic(t *testing.T) {
 	const n = 8
 
 	// One shared recipe workspace + input set across every worker count: source_file
@@ -148,7 +148,7 @@ func TestExtractMulti_ParseWorkersDeterministic(t *testing.T) {
 			OutputPath:   outRoot,
 			OutputMode:   outputModeAggregate,
 			RunID:        testMultiRunID,
-			ParseWorkers: workers,
+			InputWorkers: workers,
 		}
 		d := newMultiDispatcher(shared, io.Discard)
 		realParse := d.parseFile
@@ -192,15 +192,15 @@ func TestExtractMulti_ParseWorkersDeterministic(t *testing.T) {
 
 	for _, workers := range []int{2, 4, 8} {
 		if got := runAt(workers); got != want {
-			t.Errorf("--parse-workers %d: aggregate records.jsonl differs from serial:\n serial: %s\n got:    %s", workers, want, got)
+			t.Errorf("--input-workers %d: aggregate records.jsonl differs from serial:\n serial: %s\n got:    %s", workers, want, got)
 		}
 	}
 }
 
-// TestExtractMulti_ParseWorkersParseOnceFanToM proves SUM-057 survives concurrency: each
+// TestExtractMulti_InputWorkersParseOnceFanToM proves SUM-057 survives concurrency: each
 // input is parsed exactly once (not once per recipe) even across workers, and each
 // recipe's aggregate output drains in input ordinal order.
-func TestExtractMulti_ParseWorkersParseOnceFanToM(t *testing.T) {
+func TestExtractMulti_InputWorkersParseOnceFanToM(t *testing.T) {
 	const (
 		inputs  = 4
 		workers = 4
@@ -215,7 +215,7 @@ func TestExtractMulti_ParseWorkersParseOnceFanToM(t *testing.T) {
 		OutputPath:   outRoot,
 		OutputMode:   outputModeAggregate,
 		RunID:        testMultiRunID,
-		ParseWorkers: workers,
+		InputWorkers: workers,
 	}
 	d := newMultiDispatcher(shared, io.Discard)
 	realParse := d.parseFile

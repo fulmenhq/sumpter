@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fulmenhq/goneat/pkg/pathfinder"
@@ -1290,6 +1291,20 @@ func (t *jsonOutputTarget) OnRecord(ctx context.Context, record extract.EmittedR
 	return nil
 }
 
+// writeMarshaled writes one already-marshaled record (json object + trailing newline)
+// verbatim, the byte-for-byte equivalent of OnRecord for the extract-multi input-worker
+// path, which marshals each record on its worker and replays the bytes here on the ordered
+// committer. Lazily opens the per-input output the same way OnRecord does.
+func (t *jsonOutputTarget) writeMarshaled(data []byte) error {
+	if err := t.ensureOpen(); err != nil {
+		return wrapJSONOutputError("open output", err)
+	}
+	if err := t.sink.WriteMarshaled(data); err != nil {
+		return wrapJSONOutputError("write output record", err)
+	}
+	return nil
+}
+
 func (t *jsonOutputTarget) OnFileBoundary(ctx context.Context, summary extract.FileEmissionSummary) error {
 	if err := ctx.Err(); err != nil {
 		return wrapJSONOutputError("check output boundary context", err)
@@ -2488,6 +2503,13 @@ func resolveRelativeSourcePath(root, filePath string, followSymlinks bool) (stri
 }
 
 type sourceExtractionWarnLimiter struct {
+	// mu guards emitted/summarized. SUM-068: a single per-recipe limiter is shared across
+	// inputs, and from the input-workers slice the per-input application (which reaches
+	// warn() via buildExternalFieldsForFile) runs concurrently across workers. The lock
+	// keeps the global non-match warning cap correct under that concurrency; it is
+	// uncontended on the serial path. Emission stays on the build stage (not deferred to
+	// the ordered committer) so the cap counts attempts, not commits.
+	mu         sync.Mutex
 	limit      int
 	emitted    int
 	summarized bool
@@ -2501,6 +2523,8 @@ func (l *sourceExtractionWarnLimiter) warn(filePath string, pattern recipesmanif
 	if l == nil {
 		return
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.limit <= 0 || l.emitted < l.limit {
 		l.emitted++
 		logging.Warn("source_extraction pattern did not match",

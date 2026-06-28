@@ -1,19 +1,26 @@
 //go:build s3integration
 
-// S3 live-integration tests for extract-multi cloud aggregate output UNDER PARSE
-// CONCURRENCY (parse-parallelism slice 3): require a live S3-compatible endpoint,
-// excluded from the default/CI build. Run with `-tags s3integration` (see
-// `make test-integration-s3`). Shares the moto harness in extract_moto_test.go.
+// S3 live-integration tests for extract-multi cloud aggregate output UNDER INPUT-WORKER
+// CONCURRENCY: require a live S3-compatible endpoint, excluded from the default/CI build.
+// Run with `-tags s3integration` (see `make test-integration-s3`). Shares the moto harness
+// in extract_moto_test.go.
 //
-// These prove the SUM-063 cloud invariants (R1 write-boundary publish, R7 proactive
-// byte cap, R8 incomplete-on-partial-publish, S9 publish-fatal) still hold when the
-// input set is parsed across N workers: durable shard publishes stay on the single
-// ordered drain in deterministic shard order, and cloud input acquisition is
-// upstream-serial — concurrency multiplies neither cloud PUTs nor GETs.
+// These prove the SUM-063 cloud invariants (R1 write-boundary publish, R7 proactive byte
+// cap, R8 incomplete-on-partial-publish, S9 publish-fatal) still hold under --input-workers
+// > 1. Originally written for SUM-066 (workers parsed only); since SUM-068 the workers run
+// the FULL per-input recipe application (parse + signature/applicability/extraction/
+// min_occurrences) into worker-local bundles, so these now re-prove the invariants with
+// per-input APPLICATION running concurrently — not just parse. The guarantee is structural:
+// workers only BUILD (no cloud calls); every shard stage/publish happens in
+// commitAggregateApplication on the single ordered committer, so durable publishes stay
+// drain-owned in deterministic shard order and concurrency multiplies neither cloud PUTs
+// nor GETs.
 
 package commands
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -139,12 +146,12 @@ func cloudShardSnapshot(t *testing.T, m motoEnv, recipePrefix string) (content s
 	return b.String(), string(out)
 }
 
-// TestMotoExtractMultiCloudParseWorkersEquivalence proves a cloud extract-multi
-// aggregate run is EQUIVALENT at --parse-workers 1 and >1: every recipe's published
+// TestMotoExtractMultiCloudInputWorkersEquivalence proves a cloud extract-multi
+// aggregate run is EQUIVALENT at --input-workers 1 and >1: every recipe's published
 // shard content (generated_at normalized), shard ordering, per-input inventory, and
 // record counts match the single-worker run. Multiple shards (max-records 2 over 6
 // inputs) exercise the deterministic multi-shard cloud publish path under concurrency.
-func TestMotoExtractMultiCloudParseWorkersEquivalence(t *testing.T) {
+func TestMotoExtractMultiCloudInputWorkersEquivalence(t *testing.T) {
 	m := motoEnvOrSkip(t)
 	initExtractManifestTestLogger(t)
 	dir := t.TempDir()
@@ -166,7 +173,7 @@ func TestMotoExtractMultiCloudParseWorkersEquivalence(t *testing.T) {
 			AggregateMaxRecords: 2,
 			AggregateMaxBytes:   1 << 20, // R7: cloud requires a byte cap
 			CredentialsPath:     credPath,
-			ParseWorkers:        workers,
+			InputWorkers:        workers,
 		}
 		if err := runExtractMulti(shared, []string{wsA, wsB}, io.Discard, time.Now()); err != nil {
 			t.Fatalf("workers=%d cloud extract-multi: %v", workers, err)
@@ -190,7 +197,7 @@ func TestMotoExtractMultiCloudParseWorkersEquivalence(t *testing.T) {
 }
 
 // TestMotoExtractMultiCloudByteCapPreflightWithWorkers proves the R7 proactive byte-cap
-// preflight still fires BEFORE any worker/publish when --parse-workers > 1: an uncapped
+// preflight still fires BEFORE any worker/publish when --input-workers > 1: an uncapped
 // or over-limit cloud aggregate run is rejected, and nothing is published.
 func TestMotoExtractMultiCloudByteCapPreflightWithWorkers(t *testing.T) {
 	m := motoEnvOrSkip(t)
@@ -217,7 +224,7 @@ func TestMotoExtractMultiCloudByteCapPreflightWithWorkers(t *testing.T) {
 				RunID:             testMultiRunID,
 				AggregateMaxBytes: tc.cap,
 				CredentialsPath:   credPath,
-				ParseWorkers:      4,
+				InputWorkers:      4,
 			}
 			err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now())
 			if err == nil {
@@ -232,7 +239,7 @@ func TestMotoExtractMultiCloudByteCapPreflightWithWorkers(t *testing.T) {
 }
 
 // TestMotoExtractMultiCloudPublishFailureFatalUnderWorkers proves S9 publish-fatal
-// survives concurrency: with --parse-workers > 1 AND --continue-on-error, a shard PUT
+// survives concurrency: with --input-workers > 1 AND --continue-on-error, a shard PUT
 // failure still aborts the whole run and leaves an incomplete:true (R8) manifest
 // recording the already-published shards. A reverse proxy fails one shard's PUT.
 func TestMotoExtractMultiCloudPublishFailureFatalUnderWorkers(t *testing.T) {
@@ -275,7 +282,7 @@ func TestMotoExtractMultiCloudPublishFailureFatalUnderWorkers(t *testing.T) {
 		AggregateMaxBytes:   1 << 20,
 		ContinueOnError:     true, // a publish failure must STILL abort despite this
 		CredentialsPath:     credPath,
-		ParseWorkers:        4,
+		InputWorkers:        4,
 	}
 	if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err == nil {
 		t.Fatal("a publish failure must abort even under --continue-on-error + workers, got nil")
@@ -299,7 +306,7 @@ func TestMotoExtractMultiCloudPublishFailureFatalUnderWorkers(t *testing.T) {
 
 // TestMotoExtractMultiCloudContinueInputFailureUnderWorkers proves the input-failure vs
 // publish-failure boundary holds under concurrency: a recoverable INPUT failure under
-// --parse-workers > 1 + --continue-on-error publishes only the successful inputs' rows,
+// --input-workers > 1 + --continue-on-error publishes only the successful inputs' rows,
 // writes a NORMAL (not incomplete) manifest plus failures.json, records the failed input
 // with record_count 0, and exits partial-failure — the failed input's rows are never PUT.
 func TestMotoExtractMultiCloudContinueInputFailureUnderWorkers(t *testing.T) {
@@ -323,7 +330,7 @@ func TestMotoExtractMultiCloudContinueInputFailureUnderWorkers(t *testing.T) {
 		AggregateMaxBytes: 1 << 20,
 		ContinueOnError:   true,
 		CredentialsPath:   credPath,
-		ParseWorkers:      4,
+		InputWorkers:      4,
 	}
 	err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "partial failure") {
@@ -369,6 +376,103 @@ func TestMotoExtractMultiCloudContinueInputFailureUnderWorkers(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Errorf("manifest records %d failed inputs, want 1", failed)
+	}
+	assertStagingCleanedUp(t, home)
+}
+
+// TestMotoExtractMultiCloudApplicationConcurrentAndDigests is the SUM-068 slice-4 G5
+// re-proof. It proves two things on the cloud aggregate path at --input-workers > 1:
+//
+//  1. Per-input APPLICATION (not just parse) overlaps across workers — a blocking hook in
+//     the worker application stage observes >= 2 inputs in-stage concurrently, which the
+//     pre-SUM-068 parse-only worker path could never do.
+//  2. Each published shard's bytes match its manifest digest (the tracked digest-vs-
+//     published-object integrity check): the per-shard manifest SHA256 equals the SHA256 of
+//     the object actually fetched back from the store. This ties the drain-owned, ordered
+//     publish to a verifiable content digest under application concurrency.
+func TestMotoExtractMultiCloudApplicationConcurrentAndDigests(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	initExtractManifestTestLogger(t)
+	dir := t.TempDir()
+	credPath := m.writeCredentialsConfig(t, dir)
+	ws := writeMultiCloudRecipeWorkspace(t, "summary", "default")
+	fileList, _ := writeMultiInputSet(t, 6)
+
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+	prefix := runKeyPrefix() + "mc-appconc-digest/"
+	shared := &multiSharedOptions{
+		FileList:            fileList,
+		OutputPath:          "s3://" + m.bucket + "/" + prefix,
+		OutputMode:          outputModeAggregate,
+		RunID:               testMultiRunID,
+		AggregateMaxRecords: 2, // multiple shards
+		AggregateMaxBytes:   1 << 20,
+		CredentialsPath:     credPath,
+		InputWorkers:        4, // application-concurrent
+	}
+
+	d := newMultiDispatcher(shared, io.Discard)
+	// Hold every input inside the worker application stage until we have observed overlap,
+	// then release: this both proves application concurrency and guarantees the publishes
+	// that follow are drain-owned (they cannot start until the held applications release).
+	release := make(chan struct{})
+	var concurrent, peak int32
+	d.onBuildApplication = func(ordinal int) {
+		c := atomic.AddInt32(&concurrent, 1)
+		for {
+			p := atomic.LoadInt32(&peak)
+			if c <= p || atomic.CompareAndSwapInt32(&peak, p, c) {
+				break
+			}
+		}
+		<-release
+		atomic.AddInt32(&concurrent, -1)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- d.run([]string{ws}, time.Now()) }()
+	deadline := time.After(10 * time.Second)
+	for atomic.LoadInt32(&peak) < 2 {
+		select {
+		case <-deadline:
+			close(release)
+			<-done
+			t.Fatalf("cloud per-input application never reached 2 concurrent workers (peak=%d)", atomic.LoadInt32(&peak))
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("cloud extract-multi: %v", err)
+	}
+
+	manData, ok := m.getObject(t, prefix+"summary/manifest.json")
+	if !ok {
+		t.Fatal("manifest not published")
+	}
+	var man provenance.Manifest
+	if err := json.Unmarshal(manData, &man); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if man.Incomplete {
+		t.Error("successful application-concurrent run wrote incomplete:true")
+	}
+	if len(man.AggregateOutputs) < 2 {
+		t.Fatalf("expected multiple published shards, got %d", len(man.AggregateOutputs))
+	}
+	for _, shard := range man.AggregateOutputs {
+		data, ok := m.getObject(t, prefix+"summary/"+shard.Path)
+		if !ok {
+			t.Errorf("shard %s not published (R1)", shard.Path)
+			continue
+		}
+		sum := sha256.Sum256(data)
+		want := "sha256:" + hex.EncodeToString(sum[:])
+		if shard.SHA256 != want {
+			t.Errorf("shard %s: manifest digest %q != sha256 of the published object %q", shard.Path, shard.SHA256, want)
+		}
 	}
 	assertStagingCleanedUp(t, home)
 }

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/antchfx/xmlquery"
@@ -37,6 +38,21 @@ type multiDispatcher struct {
 	shared    *multiSharedOptions
 	warnOut   io.Writer
 	parseFile func(filePath string, allowLargeFiles bool) (*xmlquery.Node, error)
+
+	// onBuildApplication is a test-only seam invoked inside the worker's per-input
+	// application stage (within the panic-recovery region of buildApplicationContained, for
+	// both aggregate and per-input modes), keyed by input ordinal. Tests use it to inject
+	// latency/blocking (to prove application-stage overlap and record backpressure) or a
+	// panic (to prove G3 containment). nil in production.
+	onBuildApplication func(ordinal int)
+	// maxInFlightRecords overrides the aggregate input-worker in-flight record ceiling
+	// (default inFlightRecordsPerSlot × window) for tests that need a small, deterministic
+	// bound. 0 means use the default.
+	maxInFlightRecords int64
+	// bundleMaxRecords/bundleMaxBytes are the per-input bundle budget (SUM-068 G4), defaulted
+	// in newMultiDispatcher and overridable by tests. 0 disables that dimension.
+	bundleMaxRecords int
+	bundleMaxBytes   int64
 }
 
 func newMultiDispatcher(shared *multiSharedOptions, warnOut io.Writer) *multiDispatcher {
@@ -44,9 +60,11 @@ func newMultiDispatcher(shared *multiSharedOptions, warnOut io.Writer) *multiDis
 		warnOut = io.Discard
 	}
 	return &multiDispatcher{
-		shared:    shared,
-		warnOut:   warnOut,
-		parseFile: extract.ParseFileForDOMDispatch,
+		shared:           shared,
+		warnOut:          warnOut,
+		parseFile:        extract.ParseFileForDOMDispatch,
+		bundleMaxRecords: defaultBundleMaxRecords,
+		bundleMaxBytes:   defaultBundleMaxBytes,
 	}
 }
 
@@ -97,7 +115,7 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		statsReady      bool
 	)
 	if shared.Stats {
-		statsCollector = runstats.Start(shared.ParseWorkers)
+		statsCollector = runstats.Start(shared.InputWorkers)
 		defer func() {
 			if !statsReady {
 				return
@@ -129,15 +147,16 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	}
 	shared.OutputPath = outputRoot
 
-	// Validate parse concurrency BEFORE any output session opens. A zero value
+	// Validate input-worker concurrency BEFORE any output session opens. A zero value
 	// (internal callers / unset) means the serial default; a negative value is a
 	// programming error. Cloud (s3://) destinations are supported under concurrency:
-	// parse workers never touch the aggregate writer — durable shard publishes stay on
-	// the single ordered drain, in deterministic shard order, and cloud input staging
-	// is resolved upstream-serial before any worker starts, so concurrency multiplies
-	// neither cloud PUTs nor concurrent GETs (the R1/R7/R8/S9 invariants are unchanged).
-	if shared.ParseWorkers < 0 {
-		return fmt.Errorf("extract-multi: --parse-workers must be >= 1 (got %d)", shared.ParseWorkers)
+	// workers only BUILD (parse + per-input application into worker-local bundles) and
+	// never touch the aggregate writer — durable shard publishes stay on the single ordered
+	// committer, in deterministic shard order, and cloud input staging is resolved
+	// upstream-serial before any worker starts, so concurrency multiplies neither cloud PUTs
+	// nor concurrent GETs (the R1/R7/R8/S9 invariants are unchanged).
+	if shared.InputWorkers < 0 {
+		return fmt.Errorf("extract-multi: --input-workers must be >= 1 (got %d)", shared.InputWorkers)
 	}
 	// Normalize the output mode ONCE so every downstream check agrees on the canonical
 	// value: plan opts (threaded from shared), isAggregateMode (writer selection),
@@ -248,7 +267,7 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 
 	states := make([]*recipeRunState, 0, len(plans))
 	for _, plan := range plans {
-		states = append(states, newRecipeRunState(plan, len(files)))
+		states = append(states, newRecipeRunState(plan, len(files), d.bundleMaxRecords, d.bundleMaxBytes))
 	}
 	// On an early return (parse/recipe failure): for a cloud recipe that already
 	// published shards, record them in an incomplete (R8) manifest so the orphaned
@@ -297,22 +316,27 @@ type parsedInputOutcome struct {
 	err     error
 }
 
-// processInputs walks the resolved input set, parsing each input and dispatching the
-// parsed document to every recipe state in input-ordinal order. With ParseWorkers <= 1
-// it is the audited serial loop, byte-identical to single-worker behavior. With
-// ParseWorkers > 1 it parses inputs concurrently across workers and fans them into a
-// single ordered drain — the drain owns ALL extraction, writing, manifest accounting,
-// and finalization, so per-recipe isolation, the per-input spool barrier, deterministic
-// emit order, and the per-invocation manifest are unchanged from serial.
+// processInputs walks the resolved input set and applies each input to every recipe state
+// in input-ordinal order. With InputWorkers <= 1 it is the audited serial loop (build then
+// commit on one goroutine), byte-identical to single-worker behavior. With InputWorkers > 1
+// the workers run parse + the full per-input recipe application into worker-local bundles,
+// and a single ordered committer performs only the durable commit — so per-recipe isolation,
+// the per-input spool barrier, deterministic emit order, and the per-invocation manifest are
+// unchanged from serial (the committer owns all writing, ledgers, and finalization).
 func (d *multiDispatcher) processInputs(ctx context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
-	if shared.ParseWorkers <= 1 {
+	if shared.InputWorkers <= 1 {
 		return d.processInputsSerial(ctx, files, logicalByLocal, states, shared)
 	}
-	return d.processInputsConcurrent(ctx, files, logicalByLocal, states, shared)
+	// SUM-068 input-workers: workers run parse + the full per-input recipe application into
+	// bundles and the ordered committer performs only the durable commit, for BOTH output
+	// modes (aggregate and per-input). Concurrency now covers the per-input work that
+	// dominates the high-count tiny-file regime — not just parse. (This supersedes the
+	// SUM-066 parse-only concurrent path.)
+	return d.processInputsConcurrentWorkers(ctx, files, logicalByLocal, states, shared)
 }
 
 // processInputsSerial is the original serial dispatch loop: parse each input in order
-// and apply it before parsing the next. This is the default (ParseWorkers <= 1) path
+// and apply it before parsing the next. This is the default (InputWorkers <= 1) path
 // and stays byte-identical to pre-SUM-066 behavior.
 func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
 	for fileIdx, file := range files {
@@ -325,13 +349,13 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 	return nil
 }
 
-// applyOutcome applies one input's parse outcome to every recipe state, exactly as the
-// serial loop did. It is the single shared dispatch body for both the serial and the
-// concurrent (ordered-drain) paths, so they cannot diverge in behavior. A non-nil
-// return aborts the run: either a fail-fast input/recipe failure, or a terminal
-// output/sink/ledger failure that ADR-0009 says must abort even under
-// --continue-on-error. Always runs on a single goroutine (serial loop or drain), so it
-// retains sole ownership of every recipe's writers, ledgers, and manifests.
+// applyOutcome applies one input's parse outcome to every recipe state on the SERIAL path
+// (InputWorkers <= 1): it builds and commits each recipe in turn. A non-nil return aborts
+// the run: either a fail-fast input/recipe failure, or a terminal output/sink/ledger
+// failure that ADR-0009 says must abort even under --continue-on-error. Always runs on a
+// single goroutine, so it retains sole ownership of every recipe's writers, ledgers, and
+// manifests. (The InputWorkers > 1 path uses commitBuiltOutcome, which mirrors this
+// branching but commits worker-built bundles.)
 func (d *multiDispatcher) applyOutcome(ctx context.Context, o parsedInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
 	if o.err != nil {
 		// Read/parse failure is INPUT-level: it affects every recipe's view of this
@@ -360,27 +384,127 @@ func (d *multiDispatcher) applyOutcome(ctx context.Context, o parsedInputOutcome
 	return nil
 }
 
-// processInputsConcurrent parses the input set across ParseWorkers workers and drains
-// the outcomes in strict input-ordinal order. Workers ONLY read+parse (no shared
-// recipe/writer state); the single drain runs applyOutcome, so all the SUM-063
-// integrity invariants (per-input barrier, deterministic emit order, per-shard digests,
-// manifest accounting) are preserved unchanged. A bounded look-ahead window caps
-// scheduled-but-not-drained inputs so a slow early input cannot let later workers buffer
-// unboundedly (head-of-line) — backpressure blocks the feeder until the drain advances.
-func (d *multiDispatcher) processInputsConcurrent(parent context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
-	workers := shared.ParseWorkers
-	// Scheduled-but-not-drained inputs are bounded to window: one slot is acquired
-	// per scheduled input and released only after the drain has consumed (and freed)
-	// that input's parsed document. The in-flight memory bound is therefore
-	// window × (largest single input's parsed document) — independent of input count.
+// parseInputContained parses one input for a concurrent worker, recovering a panic into
+// an input-level error so a single malformed/pathological input cannot crash the whole
+// invocation or corrupt the shared drain. The serial path intentionally does NOT recover
+// (default behavior is byte-identical to pre-SUM-066); containment is a concurrency
+// concern only.
+func (d *multiDispatcher) parseInputContained(filePath string, allowLargeFiles bool) (node *xmlquery.Node, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			node = nil
+			err = fmt.Errorf("panic while parsing input: %v", r)
+		}
+	}()
+	return d.parseFile(filePath, allowLargeFiles)
+}
+
+// inFlightRecordsPerSlot, multiplied by the look-ahead window, is the in-flight emitted-
+// record ceiling for the aggregate input-worker path (SUM-068 G4). The window bounds
+// in-flight INPUTS; this bounds the RECORDS those inputs hold in memory ahead of the
+// ordered committer, so a few high-yield inputs cannot accumulate unbounded record memory
+// within the window before the committer drains them. It is a backpressure throttle only —
+// it paces scheduling, never drops or fails records, so output stays byte-identical across
+// worker counts. Per-input byte size is independently bounded by the extract-multi DOM
+// input limit (ParseFileForDOMDispatch rejects >100MB).
+const inFlightRecordsPerSlot = 25_000
+
+// defaultBundleMaxRecords / defaultBundleMaxBytes bound ONE input's in-flight aggregate
+// bundle (SUM-068 G4), enforced inside the worker-local collecting sink as records are
+// appended — so a single high-output input trips a bounded failure during construction
+// rather than after a huge bundle is already retained (or, worse, an OOM). They are the
+// per-input half of the memory bound; inFlightRecordsPerSlot×window is the scheduling
+// throttle across inputs. Total worst-case in-flight bundle memory is therefore bounded by
+// roughly workers × defaultBundleMaxBytes (concurrent builds) plus the in-flight throttle —
+// an explicit bound, not "process every input's full output in memory". Spill (deferred)
+// is the future path for inputs that legitimately exceed this; until then an over-budget
+// input fails with an actionable message (split the input / reduce per-input output; spill
+// is the planned path for very large per-input outputs). Defaults are
+// generous so the tiny-file regime and normal inputs never trip them.
+const (
+	defaultBundleMaxRecords = 2_000_000
+	defaultBundleMaxBytes   = 256 << 20 // 256 MiB of marshaled records per input
+)
+
+// builtInputOutcome carries one input's worker-BUILT result to the ordered committer:
+// either an input-level parse failure, or one fully-built aggregateApplication per recipe
+// (in states order). records is the total emitted-record count across all recipe bundles,
+// computed once at build time and reused at commit to decrement the in-flight bound exactly.
+type builtInputOutcome struct {
+	idx      int
+	ordinal  int
+	file     string
+	logical  string
+	parseErr error
+	apps     []builtApplication
+	records  int
+}
+
+// commitBuiltOutcome applies one worker-built outcome to every recipe state on the ordered
+// committer. It mirrors applyOutcome's branching exactly — an input-level parse failure is
+// recorded per recipe (honoring --continue-on-error); a per-recipe commit failure aborts
+// on fail-fast or on an ADR-0009 terminal error, otherwise is recorded and skipped — but
+// sources records from the pre-built bundles instead of extracting inline. It always runs
+// on the single committer goroutine, so it retains sole ownership of every recipe's writer,
+// ledgers, and manifests.
+func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
+	if o.parseErr != nil {
+		for _, st := range states {
+			st.recordInputFailure(o.file, o.logical, o.parseErr)
+		}
+		if !shared.ContinueOnError {
+			return fmt.Errorf("failed to process file %s: %w", o.logical, o.parseErr)
+		}
+		return nil
+	}
+	for i, st := range states {
+		if rerr := o.apps[i].commit(ctx, st); rerr != nil {
+			if !shared.ContinueOnError || isTerminalDispatchError(rerr) {
+				return rerr
+			}
+		}
+	}
+	return nil
+}
+
+// processInputsConcurrentWorkers is the SUM-068 input-worker path for BOTH output modes.
+// Each worker parses AND runs the full per-input recipe application into worker-local
+// bundles (parse + external fields + signature/applicability/extraction/min_occurrences),
+// then the single ordered committer performs only the durable, in-order commit. The
+// per-recipe build and commit are mode-specific (aggregate writer vs per-input file) behind
+// the builtApplication interface; this skeleton is mode-agnostic. This moves the extract CPU
+// that dominates the high-count tiny-file regime off the serial drain, and supersedes the
+// SUM-066 parse-only concurrent path.
+//
+// Determinism, provenance, and failure semantics are preserved exactly: bundles are
+// committed in strict input-ordinal order (not worker-completion order); the committer is
+// the sole owner of every writer, output target, ledger, counter, failure, disposition, and
+// manifest mutation; per-input record order is the extraction order captured in the bundle.
+// Two bounds keep memory in check: a look-ahead window caps in-flight INPUTS (as in
+// SUM-066), and an in-flight RECORD ceiling (inFlightRecordsPerSlot × window) throttles
+// scheduling so high-yield inputs cannot accumulate unbounded record memory (G4). Worker
+// application panics are contained per recipe (G3). Worker-shared recipe plan state is
+// read-only or per-file cloned; the only shared-mutable touch (the warn limiter) is locked
+// (G1).
+func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
+	workers := shared.InputWorkers
 	window := workers * 2
+	maxInFlightRecords := int64(window) * inFlightRecordsPerSlot
+	if d.maxInFlightRecords > 0 {
+		maxInFlightRecords = d.maxInFlightRecords
+	}
 
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	workChan := make(chan int)
-	resultChan := make(chan parsedInputOutcome, window)
+	resultChan := make(chan builtInputOutcome, window)
 	slots := make(chan struct{}, window)
+	// freed coalesces "in-flight records decreased" signals so the feeder can wake from the
+	// record-ceiling wait without busy-looping. Buffered/non-blocking send: a missed signal
+	// is fine because the feeder re-checks the atomic on every wake.
+	freed := make(chan struct{}, 1)
+	var inFlightRecords int64
 
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -388,8 +512,18 @@ func (d *multiDispatcher) processInputsConcurrent(parent context.Context, files 
 		go func() {
 			defer wg.Done()
 			for idx := range workChan {
-				o := parsedInputOutcome{idx: idx, ordinal: idx + 1, file: files[idx], logical: logicalIdentity(files[idx], logicalByLocal)}
-				o.doc, o.err = d.parseInputContained(files[idx], shared.AllowLargeFiles)
+				o := builtInputOutcome{idx: idx, ordinal: idx + 1, file: files[idx], logical: logicalIdentity(files[idx], logicalByLocal)}
+				doc, perr := d.parseInputContained(files[idx], shared.AllowLargeFiles)
+				if perr != nil {
+					o.parseErr = perr
+				} else {
+					o.apps = make([]builtApplication, len(states))
+					for i, st := range states {
+						o.apps[i] = st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication)
+						o.records += o.apps[i].recordCount()
+					}
+				}
+				atomic.AddInt64(&inFlightRecords, int64(o.records))
 				select {
 				case resultChan <- o:
 				case <-ctx.Done():
@@ -399,11 +533,18 @@ func (d *multiDispatcher) processInputsConcurrent(parent context.Context, files 
 		}()
 	}
 
-	// Feeder: acquire a window slot then schedule the next input. Both selects honor
-	// cancellation so a fail-fast drain never leaves the feeder blocked.
+	// Feeder: wait out the in-flight record ceiling, then acquire a window slot, then
+	// schedule. Every wait honors cancellation so a fail-fast drain never strands it.
 	go func() {
 		defer close(workChan)
 		for idx := range files {
+			for atomic.LoadInt64(&inFlightRecords) >= maxInFlightRecords {
+				select {
+				case <-freed:
+				case <-ctx.Done():
+					return
+				}
+			}
 			select {
 			case slots <- struct{}{}:
 			case <-ctx.Done():
@@ -417,9 +558,9 @@ func (d *multiDispatcher) processInputsConcurrent(parent context.Context, files 
 		}
 	}()
 
-	// Drain: consume outcomes, reorder into strict ordinal order, and apply each input
-	// exactly once in order. Out-of-order outcomes wait in pending (bounded by window).
-	pending := make(map[int]parsedInputOutcome, window)
+	// Drain: reorder outcomes into strict ordinal order and commit each exactly once in
+	// order. Out-of-order outcomes wait in pending (bounded by window).
+	pending := make(map[int]builtInputOutcome, window)
 	next := 0
 	var runErr error
 	for next < len(files) {
@@ -434,39 +575,31 @@ func (d *multiDispatcher) processInputsConcurrent(parent context.Context, files 
 				break
 			}
 			delete(pending, next)
-			if err := d.applyOutcome(ctx, cur, states, shared); err != nil {
+			if err := d.commitBuiltOutcome(ctx, cur, states, shared); err != nil {
 				runErr = err
 				break
 			}
+			// Release this input's in-flight records and window slot so the feeder advances.
+			if cur.records > 0 {
+				atomic.AddInt64(&inFlightRecords, -int64(cur.records))
+				select {
+				case freed <- struct{}{}:
+				default:
+				}
+			}
 			next++
-			<-slots // release the drained input's window slot so the feeder advances
+			<-slots
 		}
 		if runErr != nil {
 			break
 		}
 	}
 
-	// Stop the world: cancel unblocks the feeder and any worker blocked on send, then
-	// wait for every goroutine to exit before returning (no leaked goroutines, no
-	// further parsing). Workers select on ctx.Done(), so they need no further drain.
+	// Stop the world: cancel unblocks the feeder and any worker blocked on send, then wait
+	// for every goroutine to exit before returning (no leaked goroutines, no further work).
 	cancel()
 	wg.Wait()
 	return runErr
-}
-
-// parseInputContained parses one input for a concurrent worker, recovering a panic into
-// an input-level error so a single malformed/pathological input cannot crash the whole
-// invocation or corrupt the shared drain. The serial path intentionally does NOT recover
-// (default behavior is byte-identical to pre-SUM-066); containment is a concurrency
-// concern only.
-func (d *multiDispatcher) parseInputContained(filePath string, allowLargeFiles bool) (node *xmlquery.Node, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			node = nil
-			err = fmt.Errorf("panic while parsing input: %v", r)
-		}
-	}()
-	return d.parseFile(filePath, allowLargeFiles)
 }
 
 func recipeManifestPath(workspace string) string {
@@ -538,18 +671,27 @@ type recipeRunState struct {
 	aggWriter  *aggregateWriter
 	inputCount int  // resolved input count, for the aggregate zero-record shard range
 	finalized  bool // aggregate: this recipe's finalize committed + wrote its manifest
+
+	// bundleMaxRecords/bundleMaxBytes bound one input's in-flight aggregate bundle during
+	// construction (SUM-068 G4). Threaded from the dispatcher so they apply uniformly on the
+	// serial and worker build paths (an over-budget input fails identically at every worker
+	// count). 0 disables that dimension.
+	bundleMaxRecords int
+	bundleMaxBytes   int64
 }
 
-func newRecipeRunState(plan *RecipePlan, fileCount int) *recipeRunState {
+func newRecipeRunState(plan *RecipePlan, fileCount, bundleMaxRecords int, bundleMaxBytes int64) *recipeRunState {
 	st := &recipeRunState{
-		plan:            plan,
-		manifestEnabled: shouldWriteManifest(plan.opts),
-		manifestInputs:  make([]provenance.Input, 0, fileCount),
-		manifestOutputs: make([]provenance.Output, 0, fileCount),
-		counts:          make(map[string]int),
-		dispositions:    newDispositionSummary(fileCount),
-		failures:        newExtractFailureManifest(fileCount),
-		sanitizeRoots:   manifestSanitizeRoots(plan.opts),
+		plan:             plan,
+		manifestEnabled:  shouldWriteManifest(plan.opts),
+		manifestInputs:   make([]provenance.Input, 0, fileCount),
+		manifestOutputs:  make([]provenance.Output, 0, fileCount),
+		counts:           make(map[string]int),
+		dispositions:     newDispositionSummary(fileCount),
+		failures:         newExtractFailureManifest(fileCount),
+		sanitizeRoots:    manifestSanitizeRoots(plan.opts),
+		bundleMaxRecords: bundleMaxRecords,
+		bundleMaxBytes:   bundleMaxBytes,
 	}
 	if isAggregateMode(plan.opts) {
 		st.aggWriter = newAggregateWriter(plan.opts, aggregateBuffering(plan.opts, plan.extCfg))
@@ -600,102 +742,13 @@ func (st *recipeRunState) dispatchParsedFile(ctx context.Context, file, logical 
 	if st.aggWriter != nil {
 		return st.dispatchParsedFileAggregate(ctx, file, logical, ordinal, doc)
 	}
-	opts := st.plan.opts
-	logger := dispatchLogger()
-
-	externalFields, err := buildExternalFieldsForFile(logical, opts, st.plan.fieldPlan, st.plan.warnLimiter)
-	if err != nil {
-		if !opts.ContinueOnError {
-			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, logical, err)
-		}
-		result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
-		return recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, logger)
-	}
-
-	target, err := newJSONOutputTarget(opts, logical)
-	if err != nil {
-		return fmt.Errorf("recipe %q: failed to open output for %s: %w", st.plan.RecipeID, logical, err)
-	}
-
-	rp := st.plan.runtimeProvenance
-	if file != logical {
-		rp.SourceURI = logical
-	}
-	// Clone the extract config per recipe per file so compiled XPath state is
-	// never shared while M recipes read the one shared, read-only document.
-	cloned := extract.CloneRecordMatch(st.plan.extCfg)
-	result := extract.ProcessParsedDocument(ctx, doc, file, st.plan.sigCfg, cloned, st.plan.appCfg, externalFields, rp, target)
-	closeErr := target.Close(ctx)
-
-	if result.Error != nil || result.Disposition == extract.DispositionFailed {
-		target.Abort()
-		if closeErr != nil && result.Error == nil {
-			result.Error = closeErr
-			result.Disposition = extract.DispositionFailed
-			result.DispositionReason = extract.DispositionReasonInternalError
-			result.DispositionDetail = closeErr.Error()
-		}
-		if !opts.ContinueOnError {
-			if result.Error != nil {
-				return fmt.Errorf("recipe %q: failed to process %s: %w", st.plan.RecipeID, logical, result.Error)
-			}
-			st.dispositionErr = failureErrorForResult(result, st.sanitizeRoots)
-			return st.dispositionErr
-		}
-		_ = recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, logger)
-		return nil
-	}
-	if closeErr != nil {
-		target.Abort()
-		return fmt.Errorf("recipe %q: failed to close output for %s: %w", st.plan.RecipeID, logical, closeErr)
-	}
-
-	// Enforce match_selectors[].min_occurrences floors BEFORE publishing the
-	// output/manifest (ADR-0007), matching the single-recipe path. A violation is
-	// a recipe-level failure: abort this recipe's output for the file, never
-	// commit a successful zero/short payload, and never abort the other recipes.
-	if result.Disposition != extract.DispositionNotApplicable {
-		if mErr := enforceMinOccurrences(opts, cloned, st.plan.sigCfg, result.LogicalURI, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); mErr != nil {
-			target.Abort()
-			if !opts.ContinueOnError {
-				st.dispositionErr = mErr
-				return mErr
-			}
-			reason := failureReasonForError(mErr)
-			if reason == "" {
-				reason = extract.DispositionReasonMinOccurrencesViolation
-			}
-			result.Disposition = extract.DispositionFailed
-			result.DispositionReason = reason
-			result.DispositionDetail = mErr.Error()
-			_ = recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, logger)
-			return nil
-		}
-	}
-
-	if err := target.Commit(); err != nil {
-		return err
-	}
-
-	if result.Disposition != "" {
-		st.dispositions.add(result, st.sanitizeRoots)
-	}
-	if st.manifestEnabled {
-		input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots...)
-		if err != nil {
-			return err
-		}
-		input.RecordType = st.plan.extCfg.RecordType
-		applyInputDisposition(&input, result, st.sanitizeRoots)
-		st.manifestInputs = append(st.manifestInputs, input)
-	}
-	recordCount := target.Count()
-	st.counts[st.plan.extCfg.RecordType] += recordCount
-	if st.manifestEnabled {
-		st.manifestOutputs = append(st.manifestOutputs, provenanceOutput(target.logicalName(), recipesmanifest.OutputFormatJSON, recordCount, opts, st.sanitizeRoots...))
-	}
-	st.failures.addApplied()
-	return nil
+	// SUM-068 slice 3a: split into a worker-safe build (extraction into a worker-local
+	// buffer, no durable target) and a single-owner commit (create the per-input output
+	// target, replay, write ledgers). Here both run on the ordered drain in immediate
+	// succession, so behavior is byte-identical to the pre-split path; slice 3b hoists the
+	// build onto a worker. See extract_multi_bundle.go.
+	app := st.buildPerInputApplication(ctx, file, logical, ordinal, doc)
+	return st.commitPerInputApplication(ctx, app)
 }
 
 // finalize writes this recipe's failures, dispositions, and provenance manifest

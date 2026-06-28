@@ -7,7 +7,6 @@ import (
 
 	"github.com/antchfx/xmlquery"
 
-	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 )
@@ -68,103 +67,12 @@ func (st *recipeRunState) writeIncompleteAggregateManifestOnFailure(startedAt ti
 // aborts the whole run (the deferred writer.abort in the dispatcher discards every
 // recipe's uncommitted staging) — either way, no failed-input rows are committed.
 func (st *recipeRunState) dispatchParsedFileAggregate(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node) error {
-	opts := st.plan.opts
-
-	// Start this input's per-input buffer (no-op unless --continue-on-error).
-	st.aggWriter.beginInput()
-
-	externalFields, err := buildExternalFieldsForFile(logical, opts, st.plan.fieldPlan, st.plan.warnLimiter)
-	if err != nil {
-		st.aggWriter.discardInput()
-		if !opts.ContinueOnError {
-			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, logical, err)
-		}
-		result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
-		recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
-		return nil
-	}
-
-	st.aggWriter.setCurrentInput(ordinal)
-	rp := st.plan.runtimeProvenance
-	if file != logical {
-		rp.SourceURI = logical
-	}
-	// Clone the extract config per recipe per file so compiled XPath state is never
-	// shared while M recipes read the one shared, read-only document.
-	cloned := extract.CloneRecordMatch(st.plan.extCfg)
-	before := st.aggWriter.totalRecords
-	result := extract.ProcessParsedDocument(ctx, doc, file, st.plan.sigCfg, cloned, st.plan.appCfg, externalFields, rp, st.aggWriter)
-
-	if result.Error != nil || result.Disposition == extract.DispositionFailed {
-		// Drop the failed input's buffered rows. Fail-fast: return; the deferred abort
-		// drops all staging. Continue-on-error: record the failure and move on — earlier
-		// inputs' committed rows are untouched because the failed input only ever buffered.
-		st.aggWriter.discardInput()
-		if !opts.ContinueOnError {
-			if result.Error != nil {
-				return fmt.Errorf("recipe %q: failed to process %s: %w", st.plan.RecipeID, logical, result.Error)
-			}
-			st.dispositionErr = failureErrorForResult(result, st.sanitizeRoots)
-			return st.dispositionErr
-		}
-		recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
-		return nil
-	}
-
-	// Enforce match_selectors[].min_occurrences floors at input completion (before the
-	// buffered rows are flushed): a floor miss is an input-level failure handled by the
-	// same per-input barrier — discard the buffered rows and record the input as failed,
-	// or (fail-fast) abort the run. The streamed shard never receives a floor-failing
-	// input's rows.
-	if result.Disposition != extract.DispositionNotApplicable {
-		if floorErr := enforceMinOccurrences(opts, cloned, st.plan.sigCfg, result.LogicalURI, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); floorErr != nil {
-			st.aggWriter.discardInput()
-			if !opts.ContinueOnError {
-				st.dispositionErr = floorErr
-				return floorErr
-			}
-			reason := failureReasonForError(floorErr)
-			if reason == "" {
-				reason = extract.DispositionReasonMinOccurrencesViolation
-			}
-			result.Disposition = extract.DispositionFailed
-			result.DispositionReason = reason
-			result.DispositionDetail = floorErr.Error()
-			recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
-			return nil
-		}
-	}
-
-	// The input extracted cleanly: flush its buffered records into the shared shard. A
-	// commit failure is a terminal output/sink error (ADR-0009): it must abort the whole
-	// run even under --continue-on-error, never be recorded as a recoverable input failure.
-	if cerr := st.aggWriter.commitInput(); cerr != nil {
-		return terminalDispatch(fmt.Errorf("recipe %q: failed to commit aggregate output for %s: %w", st.plan.RecipeID, logical, cerr))
-	}
-	recordCount := st.aggWriter.totalRecords - before
-	st.failures.addApplied()
-
-	if result.Disposition != "" {
-		st.dispositions.add(result, st.sanitizeRoots)
-	}
-	if st.manifestEnabled {
-		input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots...)
-		if err != nil {
-			return terminalDispatch(fmt.Errorf("recipe %q: failed to build input ledger for %s: %w", st.plan.RecipeID, logical, err))
-		}
-		input.RecordType = st.plan.extCfg.RecordType
-		rc := recordCount
-		input.RecordCount = &rc
-		applyInputDisposition(&input, result, st.sanitizeRoots)
-		if input.Disposition == "" {
-			// Inventory completeness (R5): an applied input without an explicit
-			// disposition (no applicability config), including zero-record.
-			input.Disposition = string(extract.DispositionApplied)
-		}
-		st.manifestInputs = append(st.manifestInputs, input)
-	}
-	st.counts[st.plan.extCfg.RecordType] += recordCount
-	return nil
+	// SUM-068 slice 1: split into a worker-safe build stage (no shared writer/ledger
+	// state) and a single-owner commit stage. Here both run on the ordered drain in
+	// immediate succession, so behavior is byte-identical to the pre-split path; a later
+	// slice hoists the build onto a worker. See extract_multi_bundle.go.
+	app := st.buildAggregateApplication(ctx, file, logical, ordinal, doc)
+	return st.commitAggregateApplication(ctx, app)
 }
 
 // finalizeAggregate commits this recipe's aggregate shards (atomic rename) and writes
