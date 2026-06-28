@@ -134,15 +134,19 @@ per-run provenance stamp). A shared key colliding with any recipe's
 output is written. `--parameter` is not a credential transport; secret-shaped
 keys are redacted by key in the provenance argv.
 
-`--parse-workers N` (default `1`) parses the shared input set across N workers
-within the one invocation, fanning parsed inputs into the single ordered writer to
-speed up the parse (CPU) cost at high file counts. Output is identical to a
-single-worker run — records emit in resolved input order and the per-invocation
-manifest is unchanged — because only the parse is concurrent; extraction, writing,
-and finalization stay on one ordered drain. A value below `1` is rejected. It works
-with both local and cloud (`s3://`) destinations: cloud shard publishes stay on the
-ordered drain, so concurrency leaves the cloud publish/byte-cap/partial-publish
-semantics unchanged.
+`--input-workers N` (default `1`) runs per-input processing across N workers within
+the one invocation: each worker parses an input **and** runs its full per-recipe
+application (signature/applicability/extraction/`min_occurrences`) into a worker-local
+bundle, and a single ordered committer applies the bundles in input order. This speeds
+up high-file-count batches — both parse-bound inputs (big documents) and tiny-file,
+high-count batches where per-input application is the long pole. Output is identical to
+a single-worker run — records emit in resolved input order and the per-invocation
+manifest is unchanged — because only the durable commit stays on the single ordered
+committer (writing, ledgers, finalization). A value below `1` is rejected. It works with
+both local and cloud (`s3://`) destinations: cloud shard publishes stay on the ordered
+committer, so concurrency leaves the cloud publish/byte-cap/partial-publish semantics
+unchanged. Tune it empirically with `--stats` (see the extraction workflow guide); stop
+raising N when throughput plateaus.
 
 Failure handling follows the input-vs-recipe boundary: a read/parse/acquire
 failure is input-level (every recipe sees it); an applicability, signature,

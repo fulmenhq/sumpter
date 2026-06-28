@@ -28,7 +28,7 @@ import (
 // inventory (path/disposition/record_count/record_type), per-shard aggregate
 // summaries (path/record_count/sha256/ordinal span), and the record-type counts.
 // Volatile fields (timestamps, the cli argv — which legitimately differs by
-// --parse-workers value) are deliberately excluded.
+// --input-workers value) are deliberately excluded.
 func stableManifest(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -171,7 +171,7 @@ func writeMixedInputSet(t *testing.T, n, badIdx int) string {
 	return fileList
 }
 
-func TestExtractMulti_ParseWorkersContinueOnErrorEquivalence(t *testing.T) {
+func TestExtractMulti_InputWorkersContinueOnErrorEquivalence(t *testing.T) {
 	// Two recipes, 6 inputs with a malformed input at ordinal 3, continue-on-error.
 	wsA := writeMultiRecipeWorkspace(t, "summary")
 	wsB := writeMultiRecipeWorkspace(t, "line-items")
@@ -185,7 +185,7 @@ func TestExtractMulti_ParseWorkersContinueOnErrorEquivalence(t *testing.T) {
 			OutputMode:      outputModeAggregate,
 			RunID:           testMultiRunID,
 			ContinueOnError: true,
-			ParseWorkers:    workers,
+			InputWorkers:    workers,
 		}
 		// continue-on-error returns a partial-failure error; that's expected, not fatal.
 		_ = runExtractMulti(shared, []string{wsA, wsB}, io.Discard, time.Now())
@@ -214,7 +214,7 @@ func TestExtractMulti_ParseWorkersContinueOnErrorEquivalence(t *testing.T) {
 	}
 }
 
-func TestExtractMulti_ParseWorkersFailFastEquivalence(t *testing.T) {
+func TestExtractMulti_InputWorkersFailFastEquivalence(t *testing.T) {
 	ws := writeMultiRecipeWorkspace(t, "summary")
 	fileList := writeMixedInputSet(t, 6, 2) // inC malformed, NO continue-on-error
 
@@ -225,7 +225,7 @@ func TestExtractMulti_ParseWorkersFailFastEquivalence(t *testing.T) {
 			OutputPath:   outRoot,
 			OutputMode:   outputModeAggregate,
 			RunID:        testMultiRunID,
-			ParseWorkers: workers,
+			InputWorkers: workers,
 		}
 		err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now())
 		if err == nil {
@@ -239,7 +239,7 @@ func TestExtractMulti_ParseWorkersFailFastEquivalence(t *testing.T) {
 	}
 }
 
-func TestExtractMulti_ParseWorkersFloorEquivalence(t *testing.T) {
+func TestExtractMulti_InputWorkersFloorEquivalence(t *testing.T) {
 	// Strict recipe requires >=1 //TargetElement; lax recipe has no floor. One input
 	// matches the signature but lacks the element (floor miss), the rest are normal.
 	strict := writeMinOccursRecipe(t, "strict", 1)
@@ -271,7 +271,7 @@ func TestExtractMulti_ParseWorkersFloorEquivalence(t *testing.T) {
 			OutputMode:      outputModeAggregate,
 			RunID:           testMultiRunID,
 			ContinueOnError: true,
-			ParseWorkers:    workers,
+			InputWorkers:    workers,
 		}
 		_ = runExtractMulti(shared, []string{strict, lax}, io.Discard, time.Now())
 		return outRoot
@@ -279,7 +279,7 @@ func TestExtractMulti_ParseWorkersFloorEquivalence(t *testing.T) {
 	assertWorkerCountEquivalence(t, scenario, []string{"strict", "lax"}, 2, 4, 8)
 }
 
-func TestExtractMulti_ParseWorkersShardCapEquivalence(t *testing.T) {
+func TestExtractMulti_InputWorkersShardCapEquivalence(t *testing.T) {
 	ws := writeMultiRecipeWorkspace(t, "summary")
 	fileList, _ := writeMultiInputSet(t, 8) // 8 inputs, 1 record each
 
@@ -292,7 +292,7 @@ func TestExtractMulti_ParseWorkersShardCapEquivalence(t *testing.T) {
 				OutputMode:          outputModeAggregate,
 				RunID:               testMultiRunID,
 				AggregateMaxRecords: 3, // roll every 3 records -> 3 shards (3,3,2)
-				ParseWorkers:        workers,
+				InputWorkers:        workers,
 			}
 			if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err != nil {
 				t.Fatalf("workers=%d: %v", workers, err)
@@ -322,7 +322,7 @@ func TestExtractMulti_ParseWorkersShardCapEquivalence(t *testing.T) {
 				OutputMode:        outputModeAggregate,
 				RunID:             testMultiRunID,
 				AggregateMaxBytes: 900, // a few records per shard
-				ParseWorkers:      workers,
+				InputWorkers:      workers,
 			}
 			if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err != nil {
 				t.Fatalf("workers=%d: %v", workers, err)
@@ -333,11 +333,11 @@ func TestExtractMulti_ParseWorkersShardCapEquivalence(t *testing.T) {
 	})
 }
 
-// TestExtractMulti_ParseWorkersBackpressureBound proves the bounded look-ahead: while
+// TestExtractMulti_InputWorkersBackpressureBound proves the bounded look-ahead: while
 // the earliest-ordinal input is blocked in parse, the number of inputs whose parse has
 // STARTED never exceeds the scheduler window (2×workers) — later workers cannot run
 // ahead and buffer the whole input set behind a slow head-of-line input.
-func TestExtractMulti_ParseWorkersBackpressureBound(t *testing.T) {
+func TestExtractMulti_InputWorkersBackpressureBound(t *testing.T) {
 	const (
 		n       = 20
 		workers = 2
@@ -350,7 +350,7 @@ func TestExtractMulti_ParseWorkersBackpressureBound(t *testing.T) {
 		OutputPath:   filepath.Join(t.TempDir(), "out"),
 		OutputMode:   outputModeAggregate,
 		RunID:        testMultiRunID,
-		ParseWorkers: workers,
+		InputWorkers: workers,
 	}
 	d := newMultiDispatcher(shared, io.Discard)
 	realParse := d.parseFile
@@ -387,11 +387,11 @@ func TestExtractMulti_ParseWorkersBackpressureBound(t *testing.T) {
 	}
 }
 
-// TestExtractMulti_ParseWorkersPanicContainment proves a worker panic on one input is
+// TestExtractMulti_InputWorkersPanicContainment proves a worker panic on one input is
 // contained as an input-level failure rather than crashing the invocation: under
 // continue-on-error the panicking input is recorded failed and siblings survive; under
 // fail-fast the run aborts cleanly with an error (no panic escapes, no committed output).
-func TestExtractMulti_ParseWorkersPanicContainment(t *testing.T) {
+func TestExtractMulti_InputWorkersPanicContainment(t *testing.T) {
 	ws := writeMultiRecipeWorkspace(t, "summary")
 	fileList, _ := writeMultiInputSet(t, 5)
 
@@ -413,7 +413,7 @@ func TestExtractMulti_ParseWorkersPanicContainment(t *testing.T) {
 			OutputMode:      outputModeAggregate,
 			RunID:           testMultiRunID,
 			ContinueOnError: true,
-			ParseWorkers:    4,
+			InputWorkers:    4,
 		}
 		d := newMultiDispatcher(shared, io.Discard)
 		parseWithPanicOn(d, "inC.xml")
@@ -439,7 +439,7 @@ func TestExtractMulti_ParseWorkersPanicContainment(t *testing.T) {
 			OutputPath:   outRoot,
 			OutputMode:   outputModeAggregate,
 			RunID:        testMultiRunID,
-			ParseWorkers: 4,
+			InputWorkers: 4,
 		}
 		d := newMultiDispatcher(shared, io.Discard)
 		parseWithPanicOn(d, "inC.xml")

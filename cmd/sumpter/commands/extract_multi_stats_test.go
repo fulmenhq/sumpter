@@ -22,7 +22,7 @@ func runMultiAggregateForStats(t *testing.T, ws, fileList string, stats bool, wa
 		OutputPath:   outRoot,
 		RunID:        testMultiRunID,
 		OutputMode:   "aggregate",
-		ParseWorkers: 2,
+		InputWorkers: 2,
 		Stats:        stats,
 	}
 	if err := runExtractMulti(shared, []string{ws}, warnOut, time.Now()); err != nil {
@@ -50,7 +50,7 @@ func TestExtractMultiStats_StderrBlockOnlyWhenEnabled(t *testing.T) {
 	if strings.Count(got, "extract-multi --stats") != 1 {
 		t.Fatalf("stats on must emit exactly one block, got:\n%s", got)
 	}
-	for _, want := range []string{"wall:", "inputs:", "parse-workers: 2", "GOMAXPROCS:", "effective CPU:"} {
+	for _, want := range []string{"wall:", "inputs:", "input-workers: 2", "GOMAXPROCS:", "effective CPU:"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("stats block missing %q:\n%s", want, got)
 		}
@@ -100,7 +100,7 @@ func TestBuildExtractMultiArgv_OmitsStats(t *testing.T) {
 	argv := buildExtractMultiArgv([]string{"ws"}, &recipeRunExtractMultiOptions{
 		Stats:        true,
 		OutputPath:   "out",
-		ParseWorkers: 4,
+		InputWorkers: 4,
 	})
 	joined := strings.Join(argv, " ")
 	if strings.Contains(joined, "--stats") {

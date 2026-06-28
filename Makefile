@@ -273,7 +273,7 @@ test-race-parallel: ## Race gate (-race -count=1) on parallel-extract + index pa
 	$(GOTEST) -race -count=1 ./internal/extract/parallel/... ./internal/index/...
 	$(GOTEST) -race -count=1 ./internal/extract/ -run 'TestCloneRecordMatchGivesPerHolderXPathState'
 	$(GOTEST) -race -count=1 ./cmd/sumpter/commands -run 'TestRunExtractManifestRecordsEffectiveParallelFormat'
-	$(GOTEST) -race -count=3 ./cmd/sumpter/commands -run 'TestExtractMulti_ParseWorkers'
+	$(GOTEST) -race -count=3 ./cmd/sumpter/commands -run 'TestExtractMulti_(InputWorkers|PerInput)'
 	@echo "$(GREEN)Race gate passed$(NC)"
 # Scoped to -count=1 by design: the separate, pre-existing -count>1 command
 # global-state test pollution is NOT part of this gate (see race-fix).
@@ -356,6 +356,16 @@ test-integration-s3: ## Run S3 live-integration suite (BYO endpoint or self-prov
 benchmark: ## Run benchmarks
 	@echo "$(BLUE)Running benchmarks...$(NC)"
 	$(GOTEST) $(BENCH_FLAGS) ./...
+
+.PHONY: bench-input-workers
+bench-input-workers: ## extract-multi --input-workers scaling benchmarks (tiny-file + parse-bound; ns/op trend only). Set SUMPTER_BENCH_TINY_FILES / SUMPTER_BENCH_RECIPES to scale the corpus.
+	@echo "$(BLUE)Running --input-workers scaling benchmarks (trend-only; not a CI gate)...$(NC)"
+	$(GOTEST) -run '^$$' -bench 'BenchmarkExtractMulti(TinyFile|InputWorkers)' -benchtime=3x ./cmd/sumpter/commands/
+
+.PHONY: perf-input-workers
+perf-input-workers: ## On-demand tiny-file --input-workers perf/proof-of-difference harness with --stats (large generated corpus; never a CI gate; throughput stays operator-local). Tune with SUMPTER_BENCH_TINY_FILES / SUMPTER_BENCH_RECIPES.
+	@echo "$(BLUE)Running tiny-file --input-workers perf harness (--stats; trend-only)...$(NC)"
+	SUMPTER_PERF=1 $(GOTEST) -run 'TestExtractMultiTinyFilePerf' -v -timeout 600s -count=1 ./cmd/sumpter/commands/
 
 .PHONY: coverage-check
 coverage-check: test ## Check coverage threshold
