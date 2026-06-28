@@ -10,7 +10,7 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [0.2.4] - 2026-06-27
 
-**Parallel input processing for high-volume `extract-multi`, the `--stats` instrumentation to tune it by measuring rather than by core count, plus contract-independent output hardening — all additive, with byte-for-byte unchanged defaults.**
+**Configurable parallel input processing for high-volume `extract-multi` — thousands of input files and beyond — with the `--stats` instrumentation to tune it by measuring rather than by core count, plus contract-independent output hardening; all additive, with byte-for-byte unchanged defaults.**
 
 See [`docs/releases/v0.2.4.md`](docs/releases/v0.2.4.md) for the full release narrative.
 
