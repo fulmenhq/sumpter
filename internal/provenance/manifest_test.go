@@ -309,6 +309,39 @@ func TestSanitizeArgvInternalParameter(t *testing.T) {
 	}
 }
 
+func TestSanitizeArgvParameterInternalFlag(t *testing.T) {
+	args := SanitizeArgv([]string{
+		"recipes", "run", "extract-multi", "ws",
+		"--parameter-internal=curated_prefixes=[\"NM_\",\"NR_\"]",
+		"--parameter-internal", "tenant_prefixes=[\"XM_\"]",
+		"--parameter-internal=malformed-value",
+		"--parameter=api_token=supersecret",
+		"--parameter=visible=value",
+	})
+	joined := strings.Join(args, " ")
+
+	for _, leaked := range []string{"NM_", "NR_", "XM_", "malformed-value"} {
+		if strings.Contains(joined, leaked) {
+			t.Fatalf("SanitizeArgv leaked a --parameter-internal value %q: %q", leaked, joined)
+		}
+	}
+	if !strings.Contains(joined, "--parameter-internal=curated_prefixes=<internal>") {
+		t.Fatalf("joined --parameter-internal was not redacted with key retained: %q", joined)
+	}
+	if !strings.Contains(joined, "tenant_prefixes=<internal>") {
+		t.Fatalf("split --parameter-internal was not redacted with key retained: %q", joined)
+	}
+	if !strings.Contains(joined, "--parameter-internal=<internal>") {
+		t.Fatalf("malformed --parameter-internal should redact the whole value: %q", joined)
+	}
+	if strings.Contains(joined, "supersecret") || !strings.Contains(joined, "api_token=<redacted>") {
+		t.Fatalf("secret-shaped --parameter redaction regressed: %q", joined)
+	}
+	if !strings.Contains(joined, "--parameter=visible=value") {
+		t.Fatalf("non-internal non-secret --parameter should stay visible: %q", joined)
+	}
+}
+
 func TestBuildInputLedger(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "input.xml")

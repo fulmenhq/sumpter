@@ -256,7 +256,9 @@ sumpter recipes run extract-multi \
 
 Each recipe writes to its **own** subdirectory under `--output-path`, named by the recipe `id` (`<output-path>/<recipe-id>/`): its records, provenance manifest, and — when applicable — `dispositions.json` / `failures.json`. Per-recipe state is fully isolated: output, formats, `defaults.parameters`, reference tables, and credential handles all come from each recipe's own manifest, and one recipe can never read or clobber another's output. The input set, the output root, and run-level controls (`--continue-on-error`, credentials, the shared run id) are shared across recipes; the run id resolves once (flag → `SUMPTER_RUN_ID` → generated) so every recipe's provenance ties to one invocation.
 
-**Shared run-level `--parameter`.** Each recipe's `defaults.parameters` stay authoritative for its per-recipe config, but a repeatable `--parameter key=value` on `extract-multi` is a **run-level override layer applied to every recipe** in the pass — the same operator-supplied override that single-recipe `recipes run extract --parameter` already provides (see [Recipe Parameters](#recipe-parameters)). It is layered **over** each recipe's `defaults.parameters` (CLI wins uniformly across recipes), satisfies each recipe's `parameters_required` independently, and supports the same scalar and JSON-list typed values. By default the value is injected into **every** recipe's records — use it for the genuinely per-run keys every recipe shares (for example a per-run provenance/version stamp or an operator runtime value) that have no manifest or input-path home. A recipe can declare a key under `defaults.parameters_internal` to keep that resolved value expression-visible but off the record grain. Because internal declarations are per recipe, every recipe that receives a shared value and must hide it needs to list that key in its own `parameters_internal`. A shared key that collides with any recipe's `field_mappings[].output_field` fails the whole run at plan-load preflight, before any output is written.
+**Shared run-level parameters.** Each recipe's `defaults.parameters` stay authoritative for its per-recipe config, but a repeatable `--parameter key=value` on `extract-multi` is a **run-level override layer applied to every recipe** in the pass — the same operator-supplied override that single-recipe `recipes run extract --parameter` already provides (see [Recipe Parameters](#recipe-parameters)). It is layered **over** each recipe's `defaults.parameters` (CLI wins uniformly across recipes), satisfies each recipe's `parameters_required` independently, and supports the same scalar and JSON-list typed values. By default the value is injected into **every** recipe's records — use it for the genuinely per-run keys every recipe shares (for example a per-run provenance/version stamp or an operator runtime value) that have no manifest or input-path home.
+
+Use repeatable `--parameter-internal key=value` when a shared run-level value must stay available to expressions in every recipe but must not appear in any recipe's records or provenance argv value. It uses the same scalar/JSON-list typing and required-parameter checks as `--parameter`, but suppresses the key from every recipe's record grain and records only `key=<internal>` in each per-recipe manifest. This is the preferred way to pass a shared classifier list or other derive-only run input through `extract-multi`; it avoids listing the key under `defaults.parameters_internal` in every bystander recipe. Supplying the same key through both `--parameter` and `--parameter-internal` in one run is rejected because separate repeatable flags do not preserve a reliable cross-flag ordering. A shared key from either flag that collides with any recipe's `field_mappings[].output_field` fails the whole run at plan-load preflight, before any output is written.
 
 ```bash
 sumpter recipes run extract-multi \
@@ -264,6 +266,14 @@ sumpter recipes run extract-multi \
   --file-list ./batch/inputs.list \
   --output-path ./out \
   --parameter harness_version=2024.11.3
+```
+
+```bash
+sumpter recipes run extract-multi \
+  ./recipes/summary ./recipes/line-items ./recipes/financial \
+  --file-list ./batch/inputs.list \
+  --output-path ./out \
+  --parameter-internal 'curated_prefixes=["NM_","NR_"]'
 ```
 
 `--parameter` is **not** a credential transport — credential material stays behind named credential handles. Secret-shaped parameter keys (`token`, `secret`, `password`, `credential`, …) are redacted by key in the recorded provenance argv.
