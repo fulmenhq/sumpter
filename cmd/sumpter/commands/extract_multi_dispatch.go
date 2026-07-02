@@ -158,6 +158,9 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	if shared.InputWorkers < 0 {
 		return fmt.Errorf("extract-multi: --input-workers must be >= 1 (got %d)", shared.InputWorkers)
 	}
+	if err := validateExtractMultiInternalParameters(shared); err != nil {
+		return err
+	}
 	// Normalize the output mode ONCE so every downstream check agrees on the canonical
 	// value: plan opts (threaded from shared), isAggregateMode (writer selection),
 	// validateAggregateMulti's aggregate-only gate, and the --input-path determinism

@@ -62,6 +62,12 @@ type multiSharedOptions struct {
 	// genuinely run-level keys every recipe shares.
 	Parameters []string
 
+	// InternalParameters is the shared run-level --parameter-internal key=value
+	// layer. Values are parsed through the same parameter path as Parameters, but
+	// their keys are also unioned into each recipe's key-only ParametersInternal
+	// set so the values remain expression-visible and are suppressed at emit time.
+	InternalParameters []string
+
 	// Aggregate output mode applied to EVERY recipe in the pass: each recipe streams
 	// its records to one NDJSON writer (rolling shards) under its own
 	// <output-root>/<recipe-id>/ instead of one file per input. Empty/"per-input" is
@@ -88,6 +94,92 @@ type multiSharedOptions struct {
 	// touches records, aggregate output, or the provenance manifest, so the
 	// SUM-066 byte-identical contract holds with stats on or off.
 	Stats bool
+}
+
+func validateExtractMultiInternalParameters(shared *multiSharedOptions) error {
+	if shared == nil || len(shared.InternalParameters) == 0 {
+		return nil
+	}
+	regularKeys := make(map[string]struct{}, len(shared.Parameters))
+	for _, raw := range shared.Parameters {
+		key, ok := extractMultiParameterKey(raw)
+		if ok {
+			regularKeys[key] = struct{}{}
+		}
+	}
+	for _, raw := range shared.InternalParameters {
+		key, err := extractMultiInternalParameterKey(raw)
+		if err != nil {
+			return err
+		}
+		if _, exists := regularKeys[key]; exists {
+			return fmt.Errorf("parameter %q cannot be supplied with both --parameter and --parameter-internal", key)
+		}
+	}
+	return nil
+}
+
+func appendExtractMultiParameters(parameters, internalParameters []string) []string {
+	if len(internalParameters) == 0 {
+		return append([]string(nil), parameters...)
+	}
+	out := make([]string, 0, len(parameters)+len(internalParameters))
+	out = append(out, parameters...)
+	out = append(out, internalParameters...)
+	return out
+}
+
+func extractMultiInternalParameterKeys(internalParameters []string) ([]string, error) {
+	if len(internalParameters) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(internalParameters))
+	for _, raw := range internalParameters {
+		key, err := extractMultiInternalParameterKey(raw)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return unionStringSlices(keys), nil
+}
+
+func extractMultiInternalParameterKey(raw string) (string, error) {
+	key, ok := extractMultiParameterKey(raw)
+	if !ok {
+		return "", fmt.Errorf("invalid --parameter-internal: expected key=value")
+	}
+	if key == "" {
+		return "", fmt.Errorf("invalid --parameter-internal: key cannot be empty")
+	}
+	return key, nil
+}
+
+func extractMultiParameterKey(raw string) (string, bool) {
+	key, _, ok := strings.Cut(raw, "=")
+	if !ok {
+		return "", false
+	}
+	return strings.TrimSpace(key), true
+}
+
+func unionStringSlices(lists ...[]string) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	for _, list := range lists {
+		for _, value := range list {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, exists := seen[value]; exists {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // RecipePlan is the fully-loaded, isolated per-recipe execution state for one
@@ -287,13 +379,17 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 	opts.SiteID = defaults.SiteID
 	opts.ManifestParameters = defaults.Parameters
 	opts.ParametersRequired = defaults.ParametersRequired
-	opts.ParametersInternal = defaults.ParametersInternal
+	runInternalKeys, err := extractMultiInternalParameterKeys(shared.InternalParameters)
+	if err != nil {
+		return nil, err
+	}
+	opts.ParametersInternal = unionStringSlices(defaults.ParametersInternal, runInternalKeys)
 	// Shared run-level --parameter override layer, applied to every recipe. Threaded
 	// in here so buildExternalFieldPlan does ALL parsing, last-wins override over
 	// defaults.parameters, typed (list) handling, required checks, and output-field
 	// collision checks — identical to single-recipe `recipes run extract`. No second
 	// parser or merge layer.
-	opts.Parameters = shared.Parameters
+	opts.Parameters = appendExtractMultiParameters(shared.Parameters, shared.InternalParameters)
 	// Aggregate output mode is shared run-level: each recipe's plan carries it so its
 	// per-recipe aggregate writer streams under opts.OutputPath (= the recipe's
 	// validated <output-root>/<recipe-id>/ dir).

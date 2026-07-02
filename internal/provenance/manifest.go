@@ -407,6 +407,10 @@ func sanitizeArgv(args []string, internalParameters map[string]struct{}, roots .
 			out = append(out, key+"=<redacted>")
 			continue
 		}
+		if hasValue && isParameterInternalFlag(key) {
+			out = append(out, key+"="+sanitizeInternalParameterValue(value))
+			continue
+		}
 		// A --parameter value is itself an inner key=value pair injected into every
 		// record (the value carries the secret-shape, not the flag), so the inner
 		// key — not "parameter" — decides redaction. Joined form: --parameter=k=v.
@@ -420,6 +424,14 @@ func sanitizeArgv(args []string, internalParameters map[string]struct{}, roots .
 		}
 
 		out = append(out, arg)
+		// Split form: --parameter-internal <k=v>. Redact by flag, not by the
+		// recipe's internal key set, so every per-recipe manifest suppresses a
+		// run-level internal value even for bystander recipes.
+		if isParameterInternalFlag(arg) && i+1 < len(args) {
+			i++
+			out = append(out, sanitizeInternalParameterValue(strings.TrimSpace(args[i])))
+			continue
+		}
 		// Split form: --parameter <k=v>. Consume the next token as the parameter
 		// value and redact by its inner key, mirroring the joined form above.
 		if isParameterFlag(arg) && i+1 < len(args) {
@@ -442,6 +454,14 @@ func isParameterFlag(key string) bool {
 	return strings.ToLower(strings.TrimLeft(strings.TrimSpace(key), "-")) == "parameter"
 }
 
+// isParameterInternalFlag reports whether a flag token is the extract-multi
+// --parameter-internal injection flag. It is intentionally distinct from
+// isParameterFlag because the redaction trigger is the flag itself, not recipe
+// membership in a key set.
+func isParameterInternalFlag(key string) bool {
+	return strings.ToLower(strings.TrimLeft(strings.TrimSpace(key), "-")) == "parameter-internal"
+}
+
 // sanitizeParameterValue redacts/normalizes a --parameter value, which is an
 // inner key=value pair. When the inner key is secret-shaped (token, secret,
 // password, credential, ...) the inner value is redacted while the parameter key
@@ -461,6 +481,18 @@ func sanitizeParameterValue(value string, internalParameters map[string]struct{}
 		return innerKey + "=<internal>"
 	}
 	return innerKey + "=" + sanitizeValue(innerValue, roots...)
+}
+
+func sanitizeInternalParameterValue(value string) string {
+	innerKey, _, ok := strings.Cut(value, "=")
+	if !ok {
+		return "<internal>"
+	}
+	innerKey = strings.TrimSpace(innerKey)
+	if innerKey == "" {
+		return "<internal>"
+	}
+	return innerKey + "=<internal>"
 }
 
 func sanitizeValue(value string, roots ...string) string {

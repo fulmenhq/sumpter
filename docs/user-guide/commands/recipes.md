@@ -128,14 +128,18 @@ every recipe in the pass: it layers over each recipe's `defaults.parameters` (CL
 wins uniformly), satisfies each recipe's `parameters_required` independently,
 supports the same scalar/JSON-list typed values as single-recipe
 [`run extract --parameter`](#run-extract), and is injected into every
-recipe's records unless that recipe lists the key in `defaults.parameters_internal`
-— use it for genuinely per-run keys every recipe shares (e.g. a per-run
-provenance stamp). Internal declarations are per recipe, so every recipe that
-receives a shared value and must hide it needs to list that key in its own
-`parameters_internal`. A shared key colliding with any recipe's
-`field_mappings[].output_field` fails the run at plan-load preflight, before
-output is written. `--parameter` is not a credential transport; secret-shaped
-keys are redacted by key in the provenance argv.
+recipe's records — use it for genuinely per-run keys every recipe shares (e.g.
+a per-run provenance stamp). Use repeatable `--parameter-internal key=value`
+for a shared derive-only value: it is available to every recipe's expressions,
+satisfies `parameters_required`, uses the same scalar/JSON-list typing, is
+withheld from every recipe's records, and is recorded in each provenance argv as
+`key=<internal>`. This is the preferred way to pass a shared classifier list
+without declaring the key internal in every bystander recipe. A key may not be
+supplied through both `--parameter` and `--parameter-internal` in the same run. A
+shared key colliding with any recipe's `field_mappings[].output_field` fails the
+run at plan-load preflight, before output is written. These flags are not
+credential transports; secret-shaped `--parameter` keys are redacted by key in
+the provenance argv.
 
 `--input-workers N` (default `1`) runs per-input processing across N workers within
 the one invocation: each worker parses an input **and** runs its full per-recipe
