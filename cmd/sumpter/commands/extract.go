@@ -73,6 +73,7 @@ type ExtractOptions struct {
 	ManifestParameters       map[string]recipesmanifest.ParamValue
 	Parameters               []string
 	ParametersRequired       []string
+	ParametersInternal       []string
 	SourceExtraction         []recipesmanifest.SourceExtractionPattern
 	SourceExtractionRequired []string
 	SourceExtractionInput    recipesmanifest.InputDefaults
@@ -2006,7 +2007,7 @@ func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.
 		SumpterVersion:     runtimeProvenance.SumpterVersion,
 		StartedAt:          startedAt,
 		CompletedAt:        completedAt,
-		CLI:                provenance.CLI{Command: commandName, ArgvSanitized: provenance.SanitizeArgv(argv, roots...)},
+		CLI:                provenance.CLI{Command: commandName, ArgvSanitized: provenance.SanitizeArgvWithInternalParameters(argv, opts.ParametersInternal, roots...)},
 		Recipe:             opts.Recipe,
 		Inputs:             inputs,
 		Outputs:            outputs,
@@ -2097,6 +2098,11 @@ type externalFieldPlan struct {
 	manifestParameters map[string]recipesmanifest.ParamValue
 	cliParameters      map[string]recipesmanifest.ParamValue
 	parametersRequired []string
+	// internalParameters is the set of defaults.parameters keys declared
+	// derive-only via defaults.parameters_internal. build() wraps matching
+	// resolved parameter values so they stay in expression scope but are never
+	// emitted to extract.data.
+	internalParameters map[string]struct{}
 	// internalCaptures is the set of source_extraction capture names declared
 	// `internal: true`. build() wraps these in extract.InternalField so they reach
 	// expression scope but are not emitted into the record body.
@@ -2116,6 +2122,7 @@ func buildExternalFieldPlan(opts *ExtractOptions, mappings []extract.FieldMappin
 		shimFields:         make(map[string]string),
 		manifestParameters: make(map[string]recipesmanifest.ParamValue),
 		cliParameters:      make(map[string]recipesmanifest.ParamValue),
+		internalParameters: make(map[string]struct{}),
 		internalCaptures:   make(map[string]struct{}),
 	}
 	if opts == nil {
@@ -2168,6 +2175,13 @@ func buildExternalFieldPlan(opts *ExtractOptions, mappings []extract.FieldMappin
 		plan.cliParameters[key] = pv
 	}
 	plan.parametersRequired = append(plan.parametersRequired, opts.ParametersRequired...)
+	for _, key := range opts.ParametersInternal {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("internal parameter key cannot be empty")
+		}
+		plan.internalParameters[key] = struct{}{}
+	}
 
 	externalFields := plan.build(nil)
 	for key := range externalFields {
@@ -2212,10 +2226,20 @@ func (p *externalFieldPlan) build(sourceFields map[string]string) map[string]int
 		externalFields[key] = value
 	}
 	for key, value := range p.manifestParameters {
-		externalFields[key] = value.AsScope()
+		scopeValue := value.AsScope()
+		if _, internal := p.internalParameters[key]; internal {
+			externalFields[key] = extract.InternalField{Value: scopeValue}
+			continue
+		}
+		externalFields[key] = scopeValue
 	}
 	for key, value := range p.cliParameters {
-		externalFields[key] = value.AsScope()
+		scopeValue := value.AsScope()
+		if _, internal := p.internalParameters[key]; internal {
+			externalFields[key] = extract.InternalField{Value: scopeValue}
+			continue
+		}
+		externalFields[key] = scopeValue
 	}
 	return externalFields
 }
@@ -2251,6 +2275,9 @@ func parseCLIParameterValue(key, value string) (recipesmanifest.ParamValue, erro
 // counts as provided (an explicit empty set is a meaningful run input); a string
 // counts as provided only when it is non-blank.
 func externalFieldUnprovided(value interface{}) bool {
+	if internal, ok := value.(extract.InternalField); ok {
+		value = internal.Value
+	}
 	switch v := value.(type) {
 	case []string:
 		return false

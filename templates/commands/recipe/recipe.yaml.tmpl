@@ -34,8 +34,9 @@ defaults:
   client_id: ""
   site_id: ""
   parameters:
-    # Inject operator-known fields into every extracted record.
-    # Use for identifiers the consumer needs but the source data lacks.
+    # Inject operator-known fields into expression scope and, by default,
+    # every extracted record. Use for identifiers the consumer needs but the
+    # source data lacks.
     # NOTE: parameter keys must NOT collide with
     # field_mappings[].output_field; recipe load fails on collision.
     region_id: "westcoast"
@@ -45,6 +46,11 @@ defaults:
     # OR from CLI --parameter key=value). Recipe load fails if any required
     # key has no value.
     - tenant_id
+  parameters_internal:
+    # Optional: list parameter keys that should stay visible in expressions
+    # but never emit to JSON/NDJSON or Parquet records. CLI overrides still
+    # apply, and their values are redacted from provenance argv as <internal>.
+    # - curated_prefixes
   source_extraction:
     # Extract file-level fields once per source file. Named captures become
     # record fields before defaults.parameters and CLI --parameter overrides.

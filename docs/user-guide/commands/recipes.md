@@ -42,10 +42,10 @@ sumpter recipes run extract <workspace> [flags]
 - `--output-path` / `--output-pattern`: Override output destinations
 - `--format`: Override output format (`json`, `structured`, `ndjson`, etc.)
 - `--client-id`, `--site-id`: Blend identifiers into the output payload
-- `--parameter key=value`: Inject or override a recipe parameter; repeat the flag for multiple values. The value is a literal string unless it is a valid JSON array of strings, which becomes a **list parameter** (read by the `starts_with_any` / `value_in` DSL helpers). Quote the array for your shell, e.g. `--parameter prefixes='["NM_","NR_"]'`. A value that merely contains commas stays a literal string; list members must be non-empty strings (numbers/booleans/objects/nested/mixed arrays are rejected). List values are emitted into `extract.data` as a JSON array like scalar parameters unless withheld.
+- `--parameter key=value`: Inject or override a recipe parameter; repeat the flag for multiple values. The value is a literal string unless it is a valid JSON array of strings, which becomes a **list parameter** (read by the `starts_with_any` / `value_in` DSL helpers). Quote the array for your shell, e.g. `--parameter prefixes='["NM_","NR_"]'`. A value that merely contains commas stays a literal string; list members must be non-empty strings (numbers/booleans/objects/nested/mixed arrays are rejected). List values are emitted into `extract.data` as a JSON array like scalar parameters unless withheld or declared under `defaults.parameters_internal`.
 - `--signature`, `--extract`: Override the manifest asset paths for debugging
 
-When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, progress settings, source extraction patterns, and any `defaults.parameters` values. Generic parameters are injected into every record after file-level source captures, and `--parameter` overrides the same key from the manifest. Parameter and source capture keys must not collide with `field_mappings[].output_field`; Sumpter fails the run instead of silently replacing content-derived fields. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
+When no overrides are provided the manifest supplies signature/extract config paths, input discovery strategy, output format, worker count, progress settings, source extraction patterns, and any `defaults.parameters` values. Generic parameters are injected into every record after file-level source captures, and `--parameter` overrides the same key from the manifest. Keys listed in `defaults.parameters_internal` stay available to expression mappings but are not emitted into any sink; CLI override values for those keys are redacted from provenance `argv_sanitized` as `<internal>`. Parameter and source capture keys must not collide with `field_mappings[].output_field`; Sumpter fails the run instead of silently replacing content-derived fields. Internally the command delegates to `sumpter extract files`, so the low-level CLI remains available for direct debugging.
 
 Successful extract runs always write the requested output artifact, including
 the legitimate zero-record case. Empty JSONL outputs are zero-byte files, and
@@ -128,8 +128,11 @@ every recipe in the pass: it layers over each recipe's `defaults.parameters` (CL
 wins uniformly), satisfies each recipe's `parameters_required` independently,
 supports the same scalar/JSON-list typed values as single-recipe
 [`run extract --parameter`](#run-extract), and is injected into every
-recipe's records — use it for genuinely per-run keys every recipe shares (e.g. a
-per-run provenance stamp). A shared key colliding with any recipe's
+recipe's records unless that recipe lists the key in `defaults.parameters_internal`
+— use it for genuinely per-run keys every recipe shares (e.g. a per-run
+provenance stamp). Internal declarations are per recipe, so every recipe that
+receives a shared value and must hide it needs to list that key in its own
+`parameters_internal`. A shared key colliding with any recipe's
 `field_mappings[].output_field` fails the run at plan-load preflight, before
 output is written. `--parameter` is not a credential transport; secret-shaped
 keys are redacted by key in the provenance argv.
@@ -217,8 +220,11 @@ defaults:
   parameters:
     region_id: "westcoast"
     tenant_id: "1234"
+    curated_prefixes: ["NM_", "NR_"]
   parameters_required:
     - tenant_id
+  parameters_internal:
+    - curated_prefixes
   source_extraction:
     - id: filename-date-token
       source: filename
@@ -238,7 +244,7 @@ defaults:
 - **`defaults.output`** controls output formatting and destination. For the record stream, `format: json` is the legacy/canonical token and `format: ndjson` is an accepted alias for it — both emit the same newline-delimited JSON (NDJSON/JSONL) record envelopes and are behavior-identical (neither produces a single-file JSON array). `parquet` selects the columnar secondary projection.
 - **`defaults.cadence`** records operator-readable run cadence intent such as `daily-rolling`, `weekly`, `weekly-2x`, `on-demand`, `hourly`, `monthly`, or `quarterly`.
 - **`defaults.client_id` / `site_id`** pre-populate metadata for downstream consumers.
-- **`defaults.parameters`** injects parameters into every record — each value is a string or a list of strings; **`defaults.parameters_required`** fails the run if a required key does not resolve from the manifest or CLI (an empty list counts as provided; an empty scalar string does not).
+- **`defaults.parameters`** injects parameters into expression scope and, by default, into every record — each value is a string or a list of strings; **`defaults.parameters_required`** fails the run if a required key does not resolve from the manifest or CLI (an empty list counts as provided; an empty scalar string does not). Add a key to **`defaults.parameters_internal`** when the value should remain expression-visible but never be emitted to JSON/NDJSON or Parquet; CLI overrides still apply, and their values are redacted from provenance argv as `<internal>`.
 - **`defaults.source_extraction`** injects named regexp captures from the source `filename`, `relative_path`, or `absolute_path` once per file — each capture is emitted directly as a record field, so it can **tag every record by which file/grain produced it** (e.g. a `^(?P<grain>unit|batch)-` filename prefix for provenance or grain classification) without re-deriving it downstream; **`defaults.source_extraction_required`** fails before parameter merging if a required capture is absent. Add **`internal: true`** to a pattern to make its captures **derive-only**: visible in `field_mappings[].expression` scope but never emitted to the record body (any sink), for a true intermediate with no stray column — it still participates in `source_extraction_required` and the collision checks (defaults to `false`). `relative_path` requires a root from `--input-path` or `defaults.input.path`; `filename` and `absolute_path` need none, so they work with `--files` / `--file-list`.
 - **`kind`** distinguishes extract vs. acquire recipes; additional kinds can be introduced without changing the runner syntax.
 

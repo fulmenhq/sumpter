@@ -60,7 +60,8 @@ Recipe parameters come from `defaults.parameters` plus CLI
 `--parameter key=value` overrides. A parameter value is either a **string** or a
 **list of strings**. CLI values override manifest defaults before evaluation, and
 the same resolved values are emitted as fields in each record (a list as a JSON
-array) unless withheld by the selected output format configuration.
+array) unless withheld by the selected output format configuration or declared
+derive-only in `defaults.parameters_internal`.
 
 Parameters are referenced as **bare DSL variables** (`curated_prefixes`), not
 `$curated_prefixes`. There is no `$` parameter syntax.
@@ -74,6 +75,8 @@ run config instead of inlining it into the recipe:
 defaults:
   parameters:
     curated_prefixes: ["NM_", "NR_", "NC_"] # list-typed; operator-overridable
+  parameters_internal:
+    - curated_prefixes # expression-visible, not emitted
 ```
 
 ```bash
@@ -90,6 +93,10 @@ List rules:
   mixed arrays, and empty members are rejected at parse time — never coerced.
 - An empty list (`[]`) is a valid, explicit empty set: it matches nothing and
   counts as "provided" for `parameters_required` (an empty scalar string does not).
+- A key listed in `defaults.parameters_internal` remains visible in expression
+  scope and can still be overridden with `--parameter`, but it is never emitted
+  to `extract.data`. CLI override values for those keys are redacted from
+  provenance `argv_sanitized` as `<internal>`.
 
 Expression mappings continue to evaluate in declaration order. An expression
 can reference:

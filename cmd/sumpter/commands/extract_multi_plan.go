@@ -287,6 +287,7 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 	opts.SiteID = defaults.SiteID
 	opts.ManifestParameters = defaults.Parameters
 	opts.ParametersRequired = defaults.ParametersRequired
+	opts.ParametersInternal = defaults.ParametersInternal
 	// Shared run-level --parameter override layer, applied to every recipe. Threaded
 	// in here so buildExternalFieldPlan does ALL parsing, last-wins override over
 	// defaults.parameters, typed (list) handling, required checks, and output-field

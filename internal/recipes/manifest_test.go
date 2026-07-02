@@ -225,6 +225,8 @@ defaults:
     tenant_id: "1234"
   parameters_required:
     - tenant_id
+  parameters_internal:
+    - curated_prefixes
 `
 
 	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
@@ -243,6 +245,38 @@ defaults:
 	}
 	if len(manifest.Defaults.ParametersRequired) != 1 || manifest.Defaults.ParametersRequired[0] != "tenant_id" {
 		t.Fatalf("parameters_required = %#v, want [tenant_id]", manifest.Defaults.ParametersRequired)
+	}
+	if len(manifest.Defaults.ParametersInternal) != 1 || manifest.Defaults.ParametersInternal[0] != "curated_prefixes" {
+		t.Fatalf("parameters_internal = %#v, want [curated_prefixes]", manifest.Defaults.ParametersInternal)
+	}
+}
+
+func TestLoadManifestRejectsDuplicateInternalParameter(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  parameters_internal:
+    - curated_prefixes
+    - curated_prefixes
+`
+
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	_, err := LoadManifest(manifestPath)
+	if err == nil {
+		t.Fatal("expected duplicate parameters_internal item to fail validation")
+	}
+	if !contains(err.Error(), "parameters_internal") {
+		t.Fatalf("error %q does not mention parameters_internal", err.Error())
 	}
 }
 
