@@ -209,6 +209,134 @@ func TestInternalSourceCaptureNotEmittedNDJSON(t *testing.T) {
 	}
 }
 
+func writeInternalParameterWorkspace(t *testing.T) string {
+	t.Helper()
+	workspace := createWorkingTempDir(t)
+	for _, dir := range []string{"signature", "extract", "testdata", "outputs"} {
+		if err := os.MkdirAll(filepath.Join(workspace, dir), 0o750); err != nil {
+			t.Fatalf("MkdirAll %s: %v", dir, err)
+		}
+	}
+	mustWriteFile(t, filepath.Join(workspace, "recipe.yaml"), `version: recipe/v0.1.0
+kind: extract
+id: internal_parameter_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/signature.yaml
+  extract: extract/extract.yaml
+defaults:
+  input:
+    mode: files
+    path: testdata
+    files:
+      - testdata/in.xml
+  output:
+    format: ndjson
+    path: outputs
+    pattern: records.ndjson
+  parameters:
+    curated_prefixes: ["NM_"]
+  parameters_required:
+    - curated_prefixes
+  parameters_internal:
+    - curated_prefixes
+  workers: 1
+  progress: false
+`)
+	mustWriteFile(t, filepath.Join(workspace, "signature", "signature.yaml"), `signature_id: sample
+name: Sample
+match_patterns:
+  - pattern_id: root
+    name: Root
+    selector: /root
+    weight: 1
+confidence_threshold: 1
+`)
+	mustWriteFile(t, filepath.Join(workspace, "extract", "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+field_mappings:
+  - output_field: accession
+    xpath: accession
+    type: string
+  - output_field: is_curated
+    expression: 'starts_with_any(accession, curated_prefixes)'
+    type: boolean
+output_schema:
+  type: object
+  properties:
+    accession:
+      type: string
+    is_curated:
+      type: boolean
+    curated_prefixes:
+      type: array
+      items:
+        type: string
+`)
+	mustWriteFile(t, filepath.Join(workspace, "testdata", "in.xml"), `<root><item><accession>NM_000001</accession></item></root>`)
+	return workspace
+}
+
+func TestInternalParameterNotEmittedButInExpressionScope(t *testing.T) {
+	initExtractManifestTestLogger(t)
+	workspace := writeInternalParameterWorkspace(t)
+
+	if err := executeExtractRecipe(recipeRunExtractTestCommand(), workspace, &recipeRunExtractOptions{
+		ManifestPath: "recipe.yaml",
+		Progress:     false,
+	}); err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	raw := readFileString(t, filepath.Join(workspace, "outputs", "records.ndjson"))
+	var record map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &record); err != nil {
+		t.Fatalf("decode record: %v\n%s", err, raw)
+	}
+	data := extractData(t, record)
+	if data["is_curated"] != true {
+		t.Fatalf("is_curated = %#v, want true from internal parameter expression scope", data["is_curated"])
+	}
+	if v, ok := data["curated_prefixes"]; ok {
+		t.Fatalf("internal parameter leaked into extract.data: %#v", v)
+	}
+}
+
+func TestInternalParameterCLIOverrideRedactedInManifest(t *testing.T) {
+	initExtractManifestTestLogger(t)
+	workspace := writeInternalParameterWorkspace(t)
+
+	if err := executeExtractRecipe(recipeRunExtractTestCommand(), workspace, &recipeRunExtractOptions{
+		ManifestPath: "recipe.yaml",
+		Parameters:   []string{`curated_prefixes=["XM_"]`},
+		Progress:     false,
+	}); err != nil {
+		t.Fatalf("executeExtractRecipe: %v", err)
+	}
+
+	raw := readFileString(t, filepath.Join(workspace, "outputs", "records.ndjson"))
+	var record map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &record); err != nil {
+		t.Fatalf("decode record: %v\n%s", err, raw)
+	}
+	data := extractData(t, record)
+	if data["is_curated"] != false {
+		t.Fatalf("is_curated = %#v, want false after CLI override changes classifier set", data["is_curated"])
+	}
+	if v, ok := data["curated_prefixes"]; ok {
+		t.Fatalf("internal parameter leaked into extract.data after CLI override: %#v", v)
+	}
+
+	manifestRaw := readFileString(t, filepath.Join(workspace, "outputs", "manifest.json"))
+	if strings.Contains(manifestRaw, "XM_") {
+		t.Fatalf("manifest leaked internal parameter value:\n%s", manifestRaw)
+	}
+	if !strings.Contains(manifestRaw, `curated_prefixes=\u003cinternal\u003e`) {
+		t.Fatalf("manifest argv did not record redacted internal parameter key:\n%s", manifestRaw)
+	}
+}
+
 // TestSourceCaptureEmittedWithoutInternal is the non-regression control: with no
 // internal flag, the same grain capture emits into extract.data as before.
 func TestSourceCaptureEmittedWithoutInternal(t *testing.T) {
@@ -512,6 +640,48 @@ func TestInternalSourceCaptureNotEmittedUnderExtractMulti(t *testing.T) {
 	}
 	if strings.Contains(records, `"grain":`) {
 		t.Errorf("extract-multi leaked the internal capture into records:\n%s", records)
+	}
+}
+
+func TestInternalParameterOverrideUnderExtractMulti(t *testing.T) {
+	wsA := writeInternalParameterWorkspace(t)
+	outRoot := filepath.Join(t.TempDir(), "out")
+	input := filepath.Join(wsA, "testdata", "in.xml")
+	// The recipe default only matches NM_; this input needs the shared
+	// extract-multi override to prove the internal list remains in expression
+	// scope after SUM-058 run-level parameter passthrough.
+	mustWriteFile(t, input, `<root><item><accession>XM_000001</accession></item></root>`)
+
+	fileList := filepath.Join(t.TempDir(), "files.txt")
+	if err := os.WriteFile(fileList, []byte(input+"\n"), 0o600); err != nil {
+		t.Fatalf("write file list: %v", err)
+	}
+
+	shared := &multiSharedOptions{
+		FileList:   fileList,
+		OutputPath: outRoot,
+		RunID:      testMultiRunID,
+		Parameters: []string{`curated_prefixes=["XM_"]`},
+	}
+	if err := runExtractMulti(shared, []string{wsA}, io.Discard, time.Now()); err != nil {
+		t.Fatalf("runExtractMulti: %v", err)
+	}
+
+	recipeOut := filepath.Join(outRoot, "internal_parameter_recipe")
+	records := readFileString(t, filepath.Join(recipeOut, "records.ndjson"))
+	if !strings.Contains(records, `"is_curated":true`) {
+		t.Fatalf("extract-multi internal parameter override did not drive classifier:\n%s", records)
+	}
+	if strings.Contains(records, `"curated_prefixes":`) {
+		t.Fatalf("extract-multi leaked internal parameter into records:\n%s", records)
+	}
+
+	manifestRaw := readFileString(t, filepath.Join(recipeOut, "manifest.json"))
+	if strings.Contains(manifestRaw, "XM_") {
+		t.Fatalf("extract-multi manifest leaked internal parameter value:\n%s", manifestRaw)
+	}
+	if !strings.Contains(manifestRaw, `curated_prefixes=\u003cinternal\u003e`) {
+		t.Fatalf("extract-multi manifest argv did not redact internal parameter key:\n%s", manifestRaw)
 	}
 }
 

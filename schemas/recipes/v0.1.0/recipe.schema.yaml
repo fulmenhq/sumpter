@@ -227,6 +227,17 @@ properties:
           type: string
           minLength: 1
         uniqueItems: true
+      parameters_internal:
+        type: array
+        description: |
+          Parameter keys that remain visible in field_mappings[].expression
+          scope but are not emitted into extract.data on any sink. CLI
+          --parameter overrides still apply; matching values are redacted from
+          provenance argv_sanitized as <internal>.
+        items:
+          type: string
+          minLength: 1
+        uniqueItems: true
       source_extraction:
         type: array
         description: |

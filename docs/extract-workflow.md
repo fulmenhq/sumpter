@@ -256,7 +256,7 @@ sumpter recipes run extract-multi \
 
 Each recipe writes to its **own** subdirectory under `--output-path`, named by the recipe `id` (`<output-path>/<recipe-id>/`): its records, provenance manifest, and — when applicable — `dispositions.json` / `failures.json`. Per-recipe state is fully isolated: output, formats, `defaults.parameters`, reference tables, and credential handles all come from each recipe's own manifest, and one recipe can never read or clobber another's output. The input set, the output root, and run-level controls (`--continue-on-error`, credentials, the shared run id) are shared across recipes; the run id resolves once (flag → `SUMPTER_RUN_ID` → generated) so every recipe's provenance ties to one invocation.
 
-**Shared run-level `--parameter`.** Each recipe's `defaults.parameters` stay authoritative for its per-recipe config, but a repeatable `--parameter key=value` on `extract-multi` is a **run-level override layer applied to every recipe** in the pass — the same operator-supplied override that single-recipe `recipes run extract --parameter` already provides (see [Recipe Parameters](#recipe-parameters)). It is layered **over** each recipe's `defaults.parameters` (CLI wins uniformly across recipes), satisfies each recipe's `parameters_required` independently, and supports the same scalar and JSON-list typed values. The value is injected into **every** recipe's records — use it for the genuinely per-run keys every recipe shares (for example a per-run provenance/version stamp or an operator runtime value) that have no manifest or input-path home. A shared key that collides with any recipe's `field_mappings[].output_field` fails the whole run at plan-load preflight, before any output is written.
+**Shared run-level `--parameter`.** Each recipe's `defaults.parameters` stay authoritative for its per-recipe config, but a repeatable `--parameter key=value` on `extract-multi` is a **run-level override layer applied to every recipe** in the pass — the same operator-supplied override that single-recipe `recipes run extract --parameter` already provides (see [Recipe Parameters](#recipe-parameters)). It is layered **over** each recipe's `defaults.parameters` (CLI wins uniformly across recipes), satisfies each recipe's `parameters_required` independently, and supports the same scalar and JSON-list typed values. By default the value is injected into **every** recipe's records — use it for the genuinely per-run keys every recipe shares (for example a per-run provenance/version stamp or an operator runtime value) that have no manifest or input-path home. A recipe can declare a key under `defaults.parameters_internal` to keep that resolved value expression-visible but off the record grain. Because internal declarations are per recipe, every recipe that receives a shared value and must hide it needs to list that key in its own `parameters_internal`. A shared key that collides with any recipe's `field_mappings[].output_field` fails the whole run at plan-load preflight, before any output is written.
 
 ```bash
 sumpter recipes run extract-multi \
@@ -403,8 +403,11 @@ defaults:
   parameters:
     region_id: "westcoast"
     tenant_id: "1234"
+    curated_prefixes: ["NM_", "NR_"]
   parameters_required:
     - tenant_id
+  parameters_internal:
+    - curated_prefixes
 ```
 
 At runtime, legacy `client_id` and `site_id` defaults or flags write through to the same external-field map, then `defaults.parameters` overlays those values, then repeatable CLI parameters have final precedence:
@@ -417,6 +420,15 @@ sumpter recipes run extract ./recipes/customer/retail-daily-sales \
 
 The lower-level `sumpter extract files` command accepts the same repeatable `--parameter key=value` flag. Missing `parameters_required` entries fail before extraction. After all parameter sources are merged, Sumpter rejects any parameter key that collides with a `field_mappings[].output_field`; injected values must not silently replace values extracted or derived from content.
 
+Declare `defaults.parameters_internal` for derive-only parameters: the resolved
+value is available as a bare DSL variable, but it is never written to
+`extract.data` in JSON/NDJSON or Parquet output. CLI overrides still apply and
+still satisfy `parameters_required`; when an internal parameter is supplied with
+`--parameter`, the provenance manifest records the key but redacts the value in
+`argv_sanitized` as `<internal>`. This declaration is recipe-backed; direct
+`sumpter extract files` invocations have no standalone flag for marking a
+parameter internal.
+
 #### List-typed parameters and set classification
 
 A parameter value can be a **list of strings** as well as a scalar. A list is read by the DSL membership/prefix helpers — `starts_with_any(field, list)` (leading-prefix) and `value_in(field, list)` (exact membership) — so a recipe can classify a record against a set that an operator supplies as run config instead of inlining the set as an XPath disjunction. The recommended pattern: `xpath:` extracts the source value, an `expression:` mapping derives the classification.
@@ -425,6 +437,8 @@ A parameter value can be a **list of strings** as well as a scalar. A list is re
 defaults:
   parameters:
     curated_prefixes: ["NM_", "NR_", "NC_"] # list-typed; operator-overridable
+  parameters_internal:
+    - curated_prefixes                  # expression-visible, not emitted
 
 # extract.yaml — one helper, no inlined member list:
 field_mappings:
@@ -450,7 +464,7 @@ sumpter recipes run extract ./recipes/genomics/refseq-classify \
   --parameter curated_prefixes='["NM_","NR_","NC_","XM_"]'
 ```
 
-A CLI `--parameter` value becomes a list **only** when it is a valid JSON array of strings (quote it for your shell); otherwise it stays a literal string, including a value that merely contains commas. List members must be non-empty strings — numbers, booleans, objects, nested/mixed arrays, and empty members are rejected, not coerced. An empty list (`[]`) matches nothing and counts as provided for `parameters_required`. List parameters are emitted into `extract.data` (as a JSON array) like scalar parameters unless withheld by output configuration. See the [DSL Reference](dsl-reference.md#recipe-parameters) for the full semantics and function reference.
+A CLI `--parameter` value becomes a list **only** when it is a valid JSON array of strings (quote it for your shell); otherwise it stays a literal string, including a value that merely contains commas. List members must be non-empty strings — numbers, booleans, objects, nested/mixed arrays, and empty members are rejected, not coerced. An empty list (`[]`) matches nothing and counts as provided for `parameters_required`. List parameters are emitted into `extract.data` (as a JSON array) like scalar parameters unless declared in `parameters_internal` or withheld by output configuration. See the [DSL Reference](dsl-reference.md#recipe-parameters) for the full semantics and function reference.
 
 ### Source Extraction
 

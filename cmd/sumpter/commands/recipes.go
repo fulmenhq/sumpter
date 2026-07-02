@@ -636,6 +636,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 	extractOpts.ManifestParameters = defaults.Parameters
 	extractOpts.ParametersRequired = defaults.ParametersRequired
+	extractOpts.ParametersInternal = defaults.ParametersInternal
 	extractOpts.Parameters = opts.Parameters
 	// Reference tables: declarations come from the recipe; absWorkspace is the C1
 	// containment root for their local sources; CLI overrides replace a source only.

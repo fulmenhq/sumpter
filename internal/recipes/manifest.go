@@ -120,6 +120,7 @@ type Defaults struct {
 	SiteID                   string                    `yaml:"site_id"`
 	Parameters               map[string]ParamValue     `yaml:"parameters,omitempty"`
 	ParametersRequired       []string                  `yaml:"parameters_required,omitempty"`
+	ParametersInternal       []string                  `yaml:"parameters_internal,omitempty"`
 	SourceExtraction         []SourceExtractionPattern `yaml:"source_extraction,omitempty"`
 	SourceExtractionRequired []string                  `yaml:"source_extraction_required,omitempty"`
 	ReferenceTables          []ReferenceTableDecl      `yaml:"reference_tables,omitempty"`
@@ -300,7 +301,32 @@ func (m *Manifest) validate() error {
 	if err := m.validateOutputDefaults(); err != nil {
 		return err
 	}
+	if err := m.validateParameterLists(); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (m *Manifest) validateParameterLists() error {
+	if err := validateUniqueStringList("defaults.parameters_required", m.Defaults.ParametersRequired); err != nil {
+		return err
+	}
+	return validateUniqueStringList("defaults.parameters_internal", m.Defaults.ParametersInternal)
+}
+
+func validateUniqueStringList(label string, values []string) error {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		key := strings.TrimSpace(value)
+		if key == "" {
+			return fmt.Errorf("%s key cannot be empty", label)
+		}
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("%s key %q is duplicated", label, key)
+		}
+		seen[key] = struct{}{}
+	}
 	return nil
 }
 

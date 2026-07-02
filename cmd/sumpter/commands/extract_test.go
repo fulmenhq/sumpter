@@ -127,6 +127,54 @@ func TestExternalFieldPlanParameterPrecedence(t *testing.T) {
 	}
 }
 
+func TestExternalFieldPlanInternalParameters(t *testing.T) {
+	opts := &ExtractOptions{
+		ManifestParameters: map[string]recipesmanifest.ParamValue{
+			"prefixes": recipesmanifest.ListParam([]string{"NM_"}),
+		},
+		Parameters:         []string{`prefixes=["XM_","XR_"]`},
+		ParametersRequired: []string{"prefixes"},
+		ParametersInternal: []string{"prefixes"},
+	}
+	fields, err := buildExternalFields(opts, nil)
+	if err != nil {
+		t.Fatalf("buildExternalFields: %v", err)
+	}
+	internal, ok := fields["prefixes"].(extract.InternalField)
+	if !ok {
+		t.Fatalf("prefixes = %#v, want extract.InternalField", fields["prefixes"])
+	}
+	got, ok := internal.Value.([]string)
+	if !ok || len(got) != 2 || got[0] != "XM_" || got[1] != "XR_" {
+		t.Fatalf("internal prefixes value = %#v, want CLI override [XM_ XR_]", internal.Value)
+	}
+
+	opts = &ExtractOptions{
+		Parameters:         []string{`prefixes=[]`},
+		ParametersRequired: []string{"prefixes"},
+		ParametersInternal: []string{"prefixes"},
+	}
+	if _, err := buildExternalFields(opts, nil); err != nil {
+		t.Fatalf("empty internal list should satisfy parameters_required: %v", err)
+	}
+
+	opts = &ExtractOptions{
+		Parameters:         []string{"prefixes="},
+		ParametersRequired: []string{"prefixes"},
+		ParametersInternal: []string{"prefixes"},
+	}
+	err = func() error {
+		_, err := buildExternalFields(opts, nil)
+		return err
+	}()
+	if err == nil || !strings.Contains(err.Error(), "required parameter \"prefixes\" not provided") {
+		t.Fatalf("empty internal scalar should fail parameters_required with key-only error, got %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "XM_") {
+		t.Fatalf("required error leaked an internal value: %v", err)
+	}
+}
+
 // TestParameterFlagIsStringArray pins --parameter to StringArray (not StringSlice)
 // on both commands: StringSlice CSV-splits a value, which both splits a JSON
 // array on its commas and errors on its quotes, so list parameters require the

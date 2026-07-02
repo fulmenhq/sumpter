@@ -376,6 +376,25 @@ func SanitizePath(candidate string, roots ...string) string {
 // SanitizeArgv redacts secret-like flag values and normalizes path-looking
 // values before writing argv to the sidecar.
 func SanitizeArgv(args []string, roots ...string) []string {
+	return sanitizeArgv(args, nil, roots...)
+}
+
+// SanitizeArgvWithInternalParameters redacts argv values for --parameter keys
+// declared derive-only by the recipe. The parameter key remains visible in
+// provenance; only the value is suppressed.
+func SanitizeArgvWithInternalParameters(args []string, internalParameters []string, roots ...string) []string {
+	internalSet := make(map[string]struct{}, len(internalParameters))
+	for _, key := range internalParameters {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		internalSet[key] = struct{}{}
+	}
+	return sanitizeArgv(args, internalSet, roots...)
+}
+
+func sanitizeArgv(args []string, internalParameters map[string]struct{}, roots ...string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := strings.TrimSpace(args[i])
@@ -392,7 +411,7 @@ func SanitizeArgv(args []string, roots ...string) []string {
 		// record (the value carries the secret-shape, not the flag), so the inner
 		// key — not "parameter" — decides redaction. Joined form: --parameter=k=v.
 		if hasValue && isParameterFlag(key) {
-			out = append(out, key+"="+sanitizeParameterValue(value, roots...))
+			out = append(out, key+"="+sanitizeParameterValue(value, internalParameters, roots...))
 			continue
 		}
 		if hasValue {
@@ -405,7 +424,7 @@ func SanitizeArgv(args []string, roots ...string) []string {
 		// value and redact by its inner key, mirroring the joined form above.
 		if isParameterFlag(arg) && i+1 < len(args) {
 			i++
-			out = append(out, sanitizeParameterValue(strings.TrimSpace(args[i]), roots...))
+			out = append(out, sanitizeParameterValue(strings.TrimSpace(args[i]), internalParameters, roots...))
 			continue
 		}
 		if isSecretKey(arg) && i+1 < len(args) {
@@ -429,13 +448,17 @@ func isParameterFlag(key string) bool {
 // stays visible (so provenance still records WHICH parameter was set). A
 // non-secret inner value is path-sanitized like any other argv value. A value
 // with no inner "=" is malformed for --parameter; sanitize it as a plain value.
-func sanitizeParameterValue(value string, roots ...string) string {
+func sanitizeParameterValue(value string, internalParameters map[string]struct{}, roots ...string) string {
 	innerKey, innerValue, ok := strings.Cut(value, "=")
 	if !ok {
 		return sanitizeValue(value, roots...)
 	}
+	innerKey = strings.TrimSpace(innerKey)
 	if isSecretKey(innerKey) {
 		return innerKey + "=<redacted>"
+	}
+	if _, internal := internalParameters[innerKey]; internal {
+		return innerKey + "=<internal>"
 	}
 	return innerKey + "=" + sanitizeValue(innerValue, roots...)
 }
