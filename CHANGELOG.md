@@ -8,6 +8,18 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-07-06
+
+**Non-emitted recipe parameters — declare parameters that drive extraction logic but never land in output records, the Parquet projection, or the provenance sidecar; per-recipe and run-level, all additive with byte-identical defaults.**
+
+See [`docs/releases/v0.2.5.md`](docs/releases/v0.2.5.md) for the full release narrative.
+
+### Added
+
+- **Per-recipe internal parameters — `parameters_internal` (`internal-parameters`)** - a recipe may declare `parameters_internal: [keys]`; the named parameters stay in expression/DSL scope (list typing preserved, so membership predicates such as `starts_with_any` still fire) but are suppressed at emit time from NDJSON/JSON records, the Parquet projection, and the provenance manifest's `argv_sanitized` sidecar. Values remain run-overridable via `--parameter`, and a required internal parameter with no default still fails loud when omitted. Suppression happens at write time rather than by dropping the value from scope, so a JSON-array override still resolves to a list and feeds extraction logic while staying out of both the record body and the manifest (#132).
+- **Run-level internal parameters — `--parameter-internal` on `extract-multi` (`run-internal-parameters`)** - `recipes run extract-multi --parameter-internal key=value` (repeatable) layers a run-level parameter over every recipe in the pass like `--parameter`, but applies the same suppress-at-emit behavior to every recipe. The value is in each recipe's expression scope, never written to any sink by any recipe (bystanders included), and redacted in every recipe's `argv_sanitized`. It satisfies `parameters_required`, composes with a recipe's own `parameters_internal`, and is `extract-multi`-only (#133).
+- **VERSION bumped to `0.2.5`.**
+
 ## [0.2.4] - 2026-06-27
 
 **Configurable parallel input processing for high-volume `extract-multi` — thousands of input files and beyond — with the `--stats` instrumentation to tune it by measuring rather than by core count, plus contract-independent output hardening; all additive, with byte-for-byte unchanged defaults.**
@@ -202,35 +214,3 @@ See [`docs/releases/v0.1.7.md`](docs/releases/v0.1.7.md) for the full release na
 
 - **Bounded end-to-end JSONL/NDJSON output streaming** remains roadmap work. v0.1.7 ships the contract and sequential primitives, but command paths still buffer extracted records per source file before output.
 - **Parallel sink integration and incremental Parquet writing** remain future work. Parquet is still a projection path and may buffer rows.
-
-## [0.1.6] - 2026-06-01
-
-**Public-readiness, capability honesty, and streaming/index correctness.**
-
-See [`docs/releases/v0.1.6.md`](docs/releases/v0.1.6.md) for the full release narrative.
-
-### Added
-
-- **Uniform per-record schema** - recipes can emit declared-but-absent properties as explicit `null` values for stable downstream table shapes (PR #52).
-- **Final PR drift gate** - `make pr-final` now checks generated/embedded drift before release-prep completion (PR #45/#46).
-- **ADR-0008 confidentiality posture** - sensitive data belongs outside repository working trees, with operator-specific scans handled out of band (PR #48).
-
-### Changed
-
-- **Go 1.26 floor** - `go.mod` now declares `go 1.26.0` with `toolchain go1.26.3`; stale seekable-zstd integration containers now use Go 1.26 images.
-- **Public capability copy** - README, overview, envinfo schemas, and release docs now distinguish shipped outputs from roadmap sinks and integrations (PR #54).
-- **VERSION bumped to `0.1.6`** for this release.
-
-### Fixed
-
-- **Compressed-source index safety** - record index metadata and extraction paths no longer imply unsafe byte seeking for compressed sources (PR #53).
-- **Streaming/index selector over-match** - streaming extraction and `index build --selector` now reject unsupported selectors instead of silently reducing XPath forms to local names (PR #55).
-- **Final readiness correctness sweep** - retrieval, DSL defaults, and memory-contract wording were corrected before the public repository transition (PR #47).
-
-### Security
-
-- **Public-readiness and dependency posture** - release metadata, dependency checks, and security gate documentation were aligned for the final release-prep step (PR #45/#46).
-
-### Deferred
-
-- **Record-sink output streaming and index streaming** are deferred to v0.1.7 or later; v0.1.6 keeps the honest memory contract that extracted records are buffered per file before output.
