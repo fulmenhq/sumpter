@@ -6,6 +6,82 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.2.5 (2026-07-06)
+
+**Non-emitted recipe parameters for derive-only extraction inputs.**
+
+**Released:** 2026-07-06 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
+
+v0.2.5 is a focused release for parameters that drive extraction logic but should not become output data. Recipes can now mark selected parameters as **internal**: the values remain available to XPath/DSL expressions, keep the existing scalar and JSON-list typing semantics, and still satisfy required-parameter checks, but are suppressed from emitted records, Parquet output, and the provenance argv sidecar. `extract-multi` also gains a run-level `--parameter-internal` flag for shared derive-only values that should be available across a whole multi-recipe pass without appearing as stray columns in recipes that do not consume them.
+
+Everything in this release is additive. Existing recipes without internal parameters keep their current records and manifests byte-for-byte, and ordinary `--parameter` behavior is unchanged.
+
+### Features
+
+#### Per-recipe internal parameters — `parameters_internal`
+
+Recipe defaults may now include a `parameters_internal` list:
+
+```yaml
+defaults:
+  parameters:
+    curated_prefixes: ["NM_", "NR_"]
+  parameters_internal:
+    - curated_prefixes
+```
+
+Each listed key remains in expression scope exactly like any other parameter. That matters for list-typed parameters: a JSON-array default or `--parameter key='["a","b"]'` override still resolves to a list and can be consumed by helpers such as `starts_with_any` and `value_in`. The difference is at emit time: Sumpter unwraps the value for expression evaluation and then skips it when writing output records.
+
+This gives recipe authors a first-class way to pass classifier lists, lookup switches, or other derive-only run inputs through the normal parameter path without replicating those constants onto every row.
+
+- **Record suppression.** Internal parameter values are omitted from NDJSON/JSON records and Parquet projections.
+- **Provenance suppression.** CLI override values for internal parameters are redacted in `argv_sanitized` as `key=<internal>`. The key remains visible for replay and audit; the value does not.
+- **Required checks still apply.** A key may be both required and internal. If it has no default and no CLI override, the run fails as before.
+- **Collision checks still apply.** An internal parameter key still cannot collide with a mapped output field; Sumpter fails before writing output instead of silently replacing content-derived fields.
+
+#### Run-level internal parameters — `--parameter-internal` on `extract-multi`
+
+`extract-multi` already supports shared run-level `--parameter key=value`, layered over every recipe in the pass. v0.2.5 adds the derive-only twin:
+
+```bash
+sumpter recipes run extract-multi workspace/ \
+  --parameter-internal 'curated_prefixes=["NM_","NR_"]'
+```
+
+The flag is repeatable and uses the same scalar/JSON-list parsing path as `--parameter`, but marks the supplied keys internal for every recipe in the pass. This is useful when one shared run value should be available to any recipe expression that needs it, while bystander recipes must not emit it as an unused output column.
+
+- **Available everywhere, emitted nowhere.** The value is in every recipe's expression scope, but no recipe writes it to any sink.
+- **Bystander-safe provenance.** Every per-recipe manifest redacts the run-level internal value in `argv_sanitized`, including recipes that do not declare or consume the parameter.
+- **Composes with recipe declarations.** A recipe may also list the same key in `defaults.parameters_internal`; suppression is idempotent.
+- **Required checks still apply.** A recipe's `parameters_required` entry is satisfied by a run-level internal value.
+- **Conflict handling stays strict.** Supplying the same key through both `--parameter` and `--parameter-internal` in one `extract-multi` invocation is rejected because the repeatable flags do not preserve reliable cross-flag ordering. A shared key that collides with any recipe output field still fails plan loading.
+
+`--parameter-internal` is intentionally scoped to `recipes run extract-multi`. Single-recipe `recipes run extract` already has the per-recipe `parameters_internal` declaration for this purpose.
+
+### Compatibility & notes
+
+- **All-additive.** Recipes with no `parameters_internal` declaration and `extract-multi` runs with no `--parameter-internal` flag keep current behavior.
+- **Suppress-at-emit, not drop-from-scope.** Internal values stay available to expressions and retain list typing. Suppression happens only when records, Parquet columns, and provenance argv values are written.
+- **Not a general secret-transport mechanism.** Internal parameters reduce output exposure for derive-only values, but recipe authors can still deliberately re-emit a derived result. Use credential handles for credentials and other secret-bearing integration paths.
+- **Platforms:** unchanged from 0.2.0-0.2.4 — linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source.
+- **Alpha:** interfaces may still change between minor releases; external pull requests are welcome.
+
+### Deferred / follow-ups
+
+- **Namespace-aware XPath binding** is planned separately. Current recipes that need namespace portability should continue using documented namespace-safe forms until the binding surface lands.
+- **Portable data-artifact contract support** remains on its own track.
+- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, DuckDB/Arrow, service health endpoints, and repair modes** remain roadmap items, as in 0.2.4.
+
+### Release notes
+
+- **Version bump.** `VERSION` is `0.2.5`. Binaries from this tag emit `v0.2.5` via `sumpter version`.
+- **Tag/version guard.** `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.5` is the intended tag/version sanity check.
+- **Release ceremony.** Use the standard draft-release and signing flow in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md): CI builds the tag, then the operator signing ceremony uploads checksums, signatures, public keys, and release notes before publishing.
+
+See [`docs/releases/v0.2.5.md`](docs/releases/v0.2.5.md) for the full release narrative.
+
+---
+
 ## v0.2.4 (2026-06-27)
 
 **A performance + tunability minor for high-volume `extract-multi`: configurable parallel input processing across thousands of input files and beyond, the instrumentation to tune it, and contract-independent output hardening — all additive, with defaults byte-for-byte unchanged.**
@@ -74,33 +150,3 @@ v0.2.3 is a feature minor driven by dogfooding of large many-small-input extract
 See [`docs/releases/v0.2.3.md`](docs/releases/v0.2.3.md) for the full release narrative.
 
 ---
-
-## v0.2.2 (2026-06-23)
-
-**Multi-recipe throughput: apply many extract recipes to one input set in a single parse-once pass, plus the run-level parameters and derive-only capture fields that make it adoptable.**
-
-v0.2.2 is a feature minor driven by real-world dogfooding of large multi-projection extraction runs. The headline is **`extract-multi`**: when several recipes extract different projections from the **same** input set, the engine now reads and parses each input file once and dispatches the parsed document to every recipe — amortizing the per-recipe re-parse (the dominant cost at high file counts) from ~N× to 1× across N recipes. Two ergonomics features make it adoptable for production pipelines: a shared run-level `--parameter` passthrough, and derive-only `source_extraction` captures. The v0.2.0/0.2.1 surface (cloud I/O, reference-table lookup, list/file-list inputs) is unchanged.
-
-### What's new (summary)
-
-- **Multi-recipe single-pass extract (`extract-multi`)** - `recipes run extract-multi <workspace>...` parses each input file once, then fans the parsed document to every signature-matched recipe. Each recipe writes to its own isolated `<output-path>/<recipe-id>/` subdirectory; per-recipe output, formats, `defaults.parameters`, reference tables, and credential handles come from each recipe's own manifest, while the input set, output root, and run-level controls (and a single shared run id) are shared. Failure handling follows the input-vs-recipe boundary — a read/parse failure is input-level, while applicability/signature/extraction/`min_occurrences`/output failures are recipe-level and isolated under `--continue-on-error`. JSON/NDJSON output only in v0; the streaming/large-file path is not supported (a too-large file is rejected). See the worked example in [`docs/extract-workflow.md`](docs/extract-workflow.md).
-- **Shared run-level `--parameter` (`multi-parameter`)** - a repeatable `--parameter key=value` on `extract-multi` layers over **every** recipe's `defaults.parameters` with the same override / collision / typed-value (scalar or JSON-list) semantics as single-recipe `recipes run extract --parameter`, satisfies each recipe's `parameters_required` independently, and is injected into every recipe's records — for the per-run keys every recipe shares (e.g. a per-run provenance/runtime stamp). A shared key colliding with any recipe's `field_mappings[].output_field` fails the run at plan-load preflight; secret-shaped parameter values are redacted by key in the provenance argv.
-- **Derive-only `source_extraction` captures (`internal-fields`)** - a `source_extraction` pattern may set `internal: true`, making its named captures usable in `field_mappings[].expression` scope but **never emitted** into the record body on any sink — a true intermediate with no stray column. Defaults to `false`; internal captures still honor `source_extraction_required` and the collision checks. A capture name declared on both an internal and a non-internal pattern is rejected at plan validation.
-
-### Behavior changes (please review before upgrading)
-
-- **All-additive.** `extract-multi` is a new subcommand; the shared `--parameter` and `internal: true` are opt-in. Existing single-recipe `recipes run extract` behavior, output formats, and the provenance sidecar schema are unchanged. A recipe with no `internal: true` pattern and no `extract-multi` run behaves byte-for-byte as in 0.2.1.
-- **`internal: true` is an output-shaping control, not a redaction mechanism** - the captured value still lives in expression scope and a recipe author can deliberately re-emit it; do not rely on it to keep a sensitive value out of output.
-
-### Deferred / follow-ups
-
-- **Input-handle provenance in multi runs** (record the effective shared input handle) and a **`relative_path` log-message tidy** are tracked fast-follows.
-- **Parquet/other formats and the streaming/large-file path for `extract-multi`**, plus **cloud range-reads, cloud-side indexing, GCS/Azure providers, and repair modes**, remain roadmap items.
-
-### Release notes
-
-- `VERSION` is `0.2.2`. Binaries from this tag emit `v0.2.2` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.2` is the intended tag/version sanity check.
-- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
-
-See [`docs/releases/v0.2.2.md`](docs/releases/v0.2.2.md) for the full release narrative.
