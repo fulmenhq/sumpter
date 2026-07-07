@@ -1,0 +1,8 @@
+<Ledger xmlns="urn:example:sumpter-records" xmlns:v="a&quot;/&gt;&lt;x&gt;">
+  <Record id="R-0001">
+    <Label>Alpha</Label>
+    <Amount>42.50</Amount>
+    <PostedDate>2026-01-15</PostedDate>
+    <v:Tag>value-under-a-breakout-shaped-namespace-uri</v:Tag>
+  </Record>
+</Ledger>

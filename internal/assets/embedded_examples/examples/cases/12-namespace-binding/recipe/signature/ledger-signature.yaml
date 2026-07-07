@@ -1,0 +1,10 @@
+signature_id: sumpter-records-ledger
+name: Sumpter Records Ledger
+namespaces:
+  n: "urn:example:sumpter-records"
+match_patterns:
+  - pattern_id: ledger-root
+    name: Ledger root (core namespace)
+    selector: /n:Ledger
+    weight: 1
+confidence_threshold: 1

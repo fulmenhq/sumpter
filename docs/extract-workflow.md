@@ -644,6 +644,73 @@ output field and expression in the error message.
 
 Each scalar mapping must declare exactly one of `xpath` or `expression`. Expression mappings are only supported for top-level scalar `field_mappings`; nested `item_mapping` and `polymorphic_mapping` fields remain XPath-only.
 
+### XML Namespace Binding
+
+The same logical vocabulary is often serialized in more than one namespace
+shape: fully prefixed (`<n:Record>` with `xmlns:n="URI"`), a default namespace
+(`xmlns="URI"`), or a default plus a secondary extension namespace. An optional
+`namespaces:` map binds XPath prefixes to namespace **URIs** so a selector
+resolves the same way regardless of the document's literal prefixes. It is
+accepted at the root of the extract config and the file signature:
+
+```yaml
+namespaces:
+  n: "urn:example:ledger"
+  ext: "urn:example:ledger-ext"
+match_selectors:
+  - xpath: "//n:Record"
+field_mappings:
+  - output_field: posted_date
+    xpath: "ext:PostedDate"
+    type: string
+```
+
+The alias (`n`, `ext`) is a **local name you choose**; it is bound to the URI and
+need not match any prefix that appears in the document. `//n:Record` then matches
+an element in `urn:example:ledger` whether the document wrote it as `<v:Record>`,
+`<Record xmlns=…>`, or `<n:Record>`, and two elements that share a local name in
+different URIs (`//n:Record` vs `//ext:Record`) are disambiguated. Attribute
+reads bind the same way (`@ext:origin`). Binding by URI is the stable,
+serialization-independent form and also resists namespace-confusion spoofing
+(a look-alike element placed in an unexpected namespace).
+
+Semantics:
+
+- **Map absent → behavior unchanged.** Existing recipes keep the current lenient
+  (literal-prefix) matching byte-for-byte; the map is opt-in.
+- **Map present → prefixes resolve by URI.** A prefix used in any XPath that is
+  **not bound** in the map fails at **config load** (fail-closed) with the
+  offending config, XPath, and prefix named — no silent 0-match from a typo'd
+  or unbound prefix.
+- **Bare name tests stay lenient.** A `namespaces:` map governs *prefixed* tests;
+  an unprefixed test like `//Record` keeps lenient matching. Because a bare test
+  does **not** match fully-prefixed documents, one used alongside a non-empty map
+  emits a load-time warning (it will silently under-match prefixed input) — bind
+  it to an alias if you meant the URI.
+- Aliases must be ordinary non-colon names; `xml` and `xmlns` are reserved.
+  XPath 1.0 has no default element namespace, so bind a default-source namespace
+  to an explicit alias (e.g. `n`) rather than an empty alias.
+
+Namespace URIs are inert match keys — they are never fetched, resolved, or
+networked.
+
+Scope of binding in this release:
+
+- **Whole-document mode.** Binding applies to match selectors and field-mapping
+  XPaths, including the record-boundary selector (`//n:Record`) — the full
+  document is in scope, so URI resolution and same-local-name disambiguation
+  work at the boundary too. This is the acceptance target; see the worked
+  example `examples/cases/12-namespace-binding`.
+- **Streaming and indexed modes.** The record-boundary selector is matched by
+  **local name only**, so a bound prefix on the *boundary* is not URI-resolved
+  in these modes and cannot disambiguate two records that share a local name in
+  different URIs — binding still applies to field/relative-path XPaths within a
+  matched record. Full boundary parity across modes is tracked separately.
+- **Applicability predicates** are evaluated leniently and are **not**
+  URI-bound, even when the extract config declares a `namespaces:` map. A
+  prefixed test in an applicability predicate keeps literal-prefix semantics in
+  this release.
+
 ### Conditional Expressions
 
 Expression mappings can use the DSL ternary conditional:

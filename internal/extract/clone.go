@@ -33,6 +33,7 @@ func cloneExtractConfig(cfg *ExtractRecordMatch) *ExtractRecordMatch {
 
 	clone := ExtractRecordMatch{
 		RecordType:         cfg.RecordType,
+		Namespaces:         cloneStringMap(cfg.Namespaces),
 		MatchSelectors:     cloneMatchSelectors(cfg.MatchSelectors),
 		OutputSchema:       cloneStringInterfaceMap(cfg.OutputSchema),
 		FieldMappings:      cloneFieldMappings(cfg.FieldMappings),
@@ -138,6 +139,17 @@ func cloneReconciliationConfigs(configs []dsl.ReconciliationConfig) []dsl.Reconc
 			groupBy := *configs[i].GroupBy
 			clone[i].GroupBy = &groupBy
 		}
+	}
+	return clone
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(in))
+	for key, value := range in {
+		clone[key] = value
 	}
 	return clone
 }

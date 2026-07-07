@@ -1,0 +1,28 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "amount": 42.5,
+          "annotation": "reviewed",
+          "label": "Alpha",
+          "origin": "import",
+          "posted_date": "2026-01-15",
+          "record_id": "R-0001"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "amount": 17,
+          "annotation": "pending",
+          "label": "Beta",
+          "origin": "manual",
+          "posted_date": "2026-02-20",
+          "record_id": "R-0002"
+        }
+      }
+    }
+  ]
+}

@@ -1252,7 +1252,7 @@ func TestMatchesPattern_SelectorForms(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesPattern(doc, MatchPattern{Selector: tt.selector, Weight: 1.0})
+			got := matchesPattern(doc, MatchPattern{Selector: tt.selector, Weight: 1.0}, nil)
 			if got != tt.want {
 				t.Errorf("matchesPattern(%q) = %v, want %v", tt.selector, got, tt.want)
 			}
