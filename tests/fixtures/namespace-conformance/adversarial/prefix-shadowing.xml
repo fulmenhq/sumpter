@@ -1,0 +1,8 @@
+<p:Ledger xmlns:p="urn:example:sumpter-records">
+  <p:Record id="R-0001">
+    <p:Label>outer-core</p:Label>
+    <p:Inner xmlns:p="urn:example:sumpter-records-ext">
+      <p:Label>inner-ext-shadowed</p:Label>
+    </p:Inner>
+  </p:Record>
+</p:Ledger>

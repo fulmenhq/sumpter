@@ -1,0 +1,20 @@
+<Ledger xmlns="urn:example:sumpter-records" xmlns:ext="urn:example:sumpter-records-ext">
+  <Record id="R-0001" ext:origin="import">
+    <Label>Alpha</Label>
+    <Amount>42.50</Amount>
+    <PostedDate>2026-01-15</PostedDate>
+    <ext:Annotation>reviewed</ext:Annotation>
+    <ext:Record id="X-0001">
+      <ext:Note>extension-scoped record, same local name as core Record</ext:Note>
+    </ext:Record>
+  </Record>
+  <Record id="R-0002" ext:origin="manual">
+    <Label>Beta</Label>
+    <Amount>17.00</Amount>
+    <PostedDate>2026-02-20</PostedDate>
+    <ext:Annotation>pending</ext:Annotation>
+    <ext:Record id="X-0002">
+      <ext:Note>extension-scoped record, same local name as core Record</ext:Note>
+    </ext:Record>
+  </Record>
+</Ledger>

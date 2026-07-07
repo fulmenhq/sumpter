@@ -1,0 +1,41 @@
+record_type: ledger_record
+namespaces:
+  n: "urn:example:sumpter-records"
+  ext: "urn:example:sumpter-records-ext"
+match_selectors:
+  - xpath: "//n:Record"
+field_mappings:
+  - output_field: record_id
+    xpath: "@id"
+    type: string
+  - output_field: label
+    xpath: "n:Label"
+    type: string
+  - output_field: amount
+    xpath: "n:Amount"
+    type: number
+  - output_field: posted_date
+    xpath: "n:PostedDate"
+    type: string
+  - output_field: origin
+    xpath: "@ext:origin"
+    type: string
+  - output_field: annotation
+    xpath: "ext:Annotation"
+    type: string
+output_schema:
+  type: object
+  properties:
+    record_id:
+      type: string
+    label:
+      type: string
+    amount:
+      type: number
+    posted_date:
+      type: string
+    origin:
+      type: string
+    annotation:
+      type: string
+  required: [record_id, label, amount, posted_date, origin, annotation]

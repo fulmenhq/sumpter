@@ -10,18 +10,23 @@ import (
 
 // FileSignature represents a file signature configuration
 type FileSignature struct {
-	SignatureID         string         `yaml:"signature_id" json:"signature_id"`
-	Name                string         `yaml:"name" json:"name"`
-	Description         string         `yaml:"description" json:"description"`
-	Status              string         `yaml:"status" json:"status"`
-	Priority            string         `yaml:"priority" json:"priority"`
-	Realm               string         `yaml:"realm" json:"realm"`
-	Dialects            []Dialect      `yaml:"dialects" json:"dialects"`
-	MatchPatterns       []MatchPattern `yaml:"match_patterns" json:"match_patterns"`
-	ConfidenceThreshold float64        `yaml:"confidence_threshold" json:"confidence_threshold"`
-	FormatType          string         `yaml:"format_type" json:"format_type"`
-	Tags                []string       `yaml:"tags" json:"tags"`
-	UseCases            []string       `yaml:"use_cases" json:"use_cases"`
+	SignatureID string `yaml:"signature_id" json:"signature_id"`
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description"`
+	Status      string `yaml:"status" json:"status"`
+	Priority    string `yaml:"priority" json:"priority"`
+	Realm       string `yaml:"realm" json:"realm"`
+	// Namespaces optionally binds recipe-author XPath prefixes to namespace
+	// URIs (prefix -> URI). When present, match-pattern selectors compile with
+	// xpath.CompileWithNS and resolve by URI rather than the document's literal
+	// prefix. Absent/empty preserves the current lenient matching byte-for-byte.
+	Namespaces          map[string]string `yaml:"namespaces,omitempty" json:"namespaces,omitempty"`
+	Dialects            []Dialect         `yaml:"dialects" json:"dialects"`
+	MatchPatterns       []MatchPattern    `yaml:"match_patterns" json:"match_patterns"`
+	ConfidenceThreshold float64           `yaml:"confidence_threshold" json:"confidence_threshold"`
+	FormatType          string            `yaml:"format_type" json:"format_type"`
+	Tags                []string          `yaml:"tags" json:"tags"`
+	UseCases            []string          `yaml:"use_cases" json:"use_cases"`
 }
 
 // MatchPattern represents a pattern for matching files
@@ -69,7 +74,14 @@ type Dialect struct {
 
 // ExtractRecordMatch represents an extract configuration
 type ExtractRecordMatch struct {
-	RecordType         string                  `yaml:"record_type" json:"record_type"`
+	RecordType string `yaml:"record_type" json:"record_type"`
+	// Namespaces optionally binds recipe-author XPath prefixes to namespace
+	// URIs (prefix -> URI) for all match selectors, field mappings, nested
+	// item mappings, and polymorphic match XPaths. When present, expressions
+	// compile with xpath.CompileWithNS and resolve by URI rather than the
+	// document's literal prefix; an unbound prefix fails closed at load.
+	// Absent/empty preserves the current lenient matching byte-for-byte.
+	Namespaces         map[string]string       `yaml:"namespaces,omitempty" json:"namespaces,omitempty"`
 	MatchSelectors     []MatchSelector         `yaml:"match_selectors" json:"match_selectors"`
 	OutputSchema       map[string]interface{}  `yaml:"output_schema" json:"output_schema"`
 	FieldMappings      []FieldMapping          `yaml:"field_mappings" json:"field_mappings"`

@@ -62,6 +62,18 @@ properties:
   record_type:
     type: string
     description: The type of record to extract (e.g., "transaction", "event").
+  namespaces:
+    type: object
+    description: >-
+      Optional map of recipe-author XPath prefix aliases to namespace URIs (alias -> URI). When present, match selectors and field-mapping XPaths resolve prefixes by namespace URI rather than the document's literal prefix, and a prefix not bound here fails at load. The alias is a local name chosen by the recipe author; it need not match any prefix used in the document. Absent or empty preserves the current lenient (literal-prefix) matching byte-for-byte. Namespace URIs are inert match keys only and are never dereferenced.
+    propertyNames:
+      allOf:
+        - pattern: '^[A-Za-z_][A-Za-z0-9_.-]*$'
+        - not:
+            enum: ["xml", "xmlns"]
+    additionalProperties:
+      type: string
+      minLength: 1
   match_selectors:
     type: array
     description: Array of selectors used to identify matching records in the XML.

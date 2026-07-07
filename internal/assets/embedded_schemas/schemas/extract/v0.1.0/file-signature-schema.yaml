@@ -26,6 +26,18 @@ properties:
   realm:
     type: string
     description: Domain or realm this signature applies to (e.g., "retail", "finance").
+  namespaces:
+    type: object
+    description: >-
+      Optional map of recipe-author XPath prefix aliases to namespace URIs (alias -> URI). When present, match-pattern selectors resolve prefixes by namespace URI rather than the document's literal prefix, and a prefix not bound here fails at load. The alias is a local name chosen by the recipe author; it need not match any prefix used in the document. Absent or empty preserves the current lenient (literal-prefix) matching byte-for-byte. Namespace URIs are inert match keys only and are never dereferenced.
+    propertyNames:
+      allOf:
+        - pattern: '^[A-Za-z_][A-Za-z0-9_.-]*$'
+        - not:
+            enum: ["xml", "xmlns"]
+    additionalProperties:
+      type: string
+      minLength: 1
   dialects:
     type: array
     description: Optional list of supported dialects for this signature type.

@@ -60,7 +60,47 @@ func LoadSignatureConfig(path string) (*FileSignature, error) {
 		return nil, fmt.Errorf("failed to parse signature config: %w", err)
 	}
 
+	if err := prepareSignatureConfig(&cfg); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// prepareSignatureConfig validates the signature namespaces map and, when a map
+// is present, lint-compiles each match-pattern selector at load so an unbound
+// prefix fails closed here rather than silently 0-matching during file matching.
+//
+// The lint-compiled expression is deliberately discarded: match time recompiles
+// the selector per evaluation (see matchesPattern), so no mutable XPath state is
+// shared across concurrently-processed input files (the signature config is
+// shared read-only across input workers; only the extract config is cloned).
+//
+// Back-compat: with no namespaces map, selectors are left to the match-time
+// lenient path exactly as before — a selector that does not compile is a
+// non-match, never a new load failure.
+func prepareSignatureConfig(cfg *FileSignature) error {
+	if cfg == nil {
+		return fmt.Errorf("signature config is nil")
+	}
+	if err := validateNamespaceMap("signature", cfg.Namespaces); err != nil {
+		return err
+	}
+	if len(cfg.Namespaces) == 0 {
+		return nil
+	}
+	for i := range cfg.MatchPatterns {
+		pattern := &cfg.MatchPatterns[i]
+		selector := strings.TrimSpace(pattern.Selector)
+		if selector == "" {
+			continue
+		}
+		if _, err := compileXPath(selector, cfg.Namespaces); err != nil {
+			return fmt.Errorf("failed to compile signature selector %q (pattern %q): %w", pattern.Selector, pattern.PatternID, err)
+		}
+		warnBareTestsUnderMap("signature", pattern.Selector, cfg.Namespaces)
+	}
+	return nil
 }
 
 // LoadApplicabilityConfig loads a recipe applicability predicate from YAML.
@@ -137,6 +177,11 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 	}
 
 	cfg.prepareOnce.Do(func() {
+		if err := validateNamespaceMap("extract", cfg.Namespaces); err != nil {
+			cfg.prepareErr = err
+			return
+		}
+
 		if len(cfg.OutputSchema) > 0 && cfg.OutputValidator == nil {
 			validator, err := buildOutputValidator(cfg.OutputSchema, cfg.UniformSchema)
 			if err != nil {
@@ -152,17 +197,18 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 				continue
 			}
 			if selector.CompiledXPath == nil {
-				compiled, err := xpath.Compile(selector.XPath)
+				compiled, err := compileXPath(selector.XPath, cfg.Namespaces)
 				if err != nil {
 					cfg.prepareErr = fmt.Errorf("failed to compile match selector %q: %w", selector.XPath, err)
 					return
 				}
 				selector.CompiledXPath = compiled
 			}
+			warnBareTestsUnderMap("extract", selector.XPath, cfg.Namespaces)
 		}
 
 		for i := range cfg.FieldMappings {
-			if err := compileFieldMapping(&cfg.FieldMappings[i]); err != nil {
+			if err := compileFieldMapping(&cfg.FieldMappings[i], cfg.Namespaces); err != nil {
 				cfg.prepareErr = err
 				return
 			}
@@ -233,36 +279,42 @@ func nullableOutputSchema(outputSchema map[string]interface{}) (map[string]inter
 	return copied, nil
 }
 
-func compileFieldMapping(mapping *FieldMapping) error {
+func compileFieldMapping(mapping *FieldMapping, nsMap map[string]string) error {
 	if mapping == nil {
 		return nil
 	}
 
-	if strings.TrimSpace(mapping.XPath) != "" && mapping.CompiledXPath == nil {
-		compiled, err := xpath.Compile(mapping.XPath)
-		if err != nil {
-			return fmt.Errorf("failed to compile XPath %q for field %q: %w", mapping.XPath, mapping.OutputField, err)
+	if strings.TrimSpace(mapping.XPath) != "" {
+		if mapping.CompiledXPath == nil {
+			compiled, err := compileXPath(mapping.XPath, nsMap)
+			if err != nil {
+				return fmt.Errorf("failed to compile XPath %q for field %q: %w", mapping.XPath, mapping.OutputField, err)
+			}
+			mapping.CompiledXPath = compiled
 		}
-		mapping.CompiledXPath = compiled
+		warnBareTestsUnderMap("extract", mapping.XPath, nsMap)
 	}
 
 	for i := range mapping.ItemMapping {
-		if err := compileFieldMapping(&mapping.ItemMapping[i]); err != nil {
+		if err := compileFieldMapping(&mapping.ItemMapping[i], nsMap); err != nil {
 			return err
 		}
 	}
 
 	for i := range mapping.Polymorphic {
 		pm := &mapping.Polymorphic[i]
-		if strings.TrimSpace(pm.MatchXPath) != "" && pm.CompiledMatchXPath == nil {
-			compiled, err := xpath.Compile(pm.MatchXPath)
-			if err != nil {
-				return fmt.Errorf("failed to compile polymorphic match XPath %q: %w", pm.MatchXPath, err)
+		if strings.TrimSpace(pm.MatchXPath) != "" {
+			if pm.CompiledMatchXPath == nil {
+				compiled, err := compileXPath(pm.MatchXPath, nsMap)
+				if err != nil {
+					return fmt.Errorf("failed to compile polymorphic match XPath %q: %w", pm.MatchXPath, err)
+				}
+				pm.CompiledMatchXPath = compiled
 			}
-			pm.CompiledMatchXPath = compiled
+			warnBareTestsUnderMap("extract", pm.MatchXPath, nsMap)
 		}
 		for j := range pm.FieldMappings {
-			if err := compileFieldMapping(&pm.FieldMappings[j]); err != nil {
+			if err := compileFieldMapping(&pm.FieldMappings[j], nsMap); err != nil {
 				return err
 			}
 		}
@@ -972,7 +1024,7 @@ func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, float64, er
 	for _, pattern := range cfg.MatchPatterns {
 		totalWeight += pattern.Weight
 
-		if matchesPattern(doc, pattern) {
+		if matchesPattern(doc, pattern, cfg.Namespaces) {
 			score += pattern.Weight
 		}
 	}
@@ -1009,9 +1061,43 @@ func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, float64, er
 //	/Envelope                    (absolute path)
 //
 // A compile error or evaluation error is treated as a non-match.
-func matchesPattern(doc *xmlquery.Node, pattern MatchPattern) bool {
-	matched, err := evaluateXPathBoolean(doc, pattern.Selector)
-	return err == nil && matched
+//
+// The selector is compiled fresh here (namespace-bound when nsMap is non-empty)
+// rather than reused from a shared precompiled expression: the signature config
+// is shared read-only across concurrently-processed input files, and a compiled
+// xpath.Expr holds mutable evaluation state that is not safe to evaluate
+// concurrently. Under a namespaces map, unbound-prefix errors have already been
+// caught at load (prepareSignatureConfig), so a match-time compile error here is
+// an ordinary non-match.
+func matchesPattern(doc *xmlquery.Node, pattern MatchPattern, nsMap map[string]string) bool {
+	selector := strings.TrimSpace(pattern.Selector)
+	if selector == "" {
+		return false
+	}
+	expr, err := compileXPath(selector, nsMap)
+	if err != nil {
+		return false
+	}
+	return evaluateCompiledXPathBoolean(doc, expr)
+}
+
+// evaluateCompiledXPathBoolean applies XPath 1.0 boolean() coercion (same rules
+// as evaluateXPathBoolean) to a compiled expression's result. An unsupported
+// result type is treated as a non-match, matching matchesPattern's
+// error-as-non-match posture.
+func evaluateCompiledXPathBoolean(doc *xmlquery.Node, expr *xpath.Expr) bool {
+	switch v := expr.Evaluate(xmlquery.CreateXPathNavigator(doc)).(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0 && !math.IsNaN(v)
+	case string:
+		return v != ""
+	case *xpath.NodeIterator:
+		return v != nil && v.MoveNext()
+	default:
+		return false
+	}
 }
 
 func evaluateXPathBoolean(doc *xmlquery.Node, selector string) (bool, error) {
