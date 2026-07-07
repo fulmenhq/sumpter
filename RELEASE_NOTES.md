@@ -28,7 +28,7 @@ namespaces:
   ext: "urn:example:sumpter-records-ext"
 
 match_selectors:
-  - selector: "//rec:Record"
+  - xpath: "//rec:Record"
 
 field_mappings:
   - output_field: "record_id"
