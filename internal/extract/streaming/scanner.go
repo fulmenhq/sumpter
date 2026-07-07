@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"sort"
 
 	"golang.org/x/net/html/charset"
 )
@@ -100,6 +101,7 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 
 		switch t := token.(type) {
 		case xml.StartElement:
+			s.pushNamespaceContext(t)
 			s.depth++
 
 			// Check if this is the start of a record we're looking for
@@ -140,19 +142,22 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 				sizeBytes := endOffset - recordStartOffset
 
 				result := &RecordBuffer{
-					XML:         recordXML,
-					RecordNum:   s.recordCount,
-					StartOffset: recordStartOffset,
-					EndOffset:   endOffset,
-					SizeBytes:   sizeBytes,
-					ElementName: s.elementName,
-					Depth:       s.recordDepth,
+					XML:              recordXML,
+					RecordNum:        s.recordCount,
+					StartOffset:      recordStartOffset,
+					EndOffset:        endOffset,
+					SizeBytes:        sizeBytes,
+					ElementName:      s.elementName,
+					Depth:            s.recordDepth,
+					NamespaceContext: s.currentNamespaceContext(),
 				}
 
+				s.popNamespaceContext()
 				s.depth--
 				return result, nil
 			}
 
+			s.popNamespaceContext()
 			s.depth--
 
 		case xml.CharData, xml.Comment, xml.ProcInst, xml.Directive:
@@ -162,6 +167,54 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 			}
 		}
 	}
+}
+
+func (s *RecordScanner) pushNamespaceContext(start xml.StartElement) {
+	next := map[string]string{}
+	if len(s.namespaceStack) > 0 {
+		for prefix, uri := range s.namespaceStack[len(s.namespaceStack)-1] {
+			next[prefix] = uri
+		}
+	}
+	for _, attr := range start.Attr {
+		switch {
+		case attr.Name.Space == "" && attr.Name.Local == "xmlns":
+			next[""] = attr.Value
+		case attr.Name.Space == "xmlns":
+			next[attr.Name.Local] = attr.Value
+		}
+	}
+	s.namespaceStack = append(s.namespaceStack, next)
+}
+
+func (s *RecordScanner) popNamespaceContext() {
+	if len(s.namespaceStack) == 0 {
+		return
+	}
+	s.namespaceStack = s.namespaceStack[:len(s.namespaceStack)-1]
+}
+
+func (s *RecordScanner) currentNamespaceContext() []NamespaceDeclaration {
+	if len(s.namespaceStack) == 0 {
+		return nil
+	}
+	current := s.namespaceStack[len(s.namespaceStack)-1]
+	prefixes := make([]string, 0, len(current))
+	for prefix, uri := range current {
+		if prefix == "xml" || prefix == "xmlns" || uri == "" {
+			continue
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+	declarations := make([]NamespaceDeclaration, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		declarations = append(declarations, NamespaceDeclaration{
+			Prefix: prefix,
+			URI:    current[prefix],
+		})
+	}
+	return declarations
 }
 
 // matchesRecordElement checks if the given element name matches our record selector.

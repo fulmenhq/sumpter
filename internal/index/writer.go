@@ -88,6 +88,9 @@ func (w *JSONIndexWriter) Start(index *RecordIndex) (err error) {
 	if err := writeJSONField(w.file, "selector", header.Selector, true); err != nil {
 		return err
 	}
+	if err := writeJSONField(w.file, "namespace_contexts", header.NamespaceContexts, true); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprint(w.file, "  \"records\": ["); err != nil {
 		return err
 	}

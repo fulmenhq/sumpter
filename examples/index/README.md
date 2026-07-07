@@ -1,6 +1,6 @@
 # Record Index Examples
 
-This directory contains example XML record index files demonstrating the `record-index/v0.1.1` schema.
+This directory contains example XML record index files demonstrating the `record-index/v0.1.2` schema.
 
 ## Files
 
@@ -39,7 +39,7 @@ sumpter extract files input.xml --record-index my-index.recordindex.json --worke
 
 ## Schema Documentation
 
-See [schemas/index/v0.1.1/README.md](../../schemas/index/v0.1.1/README.md) for complete schema documentation.
+See [schemas/index/v0.1.2/README.md](../../schemas/index/v0.1.2/README.md) for complete schema documentation.
 
 ## Related Examples
 

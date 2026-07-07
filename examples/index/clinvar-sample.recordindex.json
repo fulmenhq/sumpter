@@ -1,5 +1,5 @@
 {
-  "version": "record-index/v0.1.1",
+  "version": "record-index/v0.1.2",
   "source": {
     "path": "/data/genomics/clinvar_vcv_2024.xml",
     "size_bytes": 53687091200,
@@ -14,6 +14,12 @@
     "xpath": "//VariationArchive",
     "element_name": "VariationArchive"
   },
+  "namespace_contexts": [
+    {
+      "id": 0,
+      "declarations": []
+    }
+  ],
   "records": [
     {
       "record_num": 1,
@@ -22,7 +28,8 @@
       "size_bytes": 11264,
       "sha256": "e4f7a2b9c3d1e5f6a8b2c4d7e9f1a3b5c6d8e2f4a7b9c1d3e5f7a8b2c4d6e8f1",
       "element_name": "VariationArchive",
-      "depth": 1
+      "depth": 1,
+      "namespace_context_ref": 0
     },
     {
       "record_num": 2,
@@ -31,7 +38,8 @@
       "size_bytes": 26624,
       "sha256": "b2c4d6e8f1a3b5c7d9e2f4a6b8c1d3e5f7a9b2c4d6e8f1a3b5c7d9e2f4a6b8c1",
       "element_name": "VariationArchive",
-      "depth": 1
+      "depth": 1,
+      "namespace_context_ref": 0
     },
     {
       "record_num": 3,
@@ -40,7 +48,8 @@
       "size_bytes": 12288,
       "sha256": "d6e8f1a3b5c7d9e2f4a6b8c1d3e5f7a9b2c4d6e8f1a3b5c7d9e2f4a6b8c1d3e5",
       "element_name": "VariationArchive",
-      "depth": 1
+      "depth": 1,
+      "namespace_context_ref": 0
     }
   ],
   "summary": {

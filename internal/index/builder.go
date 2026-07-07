@@ -107,6 +107,12 @@ func (b *Builder) BuildTo(writers ...IndexWriter) (result *RecordIndex, err erro
 	}
 	NormalizeRecordIndex(header)
 
+	namespaceTable, err := b.collectNamespaceContexts(recordSelector.Raw)
+	if err != nil {
+		return nil, err
+	}
+	header.NamespaceContexts = namespaceTable.Contexts()
+
 	for _, writer := range writers {
 		if writer == nil {
 			return nil, fmt.Errorf("index writer is required")
@@ -161,13 +167,14 @@ func (b *Builder) BuildTo(writers ...IndexWriter) (result *RecordIndex, err erro
 
 		// Create record metadata
 		metadata := RecordMetadata{
-			RecordNum:   rec.RecordNum,
-			StartOffset: rec.StartOffset,
-			EndOffset:   rec.EndOffset,
-			SizeBytes:   rec.SizeBytes,
-			SHA256:      recordHash,
-			ElementName: rec.ElementName,
-			Depth:       rec.Depth,
+			RecordNum:           rec.RecordNum,
+			StartOffset:         rec.StartOffset,
+			EndOffset:           rec.EndOffset,
+			SizeBytes:           rec.SizeBytes,
+			SHA256:              recordHash,
+			ElementName:         rec.ElementName,
+			Depth:               rec.Depth,
+			NamespaceContextRef: namespaceTable.RefFor(convertStreamingNamespaceContext(rec.NamespaceContext)),
 		}
 
 		for _, writer := range writers {
@@ -246,6 +253,42 @@ func (b *Builder) BuildTo(writers ...IndexWriter) (result *RecordIndex, err erro
 	}
 
 	return &index, nil
+}
+
+func (b *Builder) collectNamespaceContexts(selector string) (*NamespaceContextTable, error) {
+	table := NewNamespaceContextTable()
+	file, err := os.Open(b.opts.InputPath) // #nosec G304 - path is user-provided CLI argument
+	if err != nil {
+		return nil, fmt.Errorf("failed to open input file for namespace context scan: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	scanner := streaming.NewRecordScannerSizeOnly(file, selector)
+	defer func() { _ = scanner.Close() }()
+
+	for {
+		rec, err := scanner.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan namespace context for record %d: %w", scanner.RecordCount()+1, err)
+		}
+		table.RefFor(convertStreamingNamespaceContext(rec.NamespaceContext))
+	}
+
+	return table, nil
+}
+
+func convertStreamingNamespaceContext(declarations []streaming.NamespaceDeclaration) []NamespaceDeclaration {
+	if len(declarations) == 0 {
+		return nil
+	}
+	out := make([]NamespaceDeclaration, 0, len(declarations))
+	for _, decl := range declarations {
+		out = append(out, NamespaceDeclaration{Prefix: decl.Prefix, URI: decl.URI})
+	}
+	return out
 }
 
 // WriteToFile writes the record index to a JSON file

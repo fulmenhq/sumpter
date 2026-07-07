@@ -77,6 +77,15 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("record index is not safe for parallel extraction: %w", err)
 	}
 
+	// Create seekable extractor
+	extCfg, ok := pe.opts.ExtractConfig.(*extract.ExtractRecordMatch)
+	if !ok {
+		return nil, fmt.Errorf("extract config must be *extract.ExtractRecordMatch")
+	}
+	if err := index.ValidateNamespaceContextSupport(header, len(extCfg.Namespaces) > 0); err != nil {
+		return nil, err
+	}
+
 	// Safety verification (if enabled)
 	if pe.opts.VerifyIndex {
 		verifier := NewSafetyVerifierFromHeader(header, pe.opts.SourcePath, pe.opts.IndexPath)
@@ -84,12 +93,6 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 			return nil, fmt.Errorf("safety verification failed: %w", err)
 		}
 		pe.logger.Info("Safety verification passed")
-	}
-
-	// Create seekable extractor
-	extCfg, ok := pe.opts.ExtractConfig.(*extract.ExtractRecordMatch)
-	if !ok {
-		return nil, fmt.Errorf("extract config must be *extract.ExtractRecordMatch")
 	}
 
 	var sigCfg *extract.FileSignature
@@ -125,7 +128,12 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 		// config, so workers never share mutable compiled *xpath.Expr state (the
 		// site-B race). The clone clears compiled XPath and keeps the immutable
 		// reference-table registry + external fields shared by pointer (read-only).
-		workerExtractor := NewSeekableExtractor(pe.opts.SourcePath, extract.CloneRecordMatch(extCfg), sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
+		workerCfg := extract.CloneRecordMatch(extCfg)
+		if err := extract.PrepareRecordMatch(workerCfg); err != nil {
+			return nil, fmt.Errorf("failed to prepare worker extract config: %w", err)
+		}
+		workerExtractor := NewSeekableExtractor(pe.opts.SourcePath, workerCfg, sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
+		workerExtractor.SetNamespaceContexts(header.NamespaceContexts)
 		go func(workerID int, ex *SeekableExtractor) {
 			defer wg.Done()
 			Worker(workerID, scheduler.GetWorkChannel(), scheduler.GetResultChannel(), ex, stats)
@@ -237,17 +245,20 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 		return summary, fmt.Errorf("record index is not safe for parallel extraction: %w", err)
 	}
 
+	extCfg, ok := pe.opts.ExtractConfig.(*extract.ExtractRecordMatch)
+	if !ok {
+		return summary, fmt.Errorf("extract config must be *extract.ExtractRecordMatch")
+	}
+	if err := index.ValidateNamespaceContextSupport(header, len(extCfg.Namespaces) > 0); err != nil {
+		return summary, err
+	}
+
 	if pe.opts.VerifyIndex {
 		verifier := NewSafetyVerifierFromHeader(header, pe.opts.SourcePath, pe.opts.IndexPath)
 		if err := verifier.VerifyIntegrity(); err != nil {
 			return summary, fmt.Errorf("safety verification failed: %w", err)
 		}
 		pe.logger.Info("Safety verification passed")
-	}
-
-	extCfg, ok := pe.opts.ExtractConfig.(*extract.ExtractRecordMatch)
-	if !ok {
-		return summary, fmt.Errorf("extract config must be *extract.ExtractRecordMatch")
 	}
 
 	var sigCfg *extract.FileSignature
@@ -276,7 +287,12 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 	for i := 0; i < pe.opts.Workers; i++ {
 		wg.Add(1)
 		// Per-worker extractor over a per-worker config clone — see Extract().
-		workerExtractor := NewSeekableExtractor(pe.opts.SourcePath, extract.CloneRecordMatch(extCfg), sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
+		workerCfg := extract.CloneRecordMatch(extCfg)
+		if err := extract.PrepareRecordMatch(workerCfg); err != nil {
+			return summary, fmt.Errorf("failed to prepare worker extract config: %w", err)
+		}
+		workerExtractor := NewSeekableExtractor(pe.opts.SourcePath, workerCfg, sigCfg, pe.opts.ExternalFields, pe.opts.RuntimeProvenance)
+		workerExtractor.SetNamespaceContexts(header.NamespaceContexts)
 		go func(workerID int, ex *SeekableExtractor) {
 			defer wg.Done()
 			Worker(workerID, scheduler.GetWorkChannel(), scheduler.GetResultChannel(), ex, stats)

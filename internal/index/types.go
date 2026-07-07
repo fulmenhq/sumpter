@@ -4,10 +4,13 @@ import "time"
 
 const (
 	// SchemaVersion is the current JSON record index schema version.
-	SchemaVersion = "record-index/v0.1.1"
+	SchemaVersion = "record-index/v0.1.2"
 
 	// LegacySchemaVersion is the previous JSON record index schema version.
-	LegacySchemaVersion = "record-index/v0.1.0"
+	LegacySchemaVersion = "record-index/v0.1.1"
+
+	// LegacySchemaVersionV010 is the original JSON record index schema version.
+	LegacySchemaVersionV010 = "record-index/v0.1.0"
 
 	// OffsetKindSourceBytes means record offsets address the source file bytes.
 	OffsetKindSourceBytes = "source_bytes"
@@ -19,12 +22,13 @@ const (
 // RecordIndex represents the complete XML record index structure
 // conforming to the record-index JSON schema.
 type RecordIndex struct {
-	Version  string           `json:"version"`
-	Source   SourceInfo       `json:"source"`
-	Selector SelectorInfo     `json:"selector"`
-	Records  []RecordMetadata `json:"records"`
-	Summary  SummaryStats     `json:"summary"`
-	Metadata IndexMetadata    `json:"metadata"`
+	Version           string             `json:"version"`
+	Source            SourceInfo         `json:"source"`
+	Selector          SelectorInfo       `json:"selector"`
+	NamespaceContexts []NamespaceContext `json:"namespace_contexts,omitempty"`
+	Records           []RecordMetadata   `json:"records"`
+	Summary           SummaryStats       `json:"summary"`
+	Metadata          IndexMetadata      `json:"metadata"`
 }
 
 // SourceInfo contains source XML file information and integrity metadata
@@ -45,15 +49,30 @@ type SelectorInfo struct {
 	ElementName string `json:"element_name"`
 }
 
+// NamespaceContext is a deduplicated set of namespace declarations in scope at
+// a record boundary. Records refer to this table by NamespaceContextRef.
+type NamespaceContext struct {
+	ID           int                    `json:"id"`
+	Declarations []NamespaceDeclaration `json:"declarations"`
+}
+
+// NamespaceDeclaration records one in-scope XML namespace declaration. Prefix is
+// empty for the default namespace.
+type NamespaceDeclaration struct {
+	Prefix string `json:"prefix"`
+	URI    string `json:"uri"`
+}
+
 // RecordMetadata contains boundary and integrity metadata for a single record
 type RecordMetadata struct {
-	RecordNum   int    `json:"record_num"`
-	StartOffset int64  `json:"start_offset"`
-	EndOffset   int64  `json:"end_offset"`
-	SizeBytes   int64  `json:"size_bytes"`
-	SHA256      string `json:"sha256"`
-	ElementName string `json:"element_name"`
-	Depth       int    `json:"depth"`
+	RecordNum           int    `json:"record_num"`
+	StartOffset         int64  `json:"start_offset"`
+	EndOffset           int64  `json:"end_offset"`
+	SizeBytes           int64  `json:"size_bytes"`
+	SHA256              string `json:"sha256"`
+	ElementName         string `json:"element_name"`
+	Depth               int    `json:"depth"`
+	NamespaceContextRef int    `json:"namespace_context_ref"`
 }
 
 // SummaryStats contains aggregate statistics across all records

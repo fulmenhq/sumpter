@@ -76,6 +76,7 @@ func (s *RecordIndexStream) Header() (*RecordIndex, error) {
 	// of the header snapshot.
 	snapshot := s.header
 	snapshot.Records = nil
+	snapshot.NamespaceContexts = cloneNamespaceContexts(s.header.NamespaceContexts)
 	return &snapshot, nil
 }
 
@@ -122,6 +123,20 @@ func (s *RecordIndexStream) NextRecord() (*RecordMetadata, error) {
 	}
 
 	return &rec, nil
+}
+
+func cloneNamespaceContexts(contexts []NamespaceContext) []NamespaceContext {
+	if len(contexts) == 0 {
+		return nil
+	}
+	out := make([]NamespaceContext, len(contexts))
+	for i := range contexts {
+		out[i] = NamespaceContext{
+			ID:           contexts[i].ID,
+			Declarations: append([]NamespaceDeclaration(nil), contexts[i].Declarations...),
+		}
+	}
+	return out
 }
 
 // Close releases underlying resources.
@@ -251,6 +266,8 @@ func (s *RecordIndexStream) decodeFieldIntoHeader(key string) error {
 		return s.dec.Decode(&s.header.Source)
 	case "selector":
 		return s.dec.Decode(&s.header.Selector)
+	case "namespace_contexts":
+		return s.dec.Decode(&s.header.NamespaceContexts)
 	case "summary":
 		return s.dec.Decode(&s.header.Summary)
 	case "metadata":

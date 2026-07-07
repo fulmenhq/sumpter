@@ -15,10 +15,11 @@ This package implements Phase 2 of the High-Scale XML Processing MVP, enabling:
 
 ### Streaming Design
 
-The builder uses a **two-pass streaming architecture**:
+The builder uses a streaming architecture with bounded default memory:
 
 1. **First Pass**: Compute source file SHA-256 hash
-2. **Second Pass**: Stream through records, emit metadata, compute per-record hashes
+2. **Namespace Pass**: Deduplicate namespace contexts in scope at record boundaries
+3. **Record Pass**: Stream through records, emit metadata, compute per-record hashes
 
 Default memory usage remains bounded because:
 
@@ -34,16 +35,17 @@ values. Leave them disabled for the bounded default path.
 
 #### RecordIndex
 
-Complete index structure conforming to `record-index/v0.1.1` schema:
+Complete index structure conforming to `record-index/v0.1.2` schema:
 
 ```go
 type RecordIndex struct {
-    Version  string           // Schema version
-    Source   SourceInfo       // Source file metadata + integrity
-    Selector SelectorInfo     // Record boundary selector
-    Records  []RecordMetadata // Record boundary + integrity data
-    Summary  SummaryStats     // Aggregate statistics
-    Metadata IndexMetadata    // Build process metadata
+    Version           string             // Schema version
+    Source            SourceInfo         // Source file metadata + integrity
+    Selector          SelectorInfo       // Record boundary selector
+    NamespaceContexts []NamespaceContext // Deduplicated xmlns context table
+    Records           []RecordMetadata   // Record boundary + integrity data
+    Summary           SummaryStats       // Aggregate statistics
+    Metadata          IndexMetadata      // Build process metadata
 }
 ```
 

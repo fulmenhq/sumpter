@@ -35,19 +35,23 @@ func NormalizeRecordIndex(idx *RecordIndex) {
 	if strings.TrimSpace(idx.Source.OffsetKind) == "" {
 		idx.Source.OffsetKind = OffsetKindSourceBytes
 	}
+	if idx.Version == SchemaVersion && len(idx.NamespaceContexts) == 0 {
+		idx.NamespaceContexts = []NamespaceContext{{ID: 0, Declarations: []NamespaceDeclaration{}}}
+	}
 }
 
 // ValidateRecordIndexVersion rejects unsupported JSON record-index versions.
 func ValidateRecordIndexVersion(version string) error {
 	switch version {
-	case SchemaVersion, LegacySchemaVersion:
+	case SchemaVersion, LegacySchemaVersion, LegacySchemaVersionV010:
 		return nil
 	default:
 		return fmt.Errorf(
-			"unsupported index version: %s (expected %s or %s)",
+			"unsupported index version: %s (expected %s, %s, or %s)",
 			version,
 			SchemaVersion,
 			LegacySchemaVersion,
+			LegacySchemaVersionV010,
 		)
 	}
 }

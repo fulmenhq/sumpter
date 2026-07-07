@@ -19,14 +19,17 @@ import (
 )
 
 // BinaryRecordWidth is the fixed width of each record in the binary format.
-// Layout (64 bytes total):
+// Layout (68 bytes total):
 //   - start_offset: int64 (8 bytes)
 //   - end_offset: int64 (8 bytes)
 //   - size_bytes: int64 (8 bytes)
 //   - depth: int32 (4 bytes)
 //   - record_num: int32 (4 bytes)
 //   - sha256: [32]byte (32 bytes, raw binary)
-const BinaryRecordWidth = 64
+//   - namespace_context_ref: int32 (4 bytes)
+const BinaryRecordWidth = 68
+
+const legacyBinaryRecordWidth = 64
 
 const (
 	maxInt64AsUint64 = uint64(1<<63 - 1)
@@ -34,19 +37,20 @@ const (
 )
 
 // SzstStoreVersion is the version identifier for the seekable-zstd store format.
-// This is distinct from the JSON schema version (record-index/v0.1.1) to allow
+// This is distinct from the JSON schema version (record-index/v0.1.2) to allow
 // independent evolution of the binary store format.
-const SzstStoreVersion = "record-index-szst/v0.1.0"
+const SzstStoreVersion = "record-index-szst/v0.1.1"
 
 // SzstIndexHeader is the header structure for seekable-zstd index stores.
 // This is written to *.recordindex.header.json alongside the binary records.
 type SzstIndexHeader struct {
-	Version  string              `json:"version"`
-	Source   index.SourceInfo    `json:"source"`
-	Selector index.SelectorInfo  `json:"selector"`
-	Summary  index.SummaryStats  `json:"summary"`
-	Metadata index.IndexMetadata `json:"metadata"`
-	Records  SzstRecordsMetadata `json:"records"`
+	Version           string                   `json:"version"`
+	Source            index.SourceInfo         `json:"source"`
+	Selector          index.SelectorInfo       `json:"selector"`
+	NamespaceContexts []index.NamespaceContext `json:"namespace_contexts,omitempty"`
+	Summary           index.SummaryStats       `json:"summary"`
+	Metadata          index.IndexMetadata      `json:"metadata"`
+	Records           SzstRecordsMetadata      `json:"records"`
 }
 
 // SzstRecordsMetadata describes the binary records file format.
@@ -179,11 +183,12 @@ func (w *SeekableIndexWriter) Prepare(idx *index.RecordIndex) error {
 	index.NormalizeRecordIndex(&normalized)
 
 	header := SzstIndexHeader{
-		Version:  SzstStoreVersion,
-		Source:   normalized.Source,
-		Selector: normalized.Selector,
-		Summary:  normalized.Summary,
-		Metadata: normalized.Metadata,
+		Version:           SzstStoreVersion,
+		Source:            normalized.Source,
+		Selector:          normalized.Selector,
+		NamespaceContexts: normalized.NamespaceContexts,
+		Summary:           normalized.Summary,
+		Metadata:          normalized.Metadata,
 		Records: SzstRecordsMetadata{
 			RecordCount:      w.recordCount,
 			RecordWidthBytes: BinaryRecordWidth,
@@ -446,6 +451,10 @@ func EncodeBinaryRecord(buf []byte, rec *index.RecordMetadata) error {
 	if err != nil {
 		return err
 	}
+	namespaceContextRef, err := checkedUint32FromInt("namespace_context_ref", rec.NamespaceContextRef)
+	if err != nil {
+		return err
+	}
 
 	// Encode fields in little-endian order
 	binary.LittleEndian.PutUint64(buf[0:8], startOffset)
@@ -460,6 +469,7 @@ func EncodeBinaryRecord(buf []byte, rec *index.RecordMetadata) error {
 		return fmt.Errorf("invalid SHA256 for record %d: %w", rec.RecordNum, err)
 	}
 	copy(buf[32:64], sha256Bytes[:])
+	binary.LittleEndian.PutUint32(buf[64:68], namespaceContextRef)
 
 	return nil
 }
@@ -467,8 +477,8 @@ func EncodeBinaryRecord(buf []byte, rec *index.RecordMetadata) error {
 // DecodeBinaryRecord decodes a fixed-width binary buffer to a record.
 // The buffer must be at least BinaryRecordWidth bytes.
 func DecodeBinaryRecord(buf []byte) (*index.RecordMetadata, error) {
-	if len(buf) < BinaryRecordWidth {
-		return nil, fmt.Errorf("buffer too small: need %d, got %d", BinaryRecordWidth, len(buf))
+	if len(buf) < legacyBinaryRecordWidth {
+		return nil, fmt.Errorf("buffer too small: need at least %d, got %d", legacyBinaryRecordWidth, len(buf))
 	}
 
 	startOffset, err := checkedInt64FromUint64("start_offset", binary.LittleEndian.Uint64(buf[0:8]))
@@ -499,6 +509,13 @@ func DecodeBinaryRecord(buf []byte) (*index.RecordMetadata, error) {
 		Depth:       depth,
 		RecordNum:   recordNum,
 		SHA256:      bytesToHex(buf[32:64]),
+	}
+	if len(buf) >= BinaryRecordWidth {
+		namespaceContextRef, err := checkedIntFromUint32("namespace_context_ref", binary.LittleEndian.Uint32(buf[64:68]))
+		if err != nil {
+			return nil, err
+		}
+		rec.NamespaceContextRef = namespaceContextRef
 	}
 
 	return rec, nil

@@ -8,6 +8,7 @@ import (
 
 	"github.com/antchfx/xmlquery"
 	"github.com/fulmenhq/sumpter/internal/extract"
+	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	"go.uber.org/zap"
@@ -20,6 +21,7 @@ type SeekableExtractor struct {
 	sigCfg         *extract.FileSignature
 	externalFields map[string]interface{}
 	provenance     provenance.RuntimeOptions
+	namespaces     map[int][]index.NamespaceDeclaration
 	logger         *logging.ComponentLogger
 }
 
@@ -40,6 +42,12 @@ func NewSeekableExtractor(filePath string, extCfg *extract.ExtractRecordMatch, s
 	}
 }
 
+// SetNamespaceContexts installs the index-level namespace context table used to
+// reconstruct standalone record fragments before xmlquery parsing.
+func (se *SeekableExtractor) SetNamespaceContexts(contexts []index.NamespaceContext) {
+	se.namespaces = index.NamespaceContextByID(contexts)
+}
+
 // ExtractRecord extracts a single record from a specific byte range
 func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 	result := WorkResult{
@@ -57,6 +65,13 @@ func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 	if err != nil {
 		result.Error = fmt.Errorf("failed to read byte range for record %d: %w", item.RecordNum, err)
 		return result
+	}
+	if len(se.namespaces) > 0 {
+		xmlData, err = injectNamespaceContext(xmlData, se.namespaces[item.NamespaceContextRef])
+		if err != nil {
+			result.Error = fmt.Errorf("failed to apply namespace context for record %d: %w", item.RecordNum, err)
+			return result
+		}
 	}
 
 	// Parse XML into mini-DOM
