@@ -111,10 +111,11 @@ func openSeekableZstdStore(headerPath string) (IndexStore, error) {
 // with the existing extraction pipeline.
 func (s *szstStore) Header() (*index.RecordIndex, error) {
 	header := &index.RecordIndex{
-		Version:  s.szstHeader.Version,
-		Source:   s.szstHeader.Source,
-		Selector: s.szstHeader.Selector,
-		Summary:  s.szstHeader.Summary,
+		Version:           s.szstHeader.Version,
+		Source:            s.szstHeader.Source,
+		Selector:          s.szstHeader.Selector,
+		NamespaceContexts: s.szstHeader.NamespaceContexts,
+		Summary:           s.szstHeader.Summary,
 		// Records slice is intentionally empty - use Records() iterator instead
 	}
 	index.NormalizeRecordIndex(header)
@@ -204,13 +205,14 @@ func (it *szstRecordIterator) Next() (*index.RecordMetadata, error) {
 			it.recordWidth, it.shaEncoding, minSize)
 	}
 
-	// Layout (64 bytes for raw32):
+	// Layout (68 bytes for raw32 in v0.1.1; 64-byte legacy rows omit namespace_context_ref):
 	//   start_offset: int64  (bytes 0-8)
 	//   end_offset:   int64  (bytes 8-16)
 	//   size_bytes:   int64  (bytes 16-24)
 	//   depth:        int32  (bytes 24-28)
 	//   record_num:   int32  (bytes 28-32)
 	//   sha256:       [32]b  (bytes 32-64) for raw32, or [64]b for hex
+	//   namespace_context_ref: int32 (bytes 64-68, when present)
 	rec := &index.RecordMetadata{
 		StartOffset: int64(byteOrder.Uint64(buf[0:8])),
 		EndOffset:   int64(byteOrder.Uint64(buf[8:16])),
@@ -230,6 +232,9 @@ func (it *szstRecordIterator) Next() (*index.RecordMetadata, error) {
 	default:
 		// Default to raw32 for backward compatibility
 		rec.SHA256 = fmt.Sprintf("%x", buf[32:64])
+	}
+	if it.recordWidth >= BinaryRecordWidth {
+		rec.NamespaceContextRef = int(byteOrder.Uint32(buf[64:68]))
 	}
 
 	it.current++

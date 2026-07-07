@@ -218,6 +218,13 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 	return cfg.prepareErr
 }
 
+// PrepareRecordMatch compiles XPath expressions and validates namespace
+// bindings for a record-match extraction config. It is safe to call on cloned
+// configs that cleared compiled XPath state for concurrent use.
+func PrepareRecordMatch(cfg *ExtractRecordMatch) error {
+	return prepareExtractConfig(cfg)
+}
+
 // SetUniformSchema enables recipe-level uniform record shape on a prepared
 // extract config and rebuilds output validation to admit explicit null fields.
 func SetUniformSchema(cfg *ExtractRecordMatch, enabled bool) error {

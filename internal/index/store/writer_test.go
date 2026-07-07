@@ -11,12 +11,13 @@ import (
 
 func TestEncodeBinaryRecord(t *testing.T) {
 	rec := &index.RecordMetadata{
-		RecordNum:   42,
-		StartOffset: 1000,
-		EndOffset:   2000,
-		SizeBytes:   1000,
-		Depth:       3,
-		SHA256:      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", // SHA256 of empty string
+		RecordNum:           42,
+		StartOffset:         1000,
+		EndOffset:           2000,
+		SizeBytes:           1000,
+		Depth:               3,
+		NamespaceContextRef: 7,
+		SHA256:              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", // SHA256 of empty string
 	}
 
 	buf := make([]byte, BinaryRecordWidth)
@@ -48,6 +49,9 @@ func TestEncodeBinaryRecord(t *testing.T) {
 	}
 	if decoded.SHA256 != rec.SHA256 {
 		t.Errorf("SHA256 mismatch: got %s, want %s", decoded.SHA256, rec.SHA256)
+	}
+	if decoded.NamespaceContextRef != rec.NamespaceContextRef {
+		t.Errorf("NamespaceContextRef mismatch: got %d, want %d", decoded.NamespaceContextRef, rec.NamespaceContextRef)
 	}
 }
 
@@ -93,10 +97,33 @@ func TestEncodeBinaryRecord_BufferTooSmall(t *testing.T) {
 }
 
 func TestDecodeBinaryRecord_BufferTooSmall(t *testing.T) {
-	buf := make([]byte, BinaryRecordWidth-1) // Too small
+	buf := make([]byte, legacyBinaryRecordWidth-1) // Too small
 	_, err := DecodeBinaryRecord(buf)
 	if err == nil {
 		t.Fatal("Expected error for small buffer, got nil")
+	}
+}
+
+func TestDecodeBinaryRecord_LegacyWidth(t *testing.T) {
+	rec := &index.RecordMetadata{
+		RecordNum:   42,
+		StartOffset: 1000,
+		EndOffset:   2000,
+		SizeBytes:   1000,
+		Depth:       3,
+		SHA256:      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+	}
+
+	buf := make([]byte, BinaryRecordWidth)
+	if err := EncodeBinaryRecord(buf, rec); err != nil {
+		t.Fatalf("EncodeBinaryRecord failed: %v", err)
+	}
+	decoded, err := DecodeBinaryRecord(buf[:legacyBinaryRecordWidth])
+	if err != nil {
+		t.Fatalf("DecodeBinaryRecord legacy width failed: %v", err)
+	}
+	if decoded.NamespaceContextRef != 0 {
+		t.Errorf("legacy rows should default NamespaceContextRef to 0, got %d", decoded.NamespaceContextRef)
 	}
 }
 
@@ -251,9 +278,10 @@ func TestDeriveSeekablePaths(t *testing.T) {
 }
 
 func TestBinaryRecordWidth(t *testing.T) {
-	// Verify the constant matches our expected layout
-	// 8 (start) + 8 (end) + 8 (size) + 4 (depth) + 4 (recordnum) + 32 (sha256) = 64
-	expected := 8 + 8 + 8 + 4 + 4 + 32
+	// Verify the constant matches our expected layout:
+	// 8 (start) + 8 (end) + 8 (size) + 4 (depth) + 4 (recordnum)
+	// + 32 (sha256) + 4 (namespace_context_ref) = 68.
+	expected := 8 + 8 + 8 + 4 + 4 + 32 + 4
 	if BinaryRecordWidth != expected {
 		t.Errorf("BinaryRecordWidth mismatch: got %d, want %d", BinaryRecordWidth, expected)
 	}

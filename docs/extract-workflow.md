@@ -867,6 +867,14 @@ so they cannot silently over-match. Multi-selector
 streaming recipes may return sparse per-selector counts, so per-selector floor
 enforcement can be relaxed for selectors the streaming scanner did not count.
 
+For namespace-bound extraction, record-indexed mode requires
+`record-index/v0.1.2` or newer. That format stores a compact
+`namespace_contexts` table plus each record's `namespace_context_ref`, allowing
+Sumpter to reconstruct ancestor `xmlns` declarations before parsing a sliced
+record. Namespace-bound recipes fail with rebuild guidance when pointed at an
+older index that lacks namespace context. Namespace-free recipes keep legacy
+index compatibility.
+
 The CLI applies this enforcement at the command layer. Library consumers that
 call `extract.ProcessFileWithProvenance` directly should iterate
 `cfg.MatchSelectors` against `result.PerSelectorCounts` to get the same

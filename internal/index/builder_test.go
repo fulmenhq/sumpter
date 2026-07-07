@@ -509,6 +509,15 @@ func TestBuilder_WriteToFile_EmitsCurrentVersion(t *testing.T) {
 	if loaded.Source.OffsetKind != OffsetKindSourceBytes {
 		t.Fatalf("Expected written offset kind %q, got %q", OffsetKindSourceBytes, loaded.Source.OffsetKind)
 	}
+	if len(loaded.NamespaceContexts) != 1 {
+		t.Fatalf("Expected one default namespace context, got %d", len(loaded.NamespaceContexts))
+	}
+	if loaded.NamespaceContexts[0].ID != 0 {
+		t.Fatalf("Expected default namespace context id 0, got %d", loaded.NamespaceContexts[0].ID)
+	}
+	if len(loaded.NamespaceContexts[0].Declarations) != 0 {
+		t.Fatalf("Expected empty default namespace context declarations, got %v", loaded.NamespaceContexts[0].Declarations)
+	}
 }
 
 func TestDetectCompression(t *testing.T) {

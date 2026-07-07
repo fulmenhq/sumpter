@@ -6,6 +6,7 @@ topics:
       - sumpter_overview.md
       - output_rendering.md
       - dsl-reference.md
+      - technical/**/*.md
       - user-guide/**/*.md
     exclude:
       - .plans/**

@@ -11,10 +11,11 @@ import (
 
 // WorkItem represents a single record extraction task
 type WorkItem struct {
-	RecordNum   int
-	StartOffset int64
-	EndOffset   int64
-	SizeBytes   int64
+	RecordNum           int
+	StartOffset         int64
+	EndOffset           int64
+	SizeBytes           int64
+	NamespaceContextRef int
 }
 
 // WorkResult represents the result of extracting a single record

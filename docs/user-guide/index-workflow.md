@@ -285,11 +285,15 @@ Sumpter supports two index formats:
 | JSON          | `*.recordindex.json`        | Default, human-readable, debuggable     |
 | Seekable-Zstd | `*.recordindex.header.json` | Large indexes (1M+ records), compressed |
 
+The durable format contract is documented in
+[Record Index Format](../technical/record-index-format.md). Current JSON
+indexes emit `record-index/v0.1.2`.
+
 ### JSON Format Structure
 
 ```json
 {
-  "version": "record-index/v0.1.1",
+  "version": "record-index/v0.1.2",
   "source": {
     "path": "/path/to/source.xml",
     "size_bytes": 3235840,
@@ -303,6 +307,12 @@ Sumpter supports two index formats:
     "xpath": "//SaleEvent",
     "element_name": "SaleEvent"
   },
+  "namespace_contexts": [
+    {
+      "id": 0,
+      "declarations": []
+    }
+  ],
   "records": [
     {
       "record_num": 1,
@@ -311,7 +321,8 @@ Sumpter supports two index formats:
       "size_bytes": 5644,
       "sha256": "b3d9c1a8...",
       "element_name": "SaleEvent",
-      "depth": 2
+      "depth": 2,
+      "namespace_context_ref": 0
     }
   ],
   "summary": {
@@ -345,6 +356,8 @@ Sumpter supports two index formats:
 
 - Byte offsets enable seekable access
 - SHA-256 allows per-record integrity checking
+- `namespace_context_ref` points to the context table used to reconstruct
+  ancestor `xmlns` declarations for namespace-bound indexed extraction
 - Sorted by `record_num` (1-indexed)
 
 **summary**: Statistical overview
@@ -383,7 +396,7 @@ source.recordindex.records.szst  # Binary records (compressed)
 
 **Records file** contains:
 
-- Fixed-width binary records (64 bytes each)
+- Fixed-width binary records (68 bytes each in `record-index-szst/v0.1.1`)
 - Seekable-zstd compression with frame-level random access
 
 ### Building Seekable-Zstd Indexes

@@ -255,10 +255,11 @@ func (ws *WorkScheduler) scheduleWorkStreaming() error {
 
 			// Create work item
 			workItem := WorkItem{
-				RecordNum:   recordNum,
-				StartOffset: record.StartOffset,
-				EndOffset:   record.EndOffset,
-				SizeBytes:   record.SizeBytes,
+				RecordNum:           recordNum,
+				StartOffset:         record.StartOffset,
+				EndOffset:           record.EndOffset,
+				SizeBytes:           record.SizeBytes,
+				NamespaceContextRef: record.NamespaceContextRef,
 			}
 
 			// Send to work channel (blocks if workers are busy)
@@ -337,10 +338,11 @@ func (ws *WorkScheduler) scheduleWorkLegacy() error {
 
 			// Create work item
 			workItem := WorkItem{
-				RecordNum:   record.RecordNum,
-				StartOffset: record.StartOffset,
-				EndOffset:   record.EndOffset,
-				SizeBytes:   record.SizeBytes,
+				RecordNum:           record.RecordNum,
+				StartOffset:         record.StartOffset,
+				EndOffset:           record.EndOffset,
+				SizeBytes:           record.SizeBytes,
+				NamespaceContextRef: record.NamespaceContextRef,
 			}
 
 			// Send to work channel (blocks if workers are busy)
