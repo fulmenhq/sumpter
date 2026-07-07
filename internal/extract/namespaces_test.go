@@ -194,6 +194,31 @@ func TestNamespaceUnboundPrefixFailsClosed(t *testing.T) {
 	}
 }
 
+// TestNamespaceUnboundPrefixFailsAtLoad proves the fail-closed check fires at the
+// single shared LoadExtractConfig entry point — the same load path every parse
+// mode (whole-doc / streaming / indexed) goes through — so bound semantics can
+// never be mode-dependent: an unbound prefix is rejected before any mode is
+// selected.
+func TestNamespaceUnboundPrefixFailsAtLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "extract.yaml")
+	cfg := "record_type: r\n" +
+		"namespaces:\n  n: \"urn:example:sumpter-records\"\n" +
+		"match_selectors:\n  - xpath: \"//bad:Record\"\n" +
+		"field_mappings:\n  - output_field: id\n    xpath: \"@id\"\n    type: string\n" +
+		"output_schema:\n  type: object\n  properties:\n    id:\n      type: string\n  required: [id]\n"
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := LoadExtractConfig(path)
+	if err == nil {
+		t.Fatal("expected fail-closed at load for a prefix unbound under the namespaces map")
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("load error should name the unbound prefix, got: %v", err)
+	}
+}
+
 // TestNamespaceMapAbsentByteCompat confirms the no-map path is untouched: lenient
 // matching still selects records without a namespaces map.
 func TestNamespaceMapAbsentByteCompat(t *testing.T) {

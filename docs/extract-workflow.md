@@ -711,6 +711,39 @@ Scope of binding in this release:
   prefixed test in an applicability predicate keeps literal-prefix semantics in
   this release.
 
+#### Portability across parse paths (whole-document / streaming / indexed)
+
+Sumpter selects a parse path by input size and flags: whole-document (below the
+~100 MB threshold), streaming (at or above it), and indexed (`--record-index`).
+Namespace handling is **not identical** across these paths, so an unbound
+prefixed XPath can behave differently depending on the path — with no error.
+
+A **literal-prefix** XPath (`//v:Record`, `ext:Foo`) that relies on the
+document's textual prefix and does **not** declare a `namespaces:` map is
+mode-dependent:
+
+- **Streaming** re-encodes buffered tokens, rewriting `<v:Record>` to
+  `<Record xmlns="URI">`. A literal-prefix test can silently match **zero**
+  records once an input crosses the streaming threshold, and a bare `//Record`
+  can conversely *start* matching — so results can change with input size, with
+  no diagnostic.
+- **Indexed** parses each record fragment without the ancestor `xmlns`
+  declarations that were in scope on the full document, so a literal-prefix test
+  matches by string and `namespace-uri()` is empty.
+
+Two mode-stable forms:
+
+- **Bind by URI** — declare a `namespaces:` map and use bound prefixes
+  (`//n:Record`). This is the recommended, serialization-stable form. Binding is
+  fully resolved in **whole-document** mode; **streaming** preserves namespace
+  URIs, so bound field XPaths resolve there too. Full URI resolution of bound
+  XPaths in **indexed** mode is being completed — until it lands, prefer
+  whole-document/streaming for a bound recipe, or use `local-name()`.
+- **`local-name()` predicates** (`//*[local-name()='Record']`) match by local
+  name in every mode and are the mode-proof option when you cannot bind (for
+  example on an older release). They cannot disambiguate elements that share a
+  local name in different URIs — bind by URI when you need that.
+
 ### Conditional Expressions
 
 Expression mappings can use the DSL ternary conditional:
