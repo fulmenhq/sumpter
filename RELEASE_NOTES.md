@@ -6,6 +6,83 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.2.6 (2026-07-07)
+
+**Namespace-correct XML extraction across whole-document, streaming, and indexed modes.**
+
+**Released:** 2026-07-07 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
+
+v0.2.6 adds opt-in namespace-aware XPath binding for recipes that need to be portable across XML documents with different literal prefixes. Recipe authors can declare a `namespaces:` map on extract record-match configs and file signatures, bind XPath prefixes to namespace URIs, and get the same extracted records from whole-document, streaming, and indexed execution paths.
+
+The release is additive. Existing recipes without a `namespaces:` map keep their current behavior, and an absent or empty map preserves the byte-compatible floor. When a map is present, Sumpter fails closed on undeclared prefixes and treats namespace URIs as inert match keys, never as resources to fetch.
+
+### Features
+
+#### Namespace binding — `namespaces:`
+
+XPath-bearing config assets can now declare aliases once and use them in selectors:
+
+```yaml
+namespaces:
+  rec: "urn:example:sumpter-records"
+  ext: "urn:example:sumpter-records-ext"
+
+match_selectors:
+  - selector: "//rec:Record"
+
+field_mappings:
+  - output_field: "record_id"
+    xpath: "@ext:id"
+    type: "string"
+```
+
+The map is available on extract record-match configs and file signatures. The recipe manifest schema is unchanged.
+
+- **URI binding, not prefix matching.** A recipe prefix such as `rec` is bound to a namespace URI. Input documents may use a different literal prefix, or a default namespace, and still match by URI.
+- **Fail-closed explicit maps.** If a selector uses a prefix that is not declared in the present map, config loading fails before extraction.
+- **Byte-compatible default.** Recipes with no map, or an empty map, use the legacy XPath behavior.
+- **No namespace URI dereference.** Namespace URIs are compared as strings only; Sumpter does not fetch or resolve them.
+
+#### Namespace-mode parity
+
+Namespace-bound extraction now converges across whole-document, streaming, and indexed execution for field selection inside records. The shared synthetic conformance corpus covers prefixed, default-namespace, and dual-namespace documents plus adversarial namespace URI and prefix-shadowing cases.
+
+Streaming and indexed record boundaries remain local-name-only in v0.2.6. That means URI binding applies to field selection after a record has been identified, while boundary-level URI disambiguation remains future scope.
+
+#### Record-index `v0.1.2`
+
+Record indexes now carry namespace context so indexed extraction can re-evaluate namespace-bound fields consistently.
+
+- Namespace-free recipes continue to read legacy indexes unchanged.
+- Namespace-bound recipes against pre-`v0.1.2` indexes fail loud with rebuild guidance instead of silently matching empty namespace context.
+- Indexed slice re-injection escapes captured namespace values structurally, with regression coverage for adversarial URI values.
+
+### Compatibility & notes
+
+- **All-additive.** `namespaces:` is opt-in, and the map-absent path stays compatible with earlier releases.
+- **Legacy prefixed XPath without a map.** Existing recipes keep the prior mode-dependent behavior. To get URI binding and fail-closed prefix validation, add an explicit `namespaces:` map.
+- **Applicability predicates.** Applicability predicates are not namespace-bound by the new map in this release.
+- **Record boundaries.** Streaming and indexed record-boundary selectors remain local-name-only in v0.2.6.
+- **Platforms:** unchanged from 0.2.0-0.2.5 — linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source.
+- **Alpha:** interfaces may still change between minor releases; external pull requests are welcome.
+
+### Deferred / follow-ups
+
+- **Boundary-level URI binding** for streaming/indexed record detection remains future scope.
+- **Public-domain namespace showcase corpora** are deferred to a later release; v0.2.6 uses synthetic hermetic fixtures for correctness.
+- **Portable data-artifact contract support** remains on its own track.
+- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, DuckDB/Arrow, service health endpoints, and repair modes** remain roadmap items, as in 0.2.5.
+
+### Release notes
+
+- **Version bump.** `VERSION` is `0.2.6`. Binaries from this tag emit `v0.2.6` via `sumpter version`.
+- **Tag/version guard.** `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.6` is the intended tag/version sanity check.
+- **Release ceremony.** Use the standard draft-release and signing flow in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md): CI builds the tag, then the operator signing ceremony uploads checksums, signatures, public keys, and release notes before publishing.
+
+See [`docs/releases/v0.2.6.md`](docs/releases/v0.2.6.md) for the full release narrative.
+
+---
+
 ## v0.2.5 (2026-07-06)
 
 **Non-emitted recipe parameters for derive-only extraction inputs.**
@@ -114,39 +191,5 @@ Input-parallelism and `--stats` are built to be used together: rather than setti
 - The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
 
 See [`docs/releases/v0.2.4.md`](docs/releases/v0.2.4.md) for the full release narrative.
-
----
-
-## v0.2.3 (2026-06-25)
-
-**Aggregate output: stream one NDJSON file per recipe across many inputs — local and cloud — with deterministic ordering, rolling shards, and per-shard provenance; plus a schema-backed record envelope and a whole-tree format gate.**
-
-v0.2.3 is a feature minor driven by dogfooding of large many-small-input extraction runs. The headline is **aggregate output**: instead of one output file per input, a run can stream **one** NDJSON file per recipe per invocation, turning per-input file fan-out into a single streamed write — with deterministic record ordering, rolling shards, and per-shard provenance digests, for both local and `s3://` destinations. Around it, the emitted **record envelope** is now schema-backed, `extract-multi` gains the full `--file-list` / `--files` / `--input-path` input set with deterministic aggregate ordering, and a one-time whole-tree format normalization plus a full-tree format gate stop documentation/config drift from silently re-accumulating. The v0.2.0–0.2.2 surface (cloud I/O, reference-table lookup, multi-recipe single-pass extract) is unchanged.
-
-### What's new (summary)
-
-- **Aggregate output mode (`aggregate-output`)** - `--output-mode aggregate` streams all of a recipe's records into a **single** NDJSON file per invocation instead of one file per input. Records emit in **input order × intra-input `record_num`** (deterministic for a fixed input subset); `--aggregate-max-records` / `--aggregate-max-bytes` roll the stream into sequential shards proactively. The provenance manifest is authoritative (not filename parsing): a gap-free `inputs[]` inventory plus a per-shard `aggregate_outputs[]` entry (shard `sha256`, `record_count`, contributing input-ordinal span). `--continue-on-error` and recipe `min_occurrences` floors work for **both local and cloud** via a per-input spool barrier — an input commits to the shard only on success, so a failed/floor-missing input never contributes partial records. Cloud aggregate publishes each shard via the existing single-PUT boundary, **requires `--aggregate-max-bytes` ≤ 5 GiB**, and on partial publish marks the manifest `incomplete:true` enumerating the committed shards. Applies per-recipe under `extract-multi`. See [`docs/extract-workflow.md`](docs/extract-workflow.md) "Aggregate output mode."
-- **Batch input selection on `extract-multi` (`--file-list` / `--files` / `--input-path`)** - `extract-multi` accepts the same mutually-exclusive input set as single-recipe `extract`. `--file-list` is the batch input for large or precisely-scoped sets (no directory walk, no argv ceiling, listed order preserved). For aggregate runs the order is load-bearing — **aggregate ordinals are assigned in `--file-list` / `--files` order** — so output ordering is operator-controlled and reproducible.
-- **Schema-backed record envelope (`record-envelope`)** - a Draft 2020-12 JSON Schema validates one emitted NDJSON row (closed top-level envelope over an open, additively-extensible `_runtime`/payload), and each row self-identifies via the additive `_runtime.envelope_schema = "extract-record-envelope/v0"`. A build-time meta-validation target (wired into `make check-all`) and a live-row round-trip test keep the schema honest. Contract-independent: schematizes existing output, no behavior change.
-
-### Behavior changes (please review before upgrading)
-
-- **All-additive.** `--output-mode aggregate` and the aggregate cap flags are opt-in; the default remains one output file per input, byte-for-byte as in 0.2.2. The record-envelope schema describes existing output (the new `_runtime.envelope_schema` field is additive). The format sweep touches only whitespace/EOF, not content.
-- **Aggregate is NDJSON-only**; JSON-array and Parquet outputs continue to write per-input files. Cloud aggregate requires `--aggregate-max-bytes` ≤ 5 GiB.
-- **Provenance sidecar (`sumpter.provenance/v1`)** gains an additive `aggregate_outputs[]` block and a gap-free `inputs[]` inventory on aggregate runs; existing manifests remain valid.
-
-### Deferred / follow-ups
-
-- **An aggregate-output performance follow-on**, the **`json` / `ndjson` naming** clarification, and a **manifest-completeness signal** are sequenced for later (v0.2.4 / a separate follow-up).
-- **Optional runtime envelope validation** (a `--validate-output` mode and the full validation ladder) is deferred to the v0.3.0 data-artifact-contract work.
-- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, DuckDB/Arrow, service health endpoints, and repair modes** remain roadmap items.
-
-### Release notes
-
-- `VERSION` is `0.2.3`. Binaries from this tag emit `v0.2.3` via `sumpter version`.
-- `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.3` is the intended tag/version sanity check.
-- The public-surface/confidentiality check remains an out-of-band pre-tag gate before tagging and publication.
-
-See [`docs/releases/v0.2.3.md`](docs/releases/v0.2.3.md) for the full release narrative.
 
 ---
