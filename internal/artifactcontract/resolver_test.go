@@ -205,3 +205,76 @@ func TestValidateDescriptorRejectsMissingCapability(t *testing.T) {
 		t.Fatal("descriptor with missing data-artifact capability validated")
 	}
 }
+
+func TestValidateFieldCatalogBytes(t *testing.T) {
+	base := filepath.Join("..", "..", "tests", "fixtures", "data-artifact-contract", "v0")
+	resolved, err := ResolveBaseline(base)
+	if err != nil {
+		t.Fatalf("ResolveBaseline returned error: %v", err)
+	}
+
+	valid := []byte(`{
+	  "id": "fields/records.fields.json",
+	  "grain": "records",
+	  "fields": [
+	    {
+	      "name": "derived_total",
+	      "type": "integer",
+	      "sensitivity": "unknown",
+	      "export_action": "block_export"
+	    }
+	  ],
+	  "withheld_field_count": 1
+	}`)
+	result, err := ValidateFieldCatalogBytes(resolved, valid, "fields/records.fields.json")
+	if err != nil {
+		t.Fatalf("ValidateFieldCatalogBytes returned error: %v", err)
+	}
+	if result == nil || !result.Valid {
+		t.Fatalf("field catalog did not validate: %#v", result)
+	}
+}
+
+func TestValidateFieldCatalogBytesAllowsAllWithheldEmptyFields(t *testing.T) {
+	base := filepath.Join("..", "..", "tests", "fixtures", "data-artifact-contract", "v0")
+	resolved, err := ResolveBaseline(base)
+	if err != nil {
+		t.Fatalf("ResolveBaseline returned error: %v", err)
+	}
+
+	valid := []byte(`{
+	  "id": "fields/records.fields.json",
+	  "grain": "records",
+	  "fields": [],
+	  "withheld_field_count": 1
+	}`)
+	result, err := ValidateFieldCatalogBytes(resolved, valid, "fields/records.fields.json")
+	if err != nil {
+		t.Fatalf("ValidateFieldCatalogBytes returned error: %v", err)
+	}
+	if result == nil || !result.Valid {
+		t.Fatalf("fully withheld field catalog did not validate: %#v", result)
+	}
+}
+
+func TestValidateFieldCatalogBytesRejectsEmptyFieldsWithoutWithheldCount(t *testing.T) {
+	base := filepath.Join("..", "..", "tests", "fixtures", "data-artifact-contract", "v0")
+	resolved, err := ResolveBaseline(base)
+	if err != nil {
+		t.Fatalf("ResolveBaseline returned error: %v", err)
+	}
+
+	invalid := []byte(`{
+	  "id": "fields/records.fields.json",
+	  "grain": "records",
+	  "fields": [],
+	  "withheld_field_count": 0
+	}`)
+	result, err := ValidateFieldCatalogBytes(resolved, invalid, "fields/records.fields.json")
+	if err != nil {
+		t.Fatalf("ValidateFieldCatalogBytes returned error: %v", err)
+	}
+	if result == nil || result.Valid {
+		t.Fatalf("empty field catalog with zero withheld count validated: %#v", result)
+	}
+}

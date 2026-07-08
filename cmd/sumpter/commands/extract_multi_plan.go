@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fulmenhq/sumpter/internal/dataartifact"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
@@ -457,8 +458,12 @@ func assembleRecipePlan(recipeID, absWorkspace, outputDir string, opts *ExtractO
 				recipeID, f)
 		}
 	}
+	fieldProvenance := buildFieldProvenance(extCfg.FieldMappings)
 	if opts.Recipe != nil && len(opts.Recipe.FieldProvenance) == 0 {
-		opts.Recipe.FieldProvenance = buildFieldProvenance(extCfg.FieldMappings)
+		opts.Recipe.FieldProvenance = fieldProvenance
+	}
+	if opts.ArtifactDescriptor {
+		opts.dataArtifactFieldCatalog = dataartifact.BuildRecordFieldCatalog(fieldProvenance)
 	}
 
 	runtimeProvenance, err := buildExtractRuntimeProvenance(opts)

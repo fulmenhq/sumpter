@@ -84,6 +84,7 @@ type ExtractOptions struct {
 	NoManifest               bool
 	ArtifactDescriptor       bool
 	ArtifactContractBase     string
+	dataArtifactFieldCatalog dataartifact.FieldCatalog
 	AllowLargeFiles          bool
 	CommandName              string
 	Argv                     []string
@@ -432,8 +433,12 @@ func runExtract(opts *ExtractOptions) error {
 	if err := validateParquetWithholdColumns(opts.ParquetWithholdColumns, extCfg.OutputSchema); err != nil {
 		return err
 	}
+	fieldProvenance := buildFieldProvenance(extCfg.FieldMappings)
 	if opts.Recipe != nil && len(opts.Recipe.FieldProvenance) == 0 {
-		opts.Recipe.FieldProvenance = buildFieldProvenance(extCfg.FieldMappings)
+		opts.Recipe.FieldProvenance = fieldProvenance
+	}
+	if opts.ArtifactDescriptor {
+		opts.dataArtifactFieldCatalog = dataartifact.BuildRecordFieldCatalog(fieldProvenance)
 	}
 
 	runtimeProvenance, err := buildExtractRuntimeProvenance(opts)
@@ -2863,6 +2868,10 @@ func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manif
 		return fmt.Errorf("generated data artifact descriptor failed validation: %s", artifactValidationSummary(result))
 	}
 
+	if err := writeDataArtifactFieldCatalog(opts, resolved); err != nil {
+		return err
+	}
+
 	path := outputRefJoin(opts.OutputPath, dataartifact.DescriptorFileName)
 	tgt, err := openOutputTarget(context.Background(), opts, path)
 	if err != nil {
@@ -2873,6 +2882,44 @@ func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manif
 	}
 	if err := os.WriteFile(tgt.LocalPath, data, 0o600); err != nil {
 		return fmt.Errorf("write data artifact descriptor %s: %w", tgt.LogicalURI, err)
+	}
+	return tgt.Publish(context.Background())
+}
+
+func writeDataArtifactFieldCatalog(opts *ExtractOptions, resolved *artifactcontract.ResolvedContract) error {
+	if opts == nil {
+		return nil
+	}
+	if resolved == nil {
+		return fmt.Errorf("resolved data artifact contract is required")
+	}
+	catalog := opts.dataArtifactFieldCatalog
+	if strings.TrimSpace(catalog.ID) == "" {
+		return fmt.Errorf("data artifact field catalog was not prepared")
+	}
+	data, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal data artifact field catalog: %w", err)
+	}
+	data = append(data, '\n')
+	result, err := artifactcontract.ValidateFieldCatalogBytes(resolved, data, dataartifact.FieldCatalogRef)
+	if err != nil {
+		return err
+	}
+	if !result.Valid {
+		return fmt.Errorf("generated data artifact field catalog failed validation: %s", artifactValidationSummary(result))
+	}
+
+	path := outputRefJoin(opts.OutputPath, dataartifact.FieldCatalogRef)
+	tgt, err := openOutputTarget(context.Background(), opts, path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(tgt.LocalPath), 0o750); err != nil {
+		return fmt.Errorf("create data artifact field catalog directory: %w", err)
+	}
+	if err := os.WriteFile(tgt.LocalPath, data, 0o600); err != nil {
+		return fmt.Errorf("write data artifact field catalog %s: %w", tgt.LogicalURI, err)
 	}
 	return tgt.Publish(context.Background())
 }

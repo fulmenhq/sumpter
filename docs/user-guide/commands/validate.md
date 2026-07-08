@@ -114,7 +114,7 @@ Output:
 
 ```
 Artifact descriptor: descriptor.json
-Contract: contract: data-artifact/v0 (sha256:ef6de3f16bd988555a4e063d32e4f15478b56bf6f45121e890d89504ee468a01)
+Contract: contract: data-artifact/v0 (sha256:37eca167cfa9a86357c14239eb9c3274c40c5cfee48f48ebb81480d737104b82)
 Status: valid
 ```
 
@@ -136,10 +136,10 @@ For each file, the hash input appends:
 logicalPath \x00 fileBytes \x00
 ```
 
-The resulting digest for the Crucible `v0.1.18` baseline is:
+The resulting digest for the Crucible `v0.1.19` baseline is:
 
 ```text
-sha256:ef6de3f16bd988555a4e063d32e4f15478b56bf6f45121e890d89504ee468a01
+sha256:37eca167cfa9a86357c14239eb9c3274c40c5cfee48f48ebb81480d737104b82
 ```
 
 ## Configuration Files

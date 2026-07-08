@@ -100,7 +100,7 @@
     "grain": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "record_kind", "field_catalog_ref"],
+      "required": ["id", "kind", "record_kind"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "kind": {
@@ -215,7 +215,6 @@
         "grain": { "type": "string", "minLength": 1 },
         "fields": {
           "type": "array",
-          "minItems": 1,
           "items": { "$ref": "#/$defs/field" }
         },
         "withheld_fields": {
@@ -224,7 +223,22 @@
           "uniqueItems": true
         },
         "withheld_field_count": { "type": "integer", "minimum": 0 }
-      }
+      },
+      "allOf": [
+        {
+          "$comment": "Fully withheld catalog: empty fields is valid only with a positive withheld_field_count.",
+          "if": {
+            "required": ["fields"],
+            "properties": { "fields": { "type": "array", "maxItems": 0 } }
+          },
+          "then": {
+            "required": ["withheld_field_count"],
+            "properties": {
+              "withheld_field_count": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      ]
     },
     "field": {
       "type": "object",

@@ -155,6 +155,27 @@ func TestRunExtractWritesArtifactDescriptorWhenRequested(t *testing.T) {
 	if got := grain["field_catalog_ref"]; got != dataartifact.FieldCatalogRef {
 		t.Fatalf("grain field_catalog_ref = %#v, want %q", got, dataartifact.FieldCatalogRef)
 	}
+	catalogPath := filepath.Join(outputDir, filepath.FromSlash(dataartifact.FieldCatalogRef))
+	var catalog map[string]interface{}
+	catalogData, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatalf("read field catalog: %v", err)
+	}
+	if err := json.Unmarshal(catalogData, &catalog); err != nil {
+		t.Fatalf("unmarshal field catalog: %v", err)
+	}
+	if got := catalog["id"]; got != dataartifact.FieldCatalogRef {
+		t.Fatalf("catalog id = %#v, want %q", got, dataartifact.FieldCatalogRef)
+	}
+	if got := catalog["grain"]; got != "records" {
+		t.Fatalf("catalog grain = %#v, want records", got)
+	}
+	if got := catalog["withheld_field_count"]; got != float64(1) {
+		t.Fatalf("catalog withheld_field_count = %#v, want 1", got)
+	}
+	if fields, ok := catalog["fields"].([]interface{}); !ok || len(fields) != 0 {
+		t.Fatalf("catalog fields = %#v, want empty because source-structure key is withheld", catalog["fields"])
+	}
 	reps := descriptor["representations"].([]interface{})
 	rep := reps[0].(map[string]interface{})
 	if got := rep["format"]; got != "ndjson" {
@@ -162,6 +183,54 @@ func TestRunExtractWritesArtifactDescriptorWhenRequested(t *testing.T) {
 	}
 	if got := rep["uri"]; got != "records.jsonl" {
 		t.Fatalf("representation uri = %#v, want records.jsonl", got)
+	}
+}
+
+func TestRunExtractWritesMixedArtifactFieldCatalog(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	writeExtractManifestMixedCatalogFixture(t, dir)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:                filepath.Join(dir, "input.xml"),
+		Format:               "json",
+		OutputPath:           outputDir,
+		OutputPattern:        "records.jsonl",
+		SignatureConfig:      filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:        filepath.Join(dir, "extract.yaml"),
+		RunID:                testMultiRunID,
+		ArtifactDescriptor:   true,
+		ArtifactContractBase: filepath.Join("..", "..", "..", "tests", "fixtures", "data-artifact-contract", "v0"),
+	}
+
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+	catalogPath := filepath.Join(outputDir, filepath.FromSlash(dataartifact.FieldCatalogRef))
+	var catalog map[string]interface{}
+	catalogData, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatalf("read field catalog: %v", err)
+	}
+	if err := json.Unmarshal(catalogData, &catalog); err != nil {
+		t.Fatalf("unmarshal field catalog: %v", err)
+	}
+	fields, ok := catalog["fields"].([]interface{})
+	if !ok || len(fields) != 1 {
+		t.Fatalf("catalog fields = %#v, want one disclosed derived field", catalog["fields"])
+	}
+	field := fields[0].(map[string]interface{})
+	if got := field["name"]; got != "name_copy" {
+		t.Fatalf("catalog field name = %#v, want name_copy", got)
+	}
+	if got := field["sensitivity"]; got != "unknown" {
+		t.Fatalf("catalog field sensitivity = %#v, want unknown", got)
+	}
+	if got := field["export_action"]; got != "block_export" {
+		t.Fatalf("catalog field export_action = %#v, want block_export", got)
 	}
 }
 
@@ -189,6 +258,37 @@ func TestRunExtractDoesNotPublishArtifactDescriptorWhenManifestWriteFails(t *tes
 
 	if err := runExtract(opts); err == nil {
 		t.Fatal("runExtract succeeded; want manifest write failure")
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, dataartifact.DescriptorFileName)); !os.IsNotExist(err) {
+		t.Fatalf("descriptor stat error = %v, want not exist", err)
+	}
+}
+
+func TestRunExtractDoesNotPublishArtifactDescriptorWhenFieldCatalogWriteFails(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	writeExtractManifestMixedCatalogFixture(t, dir)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "fields"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write blocking fields path: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:                filepath.Join(dir, "input.xml"),
+		Format:               "json",
+		OutputPath:           outputDir,
+		OutputPattern:        "records.jsonl",
+		SignatureConfig:      filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:        filepath.Join(dir, "extract.yaml"),
+		RunID:                testMultiRunID,
+		ArtifactDescriptor:   true,
+		ArtifactContractBase: filepath.Join("..", "..", "..", "tests", "fixtures", "data-artifact-contract", "v0"),
+	}
+
+	if err := runExtract(opts); err == nil {
+		t.Fatal("runExtract succeeded; want field catalog write failure")
 	}
 	if _, err := os.Stat(filepath.Join(outputDir, dataartifact.DescriptorFileName)); !os.IsNotExist(err) {
 		t.Fatalf("descriptor stat error = %v, want not exist", err)
@@ -1237,6 +1337,32 @@ output_schema:
     - name
 `)
 	return dir
+}
+
+func writeExtractManifestMixedCatalogFixture(t *testing.T, dir string) {
+	t.Helper()
+	mustWriteFile(t, filepath.Join(dir, "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+    description: Sample name
+  - output_field: name_copy
+    expression: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+    name_copy:
+      type: string
+  required:
+    - name
+    - name_copy
+`)
 }
 
 func initExtractManifestTestLogger(t *testing.T) {

@@ -14,8 +14,9 @@ NDJSON is the default durable record output for recipe examples. Parquet is a se
 
 ## Portable Artifact Descriptor
 
-`--artifact-descriptor` writes an opt-in `artifact-descriptor.json` sidecar beside
-the normal provenance manifest. The sidecar declares conformance to the host-less
+`--artifact-descriptor` writes an opt-in `artifact-descriptor.json` sidecar and
+its referenced `fields/records.fields.json` field-catalog sidecar beside the
+normal provenance manifest. The descriptor declares conformance to the host-less
 `contract: data-artifact/v0` capability and describes the run's record-stream
 grain plus its emitted JSON/NDJSON or Parquet representations. Descriptor output
 requires `--output-path`, a normal manifest, and an explicit local
@@ -32,9 +33,15 @@ sumpter extract files \
   --contract-base ./contracts/data-artifact/v0
 ```
 
-This first descriptor surface covers only the record-stream grain. Field catalog
-sidecars, object-index grains, aggregate grains, value profiles, and protection
-enforcement metadata are separate follow-on surfaces.
+This descriptor surface covers only the record-stream grain. The field catalog
+sidecar is default-deny protection metadata: source-structure-derived field keys
+are withheld by count rather than disclosed. The sidecar is validated against
+the pinned data-artifact field-catalog shape before publish. With the pinned
+Crucible `v0.1.19` baseline, a fully withheld catalog is valid as `fields: []`
+plus a positive `withheld_field_count`, so all-XPath XML extraction recipes can
+emit descriptors without disclosing source-structure field keys. Object-index
+grains, aggregate grains, value profiles, and protection enforcement metadata
+are separate follow-on surfaces.
 
 ## Structured Output Layout
 
