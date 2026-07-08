@@ -20,3 +20,19 @@ func TestGetLoggerNilSafe(t *testing.T) {
 	l.Warn("no-op")
 	l.Error("no-op")
 }
+
+// TestGetSugarNilSafe pins the matching sugared-logger accessor contract for
+// non-CLI entrypoints that log before Initialize has configured global state.
+func TestGetSugarNilSafe(t *testing.T) {
+	saved := sugar
+	t.Cleanup(func() { sugar = saved })
+
+	sugar = nil
+	l := GetSugar()
+	if l == nil {
+		t.Fatal("GetSugar() returned nil with no sugar logger configured; want a no-op logger")
+	}
+	l.Infof("no-op %s", "message")
+	l.Warnf("no-op %s", "message")
+	l.Errorf("no-op %s", "message")
+}

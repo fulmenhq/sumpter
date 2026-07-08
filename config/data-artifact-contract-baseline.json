@@ -1,0 +1,6 @@
+{
+  "capability": "contract: data-artifact/v0",
+  "source": "3leaps/crucible",
+  "released_tag": "v0.1.18",
+  "resolved_bundle_sha256": "sha256:ef6de3f16bd988555a4e063d32e4f15478b56bf6f45121e890d89504ee468a01"
+}

@@ -141,6 +141,7 @@ func isTerminal() bool {
 // extends the same safety to the accessor. A no-op logger drops all output, matching
 // the unconfigured-logger intent.
 var nopLogger = zap.NewNop()
+var nopSugar = nopLogger.Sugar()
 
 // GetLogger returns the global logger instance, or a no-op logger when none has been
 // configured. It never returns nil, so callers can invoke methods on the result
@@ -152,8 +153,12 @@ func GetLogger() *zap.Logger {
 	return globalLogger
 }
 
-// GetSugar returns the global sugar logger instance
+// GetSugar returns the global sugar logger instance, or a no-op sugar logger
+// when none has been configured.
 func GetSugar() *zap.SugaredLogger {
+	if sugar == nil {
+		return nopSugar
+	}
 	return sugar
 }
 

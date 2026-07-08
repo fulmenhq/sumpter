@@ -88,7 +88,7 @@ dev: ## Set up development environment
 
 # Quality checks
 .PHONY: check-all
-check-all: fmt-strict vet lint safety-check schema-validate extract-output-contract-check ## Run all quality checks (fast)
+check-all: fmt-strict vet lint safety-check schema-validate extract-output-contract-check data-artifact-contract-check ## Run all quality checks (fast)
 	@echo "$(GREEN)✅ All quality checks passed!$(NC)"
 
 # Schema validation
@@ -111,6 +111,21 @@ extract-output-contract-check: ## Meta-validate extract record-envelope fixtures
 	done; \
 	if [ "$$count" -lt 4 ]; then echo "$(RED)❌ expected ≥4 fixtures, found $$count$(NC)"; exit 1; fi; \
 	echo "$(GREEN)✅ Extract record-envelope contract check passed ($$count fixtures)$(NC)"
+
+DATA_ARTIFACT_CONTRACT_BASE ?= tests/fixtures/data-artifact-contract/v0
+
+.PHONY: data-artifact-contract-check
+data-artifact-contract-check: ## Validate data-artifact/v0 contract resolver and descriptor fixtures
+	@echo "$(BLUE)Validating data-artifact/v0 contract baseline...$(NC)"
+	@go test ./internal/artifactcontract
+	@count=0; \
+	for f in tests/fixtures/data-artifact-descriptor/*.json; do \
+		go run ./cmd/sumpter --log-level error validate artifact-descriptor --contract-base "$(DATA_ARTIFACT_CONTRACT_BASE)" "$$f" >/dev/null || { echo "$(RED)❌ $$f failed data-artifact descriptor validation$(NC)"; exit 1; }; \
+		echo "  ✓ $$f"; \
+		count=$$((count + 1)); \
+	done; \
+	if [ "$$count" -lt 1 ]; then echo "$(RED)❌ expected ≥1 data-artifact descriptor fixtures, found $$count$(NC)"; exit 1; fi; \
+	echo "$(GREEN)✅ Data-artifact contract check passed ($$count fixtures)$(NC)"
 
 # Code formatting
 .PHONY: fmt

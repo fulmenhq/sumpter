@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fulmenhq/sumpter/internal/artifactcontract"
 	"github.com/fulmenhq/sumpter/internal/config"
 	"github.com/fulmenhq/sumpter/internal/validation"
 	"github.com/spf13/cobra"
@@ -33,8 +34,9 @@ Examples:
 }
 
 var (
-	validateDir  string
-	validateJSON bool
+	validateDir                  string
+	validateJSON                 bool
+	validateArtifactContractBase string
 )
 
 func init() {
@@ -42,6 +44,83 @@ func init() {
 
 	validateCmd.Flags().StringVarP(&validateDir, "dir", "d", "", "Directory containing config files to validate")
 	validateCmd.Flags().BoolVar(&validateJSON, "json", false, "Output results in JSON format")
+	validateCmd.AddCommand(validateArtifactDescriptorCmd)
+	validateArtifactDescriptorCmd.Flags().StringVar(&validateArtifactContractBase, "contract-base", "", "Local directory containing contract.json and its relative entry schema")
+	validateArtifactDescriptorCmd.Flags().BoolVar(&validateJSON, "json", false, "Output result in JSON format")
+}
+
+var validateArtifactDescriptorCmd = &cobra.Command{
+	Use:   "artifact-descriptor <descriptor.json>",
+	Short: "Validate a portable data artifact descriptor",
+	Long: `Validate a portable data artifact descriptor against a host-less contract base.
+
+The descriptor must carry the capability token "contract: data-artifact/v0".
+The --contract-base directory must contain contract.json, whose capability must
+match that token and whose entry_schema points to a schema file in the same
+local contract base. Resolution fails closed on missing manifests, mismatched
+capabilities, or missing/unsafe entry schemas.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runValidateArtifactDescriptor,
+}
+
+func runValidateArtifactDescriptor(cmd *cobra.Command, args []string) error {
+	resolved, err := artifactcontract.ResolveBaseline(validateArtifactContractBase)
+	if err != nil {
+		return err
+	}
+	descriptorBytes, err := os.ReadFile(args[0]) // #nosec G304 - explicit user-selected descriptor path
+	if err != nil {
+		return fmt.Errorf("read descriptor: %w", err)
+	}
+	result, err := artifactcontract.ValidateDescriptorBytes(resolved, descriptorBytes, args[0])
+	if err != nil {
+		return err
+	}
+	if validateJSON {
+		payload := map[string]interface{}{
+			"contract_baseline": map[string]string{
+				"capability":             artifactcontract.DataArtifactCapability,
+				"source":                 artifactcontract.BaselineSource,
+				"released_tag":           artifactcontract.BaselineReleasedTag,
+				"resolved_bundle_sha256": resolved.BundleSHA256,
+				"expected_bundle_sha256": artifactcontract.BaselineBundleSHA256,
+				"entry_schema":           resolved.EntrySchema,
+			},
+			"result": result,
+		}
+		out, marshalErr := json.MarshalIndent(payload, "", "  ")
+		if marshalErr != nil {
+			return fmt.Errorf("marshal artifact descriptor validation result: %w", marshalErr)
+		}
+		if _, writeErr := fmt.Fprintln(cmd.OutOrStdout(), string(out)); writeErr != nil {
+			return fmt.Errorf("write artifact descriptor validation result: %w", writeErr)
+		}
+	} else {
+		if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "Artifact descriptor: %s\n", result.File); writeErr != nil {
+			return fmt.Errorf("write artifact descriptor validation result: %w", writeErr)
+		}
+		if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "Contract: %s (%s)\n", artifactcontract.DataArtifactCapability, resolved.BundleSHA256); writeErr != nil {
+			return fmt.Errorf("write artifact descriptor validation result: %w", writeErr)
+		}
+		if result.Valid {
+			if _, writeErr := fmt.Fprintln(cmd.OutOrStdout(), "Status: valid"); writeErr != nil {
+				return fmt.Errorf("write artifact descriptor validation result: %w", writeErr)
+			}
+		} else {
+			if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "Status: invalid (%d errors)\n", len(result.Errors)); writeErr != nil {
+				return fmt.Errorf("write artifact descriptor validation result: %w", writeErr)
+			}
+			for i, validationErr := range result.Errors {
+				if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "  %d. %s: %s\n", i+1, validationErr.Path, validationErr.Message); writeErr != nil {
+					return fmt.Errorf("write artifact descriptor validation error: %w", writeErr)
+				}
+			}
+		}
+	}
+	if !result.Valid {
+		return fmt.Errorf("artifact descriptor validation failed with %d errors", len(result.Errors))
+	}
+	return nil
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {

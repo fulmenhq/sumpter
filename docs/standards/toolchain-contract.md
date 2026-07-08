@@ -8,7 +8,7 @@ cannot drift silently from the contract.
 
 Current contract:
 
-- Go: `1.26.4`
+- Go: `1.26.5`
 - golangci-lint: `v2.11.2`
 - `GOFLAGS`: empty
 
