@@ -166,6 +166,26 @@ US federal bills and laws are not subject to copyright (17 U.S.C. 105); the
 GovInfo USLM files state this in-band in their Dublin Core `rights` metadata.
 A small enrolled-bill sample ships with the repo.
 
+## Namespace-portable recipes
+
+Several formats above are multi-namespace: XBRL mixes the `xs:` and `link:`
+vocabularies, QuakeML carries the ANSS catalog extension namespace, and CAP
+alerts nest under an Atom feed. XPath selectors that lean on a document's
+*literal* prefixes are tied to one serialization — a document that uses
+different prefixes, or a default namespace, can silently under-match.
+
+Sumpter's opt-in `namespaces:` map binds XPath prefixes to namespace **URIs**
+instead, so a recipe selects the same fields regardless of the document's
+literal prefixes, and bound field selection resolves consistently across
+whole-document, streaming, and indexed execution. Recipes without a map are
+unchanged (byte-compatible default), and an undeclared prefix fails closed at
+config load rather than matching zero records silently. Record boundaries in
+streaming and indexed modes remain local-name-only in this release.
+
+See [XML Namespace Binding](../extract-workflow.md#xml-namespace-binding) for
+the full semantics and the synthetic worked example at
+[`examples/cases/12-namespace-binding`](../../examples/cases/12-namespace-binding).
+
 ## Using sumpter on your own formats
 
 Sumpter is format-agnostic by design: it bakes in no vertical's schema,

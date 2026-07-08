@@ -8,6 +8,24 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-07-07
+
+**Namespace-correct XML extraction across whole-document, streaming, and indexed modes: opt-in URI-bound XPath maps, namespace-aware record indexes, and synthetic mode-parity coverage with byte-compatible defaults.**
+
+See [`docs/releases/v0.2.6.md`](docs/releases/v0.2.6.md) for the full release narrative.
+
+### Added
+
+- **Namespace binding - `namespaces:` maps for XPath-bearing assets (`namespace-binding`)** - extract record-match configs and file signatures may now declare a `namespaces:` alias-to-URI map, and Sumpter compiles XPath selectors with URI bindings when the map is present. The recipe manifest schema is unchanged. Absent or empty maps keep legacy behavior, preserving byte-compatible defaults; explicit maps fail closed on undeclared prefixes and reject reserved aliases. Namespace URIs are inert match keys only and are never dereferenced (#135).
+- **Namespace-mode parity across whole-document, streaming, and indexed extraction (`namespace-mode-parity`)** - namespace-bound field selection now converges across the three extraction paths, backed by shared synthetic conformance fixtures. Streaming and indexed record boundaries remain local-name-only in this release, while field selection inside each record uses the declared URI bindings (#135, #136, #137).
+- **Record-index schema `v0.1.2` namespace context** - record indexes now capture the namespace context needed for indexed extraction to re-evaluate namespace-bound fields consistently. Namespace-free recipes continue to read legacy indexes unchanged; namespace-bound recipes fail loud against stale pre-`v0.1.2` indexes with rebuild guidance instead of silently matching empty namespaces (#137).
+- **Synthetic namespace conformance fixtures** - the test corpus covers prefixed, default-namespace, and dual-namespace documents plus adversarial namespace URI and prefix-shadowing cases, with mode coverage over whole-document, streaming, and indexed extraction (#135, #137).
+- **VERSION bumped to `0.2.6`.**
+
+### Changed
+
+- **Namespace portability guidance** - extraction docs now describe when to use `namespaces:`, the compatibility posture for legacy prefixed XPath without a map, the local-name-only boundary limitation in streaming/indexed modes, and the non-URI-bound applicability predicate scope (#136).
+
 ## [0.2.5] - 2026-07-06
 
 **Non-emitted recipe parameters — declare parameters that drive extraction logic but never land in output records, the Parquet projection, or the provenance sidecar; per-recipe and run-level, all additive with byte-identical defaults.**
@@ -180,37 +198,3 @@ See [`docs/releases/v0.1.8.md`](docs/releases/v0.1.8.md) for the full release na
 ### Deferred
 
 - Incremental Parquet writing, bounded mixed-output runs, bounded sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered in v0.1.8 and are future work. Cloud URI read/write is tracked as the next major capability thread.
-
-## [0.1.7] - 2026-06-02
-
-**Public-flip release: document-order semantics, streaming groundwork, index-scale hardening, and DX cleanup.**
-
-See [`docs/releases/v0.1.7.md`](docs/releases/v0.1.7.md) for the full release narrative.
-
-### Added
-
-- **Document-order emission contract** - single-selector regular DOM, streaming, and indexed parallel extraction now preserve source-document output order and emit stable `_runtime.record_num` values assigned before filters run (PR #58).
-- **Record-sink streaming contract** - ADR-0009 defines the emitted-envelope sink contract, ordering rules, backpressure requirements, fatal output-error behavior, and Parquet buffering exception for future bounded-output work (PR #59).
-- **Sequential record-sink primitives** - sequential extraction gained the internal sink interfaces and groundwork needed to move JSONL/NDJSON output away from full-result slices in later implementation work (PR #60).
-- **Streaming index writers** - `index build` can stream JSON record-index output and seekable-zstd index stores during the build path instead of retaining every record metadata row before writing (PR #61).
-
-### Changed
-
-- **Public-surface genericization** - internal coordination identifiers and non-public reference wording were scrubbed from the public docs and examples surface (PR #57).
-- **Formatter scope** - `make fmt-docs` now formats tracked and non-ignored files according to Git's exclude rules, keeping ignored local scratchpads and planning notes out of formatter scope (PR #62).
-- **VERSION bumped to `0.1.7`** for this release.
-
-### Fixed
-
-- **Record-index artifact integrity** - streaming index writers publish through transactional temp/prepare/commit/complete steps so parse, start, or commit failures do not leave corrupt final artifacts or clobber existing outputs (PR #61).
-- **Raw-byte record hashing** - index record hashes are computed from source byte ranges so integrity checks remain stable across writer implementations (PR #61).
-- **Formatter noise** - ignored `.scratchpad/` content no longer produces YAML-format warnings during local docs formatting (PR #62).
-
-### Security
-
-- **Public-flip confidentiality posture** - the release keeps repository-facing examples, docs, release notes, and PR messaging generic and leaves private data, local settings, and specialized recipes outside the repository tree (PR #57/#62).
-
-### Deferred
-
-- **Bounded end-to-end JSONL/NDJSON output streaming** remains roadmap work. v0.1.7 ships the contract and sequential primitives, but command paths still buffer extracted records per source file before output.
-- **Parallel sink integration and incremental Parquet writing** remain future work. Parquet is still a projection path and may buffer rows.
