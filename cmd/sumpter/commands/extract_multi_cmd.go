@@ -33,6 +33,8 @@ type recipeRunExtractMultiOptions struct {
 	Progress               bool
 	RunID                  string
 	NoManifest             bool
+	ArtifactDescriptor     bool
+	ArtifactContractBase   string
 	Parameters             []string
 	InternalParameters     []string
 	OutputMode             string
@@ -107,6 +109,8 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				Progress:               opts.Progress,
 				RunID:                  runID,
 				NoManifest:             opts.NoManifest,
+				ArtifactDescriptor:     opts.ArtifactDescriptor,
+				ArtifactContractBase:   opts.ArtifactContractBase,
 				Parameters:             opts.Parameters,
 				InternalParameters:     opts.InternalParameters,
 				OutputMode:             opts.OutputMode,
@@ -135,6 +139,8 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID); shared by every recipe")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
+	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for each recipe's record-stream output")
+	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
 	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable, overrides manifest defaults.parameters). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
 	cmd.Flags().StringArrayVar(&opts.InternalParameters, "parameter-internal", nil, "Inject a key=value pair into every recipe's expression scope while suppressing it from all records and provenance values (repeatable, extract-multi only)")
 	cmd.Flags().StringVar(&opts.OutputMode, "output-mode", outputModePerInput, "Record-file fan-out applied to every recipe: per-input (one file per input) or aggregate (each recipe streams to one NDJSON writer per invocation under its <recipe-id>/ dir, rolling to numbered shards). Aggregate is NDJSON only and requires a manifest")
@@ -204,5 +210,9 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 	if opts.NoManifest {
 		args = append(args, "--no-manifest")
 	}
+	if opts.ArtifactDescriptor {
+		args = append(args, "--artifact-descriptor")
+	}
+	appendFlag("--contract-base", opts.ArtifactContractBase)
 	return args
 }

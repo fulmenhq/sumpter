@@ -50,9 +50,11 @@ type multiSharedOptions struct {
 	// each recipe's provenance ties back to a single invocation. loadRecipePlan
 	// rejects an empty RunID rather than letting each recipe independently
 	// generate a divergent UUIDv7.
-	RunID           string
-	NoManifest      bool
-	AllowLargeFiles bool
+	RunID                string
+	NoManifest           bool
+	ArtifactDescriptor   bool
+	ArtifactContractBase string
+	AllowLargeFiles      bool
 
 	// Parameters is the shared run-level --parameter override layer applied to
 	// EVERY recipe in the pass. It is layered over each recipe's
@@ -295,18 +297,20 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 
 	defaults := manifest.Defaults
 	opts := &ExtractOptions{
-		SignatureConfig:     signaturePath,
-		ExtractConfig:       extractPath,
-		ApplicabilityConfig: applicabilityCfg,
-		ContinueOnError:     shared.ContinueOnError,
-		AllowLargeFiles:     shared.AllowLargeFiles,
-		RunID:               shared.RunID,
-		NoManifest:          shared.NoManifest,
-		Workers:             shared.Workers,
-		Progress:            shared.Progress,
-		DryRun:              shared.DryRun,
-		CommandName:         "sumpter recipes run extract-multi",
-		Argv:                shared.Argv,
+		SignatureConfig:      signaturePath,
+		ExtractConfig:        extractPath,
+		ApplicabilityConfig:  applicabilityCfg,
+		ContinueOnError:      shared.ContinueOnError,
+		AllowLargeFiles:      shared.AllowLargeFiles,
+		RunID:                shared.RunID,
+		NoManifest:           shared.NoManifest,
+		ArtifactDescriptor:   shared.ArtifactDescriptor,
+		ArtifactContractBase: shared.ArtifactContractBase,
+		Workers:              shared.Workers,
+		Progress:             shared.Progress,
+		DryRun:               shared.DryRun,
+		CommandName:          "sumpter recipes run extract-multi",
+		Argv:                 shared.Argv,
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,
@@ -396,6 +400,9 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 	opts.OutputMode = shared.OutputMode
 	opts.AggregateMaxRecords = shared.AggregateMaxRecords
 	opts.AggregateMaxBytes = shared.AggregateMaxBytes
+	if err := validateArtifactDescriptorOptions(opts); err != nil {
+		return nil, err
+	}
 	// Reference tables resolve against THIS recipe's workspace (per-recipe
 	// containment root); no cross-recipe root, no CLI override surface in v0.
 	opts.ReferenceTableDecls = defaults.ReferenceTables

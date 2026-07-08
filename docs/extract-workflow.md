@@ -12,6 +12,30 @@ The extract command tokenizes XML inputs incrementally through recipe-driven fie
 
 NDJSON is the default durable record output for recipe examples. Parquet is a secondary output path, still requires recipe configuration for the projected columns, and remains buffered in v0.2.0. A run that requests both JSON/NDJSON and Parquet stays on the buffered path so both outputs are produced from the same completed record set.
 
+## Portable Artifact Descriptor
+
+`--artifact-descriptor` writes an opt-in `artifact-descriptor.json` sidecar beside
+the normal provenance manifest. The sidecar declares conformance to the host-less
+`contract: data-artifact/v0` capability and describes the run's record-stream
+grain plus its emitted JSON/NDJSON or Parquet representations. Descriptor output
+requires `--output-path`, a normal manifest, and an explicit local
+`--contract-base`; Sumpter validates the generated descriptor against that pinned
+contract base before publishing it.
+
+```bash
+sumpter extract files \
+  --files ./input.xml \
+  --signature-config-path ./signature.yaml \
+  --extract-config-path ./extract.yaml \
+  --output-path ./out \
+  --artifact-descriptor \
+  --contract-base ./contracts/data-artifact/v0
+```
+
+This first descriptor surface covers only the record-stream grain. Field catalog
+sidecars, object-index grains, aggregate grains, value profiles, and protection
+enforcement metadata are separate follow-on surfaces.
+
 ## Structured Output Layout
 
 ```

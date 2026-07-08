@@ -334,6 +334,8 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable, overrides manifest defaults.parameters). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
+	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for the record-stream output")
+	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
 	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
 	cmd.Flags().StringVar(&opts.ExtractOverride, "extract", "", "Override manifest extract config path")
 	cmd.Flags().StringArrayVar(&opts.ReferenceTableOverrides, "reference-table", nil, "Override a declared reference table's source: name=source (repeatable). Source is a contained workspace-relative path (no absolute, \"..\", or symlinks) or an s3:// URI reusing the table's declared credentials_handle. Format, columns, and caps stay recipe-declared")
@@ -371,6 +373,8 @@ type recipeRunExtractOptions struct {
 	ReferenceTableOverrides []string
 	RunID                   string
 	NoManifest              bool
+	ArtifactDescriptor      bool
+	ArtifactContractBase    string
 	SignatureOverride       string
 	ExtractOverride         string
 	// Cloud credential options (handle references — no secrets in recipe YAML or
@@ -470,14 +474,16 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 
 	extractOpts := &ExtractOptions{
-		SignatureConfig:     signaturePath,
-		ExtractConfig:       extractPath,
-		ApplicabilityConfig: applicabilityCfg,
-		ContinueOnError:     opts.ContinueOnError,
-		AllowLargeFiles:     allowLargeFiles,
-		RunID:               opts.RunID,
-		NoManifest:          opts.NoManifest,
-		CommandName:         "sumpter recipes run extract",
+		SignatureConfig:      signaturePath,
+		ExtractConfig:        extractPath,
+		ApplicabilityConfig:  applicabilityCfg,
+		ContinueOnError:      opts.ContinueOnError,
+		AllowLargeFiles:      allowLargeFiles,
+		RunID:                opts.RunID,
+		NoManifest:           opts.NoManifest,
+		ArtifactDescriptor:   opts.ArtifactDescriptor,
+		ArtifactContractBase: opts.ArtifactContractBase,
+		CommandName:          "sumpter recipes run extract",
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,
@@ -733,6 +739,10 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 	if opts.NoManifest {
 		args = append(args, "--no-manifest")
 	}
+	if opts.ArtifactDescriptor {
+		args = append(args, "--artifact-descriptor")
+	}
+	appendFlag("--contract-base", opts.ArtifactContractBase)
 	return args
 }
 
