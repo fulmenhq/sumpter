@@ -1,0 +1,75 @@
+{
+  "capabilities": ["contract: data-artifact/v0"],
+  "artifact_id": "urn:uuid:00000000-0000-7000-8000-000000000071",
+  "lifecycle": "complete",
+  "producer": {
+    "name": "sumpter",
+    "version": "0.3.0-dev",
+    "profile": "sumpter.extract-artifact/v0",
+    "run_id": "00000000-0000-7000-8000-000000000171"
+  },
+  "grains": [
+    {
+      "id": "records",
+      "kind": "record_stream",
+      "record_kind": "extract_record",
+      "row_count": 2,
+      "semantic_order": "source_order",
+      "field_catalog_ref": "fields/records.fields.json"
+    }
+  ],
+  "representations": [
+    {
+      "id": "records_ndjson",
+      "grain": "records",
+      "role": "audit_stream",
+      "format": "ndjson",
+      "uri": "records/records.jsonl",
+      "row_count": 2,
+      "field_catalog_ref": "fields/records.fields.json",
+      "read_path": {
+        "range_readable": true,
+        "partitioned": false,
+        "sharded": false,
+        "appendable": false,
+        "scan_capabilities": [],
+        "read_path_granularity": "row",
+        "gateable_unit_granularity": "row",
+        "sidecar_required": true,
+        "physical_ordering": "line_order"
+      },
+      "protection_enforceable_granularity": "row"
+    }
+  ],
+  "field_catalogs": [
+    {
+      "id": "fields/records.fields.json",
+      "grain": "records",
+      "fields": [
+        {
+          "name": "record_id",
+          "type": "string",
+          "required": true,
+          "semantic_role": "identifier",
+          "sensitivity": "internal",
+          "protection_tags": ["linkage_key"],
+          "export_action": "block_export"
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "semantic_role": "measure",
+          "sensitivity": "public",
+          "protection_tags": ["measure", "safe_to_profile"],
+          "export_action": "allow",
+          "safe_to_profile": true
+        }
+      ]
+    }
+  ],
+  "protection": {
+    "default_action": "block_export",
+    "default_export_class": "internal",
+    "profile_ref": "profile:sumpter-b2.0-fixture"
+  }
+}

@@ -2,7 +2,7 @@ module github.com/fulmenhq/sumpter
 
 go 1.26.0
 
-toolchain go1.26.4
+toolchain go1.26.5
 
 require (
 	github.com/3leaps/gonimbus v0.3.2

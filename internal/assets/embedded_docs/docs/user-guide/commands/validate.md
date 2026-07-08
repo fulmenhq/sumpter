@@ -7,11 +7,18 @@ Validate Sumpter configuration files against their JSON schemas.
 ```bash
 sumpter validate [config-file] [flags]
 sumpter validate [flags]
+sumpter validate artifact-descriptor <descriptor.json> --contract-base <dir>
 ```
 
 ## Description
 
 The `validate` command validates Sumpter configuration files to ensure they conform to the expected schema structure and values. It supports validation of main configuration, logger configuration, and PII configuration files.
+
+It also validates portable data artifact descriptors against an explicit local
+contract base. The artifact descriptor path uses the host-less capability token
+`contract: data-artifact/v0`; `--contract-base` points at a trusted local
+directory containing `contract.json` and the relative entry schema named by
+that manifest.
 
 ## Parameters
 
@@ -21,6 +28,11 @@ The `validate` command validates Sumpter configuration files to ensure they conf
 
 - `--dir`, `-d`: Directory containing config files to validate
 - `--json`, `-j`: Output results in JSON format
+
+### Artifact Descriptor Flags
+
+- `--contract-base`: Local directory containing `contract.json` and the entry schema
+- `--json`: Output descriptor validation results in JSON format
 
 ## Examples
 
@@ -89,6 +101,45 @@ Output:
     "total_errors": 0
   }
 }
+```
+
+### Validate a Data Artifact Descriptor
+
+```bash
+sumpter validate artifact-descriptor descriptor.json \
+  --contract-base tests/fixtures/data-artifact-contract/v0
+```
+
+Output:
+
+```
+Artifact descriptor: descriptor.json
+Contract: contract: data-artifact/v0 (sha256:ef6de3f16bd988555a4e063d32e4f15478b56bf6f45121e890d89504ee468a01)
+Status: valid
+```
+
+Use `--json` to include the resolved contract baseline, released tag, entry
+schema, and validation result in machine-readable form.
+
+### Data Artifact Contract Baseline Hash
+
+The pinned `contract_baseline.resolved_bundle_sha256` is reproducible from the
+local contract base. Sumpter hashes the contract bundle with SHA-256 using this
+exact file order and logical path prefix:
+
+1. `schemas/data-artifact/v0/contract.json`
+2. `schemas/data-artifact/v0/artifact-descriptor.schema.json`
+
+For each file, the hash input appends:
+
+```text
+logicalPath \x00 fileBytes \x00
+```
+
+The resulting digest for the Crucible `v0.1.18` baseline is:
+
+```text
+sha256:ef6de3f16bd988555a4e063d32e4f15478b56bf6f45121e890d89504ee468a01
 ```
 
 ## Configuration Files
