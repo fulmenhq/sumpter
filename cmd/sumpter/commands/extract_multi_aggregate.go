@@ -119,6 +119,12 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 			return err
 		}
 		logger.Info("Provenance manifest written (aggregate)")
+		// After the normal manifest is durable, the run-level incomplete:true failure
+		// handler must not overwrite it if a later optional sidecar write fails.
+		st.finalized = true
+		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+			return err
+		}
 	}
 
 	// This recipe committed its shards and wrote its own successful manifest, so the

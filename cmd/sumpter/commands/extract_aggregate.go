@@ -484,8 +484,8 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	countsByRecordType := make(map[string]int)
 	dispositionSummary := newDispositionSummary(len(ordered))
 	failureManifest := newExtractFailureManifest(len(ordered))
-	// manifestFinalized is set only after the run's shards AND its normal manifest +
-	// sidecars are durably written (see end of function). Until then, any terminal output
+	// manifestFinalized is set only after the run's shards AND its normal manifest are
+	// durably written (see end of function). Until then, any terminal output
 	// failure — including one AFTER shards are committed but BEFORE the manifest is written
 	// — must fall through to the incomplete:true (R8) path below, so committed cloud
 	// objects are never left undiscoverable.
@@ -643,12 +643,13 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	}
 	logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 
-	// Only now is the run fully finalized: shards committed AND the normal manifest +
-	// sidecars durably written. Setting the guard here (not right after shard commit)
-	// means a terminal output failure between shard PUT and the normal manifest — e.g. a
-	// failures.json or manifest publish error on a cloud run — still triggers the deferred
-	// incomplete:true (R8) path, so committed shards are never left without a manifest.
+	// Once the normal manifest is durable, the incomplete:true guard must stay off:
+	// later sidecar failures (including the optional descriptor) should fail the run
+	// without overwriting a complete manifest.
 	manifestFinalized = true
+	if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		return err
+	}
 
 	// A continue-on-error run that committed its successful inputs still signals partial
 	// failure (non-zero exit) so callers do not treat it as a clean run.

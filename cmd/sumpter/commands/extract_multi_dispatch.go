@@ -780,6 +780,9 @@ func (st *recipeRunState) finalize(startedAt time.Time) error {
 			return err
 		}
 		logger.Info("Provenance manifest written")
+		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+			return err
+		}
 	}
 
 	if st.dispositionErr != nil {

@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/fulmenhq/goneat/pkg/pathfinder"
+	"github.com/fulmenhq/sumpter/internal/artifactcontract"
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/dataartifact"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/extract/parallel"
 	"github.com/fulmenhq/sumpter/internal/extract/parquetwriter"
@@ -80,6 +82,8 @@ type ExtractOptions struct {
 	SourceExtractionRecipeID string
 	RunID                    string
 	NoManifest               bool
+	ArtifactDescriptor       bool
+	ArtifactContractBase     string
 	AllowLargeFiles          bool
 	CommandName              string
 	Argv                     []string
@@ -203,6 +207,8 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
+	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for the record-stream output")
+	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
 
 	// Parallel extraction flags
 	cmd.Flags().StringVar(&opts.RecordIndex, "record-index", "", "Path to record index file (enables parallel extraction)")
@@ -391,6 +397,9 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	if opts.ContinueOnError && strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
 		return fmt.Errorf("--continue-on-error requires --output-path")
+	}
+	if err := validateArtifactDescriptorOptions(opts); err != nil {
+		return err
 	}
 	if err := validateAggregateOptions(opts, outputFormats); err != nil {
 		return err
@@ -759,6 +768,9 @@ func runExtract(opts *ExtractOptions) error {
 	if manifestEnabled {
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
+			return err
+		}
+		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -1177,6 +1189,9 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
+		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+			return err
+		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
@@ -1582,6 +1597,9 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
+		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+			return err
+		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
@@ -1644,6 +1662,9 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 		countsByRecordType := map[string]int{extCfg.RecordType: recordCount}
 		manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
+			return err
+		}
+		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -1817,6 +1838,36 @@ func perSelectorCountsForIndexedExtraction(indexSelector string, extCfg *extract
 
 func shouldWriteManifest(opts *ExtractOptions) bool {
 	return opts != nil && !opts.NoManifest && opts.OutputPath != "" && !opts.DryRun
+}
+
+func validateArtifactDescriptorOptions(opts *ExtractOptions) error {
+	if opts == nil {
+		return nil
+	}
+	if strings.TrimSpace(opts.ArtifactContractBase) != "" && !opts.ArtifactDescriptor {
+		return fmt.Errorf("--contract-base requires --artifact-descriptor")
+	}
+	if !opts.ArtifactDescriptor {
+		return nil
+	}
+	if strings.TrimSpace(opts.OutputPath) == "" {
+		return fmt.Errorf("--artifact-descriptor requires --output-path")
+	}
+	if opts.NoManifest {
+		return fmt.Errorf("--artifact-descriptor cannot be combined with --no-manifest because the descriptor links to the provenance manifest")
+	}
+	if opts.DryRun {
+		return fmt.Errorf("--artifact-descriptor cannot be combined with --dry-run")
+	}
+	if strings.TrimSpace(opts.ArtifactContractBase) == "" {
+		return fmt.Errorf("--artifact-descriptor requires --contract-base")
+	}
+	local, err := uriio.LocalPath("data artifact contract base", opts.ArtifactContractBase)
+	if err != nil {
+		return err
+	}
+	opts.ArtifactContractBase = local
+	return nil
 }
 
 func effectiveOutputFormats(opts *ExtractOptions) ([]string, error) {
@@ -2021,7 +2072,7 @@ func manifestSanitizeRoots(opts *ExtractOptions) []string {
 	if opts == nil {
 		return roots
 	}
-	for _, root := range []string{opts.OutputPath, opts.InputPath} {
+	for _, root := range []string{opts.OutputPath, opts.InputPath, opts.ArtifactContractBase} {
 		if root != "" {
 			roots = append(roots, root)
 		}
@@ -2090,6 +2141,10 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	if opts.NoManifest {
 		args = append(args, "--no-manifest")
 	}
+	if opts.ArtifactDescriptor {
+		args = append(args, "--artifact-descriptor")
+	}
+	appendFlag("--contract-base", opts.ArtifactContractBase)
 	return args
 }
 
@@ -2776,6 +2831,65 @@ func writeProvenanceManifest(opts *ExtractOptions, path string, manifest provena
 		return err
 	}
 	return provenance.WriteManifestVia(context.Background(), tgt, manifest)
+}
+
+func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manifest) error {
+	if opts == nil || !opts.ArtifactDescriptor {
+		return nil
+	}
+	artifactUUID, err := provenance.NewRunID()
+	if err != nil {
+		return fmt.Errorf("generate artifact id: %w", err)
+	}
+	descriptor, err := dataartifact.BuildRecordStreamDescriptor(manifest, artifactUUID)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(descriptor, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal data artifact descriptor: %w", err)
+	}
+	data = append(data, '\n')
+
+	resolved, err := artifactcontract.ResolveBaseline(opts.ArtifactContractBase)
+	if err != nil {
+		return err
+	}
+	result, err := artifactcontract.ValidateDescriptorBytes(resolved, data, dataartifact.DescriptorFileName)
+	if err != nil {
+		return err
+	}
+	if !result.Valid {
+		return fmt.Errorf("generated data artifact descriptor failed validation: %s", artifactValidationSummary(result))
+	}
+
+	path := outputRefJoin(opts.OutputPath, dataartifact.DescriptorFileName)
+	tgt, err := openOutputTarget(context.Background(), opts, path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(tgt.LocalPath), 0o750); err != nil {
+		return fmt.Errorf("create data artifact descriptor directory: %w", err)
+	}
+	if err := os.WriteFile(tgt.LocalPath, data, 0o600); err != nil {
+		return fmt.Errorf("write data artifact descriptor %s: %w", tgt.LogicalURI, err)
+	}
+	return tgt.Publish(context.Background())
+}
+
+func artifactValidationSummary(result *artifactcontract.ValidationResult) string {
+	if result == nil || len(result.Errors) == 0 {
+		return "unknown validation error"
+	}
+	parts := make([]string, 0, len(result.Errors))
+	for _, validationErr := range result.Errors {
+		if validationErr.Path == "" {
+			parts = append(parts, validationErr.Message)
+		} else {
+			parts = append(parts, validationErr.Path+": "+validationErr.Message)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // outputRefJoin composes an output destination from a base path/URI and a file

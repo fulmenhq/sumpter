@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fulmenhq/sumpter/internal/artifactcontract"
+	"github.com/fulmenhq/sumpter/internal/dataartifact"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/logging"
@@ -82,6 +84,125 @@ func TestExtractFilesCommandRegistersFormatsFlag(t *testing.T) {
 	}
 	if flag := cmd.Flags().Lookup("continue-on-error"); flag == nil {
 		t.Fatalf("extract files command missing --continue-on-error flag")
+	}
+	if flag := cmd.Flags().Lookup("artifact-descriptor"); flag == nil {
+		t.Fatalf("extract files command missing --artifact-descriptor flag")
+	}
+	if flag := cmd.Flags().Lookup("contract-base"); flag == nil {
+		t.Fatalf("extract files command missing --contract-base flag")
+	}
+}
+
+func TestRunExtractWritesArtifactDescriptorWhenRequested(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	contractBase := filepath.Join("..", "..", "..", "tests", "fixtures", "data-artifact-contract", "v0")
+
+	opts := &ExtractOptions{
+		Files:                filepath.Join(dir, "input.xml"),
+		Format:               "json",
+		OutputPath:           outputDir,
+		OutputPattern:        "records.jsonl",
+		SignatureConfig:      filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:        filepath.Join(dir, "extract.yaml"),
+		RunID:                testMultiRunID,
+		ArtifactDescriptor:   true,
+		ArtifactContractBase: contractBase,
+	}
+
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+
+	descriptorPath := filepath.Join(outputDir, dataartifact.DescriptorFileName)
+	result, _, err := artifactcontract.ValidateDescriptorFile(contractBase, descriptorPath)
+	if err != nil {
+		t.Fatalf("validate generated descriptor: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("generated descriptor did not validate: %+v", result.Errors)
+	}
+
+	var descriptor map[string]interface{}
+	data, err := os.ReadFile(descriptorPath)
+	if err != nil {
+		t.Fatalf("read descriptor: %v", err)
+	}
+	if err := json.Unmarshal(data, &descriptor); err != nil {
+		t.Fatalf("unmarshal descriptor: %v", err)
+	}
+	if got := descriptor["lifecycle"]; got != "complete" {
+		t.Fatalf("lifecycle = %#v, want complete", got)
+	}
+	if _, ok := descriptor["field_catalogs"]; ok {
+		t.Fatalf("generated B2.1 descriptor embedded field_catalogs; want refs only")
+	}
+	producer := descriptor["producer"].(map[string]interface{})
+	if got := producer["run_id"]; got != testMultiRunID {
+		t.Fatalf("producer.run_id = %#v, want %q", got, testMultiRunID)
+	}
+	grains := descriptor["grains"].([]interface{})
+	grain := grains[0].(map[string]interface{})
+	if got := grain["kind"]; got != "record_stream" {
+		t.Fatalf("grain kind = %#v, want record_stream", got)
+	}
+	if got := grain["row_count"]; got != float64(2) {
+		t.Fatalf("grain row_count = %#v, want 2", got)
+	}
+	if got := grain["field_catalog_ref"]; got != dataartifact.FieldCatalogRef {
+		t.Fatalf("grain field_catalog_ref = %#v, want %q", got, dataartifact.FieldCatalogRef)
+	}
+	reps := descriptor["representations"].([]interface{})
+	rep := reps[0].(map[string]interface{})
+	if got := rep["format"]; got != "ndjson" {
+		t.Fatalf("representation format = %#v, want ndjson", got)
+	}
+	if got := rep["uri"]; got != "records.jsonl" {
+		t.Fatalf("representation uri = %#v, want records.jsonl", got)
+	}
+}
+
+func TestRunExtractDoesNotPublishArtifactDescriptorWhenManifestWriteFails(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(outputDir, provenance.ManifestFileName), 0o750); err != nil {
+		t.Fatalf("Mkdir manifest path: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:                filepath.Join(dir, "input.xml"),
+		Format:               "json",
+		OutputPath:           outputDir,
+		OutputPattern:        "records.jsonl",
+		SignatureConfig:      filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:        filepath.Join(dir, "extract.yaml"),
+		RunID:                testMultiRunID,
+		ArtifactDescriptor:   true,
+		ArtifactContractBase: filepath.Join("..", "..", "..", "tests", "fixtures", "data-artifact-contract", "v0"),
+	}
+
+	if err := runExtract(opts); err == nil {
+		t.Fatal("runExtract succeeded; want manifest write failure")
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, dataartifact.DescriptorFileName)); !os.IsNotExist(err) {
+		t.Fatalf("descriptor stat error = %v, want not exist", err)
+	}
+}
+
+func TestRunExtractArtifactDescriptorRequiresContractBase(t *testing.T) {
+	err := runExtract(&ExtractOptions{
+		Files:              "input.xml",
+		OutputPath:         t.TempDir(),
+		ArtifactDescriptor: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "--artifact-descriptor requires --contract-base") {
+		t.Fatalf("runExtract error = %v, want contract-base requirement", err)
 	}
 }
 
