@@ -8,6 +8,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/dataartifact"
 	"github.com/fulmenhq/sumpter/internal/provenance"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
 func TestNormalizeValidateOutput(t *testing.T) {
@@ -138,5 +139,72 @@ func TestExtractFilesFlagExposesValidateOutput(t *testing.T) {
 	cmd := newExtractFilesCommand()
 	if flag := cmd.Flags().Lookup("validate-output"); flag == nil {
 		t.Fatal("extract files missing --validate-output flag")
+	}
+}
+
+func TestMaybeValidateExtractOutputSkipsCloudSessionReopen(t *testing.T) {
+	// Simulate a cloud output session after Publish has already removed staging.
+	// End-of-run re-open must be a no-op; write-time validation is the cloud path.
+	opts := &ExtractOptions{
+		ValidateOutput: validateOutputSidecars,
+		OutputPath:     "s3://example-bucket/out",
+		outputSession:  &uriio.Session{},
+	}
+	if err := maybeValidateExtractOutput(opts, provenance.Manifest{}); err != nil {
+		t.Fatalf("cloud end-of-run validate should no-op, got %v", err)
+	}
+}
+
+func TestValidateOutputSidecarBytesBeforePublish(t *testing.T) {
+	// Minimal valid provenance document shape for embedded schema check.
+	data := []byte(`{
+  "schema_version": "sumpter.provenance/v1",
+  "run_id": "0190a3f4-1c2d-7abc-9def-0123456789ab",
+  "sumpter_version": "0.3.0-dev",
+  "started_at": "2026-07-09T00:00:00Z",
+  "completed_at": "2026-07-09T00:00:01Z",
+  "cli": {"command": "sumpter extract files", "argv_sanitized": ["sumpter", "extract", "files"]},
+  "inputs": [],
+  "outputs": [],
+  "counts_by_record_type": {}
+}
+`)
+	validateFn, err := provenanceSidecarValidator()
+	if err != nil {
+		t.Fatalf("provenanceSidecarValidator: %v", err)
+	}
+	opts := &ExtractOptions{ValidateOutput: validateOutputSidecars}
+	if err := validateOutputSidecarBytes(opts, data, provenance.ManifestFileName, validateFn); err != nil {
+		t.Fatalf("valid sidecar bytes rejected: %v", err)
+	}
+	if err := validateOutputSidecarBytes(opts, []byte(`{"schema_version":"nope"}`), provenance.ManifestFileName, validateFn); err == nil {
+		t.Fatal("invalid sidecar bytes accepted")
+	}
+}
+
+func TestMaybeValidateEnvelopeFileBeforePublishOnStagingPath(t *testing.T) {
+	dir := t.TempDir()
+	// One envelope-shaped NDJSON line on a staging path (cloud Publish would delete this).
+	line := `{"_runtime":{"envelope_schema":"extract-record-envelope/v0","generated_at":"2026-07-09T00:00:00Z","source_file":"a.xml","record_type":"item","summaries_included":false,"validation_included":false},"extract":{"data":{"id":"1"}}}` + "\n"
+	path := filepath.Join(dir, "stage-records.jsonl")
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	opts := &ExtractOptions{ValidateOutput: validateOutputEnvelopeSample}
+	if err := maybeValidateEnvelopeFileBeforePublish(opts, path, "s3://bucket/records.jsonl"); err != nil {
+		t.Fatalf("pre-publish envelope validate: %v", err)
+	}
+	// Staging can be removed after Publish; end-of-run cloud path must not depend on it.
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("Remove staging: %v", err)
+	}
+	cloudOpts := &ExtractOptions{
+		ValidateOutput: validateOutputEnvelopeSample,
+		outputSession:  &uriio.Session{},
+	}
+	if err := maybeValidateExtractOutput(cloudOpts, provenance.Manifest{
+		Outputs: []provenance.Output{{Path: "s3://bucket/records.jsonl", Format: "json", RecordCount: 1}},
+	}); err != nil {
+		t.Fatalf("post-publish cloud validate should no-op, got %v", err)
 	}
 }

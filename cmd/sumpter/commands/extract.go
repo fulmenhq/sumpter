@@ -861,6 +861,11 @@ func writeExtractFailureManifest(opts *ExtractOptions, path string, manifest *ex
 		return fmt.Errorf("marshal extraction failures: %w", err)
 	}
 	data = append(data, '\n')
+	if validateFn, verr := failureSidecarValidator(); verr != nil {
+		return verr
+	} else if err := validateOutputSidecarBytes(opts, data, "failures.json", validateFn); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("create extraction failure manifest directory: %w", err)
 	}
@@ -995,6 +1000,11 @@ func writeDispositionSummary(opts *ExtractOptions, path string, summary *disposi
 		return fmt.Errorf("marshal dispositions summary: %w", err)
 	}
 	data = append(data, '\n')
+	if validateFn, verr := dispositionSidecarValidator(); verr != nil {
+		return verr
+	} else if err := validateOutputSidecarBytes(opts, data, "dispositions.json", validateFn); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("create dispositions directory: %w", err)
 	}
@@ -1415,9 +1425,12 @@ func (t *jsonOutputTarget) Commit() error {
 		_ = os.Remove(t.tempFile)
 		return wrapJSONOutputError(fmt.Sprintf("commit output %s", t.logicalName()), err)
 	}
+	// Validate the complete local/staging file before Publish removes a cloud staging copy.
+	if err := maybeValidateEnvelopeFileBeforePublish(t.opts, t.outputFile, t.logicalName()); err != nil {
+		return err
+	}
 	// Publish makes the committed artifact durable at the destination. No-op for
-	// local targets (the rename already finalized it); the cloud upload lands here
-	// in a later delivery.
+	// local targets (the rename already finalized it); cloud PutObject then removes staging.
 	if t.output != nil {
 		if err := t.output.Publish(context.Background()); err != nil {
 			return wrapJSONOutputError(fmt.Sprintf("publish output %s", t.logicalName()), err)
@@ -2857,6 +2870,25 @@ func writeProvenanceManifest(opts *ExtractOptions, path string, manifest provena
 	if err != nil {
 		return err
 	}
+	// Write-time ladder check on the exact bytes we will publish. Cloud Publish
+	// removes the staging file immediately after PutObject, so end-of-run re-open
+	// is not available for s3:// outputs.
+	if validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
+		preview := manifest
+		preview.SchemaVersion = provenance.ManifestSchemaVersion
+		data, merr := json.MarshalIndent(preview, "", "  ")
+		if merr != nil {
+			return fmt.Errorf("marshal provenance manifest for validate-output: %w", merr)
+		}
+		data = append(data, '\n')
+		validateFn, verr := provenanceSidecarValidator()
+		if verr != nil {
+			return verr
+		}
+		if err := validateOutputSidecarBytes(opts, data, provenance.ManifestFileName, validateFn); err != nil {
+			return err
+		}
+	}
 	return provenance.WriteManifestVia(context.Background(), tgt, manifest)
 }
 
@@ -3318,6 +3350,9 @@ func writeRecordsToFile(opts *ExtractOptions, filename string, records []map[str
 	// upload. A close error must not be masked.
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close output %s: %w", tgt.LogicalURI, err)
+	}
+	if err := maybeValidateEnvelopeFileBeforePublish(opts, localPath, tgt.LogicalURI); err != nil {
+		return err
 	}
 	return tgt.Publish(context.Background())
 }

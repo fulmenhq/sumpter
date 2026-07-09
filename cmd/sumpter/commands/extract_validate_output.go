@@ -2,17 +2,14 @@ package commands
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/fulmenhq/sumpter/internal/artifactcontract"
 	"github.com/fulmenhq/sumpter/internal/assets"
-	"github.com/fulmenhq/sumpter/internal/dataartifact"
 	"github.com/fulmenhq/sumpter/internal/provenance"
-	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/validation"
 )
 
@@ -89,34 +86,46 @@ func validateValidateOutputOptions(opts *ExtractOptions) error {
 	return nil
 }
 
-// maybeValidateExtractOutput runs the opt-in output validation ladder after
-// sidecars (and optional artifact descriptor) have been written. No-op when off.
+// maybeValidateExtractOutput is the end-of-run local re-check after sidecars land.
+//
+// Cloud outputs (opts.outputSession != nil) are intentionally skipped here:
+// Publish removes the staging file after PutObject, and re-opening via
+// openOutputTarget would create a fresh empty staging path. Cloud validation
+// therefore runs write-time on the complete staged file *before* Publish
+// (see validateOutputSidecarBytes / maybeValidateEnvelopeFileBeforePublish).
 func maybeValidateExtractOutput(opts *ExtractOptions, manifest provenance.Manifest) error {
 	if opts == nil || !validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
 		return nil
 	}
-	return runValidateExtractOutput(opts, manifest)
+	if opts.outputSession != nil {
+		return nil
+	}
+	return runValidateExtractOutputLocal(opts, manifest)
 }
 
-func runValidateExtractOutput(opts *ExtractOptions, manifest provenance.Manifest) error {
+func runValidateExtractOutputLocal(opts *ExtractOptions, manifest provenance.Manifest) error {
 	validator, err := newEmbeddedSchemaValidator()
 	if err != nil {
 		return err
 	}
 
 	if validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
-		if err := validateExtractSidecars(opts, validator); err != nil {
+		if err := validateLocalSidecarFile(opts, provenance.ManifestFileName, validator.ValidateProvenanceManifest); err != nil {
+			return err
+		}
+		if err := validateOptionalLocalSidecar(opts, "failures.json", validator.ValidateFailureManifest); err != nil {
+			return err
+		}
+		if err := validateOptionalLocalSidecar(opts, "dispositions.json", validator.ValidateDispositionSummary); err != nil {
 			return err
 		}
 	}
-	if validateOutputIncludes(opts.ValidateOutput, validateOutputArtifact) {
-		if err := validateExtractArtifactSidecars(opts); err != nil {
-			return err
-		}
-	}
+	// Artifact rung was already enforced at write-time for --artifact-descriptor
+	// (descriptor/catalog validate before Publish). Local re-check of those files
+	// is covered by the same write path; skip a second open here.
 	if validateOutputIncludes(opts.ValidateOutput, validateOutputEnvelopeSample) {
 		allRows := normalizeValidateOutput(opts.ValidateOutput) == validateOutputStrict
-		if err := validateExtractRecordEnvelopes(opts, manifest, validator, allRows); err != nil {
+		if err := validateLocalRecordEnvelopes(opts, manifest, validator, allRows); err != nil {
 			return err
 		}
 	}
@@ -131,41 +140,17 @@ func newEmbeddedSchemaValidator() (*validation.SchemaValidator, error) {
 	return validation.NewSchemaValidatorFromFS(schemaFS), nil
 }
 
-func validateExtractSidecars(opts *ExtractOptions, validator *validation.SchemaValidator) error {
-	manifestData, manifestName, err := readExtractSidecarBytes(opts, provenance.ManifestFileName)
-	if err != nil {
-		return fmt.Errorf("validate-output sidecars: read %s: %w", provenance.ManifestFileName, err)
-	}
-	result, err := validator.ValidateProvenanceManifest(manifestData, manifestName)
-	if err != nil {
-		return fmt.Errorf("validate-output sidecars: %s: %w", provenance.ManifestFileName, err)
-	}
-	if !result.IsValid() {
-		return fmt.Errorf("validate-output sidecars: %s failed: %s", provenance.ManifestFileName, result.ErrorSummary())
-	}
-
-	if err := validateOptionalSidecar(opts, validator, "failures.json", validator.ValidateFailureManifest); err != nil {
-		return err
-	}
-	if err := validateOptionalSidecar(opts, validator, "dispositions.json", validator.ValidateDispositionSummary); err != nil {
-		return err
-	}
-	return nil
-}
-
 type sidecarValidateFunc func(data []byte, name string) (*validation.ValidationResult, error)
 
-func validateOptionalSidecar(opts *ExtractOptions, _ *validation.SchemaValidator, name string, validate sidecarValidateFunc) error {
-	localPath, err := localSidecarPath(opts, name)
-	if err != nil {
-		return fmt.Errorf("validate-output sidecars: resolve %s: %w", name, err)
+// validateOutputSidecarBytes validates marshaled sidecar bytes when the
+// sidecars rung is active. Used write-time before Publish so cloud staging is
+// still present and no post-publish re-open is required.
+func validateOutputSidecarBytes(opts *ExtractOptions, data []byte, name string, validate sidecarValidateFunc) error {
+	if opts == nil || !validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
+		return nil
 	}
-	data, err := os.ReadFile(localPath) // #nosec G304 - extract sidecar written by this run
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("validate-output sidecars: read %s: %w", name, err)
+	if validate == nil {
+		return fmt.Errorf("validate-output sidecars: missing validator for %s", name)
 	}
 	result, err := validate(data, name)
 	if err != nil {
@@ -177,73 +162,69 @@ func validateOptionalSidecar(opts *ExtractOptions, _ *validation.SchemaValidator
 	return nil
 }
 
-func validateExtractArtifactSidecars(opts *ExtractOptions) error {
-	resolved, err := artifactcontract.ResolveBaseline(opts.ArtifactContractBase)
+// maybeValidateEnvelopeFileBeforePublish validates a complete NDJSON file on the
+// local (or staging) path before Publish removes a cloud staging file.
+func maybeValidateEnvelopeFileBeforePublish(opts *ExtractOptions, localPath, displayName string) error {
+	if opts == nil || !validateOutputIncludes(opts.ValidateOutput, validateOutputEnvelopeSample) {
+		return nil
+	}
+	validator, err := newEmbeddedSchemaValidator()
 	if err != nil {
-		return fmt.Errorf("validate-output artifact: resolve contract base: %w", err)
+		return err
 	}
-
-	descriptorData, descriptorName, err := readExtractSidecarBytes(opts, dataartifact.DescriptorFileName)
-	if err != nil {
-		return fmt.Errorf("validate-output artifact: read %s: %w", dataartifact.DescriptorFileName, err)
-	}
-	result, err := artifactcontract.ValidateDescriptorBytes(resolved, descriptorData, descriptorName)
-	if err != nil {
-		return fmt.Errorf("validate-output artifact: %s: %w", dataartifact.DescriptorFileName, err)
-	}
-	if !result.Valid {
-		return fmt.Errorf("validate-output artifact: %s failed: %s", dataartifact.DescriptorFileName, artifactValidationSummary(result))
-	}
-
-	catalogData, catalogName, err := readExtractSidecarBytes(opts, dataartifact.FieldCatalogRef)
-	if err != nil {
-		return fmt.Errorf("validate-output artifact: read %s: %w", dataartifact.FieldCatalogRef, err)
-	}
-	catalogResult, err := artifactcontract.ValidateFieldCatalogBytes(resolved, catalogData, catalogName)
-	if err != nil {
-		return fmt.Errorf("validate-output artifact: %s: %w", dataartifact.FieldCatalogRef, err)
-	}
-	if !catalogResult.Valid {
-		return fmt.Errorf("validate-output artifact: %s failed: %s", dataartifact.FieldCatalogRef, artifactValidationSummary(catalogResult))
-	}
-	return nil
+	allRows := normalizeValidateOutput(opts.ValidateOutput) == validateOutputStrict
+	return validateNDJSONEnvelopeFile(localPath, displayName, validator, allRows)
 }
 
-func validateExtractRecordEnvelopes(opts *ExtractOptions, manifest provenance.Manifest, validator *validation.SchemaValidator, allRows bool) error {
+func validateLocalSidecarFile(opts *ExtractOptions, name string, validate sidecarValidateFunc) error {
+	// Local-only end-of-run path: join under OutputPath without re-opening the
+	// cloud output seam (which would allocate a new staging object key).
+	localPath := outputRefJoin(opts.OutputPath, name)
+	if ref, err := uriio.Classify(localPath); err == nil && ref.IsCloud() {
+		return fmt.Errorf("validate-output sidecars: unexpected cloud path at local re-check for %s", name)
+	}
+	data, err := os.ReadFile(localPath) // #nosec G304 - local extract sidecar written by this run
+	if err != nil {
+		return fmt.Errorf("validate-output sidecars: read %s: %w", name, err)
+	}
+	return validateOutputSidecarBytes(opts, data, name, validate)
+}
+
+func validateOptionalLocalSidecar(opts *ExtractOptions, name string, validate sidecarValidateFunc) error {
+	localPath := outputRefJoin(opts.OutputPath, name)
+	data, err := os.ReadFile(localPath) // #nosec G304 - optional local extract sidecar
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("validate-output sidecars: read %s: %w", name, err)
+	}
+	return validateOutputSidecarBytes(opts, data, name, validate)
+}
+
+func validateLocalRecordEnvelopes(opts *ExtractOptions, manifest provenance.Manifest, validator *validation.SchemaValidator, allRows bool) error {
 	for _, output := range manifest.Outputs {
 		format := strings.ToLower(strings.TrimSpace(output.Format))
-		if format != recipesmanifest.OutputFormatJSON && format != recipesmanifest.OutputFormatNDJSON && format != "jsonl" {
+		if format != "json" && format != "ndjson" && format != "jsonl" {
 			continue
 		}
 		path := strings.TrimSpace(output.Path)
 		if path == "" {
 			continue
 		}
-		// Output.Path may be a logical relative name or absolute/local path.
-		localPath, err := resolveManifestOutputLocalPath(opts, path)
-		if err != nil {
-			return fmt.Errorf("validate-output envelope: resolve %s: %w", path, err)
+		if ref, err := uriio.Classify(path); err == nil && ref.IsCloud() {
+			// Cloud record streams were validated write-time before Publish.
+			continue
+		}
+		localPath := path
+		if !filepath.IsAbs(localPath) && opts != nil && strings.TrimSpace(opts.OutputPath) != "" {
+			localPath = outputRefJoin(opts.OutputPath, path)
 		}
 		if err := validateNDJSONEnvelopeFile(localPath, path, validator, allRows); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func resolveManifestOutputLocalPath(opts *ExtractOptions, outputPath string) (string, error) {
-	if filepath.IsAbs(outputPath) {
-		return outputPath, nil
-	}
-	// Prefer reading through the output seam so cloud staging paths resolve.
-	if local, err := localSidecarPath(opts, outputPath); err == nil {
-		return local, nil
-	}
-	joined := outputRefJoin(opts.OutputPath, outputPath)
-	if filepath.IsAbs(joined) {
-		return joined, nil
-	}
-	return localSidecarPath(opts, joined)
 }
 
 func validateNDJSONEnvelopeFile(localPath, displayName string, validator *validation.SchemaValidator, allRows bool) error {
@@ -299,23 +280,28 @@ func validateEnvelopeLine(validator *validation.SchemaValidator, line []byte, di
 	return nil
 }
 
-func readExtractSidecarBytes(opts *ExtractOptions, name string) ([]byte, string, error) {
-	localPath, err := localSidecarPath(opts, name)
+// provenanceSidecarValidator adapts the embedded schema validator for write-time
+// provenance checks without forcing callers to construct the validator themselves.
+func provenanceSidecarValidator() (sidecarValidateFunc, error) {
+	validator, err := newEmbeddedSchemaValidator()
 	if err != nil {
-		return nil, name, err
+		return nil, err
 	}
-	data, err := os.ReadFile(localPath) // #nosec G304 - extract sidecar written by this run
-	if err != nil {
-		return nil, localPath, err
-	}
-	return data, name, nil
+	return validator.ValidateProvenanceManifest, nil
 }
 
-func localSidecarPath(opts *ExtractOptions, name string) (string, error) {
-	path := outputRefJoin(opts.OutputPath, name)
-	tgt, err := openOutputTarget(context.Background(), opts, path)
+func failureSidecarValidator() (sidecarValidateFunc, error) {
+	validator, err := newEmbeddedSchemaValidator()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return tgt.LocalPath, nil
+	return validator.ValidateFailureManifest, nil
+}
+
+func dispositionSidecarValidator() (sidecarValidateFunc, error) {
+	validator, err := newEmbeddedSchemaValidator()
+	if err != nil {
+		return nil, err
+	}
+	return validator.ValidateDispositionSummary, nil
 }

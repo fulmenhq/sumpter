@@ -269,7 +269,11 @@ func (w *aggregateWriter) finalizeShard() error {
 	if w.cloud {
 		// Publish the completed shard NOW (incremental, R1): each shard is one object.
 		// Record the credential-handle NAME (S8) so the committed object is auditable.
+		// Validate envelopes on the staging file before Publish removes it.
 		shard.CredentialsHandle = w.opts.outputHandle
+		if err := maybeValidateEnvelopeFileBeforePublish(w.opts, w.curTgt.LocalPath, w.curTgt.LogicalURI); err != nil {
+			return err
+		}
 		if err := w.curTgt.Publish(context.Background()); err != nil {
 			return fmt.Errorf("publish aggregate shard %s: %w", shard.Path, err)
 		}

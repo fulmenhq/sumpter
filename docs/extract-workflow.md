@@ -59,10 +59,15 @@ explicitly exposed in-progress descriptor, which is not part of this surface).
 
 ### Opt-in `--validate-output` ladder
 
-After extract writes its durable sidecars (and optional artifact descriptor),
-`--validate-output` can re-check them against embedded schemas and the host-less
-data-artifact contract base. Default is `off` so high-volume runs stay
+`--validate-output` checks extract outputs against embedded schemas and the
+host-less data-artifact contract base. Default is `off` so high-volume runs stay
 performance-oriented and byte-compatible with prior behavior.
+
+Validation runs on the **complete local (or cloud staging) file before Publish**.
+That order is required for `s3://` destinations: cloud Publish uploads via a
+single PutObject and then removes the staging file, so a post-publish re-open
+would fail. Local destinations still get an end-of-run re-check of sidecars and
+record envelopes on disk.
 
 | Mode | Checks |
 | --- | --- |
