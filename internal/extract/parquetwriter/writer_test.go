@@ -3,6 +3,7 @@ package parquetwriter
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
@@ -396,6 +397,147 @@ func TestWriteFileWritesListOfStructs(t *testing.T) {
 	}
 	if rows[0].Lines[0].SKU != "SKU-1" || rows[0].Lines[0].Amount != 12.50 {
 		t.Fatalf("line = %#v, want SKU-1/12.50", rows[0].Lines[0])
+	}
+}
+
+func TestWriteFileReplacesExistingFileAtomically(t *testing.T) {
+	cfg := minimalParquetConfig()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orders.parquet")
+
+	// Seed a complete prior artifact so a failed rename must leave it intact
+	// and a successful write must replace it with a readable new file.
+	oldRecords := []map[string]interface{}{
+		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "OLD", "quantity": 1}}},
+	}
+	if err := WriteFile(path, cfg, oldRecords, Options{Compression: "none"}); err != nil {
+		t.Fatalf("seed WriteFile: %v", err)
+	}
+
+	newRecords := []map[string]interface{}{
+		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "NEW", "quantity": 9}}},
+	}
+	if err := WriteFile(path, cfg, newRecords, Options{Compression: "none"}); err != nil {
+		t.Fatalf("replace WriteFile: %v", err)
+	}
+
+	type Row struct {
+		OrderID  string `parquet:"order_id"`
+		Quantity int64  `parquet:"quantity,optional"`
+	}
+	rows, err := parquet.ReadFile[Row](path)
+	if err != nil {
+		t.Fatalf("ReadFile after replace: %v", err)
+	}
+	if len(rows) != 1 || rows[0].OrderID != "NEW" || rows[0].Quantity != 9 {
+		t.Fatalf("rows after replace = %#v, want NEW/9", rows)
+	}
+	assertNoParquetTempFiles(t, dir, "orders.parquet")
+}
+
+func TestWriteFileCleansTempOnRenameFailure(t *testing.T) {
+	cfg := minimalParquetConfig()
+	dir := t.TempDir()
+	// Block the canonical path with a directory so rename into place fails.
+	// The prior complete content (none) and the blocking dir must survive.
+	path := filepath.Join(dir, "orders.parquet")
+	if err := os.Mkdir(path, 0o750); err != nil {
+		t.Fatalf("create blocking directory: %v", err)
+	}
+
+	records := []map[string]interface{}{
+		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "A-1", "quantity": 3}}},
+	}
+	err := WriteFile(path, cfg, records, Options{Compression: "none"})
+	if err == nil {
+		t.Fatal("WriteFile succeeded; want replace failure")
+	}
+	if !strings.Contains(err.Error(), "failed to replace parquet output") {
+		t.Fatalf("error = %v, want replace context", err)
+	}
+	assertNoParquetTempFiles(t, dir, "orders.parquet")
+
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		t.Fatalf("stat blocking directory: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatalf("blocking path was replaced with a file; want directory preserved")
+	}
+}
+
+func TestWriteFileLeavesExistingIntactOnWriteFailure(t *testing.T) {
+	cfg := minimalParquetConfig()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orders.parquet")
+
+	seed := []map[string]interface{}{
+		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "KEEP", "quantity": 2}}},
+	}
+	if err := WriteFile(path, cfg, seed, Options{Compression: "none"}); err != nil {
+		t.Fatalf("seed WriteFile: %v", err)
+	}
+	before, err := os.ReadFile(path) // #nosec G304 - test-owned path
+	if err != nil {
+		t.Fatalf("read seed: %v", err)
+	}
+
+	// Missing extract.data forces a failure after the temp is created but
+	// before a valid footer lands — the canonical path must stay the seed.
+	bad := []map[string]interface{}{
+		{"extract": map[string]interface{}{"summary": map[string]interface{}{"x": true}}},
+	}
+	if err := WriteFile(path, cfg, bad, Options{Compression: "none"}); err == nil {
+		t.Fatal("WriteFile with bad records succeeded; want failure")
+	}
+	assertNoParquetTempFiles(t, dir, "orders.parquet")
+
+	after, err := os.ReadFile(path) // #nosec G304 - test-owned path
+	if err != nil {
+		t.Fatalf("read after failed write: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("canonical file changed on write failure; want seed bytes preserved")
+	}
+
+	type Row struct {
+		OrderID  string `parquet:"order_id"`
+		Quantity int64  `parquet:"quantity,optional"`
+	}
+	rows, err := parquet.ReadFile[Row](path)
+	if err != nil {
+		t.Fatalf("ReadFile seed after failed write: %v", err)
+	}
+	if len(rows) != 1 || rows[0].OrderID != "KEEP" {
+		t.Fatalf("seed rows = %#v, want KEEP preserved", rows)
+	}
+}
+
+func minimalParquetConfig() *extract.ExtractRecordMatch {
+	return &extract.ExtractRecordMatch{
+		RecordType: "order",
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "order_id", XPath: "@id", Type: "string"},
+			{OutputField: "quantity", XPath: "Quantity", Type: "integer"},
+		},
+		OutputSchema: map[string]interface{}{
+			"properties": map[string]interface{}{
+				"order_id": map[string]interface{}{"type": "string"},
+				"quantity": map[string]interface{}{"type": "integer"},
+			},
+			"required": []interface{}{"order_id"},
+		},
+	}
+}
+
+func assertNoParquetTempFiles(t *testing.T, dir, finalName string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "."+finalName+".tmp-*"))
+	if err != nil {
+		t.Fatalf("glob temp files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("leftover temp files = %#v, want none", matches)
 	}
 }
 
