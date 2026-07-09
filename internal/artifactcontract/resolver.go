@@ -16,8 +16,8 @@ import (
 const (
 	DataArtifactCapability = "contract: data-artifact/v0"
 	BaselineSource         = "3leaps/crucible"
-	BaselineReleasedTag    = "v0.1.18"
-	BaselineBundleSHA256   = "sha256:ef6de3f16bd988555a4e063d32e4f15478b56bf6f45121e890d89504ee468a01"
+	BaselineReleasedTag    = "v0.1.19"
+	BaselineBundleSHA256   = "sha256:37eca167cfa9a86357c14239eb9c3274c40c5cfee48f48ebb81480d737104b82"
 )
 
 type Manifest struct {
@@ -160,6 +160,57 @@ func ValidateDescriptorBytes(resolved *ResolvedContract, data []byte, descriptor
 		})
 	}
 	return result, nil
+}
+
+func ValidateFieldCatalogBytes(resolved *ResolvedContract, data []byte, catalogName string) (*ValidationResult, error) {
+	if resolved == nil {
+		return nil, errors.New("resolved contract is required")
+	}
+	var catalog interface{}
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		return nil, fmt.Errorf("parse field catalog JSON: %w", err)
+	}
+	wrapped := map[string]interface{}{
+		"capabilities": []interface{}{DataArtifactCapability},
+		"artifact_id":  "urn:uuid:00000000-0000-7000-8000-000000000000",
+		"lifecycle":    "complete",
+		"producer": map[string]interface{}{
+			"name":    "sumpter",
+			"version": "validation",
+			"profile": "sumpter.extract-artifact/v0",
+		},
+		"grains": []interface{}{
+			map[string]interface{}{
+				"id":                "records",
+				"kind":              "record_stream",
+				"record_kind":       "extract_record",
+				"field_catalog_ref": catalogName,
+			},
+		},
+		"representations": []interface{}{
+			map[string]interface{}{
+				"id":                                 "records_ndjson_1",
+				"role":                               "audit_stream",
+				"format":                             "ndjson",
+				"uri":                                "records.jsonl",
+				"read_path":                          map[string]interface{}{},
+				"protection_enforceable_granularity": "row",
+			},
+		},
+		"field_catalogs": []interface{}{catalog},
+		"protection": map[string]interface{}{
+			"default_action": "block_export",
+		},
+	}
+	wrappedData, err := json.Marshal(wrapped)
+	if err != nil {
+		return nil, fmt.Errorf("marshal field catalog validation wrapper: %w", err)
+	}
+	result, err := ValidateDescriptorBytes(resolved, wrappedData, catalogName)
+	if result != nil {
+		result.File = catalogName
+	}
+	return result, err
 }
 
 func cleanRelativeEntry(entry string) (string, error) {

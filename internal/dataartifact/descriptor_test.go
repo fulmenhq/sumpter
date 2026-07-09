@@ -54,3 +54,39 @@ func TestBuildRecordStreamDescriptorMarksPartialLifecycle(t *testing.T) {
 		t.Fatalf("lifecycle = %q, want partial", got)
 	}
 }
+
+func TestBuildRecordFieldCatalogWithholdsSourceStructureKeys(t *testing.T) {
+	catalog := BuildRecordFieldCatalog([]provenance.FieldProvenance{
+		{
+			OutputField: "source_label",
+			XPath:       "Label",
+			Type:        "string",
+			Description: "Label from the source record",
+		},
+		{
+			OutputField: "derived_total",
+			Expression:  "a + b",
+			Type:        "integer",
+		},
+	})
+
+	if catalog.ID != FieldCatalogRef {
+		t.Fatalf("catalog id = %q, want %q", catalog.ID, FieldCatalogRef)
+	}
+	if got := catalog.WithheldFieldCount; got != 1 {
+		t.Fatalf("withheld_field_count = %d, want 1", got)
+	}
+	if len(catalog.Fields) != 1 {
+		t.Fatalf("fields len = %d, want 1", len(catalog.Fields))
+	}
+	field := catalog.Fields[0]
+	if field.Name != "derived_total" {
+		t.Fatalf("field name = %q, want derived_total", field.Name)
+	}
+	if field.Type != "integer" {
+		t.Fatalf("field type = %q, want integer", field.Type)
+	}
+	if field.Sensitivity != "unknown" || field.ExportAction != "block_export" {
+		t.Fatalf("field protection = sensitivity %q action %q, want unknown/block_export", field.Sensitivity, field.ExportAction)
+	}
+}

@@ -27,6 +27,24 @@ type Descriptor struct {
 	Protection   Protection       `json:"protection"`
 }
 
+type FieldCatalog struct {
+	ID                 string         `json:"id"`
+	Grain              string         `json:"grain"`
+	Fields             []CatalogField `json:"fields"`
+	WithheldFieldCount int            `json:"withheld_field_count,omitempty"`
+}
+
+type CatalogField struct {
+	Name           string   `json:"name"`
+	Type           string   `json:"type"`
+	Required       *bool    `json:"required,omitempty"`
+	SemanticRole   string   `json:"semantic_role,omitempty"`
+	Sensitivity    string   `json:"sensitivity"`
+	ProtectionTags []string `json:"protection_tags,omitempty"`
+	ExportAction   string   `json:"export_action,omitempty"`
+	SafeToProfile  *bool    `json:"safe_to_profile,omitempty"`
+}
+
 type Producer struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
@@ -83,6 +101,37 @@ type Protection struct {
 	DefaultAction      string `json:"default_action"`
 	DefaultExportClass string `json:"default_export_class,omitempty"`
 	ProfileRef         string `json:"profile_ref,omitempty"`
+}
+
+func BuildRecordFieldCatalog(fields []provenance.FieldProvenance) FieldCatalog {
+	catalog := FieldCatalog{
+		ID:     FieldCatalogRef,
+		Grain:  "records",
+		Fields: []CatalogField{},
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		name := strings.TrimSpace(field.OutputField)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if fieldCatalogKeyWithheld(field) {
+			catalog.WithheldFieldCount++
+			continue
+		}
+		catalog.Fields = append(catalog.Fields, CatalogField{
+			Name:         name,
+			Type:         catalogType(field.Type),
+			SemanticRole: "derived_field",
+			Sensitivity:  "unknown",
+			ExportAction: "block_export",
+		})
+	}
+	return catalog
 }
 
 func BuildRecordStreamDescriptor(manifest provenance.Manifest, artifactUUID string) (Descriptor, error) {
@@ -212,6 +261,35 @@ func integrityFor(path string, aggregateOutputs []provenance.AggregateOutput) *I
 		}
 	}
 	return nil
+}
+
+func fieldCatalogKeyWithheld(field provenance.FieldProvenance) bool {
+	// XPath and descriptions are source-structure content, disclosed only by count.
+	// data-artifact/v0 allows a fully withheld catalog when withheld_field_count is positive.
+	return strings.TrimSpace(field.XPath) != "" || strings.TrimSpace(field.Description) != ""
+}
+
+func catalogType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "integer", "int", "int32", "int64":
+		return "integer"
+	case "number", "float", "float32", "float64", "decimal", "double":
+		return "number"
+	case "boolean", "bool":
+		return "boolean"
+	case "date":
+		return "date"
+	case "datetime", "date-time", "timestamp":
+		return "datetime"
+	case "object", "map":
+		return "object"
+	case "array", "list":
+		return "array"
+	case "null":
+		return "null"
+	default:
+		return "string"
+	}
 }
 
 func recordKind(counts map[string]int) string {
