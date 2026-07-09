@@ -43,11 +43,18 @@ type schemaProperty struct {
 var nonIdentifierChars = regexp.MustCompile(`[^A-Za-z0-9_]`)
 
 // WriteFile writes extract.data records to a Parquet file.
+//
+// The file is written to a same-directory temporary path and renamed into place
+// only after the Parquet writer has closed successfully (footer present). That
+// way a crash, cancel, or mid-write failure never leaves a truncated file at
+// the canonical destination — readers see either the previous complete file or
+// the new complete file.
 func WriteFile(path string, cfg *extract.ExtractRecordMatch, records []map[string]interface{}, opts Options) error {
 	if cfg == nil {
 		return fmt.Errorf("extract config is required for parquet output")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("failed to create parquet output directory: %w", err)
 	}
 
@@ -62,12 +69,39 @@ func WriteFile(path string, cfg *extract.ExtractRecordMatch, records []map[strin
 	rowType := structTypeForSpecs(specs)
 	schema := parquet.SchemaOf(reflect.New(rowType).Interface())
 
-	file, err := os.Create(path) // #nosec G304 - output path is caller-controlled CLI output.
+	// Same-directory temp so os.Rename is atomic on the target filesystem
+	// (no cross-device EXDEV window). #nosec G304 - output path is caller-controlled CLI output.
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("failed to create parquet output %s: %w", path, err)
+		return fmt.Errorf("failed to create parquet temp output: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	tmpPath := tmp.Name()
+	// Remove leftover temp on every path. After a successful rename this is a no-op.
+	defer func() { _ = os.Remove(tmpPath) }()
 
+	if err := writeParquetToFile(tmp, schema, records, specs, withholdColumns, opts); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close parquet temp output: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("failed to replace parquet output %s: %w", path, err)
+	}
+	return nil
+}
+
+// writeParquetToFile streams rows into an already-open file and closes the
+// parquet writer (footer). The caller owns closing the underlying *os.File.
+func writeParquetToFile(
+	file *os.File,
+	schema *parquet.Schema,
+	records []map[string]interface{},
+	specs []fieldSpec,
+	withholdColumns []string,
+	opts Options,
+) error {
 	writer := parquet.NewGenericWriter[map[string]any](file, schema, compressionOption(opts.Compression))
 	for key, value := range opts.Metadata {
 		if strings.TrimSpace(key) != "" && value != "" {
@@ -85,6 +119,7 @@ func WriteFile(path string, cfg *extract.ExtractRecordMatch, records []map[strin
 	for _, record := range records {
 		data, err := extractData(record)
 		if err != nil {
+			_ = writer.Close()
 			return err
 		}
 		rows = append(rows, normalizeRecord(data, specs))
