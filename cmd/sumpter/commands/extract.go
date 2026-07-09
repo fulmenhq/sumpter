@@ -2900,7 +2900,15 @@ func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manif
 	if err != nil {
 		return fmt.Errorf("generate artifact id: %w", err)
 	}
-	descriptor, err := dataartifact.BuildRecordStreamDescriptor(manifest, artifactUUID)
+	descriptorOpts := dataartifact.DescriptorOptions{
+		RecordIndexPath: strings.TrimSpace(opts.RecordIndex),
+	}
+	if descriptorOpts.RecordIndexPath != "" {
+		if n, cerr := countIndexedRecords(descriptorOpts.RecordIndexPath); cerr == nil {
+			descriptorOpts.RecordIndexRowCount = n
+		}
+	}
+	descriptor, err := dataartifact.BuildExtractDescriptor(manifest, artifactUUID, descriptorOpts)
 	if err != nil {
 		return err
 	}
