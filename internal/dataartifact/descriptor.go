@@ -157,7 +157,7 @@ func BuildRecordStreamDescriptor(manifest provenance.Manifest, artifactUUID stri
 	return Descriptor{
 		Capabilities: []string{artifactcontract.DataArtifactCapability},
 		ArtifactID:   "urn:uuid:" + artifactUUID,
-		Lifecycle:    lifecycle(manifest),
+		Lifecycle:    LifecycleFromManifest(manifest),
 		Producer: Producer{
 			Name:    "sumpter",
 			Version: valueOrUnknown(manifest.SumpterVersion),
@@ -322,21 +322,6 @@ func maxOutputRows(outputs []provenance.Output) int {
 		}
 	}
 	return total
-}
-
-func lifecycle(manifest provenance.Manifest) string {
-	if manifest.Incomplete {
-		return "incomplete"
-	}
-	if manifest.InputsFailed != nil && *manifest.InputsFailed > 0 {
-		return "partial"
-	}
-	for _, input := range manifest.Inputs {
-		if input.Disposition == "failed" {
-			return "partial"
-		}
-	}
-	return "complete"
 }
 
 func valueOrUnknown(value string) string {
