@@ -125,6 +125,9 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
+			return err
+		}
 	}
 
 	// This recipe committed its shards and wrote its own successful manifest, so the

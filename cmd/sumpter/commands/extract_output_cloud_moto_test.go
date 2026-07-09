@@ -285,6 +285,37 @@ func TestMotoExtractOutputLocalToCloudNoLeak(t *testing.T) {
 	assertStagingCleanedUp(t, home)
 }
 
+// TestMotoExtractValidateOutputSidecarsCloud proves --validate-output sidecars
+// works for s3:// destinations: validation runs on complete staging bytes before
+// Publish removes them, so the run succeeds and the manifest is still published.
+// This is the regression for the B2.4 post-publish staging re-open failure.
+func TestMotoExtractValidateOutputSidecarsCloud(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	dir := createExtractManifestFixture(t)
+
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+
+	prefix := runKeyPrefix() + "vout/"
+	outURI := "s3://" + m.bucket + "/" + prefix
+	credPath := m.writeCredentialsConfig(t, dir)
+
+	opts := cloudOutputExtractOptions(dir, outURI, credPath, "json")
+	opts.ValidateOutput = validateOutputSidecars
+	opts.RunID = testMultiRunID
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract(local->cloud, --validate-output sidecars) error = %v", err)
+	}
+
+	manifestData, ok := m.getObject(t, prefix+"manifest.json")
+	if !ok {
+		t.Fatalf("provenance sidecar %smanifest.json was not published under validate-output sidecars", prefix)
+	}
+	stageRoot := filepath.Join(home, "work", "cloud")
+	assertManifestOutputPath(t, manifestData, strings.TrimRight(outURI, "/")+"/out.json", stageRoot)
+	assertStagingCleanedUp(t, home)
+}
+
 // TestMotoExtractRecordIndexOutputToCloudNoLeak covers the record-index JSON
 // streaming output path to s3://: the manifest must record the logical output
 // destination and never the local staging path (the path devrev flagged where

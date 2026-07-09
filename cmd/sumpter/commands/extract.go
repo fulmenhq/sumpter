@@ -84,6 +84,9 @@ type ExtractOptions struct {
 	NoManifest               bool
 	ArtifactDescriptor       bool
 	ArtifactContractBase     string
+	// ValidateOutput selects the opt-in extract output validation ladder:
+	// off (default) | sidecars | artifact | envelope-sample | strict.
+	ValidateOutput           string
 	dataArtifactFieldCatalog dataartifact.FieldCatalog
 	AllowLargeFiles          bool
 	CommandName              string
@@ -210,6 +213,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for the record-stream output")
 	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
+	cmd.Flags().StringVar(&opts.ValidateOutput, "validate-output", validateOutputOff, "Opt-in extract output validation ladder: off|sidecars|artifact|envelope-sample|strict (default off)")
 
 	// Parallel extraction flags
 	cmd.Flags().StringVar(&opts.RecordIndex, "record-index", "", "Path to record index file (enables parallel extraction)")
@@ -400,6 +404,9 @@ func runExtract(opts *ExtractOptions) error {
 		return fmt.Errorf("--continue-on-error requires --output-path")
 	}
 	if err := validateArtifactDescriptorOptions(opts); err != nil {
+		return err
+	}
+	if err := validateValidateOutputOptions(opts); err != nil {
 		return err
 	}
 	if err := validateAggregateOptions(opts, outputFormats); err != nil {
@@ -778,6 +785,9 @@ func runExtract(opts *ExtractOptions) error {
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
+			return err
+		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
@@ -851,6 +861,11 @@ func writeExtractFailureManifest(opts *ExtractOptions, path string, manifest *ex
 		return fmt.Errorf("marshal extraction failures: %w", err)
 	}
 	data = append(data, '\n')
+	if validateFn, verr := failureSidecarValidator(); verr != nil {
+		return verr
+	} else if err := validateOutputSidecarBytes(opts, data, "failures.json", validateFn); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("create extraction failure manifest directory: %w", err)
 	}
@@ -985,6 +1000,11 @@ func writeDispositionSummary(opts *ExtractOptions, path string, summary *disposi
 		return fmt.Errorf("marshal dispositions summary: %w", err)
 	}
 	data = append(data, '\n')
+	if validateFn, verr := dispositionSidecarValidator(); verr != nil {
+		return verr
+	} else if err := validateOutputSidecarBytes(opts, data, "dispositions.json", validateFn); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("create dispositions directory: %w", err)
 	}
@@ -1197,6 +1217,9 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
+			return err
+		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
@@ -1402,9 +1425,12 @@ func (t *jsonOutputTarget) Commit() error {
 		_ = os.Remove(t.tempFile)
 		return wrapJSONOutputError(fmt.Sprintf("commit output %s", t.logicalName()), err)
 	}
+	// Validate the complete local/staging file before Publish removes a cloud staging copy.
+	if err := maybeValidateEnvelopeFileBeforePublish(t.opts, t.outputFile, t.logicalName()); err != nil {
+		return err
+	}
 	// Publish makes the committed artifact durable at the destination. No-op for
-	// local targets (the rename already finalized it); the cloud upload lands here
-	// in a later delivery.
+	// local targets (the rename already finalized it); cloud PutObject then removes staging.
 	if t.output != nil {
 		if err := t.output.Publish(context.Background()); err != nil {
 			return wrapJSONOutputError(fmt.Sprintf("publish output %s", t.logicalName()), err)
@@ -1605,6 +1631,9 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
+			return err
+		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
@@ -1670,6 +1699,9 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 			return err
 		}
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+			return err
+		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -2150,6 +2182,9 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 		args = append(args, "--artifact-descriptor")
 	}
 	appendFlag("--contract-base", opts.ArtifactContractBase)
+	if mode := normalizeValidateOutput(opts.ValidateOutput); mode != validateOutputOff {
+		appendFlag("--validate-output", mode)
+	}
 	return args
 }
 
@@ -2835,6 +2870,25 @@ func writeProvenanceManifest(opts *ExtractOptions, path string, manifest provena
 	if err != nil {
 		return err
 	}
+	// Write-time ladder check on the exact bytes we will publish. Cloud Publish
+	// removes the staging file immediately after PutObject, so end-of-run re-open
+	// is not available for s3:// outputs.
+	if opts != nil && validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
+		preview := manifest
+		preview.SchemaVersion = provenance.ManifestSchemaVersion
+		data, merr := json.MarshalIndent(preview, "", "  ")
+		if merr != nil {
+			return fmt.Errorf("marshal provenance manifest for validate-output: %w", merr)
+		}
+		data = append(data, '\n')
+		validateFn, verr := provenanceSidecarValidator()
+		if verr != nil {
+			return verr
+		}
+		if err := validateOutputSidecarBytes(opts, data, provenance.ManifestFileName, validateFn); err != nil {
+			return err
+		}
+	}
 	return provenance.WriteManifestVia(context.Background(), tgt, manifest)
 }
 
@@ -3296,6 +3350,9 @@ func writeRecordsToFile(opts *ExtractOptions, filename string, records []map[str
 	// upload. A close error must not be masked.
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close output %s: %w", tgt.LogicalURI, err)
+	}
+	if err := maybeValidateEnvelopeFileBeforePublish(opts, localPath, tgt.LogicalURI); err != nil {
+		return err
 	}
 	return tgt.Publish(context.Background())
 }

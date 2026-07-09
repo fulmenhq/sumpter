@@ -57,6 +57,42 @@ invented:
 does not emit them for finished runs (`building` would apply only to an
 explicitly exposed in-progress descriptor, which is not part of this surface).
 
+### Opt-in `--validate-output` ladder
+
+`--validate-output` checks extract outputs against embedded schemas and the
+host-less data-artifact contract base. Default is `off` so high-volume runs stay
+performance-oriented and byte-compatible with prior behavior.
+
+Validation runs on the **complete local (or cloud staging) file before Publish**.
+That order is required for `s3://` destinations: cloud Publish uploads via a
+single PutObject and then removes the staging file, so a post-publish re-open
+would fail. Local destinations still get an end-of-run re-check of sidecars and
+record envelopes on disk.
+
+| Mode | Checks |
+| --- | --- |
+| `off` (default) | No extra output validation |
+| `sidecars` | Provenance `manifest.json`; `failures.json` / `dispositions.json` when present |
+| `artifact` | `sidecars` plus generated `artifact-descriptor.json` and `fields/records.fields.json` (requires `--artifact-descriptor` and `--contract-base`) |
+| `envelope-sample` | `artifact` plus sampled NDJSON record envelopes (first, every 100th, last) against the extract-record-envelope schema |
+| `strict` | `artifact` plus **every** NDJSON record envelope |
+
+```bash
+sumpter extract files \
+  --files ./input.xml \
+  --signature-config-path ./signature.yaml \
+  --extract-config-path ./extract.yaml \
+  --output-path ./out \
+  --artifact-descriptor \
+  --contract-base ./contracts/data-artifact/v0 \
+  --validate-output strict
+```
+
+The flag is also available on `recipes run extract` and `recipes run extract-multi`.
+Payload-schema validation (`extract.data` against recipe `output_schema`) remains a
+follow-on strictness level; this ladder covers sidecars, the portable artifact
+bundle, and record envelopes.
+
 ## Structured Output Layout
 
 ```

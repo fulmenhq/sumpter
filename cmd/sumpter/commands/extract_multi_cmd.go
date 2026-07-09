@@ -35,6 +35,7 @@ type recipeRunExtractMultiOptions struct {
 	NoManifest             bool
 	ArtifactDescriptor     bool
 	ArtifactContractBase   string
+	ValidateOutput         string
 	Parameters             []string
 	InternalParameters     []string
 	OutputMode             string
@@ -111,6 +112,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				NoManifest:             opts.NoManifest,
 				ArtifactDescriptor:     opts.ArtifactDescriptor,
 				ArtifactContractBase:   opts.ArtifactContractBase,
+				ValidateOutput:         opts.ValidateOutput,
 				Parameters:             opts.Parameters,
 				InternalParameters:     opts.InternalParameters,
 				OutputMode:             opts.OutputMode,
@@ -141,6 +143,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for each recipe's record-stream output")
 	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
+	cmd.Flags().StringVar(&opts.ValidateOutput, "validate-output", validateOutputOff, "Opt-in extract output validation ladder: off|sidecars|artifact|envelope-sample|strict (default off)")
 	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable, overrides manifest defaults.parameters). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
 	cmd.Flags().StringArrayVar(&opts.InternalParameters, "parameter-internal", nil, "Inject a key=value pair into every recipe's expression scope while suppressing it from all records and provenance values (repeatable, extract-multi only)")
 	cmd.Flags().StringVar(&opts.OutputMode, "output-mode", outputModePerInput, "Record-file fan-out applied to every recipe: per-input (one file per input) or aggregate (each recipe streams to one NDJSON writer per invocation under its <recipe-id>/ dir, rolling to numbered shards). Aggregate is NDJSON only and requires a manifest")
@@ -214,5 +217,8 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 		args = append(args, "--artifact-descriptor")
 	}
 	appendFlag("--contract-base", opts.ArtifactContractBase)
+	if mode := normalizeValidateOutput(opts.ValidateOutput); mode != validateOutputOff {
+		appendFlag("--validate-output", mode)
+	}
 	return args
 }

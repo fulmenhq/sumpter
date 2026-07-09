@@ -336,6 +336,7 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for the record-stream output")
 	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
+	cmd.Flags().StringVar(&opts.ValidateOutput, "validate-output", validateOutputOff, "Opt-in extract output validation ladder: off|sidecars|artifact|envelope-sample|strict (default off)")
 	cmd.Flags().StringVar(&opts.SignatureOverride, "signature", "", "Override manifest signature config path")
 	cmd.Flags().StringVar(&opts.ExtractOverride, "extract", "", "Override manifest extract config path")
 	cmd.Flags().StringArrayVar(&opts.ReferenceTableOverrides, "reference-table", nil, "Override a declared reference table's source: name=source (repeatable). Source is a contained workspace-relative path (no absolute, \"..\", or symlinks) or an s3:// URI reusing the table's declared credentials_handle. Format, columns, and caps stay recipe-declared")
@@ -375,6 +376,7 @@ type recipeRunExtractOptions struct {
 	NoManifest              bool
 	ArtifactDescriptor      bool
 	ArtifactContractBase    string
+	ValidateOutput          string
 	SignatureOverride       string
 	ExtractOverride         string
 	// Cloud credential options (handle references — no secrets in recipe YAML or
@@ -483,6 +485,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 		NoManifest:           opts.NoManifest,
 		ArtifactDescriptor:   opts.ArtifactDescriptor,
 		ArtifactContractBase: opts.ArtifactContractBase,
+		ValidateOutput:       opts.ValidateOutput,
 		CommandName:          "sumpter recipes run extract",
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
@@ -743,6 +746,9 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 		args = append(args, "--artifact-descriptor")
 	}
 	appendFlag("--contract-base", opts.ArtifactContractBase)
+	if mode := normalizeValidateOutput(opts.ValidateOutput); mode != validateOutputOff {
+		appendFlag("--validate-output", mode)
+	}
 	return args
 }
 
