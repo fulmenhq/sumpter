@@ -650,6 +650,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 		return err
 	}
+	if err := maybeValidateExtractOutput(opts, manifest); err != nil {
+		return err
+	}
 
 	// A continue-on-error run that committed its successful inputs still signals partial
 	// failure (non-zero exit) so callers do not treat it as a clean run.

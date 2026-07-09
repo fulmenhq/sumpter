@@ -84,6 +84,9 @@ type ExtractOptions struct {
 	NoManifest               bool
 	ArtifactDescriptor       bool
 	ArtifactContractBase     string
+	// ValidateOutput selects the opt-in extract output validation ladder:
+	// off (default) | sidecars | artifact | envelope-sample | strict.
+	ValidateOutput           string
 	dataArtifactFieldCatalog dataartifact.FieldCatalog
 	AllowLargeFiles          bool
 	CommandName              string
@@ -210,6 +213,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for the record-stream output")
 	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
+	cmd.Flags().StringVar(&opts.ValidateOutput, "validate-output", validateOutputOff, "Opt-in extract output validation ladder: off|sidecars|artifact|envelope-sample|strict (default off)")
 
 	// Parallel extraction flags
 	cmd.Flags().StringVar(&opts.RecordIndex, "record-index", "", "Path to record index file (enables parallel extraction)")
@@ -400,6 +404,9 @@ func runExtract(opts *ExtractOptions) error {
 		return fmt.Errorf("--continue-on-error requires --output-path")
 	}
 	if err := validateArtifactDescriptorOptions(opts); err != nil {
+		return err
+	}
+	if err := validateValidateOutputOptions(opts); err != nil {
 		return err
 	}
 	if err := validateAggregateOptions(opts, outputFormats); err != nil {
@@ -776,6 +783,9 @@ func runExtract(opts *ExtractOptions) error {
 			return err
 		}
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+			return err
+		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -1197,6 +1207,9 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
+			return err
+		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
@@ -1605,6 +1618,9 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
+			return err
+		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
@@ -1670,6 +1686,9 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 			return err
 		}
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+			return err
+		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
 			return err
 		}
 		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
@@ -2150,6 +2169,9 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 		args = append(args, "--artifact-descriptor")
 	}
 	appendFlag("--contract-base", opts.ArtifactContractBase)
+	if mode := normalizeValidateOutput(opts.ValidateOutput); mode != validateOutputOff {
+		appendFlag("--validate-output", mode)
+	}
 	return args
 }
 

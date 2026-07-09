@@ -783,6 +783,9 @@ func (st *recipeRunState) finalize(startedAt time.Time) error {
 		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
+		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
+			return err
+		}
 	}
 
 	if st.dispositionErr != nil {

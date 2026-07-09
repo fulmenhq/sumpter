@@ -55,6 +55,7 @@ type multiSharedOptions struct {
 	NoManifest           bool
 	ArtifactDescriptor   bool
 	ArtifactContractBase string
+	ValidateOutput       string
 	AllowLargeFiles      bool
 
 	// Parameters is the shared run-level --parameter override layer applied to
@@ -307,6 +308,7 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 		NoManifest:           shared.NoManifest,
 		ArtifactDescriptor:   shared.ArtifactDescriptor,
 		ArtifactContractBase: shared.ArtifactContractBase,
+		ValidateOutput:       shared.ValidateOutput,
 		Workers:              shared.Workers,
 		Progress:             shared.Progress,
 		DryRun:               shared.DryRun,
@@ -402,6 +404,9 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 	opts.AggregateMaxRecords = shared.AggregateMaxRecords
 	opts.AggregateMaxBytes = shared.AggregateMaxBytes
 	if err := validateArtifactDescriptorOptions(opts); err != nil {
+		return nil, err
+	}
+	if err := validateValidateOutputOptions(opts); err != nil {
 		return nil, err
 	}
 	// Reference tables resolve against THIS recipe's workspace (per-recipe

@@ -124,6 +124,15 @@ func (v *SchemaValidator) ValidateFailureManifest(data []byte, manifestFile stri
 	return v.validateAgainstSchema(data, schemaBytes, manifestFile, "extract-failures-v0.1.0")
 }
 
+// ValidateExtractRecordEnvelope validates one extract NDJSON record envelope.
+func (v *SchemaValidator) ValidateExtractRecordEnvelope(data []byte, recordFile string) (*ValidationResult, error) {
+	schemaBytes, err := v.loadSchema("extract", "v0.1.0", "extract-record-envelope.schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema file %s: %w", path.Join("extract", "v0.1.0", "extract-record-envelope.schema.json"), err)
+	}
+	return v.validateAgainstSchema(data, schemaBytes, recordFile, "extract-record-envelope-v0.1.0")
+}
+
 func (v *SchemaValidator) loadSchema(parts ...string) ([]byte, error) {
 	rel := path.Join(parts...)
 
