@@ -2873,7 +2873,7 @@ func writeProvenanceManifest(opts *ExtractOptions, path string, manifest provena
 	// Write-time ladder check on the exact bytes we will publish. Cloud Publish
 	// removes the staging file immediately after PutObject, so end-of-run re-open
 	// is not available for s3:// outputs.
-	if validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
+	if opts != nil && validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
 		preview := manifest
 		preview.SchemaVersion = provenance.ManifestSchemaVersion
 		data, merr := json.MarshalIndent(preview, "", "  ")
