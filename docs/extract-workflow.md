@@ -43,6 +43,20 @@ emit descriptors without disclosing source-structure field keys. Object-index
 grains, aggregate grains, value profiles, and protection enforcement metadata
 are separate follow-on surfaces.
 
+**Descriptor `lifecycle`.** The portable data-artifact/v0 lifecycle field is
+mapped from existing provenance completeness signals — no new accounting is
+invented:
+
+| Provenance signal | `lifecycle` |
+| --- | --- |
+| `incomplete: true` (hard failure; orphans may exist) | `incomplete` |
+| Any failed inputs (`inputs_failed > 0` or `inputs[].disposition == "failed"`) | `partial` |
+| Otherwise (applied and/or not_applicable only) | `complete` |
+
+`draft`, `building`, and `retired` are reserved by the contract. Sumpter extract
+does not emit them for finished runs (`building` would apply only to an
+explicitly exposed in-progress descriptor, which is not part of this surface).
+
 ## Structured Output Layout
 
 ```
@@ -211,9 +225,10 @@ These counts are present only on aggregate manifests with an authoritative
 inventory — omitted on per-input/default manifests and on `incomplete: true`
 manifests, which are not a completeness signal. The exit code remains
 authoritative; the counts are a convenience over the `inputs[]` inventory, not a
-replacement for checking it. A semantic `status` field
-(`complete` / `partial` / `incomplete`) is deferred to the ratified durable
-data-artifact contract.
+replacement for checking it. When `--artifact-descriptor` is enabled, the
+portable descriptor `lifecycle` field maps these same signals (plus
+`incomplete: true` and per-input `disposition`) onto the data-artifact/v0
+lifecycle enum — see [Portable Artifact Descriptor](#portable-artifact-descriptor).
 
 **With `extract-multi`.** `--output-mode aggregate` applies to
 [`recipes run extract-multi`](#run-multiple-recipes-in-one-pass-extract-multi) too: each

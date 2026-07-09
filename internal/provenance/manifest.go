@@ -66,9 +66,11 @@ type Manifest struct {
 	// keeping those byte-identical; an explicit value — including 0, e.g.
 	// inputs_failed:0 on an all-applied run — in aggregate mode. The reconciliation
 	// invariant inputs_applied + inputs_failed + inputs_not_applicable ==
-	// inputs_total == len(inputs) holds by construction. The semantic status enum
-	// (complete / partial / incomplete) is deferred to the ratified data-artifact
-	// contract and is intentionally not part of this set.
+	// inputs_total == len(inputs) holds by construction. The portable semantic
+	// lifecycle (complete / partial / incomplete) is not stored here: when
+	// --artifact-descriptor is enabled, dataartifact.LifecycleFromManifest maps
+	// Incomplete + these counts + inputs[].disposition onto the data-artifact/v0
+	// lifecycle field without inventing new accounting.
 	InputsTotal         *int `json:"inputs_total,omitempty"`
 	InputsApplied       *int `json:"inputs_applied,omitempty"`
 	InputsNotApplicable *int `json:"inputs_not_applicable,omitempty"`

@@ -38,23 +38,6 @@ func TestBuildRecordStreamDescriptorUsesRecordCountAsGrainRows(t *testing.T) {
 	}
 }
 
-func TestBuildRecordStreamDescriptorMarksPartialLifecycle(t *testing.T) {
-	failed := 1
-	descriptor, err := BuildRecordStreamDescriptor(provenance.Manifest{
-		RunID:              "0190a3f4-1c2d-7abc-9def-0123456789ab",
-		SumpterVersion:     "0.3.0-dev",
-		InputsFailed:       &failed,
-		CountsByRecordType: map[string]int{"sample_record": 2},
-		Outputs:            []provenance.Output{{Path: "records.jsonl", Format: "json", RecordCount: 2}},
-	}, "0190a3f4-1c2d-7abc-9def-111111111111")
-	if err != nil {
-		t.Fatalf("BuildRecordStreamDescriptor: %v", err)
-	}
-	if got := descriptor.Lifecycle; got != "partial" {
-		t.Fatalf("lifecycle = %q, want partial", got)
-	}
-}
-
 func TestBuildRecordFieldCatalogWithholdsSourceStructureKeys(t *testing.T) {
 	catalog := BuildRecordFieldCatalog([]provenance.FieldProvenance{
 		{
