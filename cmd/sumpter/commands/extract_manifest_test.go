@@ -17,6 +17,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/validation"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -231,6 +232,72 @@ func TestRunExtractWritesMixedArtifactFieldCatalog(t *testing.T) {
 	}
 	if got := field["export_action"]; got != "block_export" {
 		t.Fatalf("catalog field export_action = %#v, want block_export", got)
+	}
+}
+
+func TestWriteOutputTargetBytesAtomicallyReplacesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, dataartifact.DescriptorFileName)
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatalf("seed existing file: %v", err)
+	}
+
+	tgt := &uriio.OutputTarget{
+		LogicalURI: dataartifact.DescriptorFileName,
+		LocalPath:  path,
+		Scheme:     uriio.SchemeLocal,
+	}
+	if err := writeOutputTargetBytesAtomically(tgt, []byte("new\n"), 0o600); err != nil {
+		t.Fatalf("writeOutputTargetBytesAtomically: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read replaced file: %v", err)
+	}
+	if string(data) != "new\n" {
+		t.Fatalf("replaced file = %q, want new payload", string(data))
+	}
+	assertNoOutputTargetTempFiles(t, dir, dataartifact.DescriptorFileName)
+}
+
+func TestWriteOutputTargetBytesAtomicallyCleansTempOnRenameFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, dataartifact.DescriptorFileName)
+	if err := os.Mkdir(path, 0o750); err != nil {
+		t.Fatalf("create blocking directory: %v", err)
+	}
+
+	tgt := &uriio.OutputTarget{
+		LogicalURI: dataartifact.DescriptorFileName,
+		LocalPath:  path,
+		Scheme:     uriio.SchemeLocal,
+	}
+	err := writeOutputTargetBytesAtomically(tgt, []byte("new\n"), 0o600)
+	if err == nil {
+		t.Fatal("writeOutputTargetBytesAtomically succeeded; want replace failure")
+	}
+	if !strings.Contains(err.Error(), "replace output") {
+		t.Fatalf("error = %v, want replace output context", err)
+	}
+	assertNoOutputTargetTempFiles(t, dir, dataartifact.DescriptorFileName)
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		t.Fatalf("stat blocking directory: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatalf("blocking path was replaced with file; want directory preserved")
+	}
+}
+
+func assertNoOutputTargetTempFiles(t *testing.T, dir, finalName string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "."+finalName+".tmp-*"))
+	if err != nil {
+		t.Fatalf("glob temp files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("leftover temp files = %#v, want none", matches)
 	}
 }
 
