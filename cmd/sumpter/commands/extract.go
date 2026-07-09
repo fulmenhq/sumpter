@@ -2877,10 +2877,7 @@ func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manif
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(tgt.LocalPath), 0o750); err != nil {
-		return fmt.Errorf("create data artifact descriptor directory: %w", err)
-	}
-	if err := os.WriteFile(tgt.LocalPath, data, 0o600); err != nil {
+	if err := writeOutputTargetBytesAtomically(tgt, data, 0o600); err != nil {
 		return fmt.Errorf("write data artifact descriptor %s: %w", tgt.LogicalURI, err)
 	}
 	return tgt.Publish(context.Background())
@@ -2915,13 +2912,47 @@ func writeDataArtifactFieldCatalog(opts *ExtractOptions, resolved *artifactcontr
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(tgt.LocalPath), 0o750); err != nil {
-		return fmt.Errorf("create data artifact field catalog directory: %w", err)
-	}
-	if err := os.WriteFile(tgt.LocalPath, data, 0o600); err != nil {
+	if err := writeOutputTargetBytesAtomically(tgt, data, 0o600); err != nil {
 		return fmt.Errorf("write data artifact field catalog %s: %w", tgt.LogicalURI, err)
 	}
 	return tgt.Publish(context.Background())
+}
+
+func writeOutputTargetBytesAtomically(tgt *uriio.OutputTarget, data []byte, mode os.FileMode) error {
+	if tgt == nil {
+		return errors.New("output target is required")
+	}
+	dir := filepath.Dir(tgt.LocalPath)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(tgt.LocalPath)+".tmp-*") // #nosec G304 - target path is already resolved by uriio
+	if err != nil {
+		return fmt.Errorf("create temp output: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	n, err := tmp.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp output: %w", err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod temp output: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp output: %w", err)
+	}
+	if err := os.Rename(tmpPath, tgt.LocalPath); err != nil {
+		return fmt.Errorf("replace output: %w", err)
+	}
+	return nil
 }
 
 func artifactValidationSummary(result *artifactcontract.ValidationResult) string {
