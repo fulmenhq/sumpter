@@ -8,17 +8,39 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-10
+
+**Portable `data-artifact/v0` producer profile — opt-in extract output that is legible to catalogs, query engines, and data planes without Sumpter-specific knowledge, while default paths stay byte-compatible.**
+
+See [`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md) for the full release narrative.
+
 ### Added
 
-- **Portable data-artifact producer profile (opt-in)** — extract can emit a
-  baseline-bound `artifact-descriptor.json` and `fields/records.fields.json`
-  under host-less `contract: data-artifact/v0`, with grains for record streams,
-  optional object index, and aggregate mode; portable lifecycle mapping; protection
-  declarations; Parquet page-metadata suppression when the descriptor is enabled;
-  opt-in `--validate-output` ladder; and guarded provenance `value_profile`.
-  Default paths stay byte-compatible when unused. Adoption guide:
-  [`docs/data-artifact-producer-profile.md`](docs/data-artifact-producer-profile.md)
-  (#139–#149).
+- **Host-less data-artifact contract baseline** — extract resolves `contract: data-artifact/v0` from an explicit local `--contract-base` bundle. Production publish is baseline-gated against the pinned Crucible release and resolved-bundle SHA-256 (current pin: Crucible `v0.1.19`). CI/offline fixtures match the pin; a mismatched bundle fails closed before publish (#139).
+- **Artifact descriptor sidecar** — opt-in `--artifact-descriptor` writes baseline-validated `artifact-descriptor.json` with producer profile `sumpter.extract-artifact/v0`. Primary grain is `record_stream` by default; `--output-mode aggregate` switches the primary grain to `aggregation`; `--record-index` adds an `object_index` grain for the consumed index (path-sanitized reference; not copied into the output bundle) (#140, #146).
+- **Field catalog sidecar** — with the descriptor enabled, extract also writes `fields/records.fields.json` (refs from the descriptor). Source-structure keys are withheld by count; disclosed fields default to `sensitivity: unknown` and `export_action: block_export`. Fully withheld catalogs (`fields: []` + positive withheld count) are valid under the pin (#141).
+- **Portable lifecycle mapping** — descriptor `lifecycle` is derived from existing provenance completeness signals (`incomplete` / `partial` / `complete`); no second accounting system (#144).
+- **Publication integrity (atomic writers)** — local record, Parquet, and portable sidecar paths finalize via same-directory temp+rename; Parquet renames only after a successful close; catalog publishes before the descriptor that references it; cloud destinations validate staging before Publish (#142, #143).
+- **Protection declarations and Parquet page-metadata suppression** — descriptor/catalog emit portable protection floors (`block_export` / `internal` defaults, row vs column enforceable granularity, `columnar_scan` without `predicate_pushdown`). When the descriptor is on, the Parquet writer suppresses page bounds and page statistics on every leaf and never wires Bloom filters. Pre-profile Parquet (no descriptor) retains page statistics. Recipe `withhold_columns` remains a stronger, separate projection control (#147).
+- **Opt-in `--validate-output` ladder** — cumulative modes `off` → `sidecars` → `artifact` → `envelope-sample` → `strict`, plus standalone `sumpter validate artifact-descriptor`. Modes provide baseline-bound structural/schema validation (and envelope checks on higher rungs); they are not a complete L3 semantic or consumer export-gate validator (#145).
+- **Guarded provenance `value_profile`** — optional recipe `defaults.value_profile` diagnostic on the provenance manifest (not the artifact descriptor). Tier A concrete values only under operator-declared `safe_to_profile` + `public|internal` + `≤ max_distinct`; never-enumerate tags dominate; Tier B emits aggregates only; small-cell suppression; hard ceiling `max_distinct` ≤ 10000; disabled/omitted leaves manifests byte-identical (#148).
+- **Producer-profile adoption guide** — in-repo reference at [`docs/data-artifact-producer-profile.md`](docs/data-artifact-producer-profile.md), linked from overview, extract workflow, and validate docs (#149).
+- **VERSION bumped to `0.3.0`.**
+
+### Changed
+
+- **Supported-version surface** — security patches target the latest `0.3.x` release; see [SECURITY.md](SECURITY.md).
+- **README capabilities** — portable data-artifact producer surfaces called out as available today (opt-in).
+
+### Security
+
+- **Default-deny portable protection floors** when descriptors are emitted; producer-side Parquet page-metadata suppression on the descriptor path; `value_profile` default-deny with never-enumerate tag dominance. Consumers and data planes still enforce export and read policy.
+
+### Deferred
+
+- Richer validation strictness, cross-artifact lineage, and reserved contract-slot activations remain later work.
+- Sibling `process-run/v0` (portable run observability / control) remains a separate track.
+- Full semantic L3 conformance for every grain shape (for example queryable catalog requirements on `object_index`, opaque shard-id carriers for multi-shard aggregates) remains follow-on; this release documents baseline-bound structural producer adoption.
 
 ## [0.2.6] - 2026-07-07
 
@@ -180,33 +202,3 @@ See [`docs/releases/v0.1.9.md`](docs/releases/v0.1.9.md) for the full release na
 
 - **GitHub Actions runtimes bumped to Node 24** - `actions/checkout` (v4→v6), `actions/setup-go` (v5→v6), and `softprops/action-gh-release` (v2→v3) moved to their current Node-24 majors across all four workflows, clearing the GitHub Actions Node-20 runtime deprecation (PR #73).
 - **VERSION bumped to `0.1.9`** for this release.
-
-## [0.1.8] - 2026-06-08
-
-**Bounded-memory JSON/NDJSON output streaming, CI/local toolchain parity, and public-data corpus expansion.**
-
-See [`docs/releases/v0.1.8.md`](docs/releases/v0.1.8.md) for the full release narrative.
-
-### Added
-
-- **Bounded sequential JSON/NDJSON output streaming** - sequential extraction streams emitted records through the record-sink path instead of buffering full-result slices, bounding memory by parser state, active record work, and writer buffers (PR #65).
-- **Bounded parallel JSON/NDJSON output streaming** - record-index parallel extraction streams output through a bounded reorder window that preserves source-document order without retaining all records (PR #67).
-- **Streaming memory-regression proof** - a fixture and test assert heap stays flat at scale on the streaming output paths, guarding against future buffering regressions (PR #68).
-- **Streaming eligibility gating** - `min_occurrences` handling and a large-file gate determine when the bounded streaming route applies versus the buffered fallback, with a warning when a sequential run falls back to the buffered floor (PR #69).
-- **Toolchain contract** - `config/toolchain.env` pins the Go and golangci-lint versions for local and CI use; `make toolchain-check` verifies local tools, the `go.mod` toolchain, `GOFLAGS`, and `.goneat/tools.yaml` against the contract before linting (PR #70).
-- **Public-data exemplars** - USGS QuakeML (geophysics), NWS CAP (public-safety geospatial), and GovInfo USLM (government/legal) recipe pairs and sliced public-domain samples, each runnable end-to-end (PR #71).
-
-### Changed
-
-- **Lint toolchain install path** - golangci-lint installs via a pinned `go install ...@v2.11.2` path (no brew/latest path); CI and release workflows load `config/toolchain.env` (PR #70).
-- **Public-data positioning** - the public-data examples guide and README reframe the exemplars as a domain-neutrality demonstration (public-domain sources so every example ships runnable by anyone); public and proprietary formats are both first-class (PR #71).
-- **VERSION bumped to `0.1.8`** for this release.
-
-### Fixed
-
-- **Staticcheck false-green class** - a pinned-staticcheck probe (`make lint-staticcheck-probe`) asserts the `SA5011` diagnostic is reported, closing the local/CI lint divergence surfaced during the v0.1.8 streaming work (PR #70).
-- **Docs table-padding drift** - normalized pre-existing prettier table-padding drift in two docs that `make check-all` does not gate.
-
-### Deferred
-
-- Incremental Parquet writing, bounded mixed-output runs, bounded sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered in v0.1.8 and are future work. Cloud URI read/write is tracked as the next major capability thread.
