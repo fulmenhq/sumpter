@@ -79,7 +79,12 @@
       "type": "object",
       "description": "Opt-in guarded value-domain diagnostic. Concrete value enumeration is default-deny.",
       "additionalProperties": false,
-      "required": ["version", "max_distinct", "small_cell_threshold", "fields"],
+      "required": [
+        "version",
+        "max_distinct",
+        "small_cell_threshold",
+        "fields"
+      ],
       "properties": {
         "version": {
           "type": "string",
@@ -156,13 +161,25 @@
             "distinct"
           ],
           "properties": {
-            "tier": { "const": "enumeration" },
+            "tier": {
+              "const": "enumeration"
+            },
             "status": {
               "const": "complete"
             },
-            "count": { "type": "integer", "minimum": 0 },
-            "null_count": { "type": "integer", "minimum": 0 },
-            "distinct_count": { "type": "integer", "minimum": 0, "maximum": 10000 },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "null_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "distinct_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
             "distinct": {
               "type": "object",
               "maxProperties": 10000,
@@ -171,8 +188,12 @@
                 "minimum": 1
               }
             },
-            "min": { "type": "number" },
-            "max": { "type": "number" }
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            }
           }
         },
         {
@@ -187,13 +208,27 @@
             "distinct_count"
           ],
           "properties": {
-            "tier": { "const": "aggregates" },
-            "status": { "const": "complete" },
-            "count": { "type": "integer", "minimum": 0 },
-            "null_count": { "type": "integer", "minimum": 0 },
+            "tier": {
+              "const": "aggregates"
+            },
+            "status": {
+              "const": "complete"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "null_count": {
+              "type": "integer",
+              "minimum": 0
+            },
             "distinct_count": {
               "oneOf": [
-                { "type": "integer", "minimum": 0, "maximum": 10000 },
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
                 {
                   "type": "string",
                   "pattern": "^<[0-9]+$"
@@ -213,11 +248,23 @@
             "length": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["min", "max", "mean"],
+              "required": [
+                "min",
+                "max",
+                "mean"
+              ],
               "properties": {
-                "min": { "type": "integer", "minimum": 0 },
-                "max": { "type": "integer", "minimum": 0 },
-                "mean": { "type": "number" }
+                "min": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "max": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mean": {
+                  "type": "number"
+                }
               }
             }
           }
@@ -234,10 +281,20 @@
             "distinct_count"
           ],
           "properties": {
-            "tier": { "const": "aggregates" },
-            "status": { "const": "high_cardinality_capped" },
-            "count": { "type": "integer", "minimum": 0 },
-            "null_count": { "type": "integer", "minimum": 0 },
+            "tier": {
+              "const": "aggregates"
+            },
+            "status": {
+              "const": "high_cardinality_capped"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "null_count": {
+              "type": "integer",
+              "minimum": 0
+            },
             "distinct_count": {
               "type": "string",
               "pattern": "^>=[0-9]+$"
@@ -255,11 +312,23 @@
             "length": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["min", "max", "mean"],
+              "required": [
+                "min",
+                "max",
+                "mean"
+              ],
               "properties": {
-                "min": { "type": "integer", "minimum": 0 },
-                "max": { "type": "integer", "minimum": 0 },
-                "mean": { "type": "number" }
+                "min": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "max": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mean": {
+                  "type": "number"
+                }
               }
             }
           }
