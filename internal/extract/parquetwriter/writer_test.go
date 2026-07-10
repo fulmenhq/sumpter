@@ -551,7 +551,8 @@ func TestWriteFileSuppressesPageStatsAndBoundsLeakCensus(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "leak-census.parquet")
 	// Default compression is zstd — required for the leak-census method.
-	if err := WriteFile(path, cfg, records, Options{}); err != nil {
+	// Suppression is the B2 opt-in path (wired from --artifact-descriptor).
+	if err := WriteFile(path, cfg, records, Options{SuppressPageMetadata: true}); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -575,13 +576,13 @@ func TestWriteFileNeverConfiguresBloomFilters(t *testing.T) {
 		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "A-1", "quantity": 3}}},
 	}
 	path := filepath.Join(t.TempDir(), "no-bloom.parquet")
-	if err := WriteFile(path, cfg, records, Options{Compression: "zstd"}); err != nil {
+	if err := WriteFile(path, cfg, records, Options{Compression: "zstd", SuppressPageMetadata: true}); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	assertNoBloomFilters(t, openParquetFile(t, path))
 }
 
-func TestWriteFileUncompressedStillSkipsPageStats(t *testing.T) {
+func TestWriteFileUncompressedStillSkipsPageStatsWhenSuppressed(t *testing.T) {
 	// Uncompressed data will contain the value in the page payload; we still
 	// assert structural stats are absent so the skip pair is wired regardless
 	// of compression codec.
@@ -590,10 +591,46 @@ func TestWriteFileUncompressedStillSkipsPageStats(t *testing.T) {
 		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "A-1", "quantity": 3}}},
 	}
 	path := filepath.Join(t.TempDir(), "no-stats.parquet")
-	if err := WriteFile(path, cfg, records, Options{Compression: "none"}); err != nil {
+	if err := WriteFile(path, cfg, records, Options{Compression: "none", SuppressPageMetadata: true}); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	assertNoFooterColumnStats(t, openParquetFile(t, path), "order_id", "quantity")
+}
+
+// TestWriteFileDefaultPathRetainsPageStats guards the SUM-071 no-opt floor:
+// without SuppressPageMetadata the writer keeps pre-B2 page/footer stats so
+// ordinary Parquet consumers are not silently regressed.
+func TestWriteFileDefaultPathRetainsPageStats(t *testing.T) {
+	cfg := minimalParquetConfig()
+	records := []map[string]interface{}{
+		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "A-1", "quantity": 3}}},
+		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "B-2", "quantity": 9}}},
+	}
+	path := filepath.Join(t.TempDir(), "default-stats.parquet")
+	if err := WriteFile(path, cfg, records, Options{Compression: "none"}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	file := openParquetFile(t, path)
+	found := false
+	for _, rg := range file.Metadata().RowGroups {
+		for _, col := range rg.Columns {
+			if len(col.MetaData.PathInSchema) == 0 {
+				continue
+			}
+			if col.MetaData.PathInSchema[0] != "order_id" {
+				continue
+			}
+			found = true
+			stats := col.MetaData.Statistics
+			if len(stats.MinValue) == 0 && len(stats.MaxValue) == 0 &&
+				len(stats.Min) == 0 && len(stats.Max) == 0 {
+				t.Fatalf("default-path order_id has no footer min/max; no-opt path must retain pre-B2 page stats")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("order_id column missing from default-path parquet")
+	}
 }
 
 func minimalParquetConfig() *extract.ExtractRecordMatch {

@@ -23,6 +23,11 @@ type Options struct {
 	Compression     string
 	Metadata        map[string]string
 	WithholdColumns []string
+	// SuppressPageMetadata enables data-artifact/v0 "Metadata Is Content"
+	// protection: SkipPageBounds + SkipPageStatistics on every leaf column.
+	// Off by default so ordinary Parquet output stays byte-compatible with the
+	// pre-B2 writer; the extract B2 path turns this on with --artifact-descriptor.
+	SuppressPageMetadata bool
 }
 
 type fieldSpec struct {
@@ -95,9 +100,10 @@ func WriteFile(path string, cfg *extract.ExtractRecordMatch, records []map[strin
 // writeParquetToFile streams rows into an already-open file and closes the
 // parquet writer (footer). The caller owns closing the underlying *os.File.
 //
-// Protection (data-artifact/v0 "Metadata Is Content"): page bounds and page
-// statistics are suppressed for every leaf column (default-deny). Bloom filters
-// are never configured — they remain opt-in in parquet-go and would form a
+// When opts.SuppressPageMetadata is true (B2 opt-in via --artifact-descriptor),
+// page bounds and page statistics are suppressed for every leaf column
+// (data-artifact/v0 "Metadata Is Content", default-deny). Bloom filters are
+// never configured — they remain opt-in in parquet-go and would form a
 // membership oracle on restricted-class values if wired.
 func writeParquetToFile(
 	file *os.File,
@@ -107,7 +113,10 @@ func writeParquetToFile(
 	withholdColumns []string,
 	opts Options,
 ) error {
-	writerOpts := protectionWriterOptions(schema)
+	writerOpts := make([]parquet.WriterOption, 0, 2)
+	if opts.SuppressPageMetadata {
+		writerOpts = append(writerOpts, protectionWriterOptions(schema)...)
+	}
 	writerOpts = append(writerOpts, schema, compressionOption(opts.Compression))
 	writer := parquet.NewGenericWriter[map[string]any](file, writerOpts...)
 	for key, value := range opts.Metadata {

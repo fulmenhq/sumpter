@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/validation"
+	"github.com/parquet-go/parquet-go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -184,6 +186,169 @@ func TestRunExtractWritesArtifactDescriptorWhenRequested(t *testing.T) {
 	}
 	if got := rep["uri"]; got != "records.jsonl" {
 		t.Fatalf("representation uri = %#v, want records.jsonl", got)
+	}
+}
+
+// TestRunExtractParquetArtifactDescriptorSuppressesPageMetadata connects the
+// B2 opt-in (--artifact-descriptor) to physical Parquet metadata suppression
+// and the descriptor's column protection floor.
+func TestRunExtractParquetArtifactDescriptorSuppressesPageMetadata(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	// Distinctive marker for leak-census (must compress out of data pages under zstd).
+	const marker = "PARQPROT-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	mustWriteFile(t, filepath.Join(dir, "input.xml"),
+		fmt.Sprintf(`<root><item><name>%s</name></item><item><name>%s</name></item></root>`, marker, marker))
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+	contractBase := filepath.Join("..", "..", "..", "tests", "fixtures", "data-artifact-contract", "v0")
+
+	opts := &ExtractOptions{
+		Files:                filepath.Join(dir, "input.xml"),
+		Format:               "parquet",
+		OutputPath:           outputDir,
+		OutputPattern:        "records.parquet",
+		ParquetCompression:   "zstd",
+		SignatureConfig:      filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:        filepath.Join(dir, "extract.yaml"),
+		RunID:                testMultiRunID,
+		ArtifactDescriptor:   true,
+		ArtifactContractBase: contractBase,
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+
+	parquetPath := filepath.Join(outputDir, "records.parquet")
+	fileBytes, err := os.ReadFile(parquetPath) // #nosec G304 - test-owned path
+	if err != nil {
+		t.Fatalf("read parquet: %v", err)
+	}
+	if n := bytes.Count(fileBytes, []byte(marker)); n != 0 {
+		t.Fatalf("marker leaked in parquet bytes %d time(s) with --artifact-descriptor; want 0", n)
+	}
+
+	f, err := os.Open(parquetPath) // #nosec G304 - test-owned path
+	if err != nil {
+		t.Fatalf("open parquet: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	stat, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat parquet: %v", err)
+	}
+	pqFile, err := parquet.OpenFile(f, stat.Size())
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	for _, rg := range pqFile.Metadata().RowGroups {
+		for _, col := range rg.Columns {
+			if col.MetaData.BloomFilterOffset != 0 {
+				t.Fatalf("BloomFilterOffset=%d on %v; must never wire Bloom filters",
+					col.MetaData.BloomFilterOffset, col.MetaData.PathInSchema)
+			}
+			stats := col.MetaData.Statistics
+			if len(stats.MinValue) > 0 || len(stats.MaxValue) > 0 ||
+				len(stats.Min) > 0 || len(stats.Max) > 0 {
+				t.Fatalf("column %v has footer stats with --artifact-descriptor", col.MetaData.PathInSchema)
+			}
+		}
+	}
+
+	descriptorPath := filepath.Join(outputDir, dataartifact.DescriptorFileName)
+	result, _, err := artifactcontract.ValidateDescriptorFile(contractBase, descriptorPath)
+	if err != nil {
+		t.Fatalf("validate descriptor: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("descriptor invalid: %+v", result.Errors)
+	}
+	var descriptor map[string]interface{}
+	data, err := os.ReadFile(descriptorPath)
+	if err != nil {
+		t.Fatalf("read descriptor: %v", err)
+	}
+	if err := json.Unmarshal(data, &descriptor); err != nil {
+		t.Fatalf("unmarshal descriptor: %v", err)
+	}
+	reps := descriptor["representations"].([]interface{})
+	foundParquet := false
+	for _, raw := range reps {
+		rep := raw.(map[string]interface{})
+		if rep["format"] != "parquet" {
+			continue
+		}
+		foundParquet = true
+		if got := rep["protection_enforceable_granularity"]; got != "column" {
+			t.Fatalf("parquet protection floor = %#v, want column", got)
+		}
+		readPath := rep["read_path"].(map[string]interface{})
+		if got := readPath["gateable_unit_granularity"]; got != "column" {
+			t.Fatalf("parquet gateable unit = %#v, want column", got)
+		}
+		for _, cap := range readPath["scan_capabilities"].([]interface{}) {
+			if cap == "predicate_pushdown" {
+				t.Fatal("parquet rep must not claim predicate_pushdown")
+			}
+		}
+	}
+	if !foundParquet {
+		t.Fatal("descriptor missing parquet representation")
+	}
+}
+
+// TestRunExtractParquetWithoutDescriptorRetainsPageStats locks the no-opt path:
+// ordinary Parquet extract keeps pre-B2 footer min/max metadata.
+func TestRunExtractParquetWithoutDescriptorRetainsPageStats(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:              filepath.Join(dir, "input.xml"),
+		Format:             "parquet",
+		OutputPath:         outputDir,
+		OutputPattern:      "records.parquet",
+		ParquetCompression: "none",
+		SignatureConfig:    filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:      filepath.Join(dir, "extract.yaml"),
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+
+	parquetPath := filepath.Join(outputDir, "records.parquet")
+	f, err := os.Open(parquetPath) // #nosec G304 - test-owned path
+	if err != nil {
+		t.Fatalf("open parquet: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	stat, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat parquet: %v", err)
+	}
+	pqFile, err := parquet.OpenFile(f, stat.Size())
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	foundStats := false
+	for _, rg := range pqFile.Metadata().RowGroups {
+		for _, col := range rg.Columns {
+			stats := col.MetaData.Statistics
+			if len(stats.MinValue) > 0 || len(stats.MaxValue) > 0 ||
+				len(stats.Min) > 0 || len(stats.Max) > 0 {
+				foundStats = true
+			}
+		}
+	}
+	if !foundStats {
+		t.Fatal("no-opt parquet path lost footer min/max; want pre-B2 page stats retained")
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, dataartifact.DescriptorFileName)); !os.IsNotExist(err) {
+		t.Fatal("no-opt path must not write artifact-descriptor.json")
 	}
 }
 

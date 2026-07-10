@@ -61,7 +61,9 @@ under known roots, otherwise basename only) so host-local absolute paths are
 never published into the portable sidecar.
 
 **Protection declarations.** The descriptor and field catalog are declare-not-
-enforce: Sumpter emits protection metadata; consumers enforce.
+enforce: Sumpter emits protection metadata; consumers enforce. These surfaces
+are gated by `--artifact-descriptor` (with `--contract-base`); ordinary extract
+output without that flag stays on the pre-B2 no-opt path.
 
 | Surface | Posture |
 | --- | --- |
@@ -69,13 +71,16 @@ enforce: Sumpter emits protection metadata; consumers enforce.
 | Field catalog keys | Source-structure-derived fields (xpath/description) withheld by count only |
 | Emitted catalog fields | `sensitivity: unknown`, `export_action: block_export` (default-deny) |
 | NDJSON / aggregate NDJSON | `protection_enforceable_granularity: row` |
-| Parquet | `protection_enforceable_granularity: column` (page bounds + page statistics suppressed on every leaf; Bloom filters never wired) |
+| Parquet (with `--artifact-descriptor`) | `protection_enforceable_granularity: column`; page bounds + page statistics suppressed on every leaf; Bloom filters never wired |
+| Parquet (no descriptor) | Pre-B2 writer configuration (page stats/bounds retained); no portable protection claims |
 | Scan claims | `columnar_scan` only — no `predicate_pushdown` without a matching `pushdown_withheld` set |
 
-Parquet physical metadata follows the contract “Metadata Is Content” rule: for
-each leaf column the writer passes both `SkipPageBounds` and `SkipPageStatistics`
-so min/max cannot leak through DataPageHeader stats, ColumnIndex, or footer
-ColumnChunk statistics. Membership-oracle Bloom filters stay unconfigured.
+When the B2 opt-in is enabled, Parquet physical metadata follows the contract
+“Metadata Is Content” rule: for each leaf column the writer passes both
+`SkipPageBounds` and `SkipPageStatistics` so min/max cannot leak through
+DataPageHeader stats, ColumnIndex, or footer ColumnChunk statistics.
+Membership-oracle Bloom filters stay unconfigured. Without the opt-in, Parquet
+bytes remain compatible with the pre-B2 writer.
 
 Value profiles (guarded `value_profile`) remain a separate follow-on surface.
 
