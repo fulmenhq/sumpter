@@ -18,7 +18,8 @@ It also validates portable data artifact descriptors against an explicit local
 contract base. The artifact descriptor path uses the host-less capability token
 `contract: data-artifact/v0`; `--contract-base` points at a trusted local
 directory containing `contract.json` and the relative entry schema named by
-that manifest.
+that manifest. How extract adopts that contract end-to-end is summarized in
+[Data-Artifact Producer Profile](../../data-artifact-producer-profile.md).
 
 ## Parameters
 

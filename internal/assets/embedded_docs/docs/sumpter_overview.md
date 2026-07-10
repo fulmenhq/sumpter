@@ -28,6 +28,10 @@ Sumpter is a **Go-based XML extraction engine** designed for:
 - **Inspection and diagnostics**: structure reports, encoding detection, and environment diagnostics.
 - **Analytics-ready outputs**: JSON/NDJSON records and Parquet projections.
 - **Operational visibility**: structured logs and machine-readable command output.
+- **Optional portable data-artifact profile**: opt-in artifact descriptors, field
+  catalogs, protection declarations, guarded value profiles, and
+  `--validate-output` — additive and byte-compatible when unused. See
+  [Data-Artifact Producer Profile](data-artifact-producer-profile.md).
 
 This combination enables teams to move from raw XML to queryable tables **in minutes, not weeks**.
 

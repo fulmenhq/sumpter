@@ -14,6 +14,11 @@ NDJSON is the default durable record output for recipe examples. Parquet is a se
 
 ## Portable Artifact Descriptor
 
+> **Adoption overview.** For the full producer-adoption narrative (what stays
+> the same, what is opt-in, security posture, non-goals), see
+> [Data-Artifact Producer Profile](data-artifact-producer-profile.md). This
+> section is the operational reference for extract flags and sidecars.
+
 `--artifact-descriptor` writes an opt-in `artifact-descriptor.json` sidecar and
 its referenced `fields/records.fields.json` field-catalog sidecar beside the
 normal provenance manifest. The descriptor declares conformance to the host-less

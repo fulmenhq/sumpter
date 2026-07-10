@@ -4,6 +4,7 @@ topics:
     tags: [commands, tutorials, guides]
     include:
       - sumpter_overview.md
+      - data-artifact-producer-profile.md
       - output_rendering.md
       - dsl-reference.md
       - technical/**/*.md
