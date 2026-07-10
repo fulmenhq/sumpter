@@ -82,7 +82,31 @@ DataPageHeader stats, ColumnIndex, or footer ColumnChunk statistics.
 Membership-oracle Bloom filters stay unconfigured. Without the opt-in, Parquet
 bytes remain compatible with the pre-B2 writer.
 
-Value profiles (guarded `value_profile`) remain a separate follow-on surface.
+**Guarded `value_profile`.** Opt-in drift-detection diagnostic written into the
+provenance manifest (`value_profile`). Recipe config:
+
+```yaml
+defaults:
+  value_profile:
+    enabled: true
+    max_distinct: 100              # optional; default 100
+    small_cell_threshold: 5        # optional; default 5
+    fields:
+      - field: status
+        safe_to_profile: true
+        sensitivity: public
+      - field: account_id          # untagged → aggregates only
+        protection_tags: [linkage_key]
+```
+
+Enumeration of concrete values is **default-deny**. Tier A (value set) requires
+`safe_to_profile` **and** `sensitivity` in `{public, internal}` **and**
+distinct-count ≤ `max_distinct`. Everything else is Tier B (counts, capped
+distinct, length stats, coarse shape) — never sample values, top-K, or string
+min/max. `source_structure` / `direct_identifier` shapes collapse to
+`opaque_string`. Quasi-identifier / linkage_key cells below
+`small_cell_threshold` are suppressed. Disabled or omitted → byte-identical
+manifests (no `value_profile` field).
 
 **Descriptor `lifecycle`.** The portable data-artifact/v0 lifecycle field is
 mapped from existing provenance completeness signals — no new accounting is

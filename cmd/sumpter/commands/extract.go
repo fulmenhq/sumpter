@@ -27,6 +27,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/uriio"
+	"github.com/fulmenhq/sumpter/internal/valueprofile"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -84,6 +85,12 @@ type ExtractOptions struct {
 	NoManifest               bool
 	ArtifactDescriptor       bool
 	ArtifactContractBase     string
+	// ValueProfile is the opt-in guarded value-domain diagnostic config.
+	// When active, extract observes extract.data fields and attaches a
+	// guarded profile to the provenance manifest.
+	ValueProfile *valueprofile.Config
+	// valueProfileCollector is the runtime accumulator (not CLI-set).
+	valueProfileCollector *valueprofile.Collector
 	// ValidateOutput selects the opt-in extract output validation ladder:
 	// off (default) | sidecars | artifact | envelope-sample | strict.
 	ValidateOutput           string
@@ -1329,6 +1336,11 @@ func (t *jsonOutputTarget) OnRecord(ctx context.Context, record extract.EmittedR
 	if err := t.ensureOpen(); err != nil {
 		return wrapJSONOutputError("open output", err)
 	}
+	// Streaming JSON path — observe here so value_profile is not limited to the
+	// buffered writeRecordsForFormat route.
+	if t.opts != nil {
+		observeValueProfile(t.opts, []map[string]interface{}{record.Envelope()})
+	}
 	if err := t.sink.OnRecord(ctx, record); err != nil {
 		return wrapJSONOutputError("write output record", err)
 	}
@@ -2031,6 +2043,7 @@ func replaceOutputExtension(filename, ext string) string {
 }
 
 func writeRecordsForFormat(outputFile, format string, records []map[string]interface{}, extCfg *extract.ExtractRecordMatch, sigCfg *extract.FileSignature, opts *ExtractOptions, runtime provenance.RuntimeOptions, sourceFile, manifestPath string) error {
+	observeValueProfile(opts, records)
 	switch format {
 	case recipesmanifest.OutputFormatJSON:
 		return writeRecordsToFile(opts, outputFile, records)
@@ -2093,7 +2106,7 @@ func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.
 	if len(argv) == 0 {
 		argv = buildExtractArgv(opts)
 	}
-	return provenance.Manifest{
+	manifest := provenance.Manifest{
 		SchemaVersion:      provenance.ManifestSchemaVersion,
 		RunID:              runtimeProvenance.RunID,
 		SumpterVersion:     runtimeProvenance.SumpterVersion,
@@ -2106,6 +2119,52 @@ func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.
 		CountsByRecordType: counts,
 		ReferenceTables:    opts.referenceTableProv,
 	}
+	if raw := snapshotValueProfile(opts); len(raw) > 0 {
+		manifest.ValueProfile = raw
+	}
+	return manifest
+}
+
+// ensureValueProfileCollector lazily builds the runtime collector from opts.
+func ensureValueProfileCollector(opts *ExtractOptions) error {
+	if opts == nil || opts.ValueProfile == nil || opts.valueProfileCollector != nil {
+		return nil
+	}
+	collector, err := valueprofile.NewCollector(*opts.ValueProfile)
+	if err != nil {
+		return fmt.Errorf("value_profile: %w", err)
+	}
+	opts.valueProfileCollector = collector
+	return nil
+}
+
+func observeValueProfile(opts *ExtractOptions, records []map[string]interface{}) {
+	if opts == nil || opts.ValueProfile == nil || !opts.ValueProfile.Active() {
+		return
+	}
+	if err := ensureValueProfileCollector(opts); err != nil {
+		logging.Warn("value_profile collector init failed", zap.Error(err))
+		return
+	}
+	if opts.valueProfileCollector != nil {
+		opts.valueProfileCollector.ObserveRecords(records)
+	}
+}
+
+func snapshotValueProfile(opts *ExtractOptions) json.RawMessage {
+	if opts == nil || opts.valueProfileCollector == nil {
+		return nil
+	}
+	profile := opts.valueProfileCollector.Snapshot()
+	if profile == nil || len(profile.Fields) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(profile)
+	if err != nil {
+		logging.Warn("value_profile marshal failed", zap.Error(err))
+		return nil
+	}
+	return raw
 }
 
 func manifestSanitizeRoots(opts *ExtractOptions) []string {

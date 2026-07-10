@@ -18,6 +18,7 @@ import (
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	regulatory "github.com/fulmenhq/sumpter/internal/retrieve/recipe/finance/regulatory"
 	"github.com/fulmenhq/sumpter/internal/utils"
+	"github.com/fulmenhq/sumpter/internal/valueprofile"
 	"github.com/spf13/cobra"
 )
 
@@ -614,6 +615,25 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	extractOpts.UniformSchema = defaults.Output.UniformSchema
 	if defaults.Output.Parquet != nil && len(defaults.Output.Parquet.WithholdColumns) > 0 {
 		extractOpts.ParquetWithholdColumns = append([]string(nil), defaults.Output.Parquet.WithholdColumns...)
+	}
+	if defaults.ValueProfile != nil && defaults.ValueProfile.Enabled {
+		cfg := &valueprofile.Config{
+			Enabled:            defaults.ValueProfile.Enabled,
+			MaxDistinct:        defaults.ValueProfile.MaxDistinct,
+			SmallCellThreshold: defaults.ValueProfile.SmallCellThreshold,
+		}
+		for _, f := range defaults.ValueProfile.Fields {
+			cfg.Fields = append(cfg.Fields, valueprofile.FieldConfig{
+				Field:          f.Field,
+				SafeToProfile:  f.SafeToProfile,
+				Sensitivity:    f.Sensitivity,
+				ProtectionTags: append([]string(nil), f.ProtectionTags...),
+			})
+		}
+		if _, err := cfg.Normalize(); err != nil {
+			return fmt.Errorf("defaults.value_profile: %w", err)
+		}
+		extractOpts.ValueProfile = cfg
 	}
 
 	if cmd.Flags().Changed("workers") {

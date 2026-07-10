@@ -124,8 +124,28 @@ type Defaults struct {
 	SourceExtraction         []SourceExtractionPattern `yaml:"source_extraction,omitempty"`
 	SourceExtractionRequired []string                  `yaml:"source_extraction_required,omitempty"`
 	ReferenceTables          []ReferenceTableDecl      `yaml:"reference_tables,omitempty"`
-	Workers                  int                       `yaml:"workers"`
-	Progress                 bool                      `yaml:"progress"`
+	// ValueProfile is the opt-in guarded value-domain diagnostic config.
+	// When enabled, extract streams distinct-value tallies into the provenance
+	// manifest under the default-deny enumeration guard.
+	ValueProfile *ValueProfileDefaults `yaml:"value_profile,omitempty"`
+	Workers      int                   `yaml:"workers"`
+	Progress     bool                  `yaml:"progress"`
+}
+
+// ValueProfileDefaults configures the opt-in value_profile diagnostic.
+type ValueProfileDefaults struct {
+	Enabled            bool                    `yaml:"enabled,omitempty"`
+	MaxDistinct        int                     `yaml:"max_distinct,omitempty"`
+	SmallCellThreshold int                     `yaml:"small_cell_threshold,omitempty"`
+	Fields             []ValueProfileFieldDecl `yaml:"fields,omitempty"`
+}
+
+// ValueProfileFieldDecl names a field to observe and optional Tier-A gate tags.
+type ValueProfileFieldDecl struct {
+	Field          string   `yaml:"field"`
+	SafeToProfile  bool     `yaml:"safe_to_profile,omitempty"`
+	Sensitivity    string   `yaml:"sensitivity,omitempty"`
+	ProtectionTags []string `yaml:"protection_tags,omitempty"`
 }
 
 // ReferenceTableDecl declares an external reference table loaded once per run to back

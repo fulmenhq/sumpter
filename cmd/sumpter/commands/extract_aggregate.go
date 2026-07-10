@@ -298,6 +298,11 @@ func (w *aggregateWriter) OnRecord(ctx context.Context, record extract.EmittedRe
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Profile before marshal so aggregate streaming sees the same extract.data
+	// domain as the per-input buffered writeRecordsForFormat path.
+	if w.opts != nil {
+		observeValueProfile(w.opts, []map[string]interface{}{record.Envelope()})
+	}
 	data, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("marshal aggregate record: %w", err)

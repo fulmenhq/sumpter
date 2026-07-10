@@ -75,6 +75,11 @@ type Manifest struct {
 	InputsApplied       *int `json:"inputs_applied,omitempty"`
 	InputsNotApplicable *int `json:"inputs_not_applicable,omitempty"`
 	InputsFailed        *int `json:"inputs_failed,omitempty"`
+	// ValueProfile is an opt-in diagnostic drift-detection surface. When
+	// present it MUST already have passed the default-deny enumeration guard
+	// (concrete values only under safe_to_profile + public|internal + cap).
+	// Omitted when profiling is disabled so manifests stay byte-identical.
+	ValueProfile json.RawMessage `json:"value_profile,omitempty"`
 }
 
 // Input disposition wire values, mirroring internal/extract's Disposition enum.

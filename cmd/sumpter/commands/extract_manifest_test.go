@@ -20,6 +20,7 @@ import (
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/validation"
+	"github.com/fulmenhq/sumpter/internal/valueprofile"
 	"github.com/parquet-go/parquet-go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -349,6 +350,104 @@ func TestRunExtractParquetWithoutDescriptorRetainsPageStats(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outputDir, dataartifact.DescriptorFileName)); !os.IsNotExist(err) {
 		t.Fatal("no-opt path must not write artifact-descriptor.json")
+	}
+}
+
+func TestRunExtractValueProfileGuardedEmission(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	// Two values for name — Tier A when gated public+safe_to_profile.
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "records.jsonl",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		ValueProfile: &valueprofile.Config{
+			Enabled: true,
+			Fields: []valueprofile.FieldConfig{
+				{Field: "name", SafeToProfile: true, Sensitivity: valueprofile.SensitivityPublic},
+				{Field: "secret", Sensitivity: valueprofile.SensitivityRestricted},
+			},
+		},
+	}
+	// secret is not in extract data — only name is profiled from data; secret
+	// field still appears with zero/null aggregates when never observed... actually
+	// only fields present in config are in the profile; name is observed.
+
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.ValueProfile) == 0 {
+		t.Fatal("expected value_profile on manifest")
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(manifest.ValueProfile, &profile); err != nil {
+		t.Fatalf("unmarshal value_profile: %v", err)
+	}
+	if profile["version"] != valueprofile.ProfileVersion {
+		t.Fatalf("version = %#v", profile["version"])
+	}
+	fields := profile["fields"].(map[string]interface{})
+	nameField := fields["name"].(map[string]interface{})
+	if nameField["tier"] != valueprofile.TierEnumeration {
+		t.Fatalf("name tier = %#v, want enumeration", nameField["tier"])
+	}
+	distinct := nameField["distinct"].(map[string]interface{})
+	if distinct["A"] == nil || distinct["B"] == nil {
+		t.Fatalf("name distinct = %#v, want A and B", distinct)
+	}
+	// secret never appeared in data — still listed with aggregates only
+	secretField := fields["secret"].(map[string]interface{})
+	if secretField["tier"] != valueprofile.TierAggregates {
+		t.Fatalf("secret tier = %#v, want aggregates", secretField["tier"])
+	}
+	if secretField["distinct"] != nil {
+		t.Fatalf("restricted field must not emit distinct: %#v", secretField["distinct"])
+	}
+
+	// Schema validation of the full manifest still passes with value_profile.
+	data, err := os.ReadFile(filepath.Join(outputDir, provenance.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "..", "schemas"))
+	result, err := validator.ValidateProvenanceManifest(data, "manifest.json")
+	if err != nil {
+		t.Fatalf("ValidateProvenanceManifest: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("manifest with value_profile invalid: %+v", result.Errors)
+	}
+}
+
+func TestRunExtractWithoutValueProfileOmitsField(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "records.jsonl",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.ValueProfile) != 0 {
+		t.Fatalf("no-opt path must omit value_profile, got %s", string(manifest.ValueProfile))
 	}
 }
 
