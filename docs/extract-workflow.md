@@ -106,10 +106,12 @@ defaults:
 
 Enumeration of concrete values is **default-deny**. Tier A (value set) requires
 `safe_to_profile` **and** `sensitivity` in `{public, internal}` **and**
-distinct-count ≤ `max_distinct`. Everything else is Tier B (counts, capped
-distinct, length stats, coarse shape) — never sample values, top-K, or string
-min/max. `source_structure` / `direct_identifier` shapes collapse to
-`opaque_string`. Quasi-identifier / linkage_key cells below
+distinct-count **at or below** `max_distinct` (`≤ max_distinct`). Never-enumerate
+tags (`direct_identifier`, `source_structure`, `opaque_payload`,
+`access_control_metadata`) force aggregates-only even when public + safe. Everything
+else is Tier B (counts, capped distinct, length stats, coarse shape) — never sample
+values, top-K, or string min/max. `source_structure` / `direct_identifier` shapes
+collapse to `opaque_string`. Quasi-identifier / linkage_key cells below
 `small_cell_threshold` are suppressed. Disabled or omitted → byte-identical
 manifests (no `value_profile` field).
 

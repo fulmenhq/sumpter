@@ -8,6 +8,18 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+### Added
+
+- **Portable data-artifact producer profile (opt-in)** — extract can emit a
+  baseline-bound `artifact-descriptor.json` and `fields/records.fields.json`
+  under host-less `contract: data-artifact/v0`, with grains for record streams,
+  optional object index, and aggregate mode; portable lifecycle mapping; protection
+  declarations; Parquet page-metadata suppression when the descriptor is enabled;
+  opt-in `--validate-output` ladder; and guarded provenance `value_profile`.
+  Default paths stay byte-compatible when unused. Adoption guide:
+  [`docs/data-artifact-producer-profile.md`](docs/data-artifact-producer-profile.md)
+  (#139–#149).
+
 ## [0.2.6] - 2026-07-07
 
 **Namespace-correct XML extraction across whole-document, streaming, and indexed modes: opt-in URI-bound XPath maps, namespace-aware record indexes, and synthetic mode-parity coverage with byte-compatible defaults.**

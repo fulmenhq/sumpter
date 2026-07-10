@@ -10,9 +10,23 @@ It is additive documentation only: it does not change runtime behavior.
 > path. What changes is that opted-in output becomes legible to consumers that
 > understand `contract: data-artifact/v0` without Sumpter-specific knowledge.
 
+> **Security posture at a glance.** (1) **Opt-in / byte-compatible default path**
+> — adopting nothing leaves pre-profile extract behavior. (2) **Default-deny** —
+> top-level `block_export` / `internal`, catalog fields default `unknown` +
+> `block_export`, and `value_profile` enumerates only under an affirmative gate.
+> (3) **Declare vs enforce** — Sumpter declares portable protection metadata and
+> applies producer-side physical controls (Parquet page-metadata suppression when
+> the descriptor is on); consumers and data planes enforce export and read policy.
+
 Operational command detail (flags, recipes, cloud I/O) lives in
 [Extract Workflow](extract-workflow.md). Descriptor validation lives in
 [Validate Command](user-guide/commands/validate.md).
+
+This release documents **baseline-bound structural producer adoption**: extract
+emits descriptors and catalogs that validate against the pinned contract bundle
+and follow the protection floors below. It is not a claim of full semantic L3
+export-gate conformance for every grain shape (see
+[Current validation scope](#current-validation-scope)).
 
 ---
 
@@ -37,19 +51,51 @@ page statistics).
 
 ## Capability identity (host-less)
 
-Sumpter declares conformance with the host-less capability string:
+Two identities appear on the wire and must not be conflated:
 
-```text
-contract: data-artifact/v0
-```
+| Identity | Role |
+| --- | --- |
+| `contract: data-artifact/v0` | Portable **contract** capability (host-less). Selects the galaxy contract and its entry schema. |
+| `sumpter.extract-artifact/v0` | Sumpter **producer profile** string (`producer.profile` / opaque `profile_ref`). Identifies this concrete adoption of the contract. |
 
 Resolution uses an explicit local **`--contract-base`**: a directory containing
-`contract.json` and the relative entry schema it names. Sumpter does **not**
-vendor the live contract as its identity; a pinned fixture under
-`tests/fixtures/data-artifact-contract/v0` supports CI and offline validation.
+`contract.json` and the relative entry schema it names. Production publish is
+**baseline-gated**: the resolved bundle must match Sumpter's pinned Crucible
+release and resolved-bundle SHA-256, not merely any directory that advertises
+`data-artifact/v0`. The current pin is Crucible **`v0.1.19`** with:
+
+```text
+sha256:37eca167cfa9a86357c14239eb9c3274c40c5cfee48f48ebb81480d737104b82
+```
+
+How that digest is computed (file order and path-delimited hash input) is
+documented under
+[Data Artifact Contract Baseline Hash](user-guide/commands/validate.md#data-artifact-contract-baseline-hash).
+
+The fixture tree `tests/fixtures/data-artifact-contract/v0` is a **CI / offline
+conformance input** that matches the pin. It is not an independently evolving
+runtime identity: changing it without updating the pin fails closed.
 
 Before publishing an artifact descriptor, extract validates the generated JSON
 against that resolved baseline (fail-closed).
+
+---
+
+## Publication integrity
+
+Local record outputs, Parquet files, and portable sidecars are finalized with
+same-directory **temp + rename** so an interrupted run does not leave a torn
+canonical file. Parquet is renamed into place only after the writer closes
+successfully (footer present). Generated field-catalog and descriptor payloads
+are validated against the pinned baseline **before** publish; the catalog is
+published **before** the descriptor that references it. Cloud destinations
+validate the complete staging file **before** Publish (single PutObject), then
+remove staging.
+
+In aggregate mode, a failed run that already published one or more cloud shards
+may emit `incomplete: true` on the provenance manifest solely to inventory those
+shards for cleanup or rerun. Treat `incomplete: true` as a **failed** run, not
+as successful output.
 
 ---
 
@@ -73,13 +119,14 @@ sumpter extract files \
 Writes `artifact-descriptor.json` beside the provenance manifest. Requires
 `--output-path`, a normal manifest, and `--contract-base`.
 
-**Grains Sumpter emits:**
+**Grains.** The **primary records grain** is always present. Its `kind` depends
+on output mode; other grains may be added:
 
-| Condition | Grain `kind` |
+| Condition | Grain behavior |
 | --- | --- |
-| Default / per-input extract | `record_stream` |
-| `--output-mode aggregate` | `aggregation` (same protection floors as the record stream — no lineage laundering) |
-| `--record-index` | additional `object_index` grain; URI path-sanitized (no host-local absolute paths) |
+| Default / per-input extract | Primary grain `kind: record_stream` |
+| `--output-mode aggregate` | Primary grain becomes `kind: aggregation` (same protection floors as the record stream — no lineage laundering). Multi-shard aggregate runs mark representations `sharded` and attach per-shard digests when present. |
+| `--record-index` | **Additional** `object_index` grain describing the **record-index file consumed** by indexed extraction. Sumpter path-sanitizes the reference (relative under known roots, otherwise basename) so host-local absolute paths never appear. It does **not** copy the index into the output bundle and does **not** promise the basename resolves beside the descriptor. |
 
 Identity is non-deterministic: `artifact_id` is a fresh UUID URN per run.
 Integrity is carried by digests where present; a rerun is a new artifact even if
@@ -112,9 +159,17 @@ Descriptor `lifecycle` is mapped from existing provenance completeness signals
 `draft`, `building`, and `retired` are reserved by the contract and are not
 emitted for finished extract runs.
 
-### 4. Protection declarations (declare, do not enforce)
+### 4. Protection declarations and writer-side metadata suppression
 
-Sumpter **declares** protection metadata; consumers / data planes **enforce**.
+Two layers:
+
+1. **Portable declarations** — Sumpter emits protection metadata on the
+   descriptor and field catalog. Consumers / data planes **enforce** export and
+   read policy from those declarations.
+2. **Producer-side physical controls** — when `--artifact-descriptor` is on,
+   the Parquet writer suppresses page bounds and page statistics on every leaf
+   and never configures Bloom filters. That is a Sumpter integrity/privacy
+   control on the file bytes, not a substitute for consumer export gates.
 
 | Surface | Default posture |
 | --- | --- |
@@ -123,6 +178,11 @@ Sumpter **declares** protection metadata; consumers / data planes **enforce**.
 | Parquet **with** `--artifact-descriptor` | `column` floor; page bounds + page statistics suppressed on every leaf; Bloom filters never wired |
 | Parquet **without** descriptor | Pre-profile writer configuration (page stats retained); no portable column claim |
 | Scan claims | `columnar_scan` only — no `predicate_pushdown` without a matching `pushdown_withheld` set |
+
+Recipe `defaults.output.parquet.withhold_columns` is a stronger, separate
+control: named columns are omitted from the Parquet projection entirely
+(JSON/NDJSON still include them). It composes with descriptor-side catalog
+withholding and page-metadata suppression.
 
 ### 5. Guarded `value_profile`
 
@@ -143,8 +203,14 @@ defaults:
         protection_tags: [linkage_key]
 ```
 
+Field classification (`sensitivity`, `protection_tags`, `safe_to_profile`) is
+**operator-declared**. Enabling `value_profile` is not a blanket “safe on any
+field.” Never-enumerate dominance backstops the worst mis-tags; it does not
+replace careful field configuration.
+
 - **Tier A (concrete values)** only when `safe_to_profile` **and** sensitivity
-  is `public` or `internal` **and** distinct count is under `max_distinct`.
+  is `public` or `internal` **and** distinct count is **at or below**
+  `max_distinct` (`≤ max_distinct`).
 - **Never-enumerate tags** (`direct_identifier`, `source_structure`,
   `opaque_payload`, `access_control_metadata`) force aggregates-only even if
   public + safe_to_profile is set.
@@ -160,15 +226,16 @@ format). Failed or floor-rejected inputs discard staged observations.
 
 ### 6. `--validate-output` ladder
 
-Opt-in extract validation (`off` by default):
+Opt-in extract validation (`off` by default). Modes are **cumulative** where
+noted; higher rungs include lower portable checks:
 
 | Mode | Checks |
 | --- | --- |
-| `off` | No extra ladder (default) |
-| `sidecars` | Provenance / failure / disposition sidecars |
-| `artifact` | Sidecars + descriptor + field catalog (requires descriptor flags) |
-| `envelope-sample` | Sample NDJSON envelopes |
-| `strict` | Full applicable ladder |
+| `off` (default) | No extra output validation |
+| `sidecars` | Provenance `manifest.json`; `failures.json` / `dispositions.json` when present |
+| `artifact` | `sidecars` plus generated `artifact-descriptor.json` and `fields/records.fields.json` (requires `--artifact-descriptor` and `--contract-base`) |
+| `envelope-sample` | `artifact` plus sampled NDJSON envelopes (first, every 100th, last) against the extract-record-envelope schema |
+| `strict` | `artifact` plus **every** NDJSON record envelope |
 
 Validation runs on the complete local (or cloud staging) file **before**
 Publish so cloud destinations cannot drop staging before the check.
@@ -180,6 +247,25 @@ sumpter validate artifact-descriptor ./out/artifact-descriptor.json \
   --contract-base ./contracts/data-artifact/v0
 ```
 
+#### Current validation scope
+
+`--validate-output artifact` and `sumpter validate artifact-descriptor` provide
+**baseline-bound structural / schema validation** (and field-catalog shape
+checks). They are **not** a complete L3 semantic or export-gate validator:
+they do not enforce consumer policy, full predicate-pushdown rules, or every
+contract prose requirement for queryable grains.
+
+Known honesty notes for this adoption:
+
+- A catalog-less `object_index` is structurally valid and shipped as a sanitized
+  reference to a **consumed** record index; contract prose for fully queryable
+  object indexes may still require catalog/lineage refinements.
+- Sharded aggregate outputs still need the opaque shard-id / count-expectation
+  semantic story closed for full L3 conformance claims.
+
+Treat this guide as documenting **what Sumpter produces and pins today**, not as
+unqualified full semantic conformance for every grain.
+
 ---
 
 ## Scope guardrails (this profile)
@@ -187,7 +273,7 @@ sumpter validate artifact-descriptor ./out/artifact-descriptor.json \
 **Does:**
 
 - Make extract bundles discoverable and protection-legible under
-  `data-artifact/v0`.
+  `data-artifact/v0` at the structural baseline.
 - Keep existing extract paths safe by default (opt-in, fail-closed validation).
 
 **Does not:**
