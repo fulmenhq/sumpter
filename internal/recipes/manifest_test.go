@@ -93,6 +93,71 @@ defaults:
 	}
 }
 
+func TestLoadManifestValueProfileConfig(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  value_profile:
+    enabled: true
+    max_distinct: 50
+    small_cell_threshold: 3
+    fields:
+      - field: status
+        safe_to_profile: true
+        sensitivity: public
+      - field: account_id
+        protection_tags: [linkage_key]
+`
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if manifest.Defaults.ValueProfile == nil || !manifest.Defaults.ValueProfile.Enabled {
+		t.Fatalf("value_profile = %#v", manifest.Defaults.ValueProfile)
+	}
+	if got := len(manifest.Defaults.ValueProfile.Fields); got != 2 {
+		t.Fatalf("fields len = %d, want 2", got)
+	}
+	if manifest.Defaults.ValueProfile.MaxDistinct != 50 {
+		t.Fatalf("max_distinct = %d", manifest.Defaults.ValueProfile.MaxDistinct)
+	}
+}
+
+func TestLoadManifestRejectsUnknownValueProfileTag(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+content_version: "0.0.1"
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  value_profile:
+    enabled: true
+    fields:
+      - field: status
+        protection_tags: [not_a_real_tag]
+`
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if _, err := LoadManifest(manifestPath); err == nil {
+		t.Fatal("LoadManifest accepted unknown protection_tag")
+	}
+}
+
 func TestLoadManifestCadenceMetadata(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "recipe.yaml")

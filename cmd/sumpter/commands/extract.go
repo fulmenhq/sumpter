@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/uriio"
+	"github.com/fulmenhq/sumpter/internal/valueprofile"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -84,6 +86,12 @@ type ExtractOptions struct {
 	NoManifest               bool
 	ArtifactDescriptor       bool
 	ArtifactContractBase     string
+	// ValueProfile is the opt-in guarded value-domain diagnostic config.
+	// When active, extract observes extract.data fields and attaches a
+	// guarded profile to the provenance manifest.
+	ValueProfile *valueprofile.Config
+	// valueProfileCollector is the runtime accumulator (not CLI-set).
+	valueProfileCollector *valueprofile.Collector
 	// ValidateOutput selects the opt-in extract output validation ladder:
 	// off (default) | sidecars | artifact | envelope-sample | strict.
 	ValidateOutput           string
@@ -747,6 +755,8 @@ func runExtract(opts *ExtractOptions) error {
 					logger.Error("Failed to encode record", zap.Error(err))
 				}
 			}
+			// Stdout is the durable sink for this path — observe once.
+			observeValueProfileCommitted(opts, result.Records)
 		} else {
 			for _, format := range outputFormats {
 				outputFile := outputFileForFormat(opts, format, result.LogicalURI)
@@ -760,6 +770,9 @@ func runExtract(opts *ExtractOptions) error {
 					manifestOutputs = append(manifestOutputs, provenanceOutput(outputFile, format, len(result.Records), opts, sanitizeRoots...))
 				}
 			}
+			// Observe once after all representations for this input succeeded —
+			// never inside the format loop (JSON+Parquet must not double-count).
+			observeValueProfileCommitted(opts, result.Records)
 		}
 		failureManifest.addApplied()
 	}
@@ -1123,6 +1136,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if err != nil {
 			return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, logical), err)
 		}
+		beginValueProfileInput(opts)
 		rp := runtimeProvenance
 		if file != logical {
 			rp.SourceURI = logical
@@ -1162,8 +1176,11 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 			return fmt.Errorf("failed to close output %s: %w", target.logicalName(), closeErr)
 		}
 		if err := target.Commit(); err != nil {
+			discardValueProfileInput(opts)
 			return err
 		}
+		// Durable rename+publish succeeded — promote staged observations.
+		commitValueProfileInput(opts)
 
 		if result.Disposition != "" {
 			dispositionSummary.add(result, sanitizeRoots)
@@ -1329,6 +1346,11 @@ func (t *jsonOutputTarget) OnRecord(ctx context.Context, record extract.EmittedR
 	if err := t.ensureOpen(); err != nil {
 		return wrapJSONOutputError("open output", err)
 	}
+	// Stage until Commit succeeds; Abort discards staged observations so
+	// failed/floor-rejected inputs never enter the shareable profile.
+	if t.opts != nil {
+		stageValueProfileRecord(t.opts, record.Envelope())
+	}
 	if err := t.sink.OnRecord(ctx, record); err != nil {
 		return wrapJSONOutputError("write output record", err)
 	}
@@ -1345,6 +1367,11 @@ func (t *jsonOutputTarget) writeMarshaled(data []byte) error {
 	}
 	if err := t.sink.WriteMarshaled(data); err != nil {
 		return wrapJSONOutputError("write output record", err)
+	}
+	// extract-multi worker path: stage the envelope after a successful write so
+	// Commit promotes it and Abort discards it.
+	if t.opts != nil {
+		stageValueProfileMarshaled(t.opts, data)
 	}
 	return nil
 }
@@ -1440,7 +1467,13 @@ func (t *jsonOutputTarget) Commit() error {
 }
 
 func (t *jsonOutputTarget) Abort() {
-	if t == nil || t.stdout {
+	if t == nil {
+		return
+	}
+	if t.opts != nil {
+		discardValueProfileInput(t.opts)
+	}
+	if t.stdout {
 		return
 	}
 	_ = t.Close(context.Background())
@@ -1595,6 +1628,8 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 				logger.Error("Failed to encode record", zap.Error(err))
 			}
 		}
+		// Stdout is the durable sink — observe once (same as sequential buffered).
+		observeValueProfileCommitted(opts, records)
 	} else {
 		countsByRecordType[extCfg.RecordType] = len(records)
 		if manifestEnabled {
@@ -1621,6 +1656,8 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 				manifestOutputs = append(manifestOutputs, provenanceOutput(outputFile, format, len(records), opts, sanitizeRoots...))
 			}
 		}
+		// Observe once after all representations succeed — never inside the format loop.
+		observeValueProfileCommitted(opts, records)
 	}
 
 	if manifestEnabled {
@@ -1656,6 +1693,8 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 	if err != nil {
 		return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, "parallel"), err)
 	}
+	// Stage through OnRecord; promote only after durable Commit (mirrors sequential streaming).
+	beginValueProfileInput(opts)
 
 	extractor := parallel.NewParallelExtractor(parallelOpts)
 	summary, extractErr := extractor.ExtractToSink(ctx, target)
@@ -1675,11 +1714,14 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 		return fmt.Errorf("failed to close output %s: %w", target.logicalName(), closeErr)
 	}
 	if err := target.Commit(); err != nil {
+		discardValueProfileInput(opts)
 		return err
 	}
+	commitValueProfileInput(opts)
 
 	recordCount := target.Count()
 	logger.Info("Parallel extraction complete", zap.Int("record_count", recordCount))
+	_ = summary
 
 	if manifestEnabled {
 		// Hash the local bytes (staged working copy for cloud sources) but record
@@ -2031,6 +2073,8 @@ func replaceOutputExtension(filename, ext string) string {
 }
 
 func writeRecordsForFormat(outputFile, format string, records []map[string]interface{}, extCfg *extract.ExtractRecordMatch, sigCfg *extract.FileSignature, opts *ExtractOptions, runtime provenance.RuntimeOptions, sourceFile, manifestPath string) error {
+	// Intentionally does NOT observe value_profile: callers may loop formats.
+	// Committed-record observation happens once outside the representation loop.
 	switch format {
 	case recipesmanifest.OutputFormatJSON:
 		return writeRecordsToFile(opts, outputFile, records)
@@ -2093,7 +2137,7 @@ func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.
 	if len(argv) == 0 {
 		argv = buildExtractArgv(opts)
 	}
-	return provenance.Manifest{
+	manifest := provenance.Manifest{
 		SchemaVersion:      provenance.ManifestSchemaVersion,
 		RunID:              runtimeProvenance.RunID,
 		SumpterVersion:     runtimeProvenance.SumpterVersion,
@@ -2106,6 +2150,102 @@ func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.
 		CountsByRecordType: counts,
 		ReferenceTables:    opts.referenceTableProv,
 	}
+	if raw := snapshotValueProfile(opts); len(raw) > 0 {
+		manifest.ValueProfile = raw
+	}
+	return manifest
+}
+
+// ensureValueProfileCollector lazily builds the runtime collector from opts.
+func ensureValueProfileCollector(opts *ExtractOptions) error {
+	if opts == nil || opts.ValueProfile == nil || opts.valueProfileCollector != nil {
+		return nil
+	}
+	collector, err := valueprofile.NewCollector(*opts.ValueProfile)
+	if err != nil {
+		return fmt.Errorf("value_profile: %w", err)
+	}
+	opts.valueProfileCollector = collector
+	return nil
+}
+
+func withValueProfileCollector(opts *ExtractOptions, fn func(*valueprofile.Collector)) {
+	if opts == nil || opts.ValueProfile == nil || !opts.ValueProfile.Active() {
+		return
+	}
+	if err := ensureValueProfileCollector(opts); err != nil {
+		logging.Warn("value_profile collector init failed", zap.Error(err))
+		return
+	}
+	if opts.valueProfileCollector != nil {
+		fn(opts.valueProfileCollector)
+	}
+}
+
+// observeValueProfileCommitted records already-durable envelopes exactly once
+// (no open input transaction). Used by the buffered multi-format path after
+// all representations for an input have been written successfully.
+func observeValueProfileCommitted(opts *ExtractOptions, records []map[string]interface{}) {
+	withValueProfileCollector(opts, func(c *valueprofile.Collector) {
+		c.ObserveRecords(records)
+	})
+}
+
+func beginValueProfileInput(opts *ExtractOptions) {
+	withValueProfileCollector(opts, func(c *valueprofile.Collector) {
+		c.BeginInput()
+	})
+}
+
+func commitValueProfileInput(opts *ExtractOptions) {
+	withValueProfileCollector(opts, func(c *valueprofile.Collector) {
+		c.CommitInput()
+	})
+}
+
+func discardValueProfileInput(opts *ExtractOptions) {
+	withValueProfileCollector(opts, func(c *valueprofile.Collector) {
+		c.DiscardInput()
+	})
+}
+
+func stageValueProfileRecord(opts *ExtractOptions, envelope map[string]interface{}) {
+	withValueProfileCollector(opts, func(c *valueprofile.Collector) {
+		// Ensure a stage is open even if the caller forgot BeginInput.
+		c.BeginInputIfNeeded()
+		// ObserveRecords unwraps extract.data from the full envelope.
+		c.ObserveRecords([]map[string]interface{}{envelope})
+	})
+}
+
+func stageValueProfileMarshaled(opts *ExtractOptions, data []byte) {
+	// data is one JSON object + trailing newline from the worker path.
+	payload := bytes.TrimSpace(data)
+	if len(payload) == 0 {
+		return
+	}
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		logging.Warn("value_profile: skip unreadable marshaled record", zap.Error(err))
+		return
+	}
+	stageValueProfileRecord(opts, envelope)
+}
+
+func snapshotValueProfile(opts *ExtractOptions) json.RawMessage {
+	if opts == nil || opts.valueProfileCollector == nil {
+		return nil
+	}
+	profile := opts.valueProfileCollector.Snapshot()
+	if profile == nil || len(profile.Fields) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(profile)
+	if err != nil {
+		logging.Warn("value_profile marshal failed", zap.Error(err))
+		return nil
+	}
+	return raw
 }
 
 func manifestSanitizeRoots(opts *ExtractOptions) []string {

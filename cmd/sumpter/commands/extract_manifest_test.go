@@ -20,6 +20,7 @@ import (
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/validation"
+	"github.com/fulmenhq/sumpter/internal/valueprofile"
 	"github.com/parquet-go/parquet-go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -349,6 +350,360 @@ func TestRunExtractParquetWithoutDescriptorRetainsPageStats(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outputDir, dataartifact.DescriptorFileName)); !os.IsNotExist(err) {
 		t.Fatal("no-opt path must not write artifact-descriptor.json")
+	}
+}
+
+func TestRunExtractValueProfileGuardedEmission(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	// Two values for name — Tier A when gated public+safe_to_profile.
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "records.jsonl",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		ValueProfile: &valueprofile.Config{
+			Enabled: true,
+			Fields: []valueprofile.FieldConfig{
+				{Field: "name", SafeToProfile: true, Sensitivity: valueprofile.SensitivityPublic},
+				{Field: "secret", Sensitivity: valueprofile.SensitivityRestricted},
+			},
+		},
+	}
+	// secret is not in extract data — only name is profiled from data; secret
+	// field still appears with zero/null aggregates when never observed... actually
+	// only fields present in config are in the profile; name is observed.
+
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.ValueProfile) == 0 {
+		t.Fatal("expected value_profile on manifest")
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(manifest.ValueProfile, &profile); err != nil {
+		t.Fatalf("unmarshal value_profile: %v", err)
+	}
+	if profile["version"] != valueprofile.ProfileVersion {
+		t.Fatalf("version = %#v", profile["version"])
+	}
+	fields := profile["fields"].(map[string]interface{})
+	nameField := fields["name"].(map[string]interface{})
+	if nameField["tier"] != valueprofile.TierEnumeration {
+		t.Fatalf("name tier = %#v, want enumeration", nameField["tier"])
+	}
+	distinct := nameField["distinct"].(map[string]interface{})
+	if distinct["A"] == nil || distinct["B"] == nil {
+		t.Fatalf("name distinct = %#v, want A and B", distinct)
+	}
+	// secret never appeared in data — still listed with aggregates only
+	secretField := fields["secret"].(map[string]interface{})
+	if secretField["tier"] != valueprofile.TierAggregates {
+		t.Fatalf("secret tier = %#v, want aggregates", secretField["tier"])
+	}
+	if secretField["distinct"] != nil {
+		t.Fatalf("restricted field must not emit distinct: %#v", secretField["distinct"])
+	}
+
+	// Schema validation of the full manifest still passes with value_profile.
+	data, err := os.ReadFile(filepath.Join(outputDir, provenance.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "..", "schemas"))
+	result, err := validator.ValidateProvenanceManifest(data, "manifest.json")
+	if err != nil {
+		t.Fatalf("ValidateProvenanceManifest: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("manifest with value_profile invalid: %+v", result.Errors)
+	}
+}
+
+func TestRunExtractValueProfileNotDoubledForMultiFormat(t *testing.T) {
+	// Representation duplication must not cross small_cell_threshold.
+	dir := createExtractManifestFixture(t)
+	mustWriteFile(t, filepath.Join(dir, "input.xml"),
+		`<root><item><name>only</name></item></root>`)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	opts := &ExtractOptions{
+		Files:              filepath.Join(dir, "input.xml"),
+		Formats:            []string{"json", "parquet"},
+		OutputPath:         outputDir,
+		OutputPattern:      "records.jsonl",
+		OutputPatterns:     map[string]string{"json": "records.jsonl", "parquet": "records.parquet"},
+		SignatureConfig:    filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:      filepath.Join(dir, "extract.yaml"),
+		ParquetCompression: "none",
+		ValueProfile: &valueprofile.Config{
+			Enabled:            true,
+			SmallCellThreshold: 2,
+			Fields: []valueprofile.FieldConfig{
+				{
+					Field:          "name",
+					SafeToProfile:  true,
+					Sensitivity:    valueprofile.SensitivityPublic,
+					ProtectionTags: []string{valueprofile.TagQuasiIdentifier},
+				},
+			},
+		},
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.ValueProfile) == 0 {
+		t.Fatal("expected value_profile")
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(manifest.ValueProfile, &profile); err != nil {
+		t.Fatal(err)
+	}
+	nameField := profile["fields"].(map[string]interface{})["name"].(map[string]interface{})
+	// Singleton frequency is 1 (not 2 from dual formats) → suppressed under threshold 2.
+	if nameField["tier"] != valueprofile.TierEnumeration {
+		t.Fatalf("tier = %#v", nameField["tier"])
+	}
+	distinct, _ := nameField["distinct"].(map[string]interface{})
+	if _, ok := distinct["only"]; ok {
+		t.Fatalf("singleton quasi cell must stay suppressed; dual-format must not double-count: %#v", distinct)
+	}
+}
+
+func TestRunExtractWithoutValueProfileOmitsField(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	opts := &ExtractOptions{
+		Files:           filepath.Join(dir, "input.xml"),
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "records.jsonl",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.ValueProfile) != 0 {
+		t.Fatalf("no-opt path must omit value_profile, got %s", string(manifest.ValueProfile))
+	}
+}
+
+func TestRunExtractIndexedJSONStreamingValueProfile(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	xmlPath := filepath.Join(dir, "input.xml")
+	indexPath := filepath.Join(dir, "input.recordindex.json")
+	builder := index.NewBuilder(index.BuildOptions{
+		InputPath:  xmlPath,
+		OutputPath: indexPath,
+		Selector:   "//item",
+	})
+	recordIndex, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build index: %v", err)
+	}
+	if err := builder.WriteToFile(recordIndex, indexPath); err != nil {
+		t.Fatalf("WriteToFile index: %v", err)
+	}
+	opts := &ExtractOptions{
+		Files:           xmlPath,
+		Format:          "json",
+		OutputPath:      outputDir,
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		RecordIndex:     indexPath,
+		Workers:         2,
+		ValueProfile: &valueprofile.Config{
+			Enabled: true,
+			Fields: []valueprofile.FieldConfig{
+				{Field: "name", SafeToProfile: true, Sensitivity: valueprofile.SensitivityPublic},
+			},
+		},
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+	assertValueProfileHasDistinct(t, filepath.Join(outputDir, provenance.ManifestFileName), "name", "A", "B")
+}
+
+func TestRunExtractIndexedMultiFormatValueProfileExactCount(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	mustWriteFile(t, filepath.Join(dir, "input.xml"),
+		`<root><item><name>only</name></item></root>`)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	xmlPath := filepath.Join(dir, "input.xml")
+	indexPath := filepath.Join(dir, "input.recordindex.json")
+	builder := index.NewBuilder(index.BuildOptions{
+		InputPath:  xmlPath,
+		OutputPath: indexPath,
+		Selector:   "//item",
+	})
+	recordIndex, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build index: %v", err)
+	}
+	if err := builder.WriteToFile(recordIndex, indexPath); err != nil {
+		t.Fatalf("WriteToFile index: %v", err)
+	}
+	opts := &ExtractOptions{
+		Files:              xmlPath,
+		Formats:            []string{"json", "parquet"},
+		OutputPath:         outputDir,
+		OutputPatterns:     map[string]string{"json": "records.jsonl", "parquet": "records.parquet"},
+		ParquetCompression: "none",
+		SignatureConfig:    filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:      filepath.Join(dir, "extract.yaml"),
+		RecordIndex:        indexPath,
+		Workers:            2,
+		ValueProfile: &valueprofile.Config{
+			Enabled:            true,
+			SmallCellThreshold: 2,
+			Fields: []valueprofile.FieldConfig{
+				{
+					Field:          "name",
+					SafeToProfile:  true,
+					Sensitivity:    valueprofile.SensitivityPublic,
+					ProtectionTags: []string{valueprofile.TagQuasiIdentifier},
+				},
+			},
+		},
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.ValueProfile) == 0 {
+		t.Fatal("expected value_profile on indexed multi-format path")
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(manifest.ValueProfile, &profile); err != nil {
+		t.Fatal(err)
+	}
+	nameField := profile["fields"].(map[string]interface{})["name"].(map[string]interface{})
+	distinct, _ := nameField["distinct"].(map[string]interface{})
+	if _, ok := distinct["only"]; ok {
+		t.Fatalf("indexed multi-format must not double-count quasi singleton: %#v", distinct)
+	}
+}
+
+func TestRunExtractValueProfileExcludesFailedFloorInput(t *testing.T) {
+	// Two inputs: one yields records, one misses min_occurrences. With continue-on-error
+	// the failed input must not promote values into the shareable profile.
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	good := filepath.Join(dir, "good.xml")
+	bad := filepath.Join(dir, "bad.xml")
+	mustWriteFile(t, good, `<root><item><name>keep</name></item></root>`)
+	mustWriteFile(t, bad, `<root></root>`)
+	mustWriteFile(t, filepath.Join(dir, "extract.yaml"), `record_type: sample_record
+match_selectors:
+  - xpath: //item
+    min_occurrences: 1
+field_mappings:
+  - output_field: name
+    xpath: name
+    type: string
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+`)
+	opts := &ExtractOptions{
+		Files:           good + "," + bad,
+		Format:          "json",
+		OutputPath:      outputDir,
+		OutputPattern:   "extract-{}.json",
+		SignatureConfig: filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:   filepath.Join(dir, "extract.yaml"),
+		ContinueOnError: true,
+		ValueProfile: &valueprofile.Config{
+			Enabled: true,
+			Fields: []valueprofile.FieldConfig{
+				{Field: "name", SafeToProfile: true, Sensitivity: valueprofile.SensitivityPublic},
+			},
+		},
+	}
+	if err := runExtract(opts); err != nil {
+		// continue-on-error still exits non-zero when failures occurred
+		if !strings.Contains(err.Error(), "min_occurrences") && !strings.Contains(err.Error(), "failed") {
+			// Some paths return aggregate non-zero via dispositionFailure; accept any error
+			// so long as the manifest is written with only the good input's values.
+			t.Logf("runExtract error (expected under continue-on-error): %v", err)
+		}
+	}
+	// Manifest may still be written on continue-on-error
+	manifestPath := filepath.Join(outputDir, provenance.ManifestFileName)
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("expected manifest after continue-on-error: %v", err)
+	}
+	manifest := readManifest(t, manifestPath)
+	if len(manifest.ValueProfile) == 0 {
+		t.Fatal("expected value_profile after partial success")
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(manifest.ValueProfile, &profile); err != nil {
+		t.Fatal(err)
+	}
+	nameField := profile["fields"].(map[string]interface{})["name"].(map[string]interface{})
+	if nameField["tier"] != valueprofile.TierEnumeration {
+		t.Fatalf("tier = %#v", nameField["tier"])
+	}
+	distinct := nameField["distinct"].(map[string]interface{})
+	if distinct["keep"] == nil {
+		t.Fatalf("expected keep from successful input: %#v", distinct)
+	}
+	// No spurious values from the empty failed input (and count must be 1).
+	if len(distinct) != 1 {
+		t.Fatalf("distinct = %#v, want only keep", distinct)
+	}
+}
+
+func assertValueProfileHasDistinct(t *testing.T, manifestPath, field string, values ...string) {
+	t.Helper()
+	manifest := readManifest(t, manifestPath)
+	if len(manifest.ValueProfile) == 0 {
+		t.Fatal("expected value_profile on manifest")
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(manifest.ValueProfile, &profile); err != nil {
+		t.Fatalf("unmarshal value_profile: %v", err)
+	}
+	fields := profile["fields"].(map[string]interface{})
+	fr := fields[field].(map[string]interface{})
+	if fr["tier"] != valueprofile.TierEnumeration {
+		t.Fatalf("field %s tier = %#v, want enumeration", field, fr["tier"])
+	}
+	distinct := fr["distinct"].(map[string]interface{})
+	for _, v := range values {
+		if distinct[v] == nil {
+			t.Fatalf("field %s missing distinct %q: %#v", field, v, distinct)
+		}
 	}
 }
 

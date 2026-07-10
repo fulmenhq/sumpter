@@ -298,6 +298,8 @@ func (w *aggregateWriter) OnRecord(ctx context.Context, record extract.EmittedRe
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Staging is done in writeMarshaled so OnRecord and multi-worker byte
+	// replay share one observation path (exactly-once per durable record).
 	data, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("marshal aggregate record: %w", err)
@@ -314,15 +316,30 @@ func (w *aggregateWriter) OnRecord(ctx context.Context, record extract.EmittedRe
 // OnRecord would produce, the committed shard is byte-identical to streaming the records.
 func (w *aggregateWriter) writeMarshaled(data []byte) error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-
+	var stageAfter bool
 	if w.buffering {
 		// Per-input barrier: hold the record until the input commits (flush) or fails
 		// (discard). data is a fresh allocation per call, so retaining it is safe.
 		w.pending = append(w.pending, data)
+		stageAfter = w.opts != nil
+		w.mu.Unlock()
+		if stageAfter {
+			// Stage for commitInput promotion; discardInput drops the stage.
+			stageValueProfileMarshaled(w.opts, data)
+		}
 		return nil
 	}
-	return w.writeRecordLocked(data)
+	err := w.writeRecordLocked(data)
+	stageAfter = err == nil && w.opts != nil
+	w.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if stageAfter {
+		// Direct-stream durable write: stage envelope (beginInput opened the stage).
+		stageValueProfileMarshaled(w.opts, data)
+	}
+	return nil
 }
 
 // writeRecordLocked appends one fully-marshaled record (with trailing newline) to the
@@ -373,6 +390,9 @@ func (w *aggregateWriter) beginInput() {
 	w.mu.Lock()
 	w.pending = w.pending[:0]
 	w.mu.Unlock()
+	if w.opts != nil {
+		beginValueProfileInput(w.opts)
+	}
 }
 
 // commitInput flushes the current input's buffered records into the shared shard
@@ -388,6 +408,10 @@ func (w *aggregateWriter) commitInput() error {
 		}
 	}
 	w.pending = w.pending[:0]
+	if w.opts != nil {
+		// Promote staged value_profile observations only after durable flush.
+		commitValueProfileInput(w.opts)
+	}
 	return nil
 }
 
@@ -398,6 +422,9 @@ func (w *aggregateWriter) discardInput() {
 	w.mu.Lock()
 	w.pending = w.pending[:0]
 	w.mu.Unlock()
+	if w.opts != nil {
+		discardValueProfileInput(w.opts)
+	}
 }
 
 // OnFileBoundary is a no-op for the aggregate sink: aggregate output deliberately

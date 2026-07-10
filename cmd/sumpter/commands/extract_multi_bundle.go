@@ -263,6 +263,7 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 	if err != nil {
 		return fmt.Errorf("recipe %q: failed to open output for %s: %w", st.plan.RecipeID, app.logical, err)
 	}
+	beginValueProfileInput(opts)
 
 	result := app.result
 	var writeErr error
@@ -337,8 +338,10 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 	}
 
 	if err := target.Commit(); err != nil {
+		discardValueProfileInput(opts)
 		return err
 	}
+	commitValueProfileInput(opts)
 
 	if result.Disposition != "" {
 		st.dispositions.add(result, st.sanitizeRoots)
