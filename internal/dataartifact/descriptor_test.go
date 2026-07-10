@@ -1,6 +1,7 @@
 package dataartifact
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/provenance"
@@ -39,13 +40,15 @@ func TestBuildRecordStreamDescriptorUsesRecordCountAsGrainRows(t *testing.T) {
 }
 
 func TestBuildExtractDescriptorAddsObjectIndexGrainForRecordIndex(t *testing.T) {
+	// URI must be a portable/sanitized ref (relative or basename), never a host-local absolute path.
+	const portableIndexURI = "indexes/source.recordindex.json"
 	descriptor, err := BuildExtractDescriptor(provenance.Manifest{
 		RunID:              "0190a3f4-1c2d-7abc-9def-0123456789ab",
 		SumpterVersion:     "0.3.0-dev",
 		CountsByRecordType: map[string]int{"item": 3},
 		Outputs:            []provenance.Output{{Path: "records.jsonl", Format: "json", RecordCount: 3}},
 	}, "0190a3f4-1c2d-7abc-9def-111111111111", DescriptorOptions{
-		RecordIndexPath:     "/tmp/source.idx.json",
+		RecordIndexPath:     portableIndexURI,
 		RecordIndexRowCount: 3,
 	})
 	if err != nil {
@@ -68,8 +71,11 @@ func TestBuildExtractDescriptorAddsObjectIndexGrainForRecordIndex(t *testing.T) 
 	for _, rep := range descriptor.Reps {
 		if rep.Grain == GrainIDRecordIndex {
 			found = true
-			if rep.Role != "object_index" || rep.Format != "json" || rep.URI != "/tmp/source.idx.json" {
+			if rep.Role != "object_index" || rep.Format != "json" || rep.URI != portableIndexURI {
 				t.Fatalf("index representation = %#v", rep)
+			}
+			if filepath.IsAbs(rep.URI) {
+				t.Fatalf("index URI must not be absolute host path: %q", rep.URI)
 			}
 			if rep.ProtectionEnforceableGranularity != "artifact" {
 				t.Fatalf("index protection floor = %q, want artifact", rep.ProtectionEnforceableGranularity)

@@ -55,7 +55,10 @@ aggregate runs mark those representations `sharded` and attach per-shard
 `whole_digest` integrity when present.
 
 When extract used `--record-index`, the descriptor also emits an `object_index`
-grain for the record-index file (JSON, role `object_index`, artifact-gated).
+grain for the record-index file (JSON, role `object_index`, artifact-gated). The
+representation `uri` is path-sanitized like provenance inputs/outputs (relative
+under known roots, otherwise basename only) so host-local absolute paths are
+never published into the portable sidecar.
 
 Value profiles and protection enforcement metadata remain separate follow-on
 surfaces.

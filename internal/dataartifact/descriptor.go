@@ -74,7 +74,7 @@ type Grain struct {
 	RecordKind      string `json:"record_kind"`
 	RowCount        int    `json:"row_count"`
 	SemanticOrder   string `json:"semantic_order,omitempty"`
-	FieldCatalogRef string `json:"field_catalog_ref"`
+	FieldCatalogRef string `json:"field_catalog_ref,omitempty"`
 	ProvenanceRef   string `json:"provenance_ref,omitempty"`
 }
 
