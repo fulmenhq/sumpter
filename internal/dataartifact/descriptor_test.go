@@ -34,8 +34,16 @@ func TestBuildRecordStreamDescriptorUsesRecordCountAsGrainRows(t *testing.T) {
 	if got := descriptor.Reps[1].Format; got != "ndjson" {
 		t.Fatalf("second representation format = %q, want ndjson", got)
 	}
-	if got := descriptor.Reps[0].ProtectionEnforceableGranularity; got != "artifact" {
-		t.Fatalf("parquet protection floor = %q, want artifact", got)
+	if got := descriptor.Reps[0].ProtectionEnforceableGranularity; got != "column" {
+		t.Fatalf("parquet protection floor = %q, want column", got)
+	}
+	if got := descriptor.Reps[0].ReadPath.GateableUnitGranularity; got != "column" {
+		t.Fatalf("parquet gateable unit = %q, want column", got)
+	}
+	for _, cap := range descriptor.Reps[0].ReadPath.ScanCapabilities {
+		if cap == "predicate_pushdown" {
+			t.Fatalf("parquet rep must not claim predicate_pushdown without pushdown_withheld")
+		}
 	}
 }
 

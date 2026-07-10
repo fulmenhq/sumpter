@@ -60,8 +60,24 @@ representation `uri` is path-sanitized like provenance inputs/outputs (relative
 under known roots, otherwise basename only) so host-local absolute paths are
 never published into the portable sidecar.
 
-Value profiles and protection enforcement metadata remain separate follow-on
-surfaces.
+**Protection declarations.** The descriptor and field catalog are declare-not-
+enforce: Sumpter emits protection metadata; consumers enforce.
+
+| Surface | Posture |
+| --- | --- |
+| Top-level `protection` | `default_action: block_export`, `default_export_class: internal`, opaque `profile_ref` |
+| Field catalog keys | Source-structure-derived fields (xpath/description) withheld by count only |
+| Emitted catalog fields | `sensitivity: unknown`, `export_action: block_export` (default-deny) |
+| NDJSON / aggregate NDJSON | `protection_enforceable_granularity: row` |
+| Parquet | `protection_enforceable_granularity: column` (page bounds + page statistics suppressed on every leaf; Bloom filters never wired) |
+| Scan claims | `columnar_scan` only — no `predicate_pushdown` without a matching `pushdown_withheld` set |
+
+Parquet physical metadata follows the contract “Metadata Is Content” rule: for
+each leaf column the writer passes both `SkipPageBounds` and `SkipPageStatistics`
+so min/max cannot leak through DataPageHeader stats, ColumnIndex, or footer
+ColumnChunk statistics. Membership-oracle Bloom filters stay unconfigured.
+
+Value profiles (guarded `value_profile`) remain a separate follow-on surface.
 
 **Descriptor `lifecycle`.** The portable data-artifact/v0 lifecycle field is
 mapped from existing provenance completeness signals — no new accounting is

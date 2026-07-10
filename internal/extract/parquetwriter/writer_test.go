@@ -1,6 +1,7 @@
 package parquetwriter
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -513,6 +514,88 @@ func TestWriteFileLeavesExistingIntactOnWriteFailure(t *testing.T) {
 	}
 }
 
+// TestWriteFileSuppressesPageStatsAndBoundsLeakCensus verifies the B2.5
+// Metadata-Is-Content floor by re-deriving suppression from emitted bytes —
+// never a self-asserted flag. The marker value is highly compressible under
+// zstd so uncompressed data pages should not retain raw copies; any remaining
+// occurrence is a metadata leak (page stats, ColumnIndex, or footer bounds).
+func TestWriteFileSuppressesPageStatsAndBoundsLeakCensus(t *testing.T) {
+	// Marker is long + repetitive so zstd compresses the data payload out of
+	// the cleartext window while page-header stats would still store it raw.
+	const marker = "LEAKPROBE-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	cfg := &extract.ExtractRecordMatch{
+		RecordType: "order",
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "secret", XPath: "Secret", Type: "string"},
+			{OutputField: "counter", XPath: "Counter", Type: "integer"},
+		},
+		OutputSchema: map[string]interface{}{
+			"properties": map[string]interface{}{
+				"secret":  map[string]interface{}{"type": "string"},
+				"counter": map[string]interface{}{"type": "integer"},
+			},
+			"required": []interface{}{"secret"},
+		},
+	}
+	records := make([]map[string]interface{}, 0, 64)
+	for i := 0; i < 64; i++ {
+		records = append(records, map[string]interface{}{
+			"extract": map[string]interface{}{
+				"data": map[string]interface{}{
+					"secret":  marker,
+					"counter": i,
+				},
+			},
+		})
+	}
+
+	path := filepath.Join(t.TempDir(), "leak-census.parquet")
+	// Default compression is zstd — required for the leak-census method.
+	if err := WriteFile(path, cfg, records, Options{}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	fileBytes, err := os.ReadFile(path) // #nosec G304 - test-owned temp path
+	if err != nil {
+		t.Fatalf("ReadFile bytes: %v", err)
+	}
+	if n := bytes.Count(fileBytes, []byte(marker)); n != 0 {
+		t.Fatalf("marker leaked in parquet file bytes %d time(s); want 0 (stats/bounds not suppressed)", n)
+	}
+
+	pqFile := openParquetFile(t, path)
+	assertNoBloomFilters(t, pqFile)
+	assertNoFooterColumnStats(t, pqFile, "secret", "counter")
+	assertColumnIndexLacksMarker(t, pqFile, []byte(marker))
+}
+
+func TestWriteFileNeverConfiguresBloomFilters(t *testing.T) {
+	cfg := minimalParquetConfig()
+	records := []map[string]interface{}{
+		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "A-1", "quantity": 3}}},
+	}
+	path := filepath.Join(t.TempDir(), "no-bloom.parquet")
+	if err := WriteFile(path, cfg, records, Options{Compression: "zstd"}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	assertNoBloomFilters(t, openParquetFile(t, path))
+}
+
+func TestWriteFileUncompressedStillSkipsPageStats(t *testing.T) {
+	// Uncompressed data will contain the value in the page payload; we still
+	// assert structural stats are absent so the skip pair is wired regardless
+	// of compression codec.
+	cfg := minimalParquetConfig()
+	records := []map[string]interface{}{
+		{"extract": map[string]interface{}{"data": map[string]interface{}{"order_id": "A-1", "quantity": 3}}},
+	}
+	path := filepath.Join(t.TempDir(), "no-stats.parquet")
+	if err := WriteFile(path, cfg, records, Options{Compression: "none"}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	assertNoFooterColumnStats(t, openParquetFile(t, path), "order_id", "quantity")
+}
+
 func minimalParquetConfig() *extract.ExtractRecordMatch {
 	return &extract.ExtractRecordMatch{
 		RecordType: "order",
@@ -527,6 +610,66 @@ func minimalParquetConfig() *extract.ExtractRecordMatch {
 			},
 			"required": []interface{}{"order_id"},
 		},
+	}
+}
+
+func assertNoBloomFilters(t *testing.T, file *parquet.File) {
+	t.Helper()
+	for _, rg := range file.Metadata().RowGroups {
+		for _, col := range rg.Columns {
+			if col.MetaData.BloomFilterOffset != 0 {
+				t.Fatalf("column %v has BloomFilterOffset=%d; Bloom filters must never be wired on extract Parquet",
+					col.MetaData.PathInSchema, col.MetaData.BloomFilterOffset)
+			}
+		}
+	}
+}
+
+func assertNoFooterColumnStats(t *testing.T, file *parquet.File, names ...string) {
+	t.Helper()
+	want := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		want[name] = struct{}{}
+	}
+	for _, rg := range file.Metadata().RowGroups {
+		for _, col := range rg.Columns {
+			if len(col.MetaData.PathInSchema) == 0 {
+				continue
+			}
+			name := col.MetaData.PathInSchema[0]
+			if _, ok := want[name]; !ok {
+				continue
+			}
+			stats := col.MetaData.Statistics
+			// SkipPageBounds suppresses real footer min/max. Empty / zero-length
+			// buffers are fine; non-empty values are a leak.
+			if len(stats.MinValue) > 0 || len(stats.MaxValue) > 0 ||
+				len(stats.Min) > 0 || len(stats.Max) > 0 {
+				t.Fatalf("column %q still has footer ColumnChunk statistics after SkipPageBounds", name)
+			}
+		}
+	}
+}
+
+// assertColumnIndexLacksMarker ensures ColumnIndex page bounds do not embed the
+// cleartext marker. parquet-go may still write empty/zero placeholder entries
+// when bounds are skipped; those are not a content leak.
+func assertColumnIndexLacksMarker(t *testing.T, file *parquet.File, marker []byte) {
+	t.Helper()
+	if len(marker) == 0 {
+		return
+	}
+	for _, idx := range file.ColumnIndexes() {
+		for _, v := range idx.MinValues {
+			if bytes.Contains(v, marker) {
+				t.Fatalf("ColumnIndex MinValues contain marker %q", marker)
+			}
+		}
+		for _, v := range idx.MaxValues {
+			if bytes.Contains(v, marker) {
+				t.Fatalf("ColumnIndex MaxValues contain marker %q", marker)
+			}
+		}
 	}
 }
 
