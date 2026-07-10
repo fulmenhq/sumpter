@@ -12,6 +12,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/valueprofile"
 )
 
 // multiSharedOptions carries the run-level inputs that are shared across every
@@ -368,6 +369,25 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 	opts.UniformSchema = defaults.Output.UniformSchema
 	if defaults.Output.Parquet != nil && len(defaults.Output.Parquet.WithholdColumns) > 0 {
 		opts.ParquetWithholdColumns = append([]string(nil), defaults.Output.Parquet.WithholdColumns...)
+	}
+	if defaults.ValueProfile != nil && defaults.ValueProfile.Enabled {
+		cfg := &valueprofile.Config{
+			Enabled:            defaults.ValueProfile.Enabled,
+			MaxDistinct:        defaults.ValueProfile.MaxDistinct,
+			SmallCellThreshold: defaults.ValueProfile.SmallCellThreshold,
+		}
+		for _, f := range defaults.ValueProfile.Fields {
+			cfg.Fields = append(cfg.Fields, valueprofile.FieldConfig{
+				Field:          f.Field,
+				SafeToProfile:  f.SafeToProfile,
+				Sensitivity:    f.Sensitivity,
+				ProtectionTags: append([]string(nil), f.ProtectionTags...),
+			})
+		}
+		if _, err := cfg.Normalize(); err != nil {
+			return nil, fmt.Errorf("defaults.value_profile: %w", err)
+		}
+		opts.ValueProfile = cfg
 	}
 
 	// Cloud credentials: the input handle is shared (shared input set); the

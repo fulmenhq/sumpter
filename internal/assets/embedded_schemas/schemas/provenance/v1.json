@@ -87,7 +87,8 @@
         },
         "max_distinct": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "small_cell_threshold": {
           "type": "integer",
@@ -157,14 +158,14 @@
           "properties": {
             "tier": { "const": "enumeration" },
             "status": {
-              "type": "string",
-              "enum": ["complete", "high_cardinality_capped"]
+              "const": "complete"
             },
             "count": { "type": "integer", "minimum": 0 },
             "null_count": { "type": "integer", "minimum": 0 },
-            "distinct_count": { "type": "integer", "minimum": 0 },
+            "distinct_count": { "type": "integer", "minimum": 0, "maximum": 10000 },
             "distinct": {
               "type": "object",
+              "maxProperties": 10000,
               "additionalProperties": {
                 "type": "integer",
                 "minimum": 0

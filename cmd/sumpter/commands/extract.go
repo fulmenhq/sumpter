@@ -1628,6 +1628,8 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 				logger.Error("Failed to encode record", zap.Error(err))
 			}
 		}
+		// Stdout is the durable sink — observe once (same as sequential buffered).
+		observeValueProfileCommitted(opts, records)
 	} else {
 		countsByRecordType[extCfg.RecordType] = len(records)
 		if manifestEnabled {
@@ -1654,6 +1656,8 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 				manifestOutputs = append(manifestOutputs, provenanceOutput(outputFile, format, len(records), opts, sanitizeRoots...))
 			}
 		}
+		// Observe once after all representations succeed — never inside the format loop.
+		observeValueProfileCommitted(opts, records)
 	}
 
 	if manifestEnabled {
@@ -1689,6 +1693,8 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 	if err != nil {
 		return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, "parallel"), err)
 	}
+	// Stage through OnRecord; promote only after durable Commit (mirrors sequential streaming).
+	beginValueProfileInput(opts)
 
 	extractor := parallel.NewParallelExtractor(parallelOpts)
 	summary, extractErr := extractor.ExtractToSink(ctx, target)
@@ -1708,11 +1714,14 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 		return fmt.Errorf("failed to close output %s: %w", target.logicalName(), closeErr)
 	}
 	if err := target.Commit(); err != nil {
+		discardValueProfileInput(opts)
 		return err
 	}
+	commitValueProfileInput(opts)
 
 	recordCount := target.Count()
 	logger.Info("Parallel extraction complete", zap.Int("record_count", recordCount))
+	_ = summary
 
 	if manifestEnabled {
 		// Hash the local bytes (staged working copy for cloud sources) but record
