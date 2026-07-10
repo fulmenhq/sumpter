@@ -61,7 +61,7 @@ Sumpter is in **alpha** — for us that's about _interface stability_, not matur
 
 **Memory contract:** XML input is tokenized incrementally where the streaming path applies. JSON/NDJSON file output is bounded with respect to emitted result count for sequential runs and record-index parallel runs: records stream through `RecordSink`, and the parallel route uses bounded reorder/backpressure instead of retaining the full output slice. Unambiguous record-index parallel runs enforce `min_occurrences` from index counts before publishing output and can still use the streaming route. This does not make every extract mode bounded end-to-end: DOM/non-streaming input can still load a document, and Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed floors intentionally remain buffered. See [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md) and [ADR-0009](docs/architecture/adr/0009-record-sink-output-streaming-contract.md).
 
-Security patches target the latest `0.2.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
+Security patches target the latest `0.3.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
 
 ---
 
@@ -192,6 +192,7 @@ The public-data exemplars are deliberately drawn from **five different verticals
 - **Reference-table lookup**: recipes load external reference tables once per run and query them from field mappings — `in_reference` (membership) and `lookup_reference` (key→value enrichment) — from a contained local path or an `s3://` object. See [Reference Tables](docs/extract-workflow.md#reference-tables) and the [DSL reference](docs/dsl-reference.md).
 - **List-typed recipe parameters**: parameters can be lists of strings with `starts_with_any`, `value_in`, and `string_length` predicates for set-based classification.
 - **Observability**: Structured logs, progress tracking, and diagnostics
+- **Portable data-artifact profile (opt-in)**: emit host-less `data-artifact/v0` descriptors and field catalogs, protection floors with Parquet page-metadata suppression, an opt-in `--validate-output` ladder, and a guarded provenance `value_profile` — all byte-compatible when unused. See [Data-Artifact Producer Profile](docs/data-artifact-producer-profile.md).
 
 ---
 
@@ -232,6 +233,7 @@ Available today:
 - ✅ S3-compatible cloud (`s3://`) sources and outputs with named credential handles
 - ✅ External reference-table lookup (membership + key→value enrichment)
 - ✅ List-typed recipe parameters with set-classification predicates
+- ✅ Portable data-artifact producer profile (opt-in descriptors, catalogs, protection floors, validate ladder, guarded `value_profile`)
 - 🔜 DuckDB output (planned)
 
 See `docs/releases/` for detailed release notes and `docs/user-guide/` for workflow documentation.
