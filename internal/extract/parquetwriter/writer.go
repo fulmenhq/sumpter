@@ -23,6 +23,11 @@ type Options struct {
 	Compression     string
 	Metadata        map[string]string
 	WithholdColumns []string
+	// SuppressPageMetadata enables data-artifact/v0 "Metadata Is Content"
+	// protection: SkipPageBounds + SkipPageStatistics on every leaf column.
+	// Off by default so ordinary Parquet output stays byte-compatible with the
+	// pre-B2 writer; the extract B2 path turns this on with --artifact-descriptor.
+	SuppressPageMetadata bool
 }
 
 type fieldSpec struct {
@@ -94,6 +99,12 @@ func WriteFile(path string, cfg *extract.ExtractRecordMatch, records []map[strin
 
 // writeParquetToFile streams rows into an already-open file and closes the
 // parquet writer (footer). The caller owns closing the underlying *os.File.
+//
+// When opts.SuppressPageMetadata is true (B2 opt-in via --artifact-descriptor),
+// page bounds and page statistics are suppressed for every leaf column
+// (data-artifact/v0 "Metadata Is Content", default-deny). Bloom filters are
+// never configured — they remain opt-in in parquet-go and would form a
+// membership oracle on restricted-class values if wired.
 func writeParquetToFile(
 	file *os.File,
 	schema *parquet.Schema,
@@ -102,7 +113,12 @@ func writeParquetToFile(
 	withholdColumns []string,
 	opts Options,
 ) error {
-	writer := parquet.NewGenericWriter[map[string]any](file, schema, compressionOption(opts.Compression))
+	writerOpts := make([]parquet.WriterOption, 0, 2)
+	if opts.SuppressPageMetadata {
+		writerOpts = append(writerOpts, protectionWriterOptions(schema)...)
+	}
+	writerOpts = append(writerOpts, schema, compressionOption(opts.Compression))
+	writer := parquet.NewGenericWriter[map[string]any](file, writerOpts...)
 	for key, value := range opts.Metadata {
 		if strings.TrimSpace(key) != "" && value != "" {
 			writer.SetKeyValueMetadata(key, value)
@@ -676,6 +692,30 @@ func compressionOption(compression string) parquet.WriterOption {
 	default:
 		return parquet.Compression(&parquet.Zstd)
 	}
+}
+
+// protectionWriterOptions wires the SkipPageBounds + SkipPageStatistics pair
+// for every leaf column. Both options are required: SkipPageStatistics closes
+// the dominant DataPageHeader full-value leak; SkipPageBounds closes ColumnIndex
+// and footer ColumnChunk min/max. Callers must never add BloomFilters here.
+func protectionWriterOptions(schema *parquet.Schema) []parquet.WriterOption {
+	if schema == nil {
+		return nil
+	}
+	columns := schema.Columns()
+	opts := make([]parquet.WriterOption, 0, 2*len(columns))
+	for _, path := range columns {
+		if len(path) == 0 {
+			continue
+		}
+		// Copy: parquet-go stores the path slice on the writer config.
+		leaf := append([]string(nil), path...)
+		opts = append(opts,
+			parquet.SkipPageBounds(leaf...),
+			parquet.SkipPageStatistics(leaf...),
+		)
+	}
+	return opts
 }
 
 func columnMetadata(specs []fieldSpec) map[string]string {

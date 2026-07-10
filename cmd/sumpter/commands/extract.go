@@ -2048,10 +2048,14 @@ func writeRecordsForFormat(outputFile, format string, records []map[string]inter
 			return err
 		}
 		metadata := parquetFileMetadata(sigCfg, opts, runtime, sourceFile, manifestPath)
+		// opts is required for extract output; ArtifactDescriptor gates the B2
+		// Metadata-Is-Content Parquet suppression so the no-opt path stays
+		// byte-compatible with pre-B2 writers.
 		if err := parquetwriter.WriteFile(tgt.LocalPath, extCfg, records, parquetwriter.Options{
-			Compression:     opts.ParquetCompression,
-			Metadata:        metadata,
-			WithholdColumns: opts.ParquetWithholdColumns,
+			Compression:          opts.ParquetCompression,
+			Metadata:             metadata,
+			WithholdColumns:      opts.ParquetWithholdColumns,
+			SuppressPageMetadata: opts.ArtifactDescriptor,
 		}); err != nil {
 			return err
 		}

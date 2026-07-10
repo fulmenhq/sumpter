@@ -313,6 +313,10 @@ func representationForOutput(output provenance.Output, ordinal int, aggregateOut
 		}
 		return rep, true
 	case "parquet":
+		// Column floor is honest once the Parquet writer suppresses page
+		// bounds + page statistics on every leaf (default-deny Metadata Is
+		// Content). We do not claim predicate_pushdown, so pushdown_withheld
+		// is not required.
 		return Representation{
 			ID:                               fmt.Sprintf("records_parquet_%d", ordinal),
 			Grain:                            GrainIDRecords,
@@ -321,7 +325,7 @@ func representationForOutput(output provenance.Output, ordinal int, aggregateOut
 			URI:                              output.Path,
 			RowCount:                         output.RecordCount,
 			FieldCatalogRef:                  FieldCatalogRef,
-			ProtectionEnforceableGranularity: "artifact",
+			ProtectionEnforceableGranularity: "column",
 			ReadPath: ReadPath{
 				RangeReadable:           true,
 				Partitioned:             false,
@@ -329,7 +333,7 @@ func representationForOutput(output provenance.Output, ordinal int, aggregateOut
 				Appendable:              false,
 				ScanCapabilities:        []string{"columnar_scan"},
 				ReadPathGranularity:     "row_group",
-				GateableUnitGranularity: "artifact",
+				GateableUnitGranularity: "column",
 				SidecarRequired:         true,
 			},
 		}, true
