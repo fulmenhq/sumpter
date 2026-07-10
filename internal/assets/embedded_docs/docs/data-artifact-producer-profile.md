@@ -7,8 +7,9 @@ It is additive documentation only: it does not change runtime behavior.
 
 > **Headline for existing users.** Almost nothing changes if you adopt nothing.
 > The portable surfaces are **opt-in** and **byte-compatible** on the default
-> path. What changes is that opted-in output becomes legible to consumers that
-> understand `contract: data-artifact/v0` without Sumpter-specific knowledge.
+> path. What changes is that opted-in output becomes legible to any consumer
+> that understands `contract: data-artifact/v0` — catalogs, query engines, and
+> data planes — without Sumpter-specific knowledge.
 
 > **Security posture at a glance.** (1) **Opt-in / byte-compatible default path**
 > — adopting nothing leaves pre-profile extract behavior. (2) **Default-deny** —
@@ -51,11 +52,15 @@ page statistics).
 
 ## Capability identity (host-less)
 
+**Host-less** means the contract identity resolves from a local bundle supplied
+with `--contract-base` — no hosting registry or server is required for
+resolution.
+
 Two identities appear on the wire and must not be conflated:
 
 | Identity | Role |
 | --- | --- |
-| `contract: data-artifact/v0` | Portable **contract** capability (host-less). Selects the galaxy contract and its entry schema. |
+| `contract: data-artifact/v0` | Portable **contract** capability (host-less). Selects the portable data-artifact contract and its entry schema. |
 | `sumpter.extract-artifact/v0` | Sumpter **producer profile** string (`producer.profile` / opaque `profile_ref`). Identifies this concrete adoption of the contract. |
 
 Resolution uses an explicit local **`--contract-base`**: a directory containing
