@@ -14,6 +14,8 @@ const (
 
 	// DefaultMaxDistinct is the per-field Tier-A cardinality cap.
 	DefaultMaxDistinct = 100
+	// HardMaxDistinct is the absolute ceiling on max_distinct (bounded memory).
+	HardMaxDistinct = 10000
 	// DefaultSmallCellThreshold suppresses quasi/linkage aggregate cells
 	// below this count (k-anonymity floor).
 	DefaultSmallCellThreshold = 5
@@ -30,18 +32,35 @@ const (
 	SensitivityRestricted = "restricted"
 	SensitivityUnknown    = "unknown"
 
-	TagSafeToProfile    = "safe_to_profile"
-	TagSourceStructure  = "source_structure"
-	TagDirectIdentifier = "direct_identifier"
-	TagQuasiIdentifier  = "quasi_identifier"
-	TagLinkageKey       = "linkage_key"
-	TagMeasure          = "measure"
-	ShapeOpaqueString   = "opaque_string"
-	ShapeAllNumeric     = "all_numeric"
-	ShapeUUIDShaped     = "uuid_shaped"
-	ShapeEmailShaped    = "email_shaped"
-	ShapeFreeform       = "freeform"
+	TagSafeToProfile         = "safe_to_profile"
+	TagSourceStructure       = "source_structure"
+	TagDirectIdentifier      = "direct_identifier"
+	TagQuasiIdentifier       = "quasi_identifier"
+	TagLinkageKey            = "linkage_key"
+	TagMeasure               = "measure"
+	TagAccessControlMetadata = "access_control_metadata"
+	TagFreeformText          = "freeform_text"
+	TagOpaquePayload         = "opaque_payload"
+	ShapeOpaqueString        = "opaque_string"
+	ShapeAllNumeric          = "all_numeric"
+	ShapeUUIDShaped          = "uuid_shaped"
+	ShapeEmailShaped         = "email_shaped"
+	ShapeFreeform            = "freeform"
 )
+
+// closedProtectionTags is the data-artifact/v0 protection_tag vocabulary.
+// Unknown tags fail closed so a typo cannot silently skip opaque_string.
+var closedProtectionTags = map[string]struct{}{
+	TagSafeToProfile:         {},
+	TagSourceStructure:       {},
+	TagDirectIdentifier:      {},
+	TagQuasiIdentifier:       {},
+	TagLinkageKey:            {},
+	TagMeasure:               {},
+	TagAccessControlMetadata: {},
+	TagFreeformText:          {},
+	TagOpaquePayload:         {},
+}
 
 // Config is the opt-in recipe/CLI surface for value profiling.
 type Config struct {
@@ -67,6 +86,9 @@ func (c Config) Normalize() (Config, error) {
 	if out.MaxDistinct <= 0 {
 		out.MaxDistinct = DefaultMaxDistinct
 	}
+	if out.MaxDistinct > HardMaxDistinct {
+		return Config{}, fmt.Errorf("value_profile.max_distinct %d exceeds hard maximum %d", out.MaxDistinct, HardMaxDistinct)
+	}
 	if out.SmallCellThreshold <= 0 {
 		out.SmallCellThreshold = DefaultSmallCellThreshold
 	}
@@ -90,12 +112,14 @@ func (c Config) Normalize() (Config, error) {
 		default:
 			return Config{}, fmt.Errorf("value_profile field %q: invalid sensitivity %q", name, f.Sensitivity)
 		}
-		tags := make([]string, 0, len(f.ProtectionTags))
-		for _, tag := range f.ProtectionTags {
-			tag = strings.TrimSpace(tag)
-			if tag != "" {
-				tags = append(tags, tag)
-			}
+		tags, err := normalizeProtectionTags(f.ProtectionTags)
+		if err != nil {
+			return Config{}, fmt.Errorf("value_profile field %q: %w", name, err)
+		}
+		// safe_to_profile may also appear as a protection tag; keep the bool
+		// authoritative for the Tier-A gate.
+		if hasTag(tags, TagSafeToProfile) {
+			f.SafeToProfile = true
 		}
 		normalized = append(normalized, FieldConfig{
 			Field:          name,
@@ -106,6 +130,40 @@ func (c Config) Normalize() (Config, error) {
 	}
 	out.Fields = normalized
 	return out, nil
+}
+
+func normalizeProtectionTags(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, tag := range raw {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		// Canonical form is snake_case lowercase as in the contract enum.
+		tag = strings.ToLower(tag)
+		if _, ok := closedProtectionTags[tag]; !ok {
+			return nil, fmt.Errorf("unknown protection_tag %q", tag)
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return out, nil
+}
+
+func hasTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if t == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Active reports whether profiling should run.

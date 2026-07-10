@@ -26,7 +26,7 @@ func TestTierAEnumerationRequiresFullGate(t *testing.T) {
 	if fr.Tier != TierEnumeration {
 		t.Fatalf("tier = %q, want enumeration", fr.Tier)
 	}
-	if fr.Distinct["active"] != 2 || fr.Distinct["closed"] != 1 || fr.Distinct["pending"] != 1 {
+	if fr.Distinct == nil || (*fr.Distinct)["active"] != 2 || (*fr.Distinct)["closed"] != 1 || (*fr.Distinct)["pending"] != 1 {
 		t.Fatalf("distinct = %#v", fr.Distinct)
 	}
 	if fr.DistinctCount != 3 {
@@ -122,7 +122,7 @@ func TestSourceStructureShapeIsOpaqueString(t *testing.T) {
 		t.Fatalf("shape = %q, want opaque_string", fr.Shape)
 	}
 	if fr.Distinct != nil {
-		t.Fatalf("must not enumerate source_structure values")
+		t.Fatalf("must not enumerate source_structure values: %#v", *fr.Distinct)
 	}
 	if blob := mustJSON(t, c.Snapshot()); strings.Contains(blob, "client-a") {
 		t.Fatalf("path segment leaked: %s", blob)
@@ -155,7 +155,7 @@ func TestHighCardinalityCapStopsGrowth(t *testing.T) {
 		t.Fatalf("distinct_count = %#v, want >=3", fr.DistinctCount)
 	}
 	if fr.Distinct != nil {
-		t.Fatalf("capped field must drop value map")
+		t.Fatalf("capped field must drop value map: %#v", *fr.Distinct)
 	}
 }
 
@@ -186,11 +186,14 @@ func TestSmallCellSuppressionOnQuasiIdentifier(t *testing.T) {
 	if fr.Tier != TierEnumeration {
 		t.Fatalf("tier = %q", fr.Tier)
 	}
-	if _, ok := fr.Distinct["south"]; ok {
-		t.Fatalf("singleton quasi cell must be suppressed: %#v", fr.Distinct)
+	if fr.Distinct == nil {
+		t.Fatal("enumeration tier must retain distinct object")
 	}
-	if fr.Distinct["north"] != 5 {
-		t.Fatalf("north = %d, want 5", fr.Distinct["north"])
+	if _, ok := (*fr.Distinct)["south"]; ok {
+		t.Fatalf("singleton quasi cell must be suppressed: %#v", *fr.Distinct)
+	}
+	if (*fr.Distinct)["north"] != 5 {
+		t.Fatalf("north = %d, want 5", (*fr.Distinct)["north"])
 	}
 }
 
@@ -217,6 +220,58 @@ func TestSmallCellDistinctCountOnTierB(t *testing.T) {
 	}
 	if got, ok := fr.DistinctCount.(string); !ok || got != "<5" {
 		t.Fatalf("distinct_count = %#v, want <5", fr.DistinctCount)
+	}
+}
+
+func TestStagingDiscardExcludesFailedInput(t *testing.T) {
+	cfg := Config{
+		Enabled: true,
+		Fields: []FieldConfig{
+			{Field: "status", SafeToProfile: true, Sensitivity: SensitivityPublic},
+		},
+	}
+	c, err := NewCollector(cfg)
+	if err != nil || c == nil {
+		t.Fatalf("NewCollector: %v", err)
+	}
+	c.BeginInput()
+	c.ObserveData(map[string]interface{}{"status": "keep"})
+	c.CommitInput()
+	c.BeginInput()
+	c.ObserveData(map[string]interface{}{"status": "drop"})
+	c.DiscardInput()
+	fr := c.Snapshot().Fields["status"]
+	if fr.Distinct == nil {
+		t.Fatal("expected enumeration distinct map")
+	}
+	if (*fr.Distinct)["drop"] != 0 {
+		t.Fatalf("discarded input leaked: %#v", *fr.Distinct)
+	}
+	if (*fr.Distinct)["keep"] != 1 {
+		t.Fatalf("committed value missing: %#v", *fr.Distinct)
+	}
+}
+
+func TestRejectUnknownProtectionTag(t *testing.T) {
+	_, err := NewCollector(Config{
+		Enabled: true,
+		Fields: []FieldConfig{
+			{Field: "x", ProtectionTags: []string{"not_a_contract_tag"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unknown protection_tag error")
+	}
+}
+
+func TestRejectMaxDistinctAboveHardCap(t *testing.T) {
+	_, err := NewCollector(Config{
+		Enabled:     true,
+		MaxDistinct: HardMaxDistinct + 1,
+		Fields:      []FieldConfig{{Field: "x"}},
+	})
+	if err == nil {
+		t.Fatal("expected max_distinct hard-cap error")
 	}
 }
 

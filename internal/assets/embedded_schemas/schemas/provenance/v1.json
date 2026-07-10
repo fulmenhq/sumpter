@@ -142,71 +142,88 @@
   },
   "$defs": {
     "valueProfileField": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "tier",
-        "status",
-        "count",
-        "null_count",
-        "distinct_count"
-      ],
-      "properties": {
-        "tier": {
-          "type": "string",
-          "enum": ["enumeration", "aggregates"]
-        },
-        "status": {
-          "type": "string",
-          "enum": ["complete", "high_cardinality_capped"]
-        },
-        "count": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "null_count": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "distinct_count": {
-          "oneOf": [
-            { "type": "integer", "minimum": 0 },
-            {
-              "type": "string",
-              "pattern": "^(>=|<)[0-9]+$"
-            }
-          ]
-        },
-        "distinct": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "integer",
-            "minimum": 0
-          }
-        },
-        "shape": {
-          "type": "string",
-          "enum": [
-            "opaque_string",
-            "all_numeric",
-            "uuid_shaped",
-            "email_shaped",
-            "freeform"
-          ]
-        },
-        "length": {
+      "oneOf": [
+        {
           "type": "object",
           "additionalProperties": false,
-          "required": ["min", "max", "mean"],
+          "required": [
+            "tier",
+            "status",
+            "count",
+            "null_count",
+            "distinct_count",
+            "distinct"
+          ],
           "properties": {
-            "min": { "type": "integer", "minimum": 0 },
-            "max": { "type": "integer", "minimum": 0 },
-            "mean": { "type": "number" }
+            "tier": { "const": "enumeration" },
+            "status": {
+              "type": "string",
+              "enum": ["complete", "high_cardinality_capped"]
+            },
+            "count": { "type": "integer", "minimum": 0 },
+            "null_count": { "type": "integer", "minimum": 0 },
+            "distinct_count": { "type": "integer", "minimum": 0 },
+            "distinct": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "min": { "type": "number" },
+            "max": { "type": "number" }
           }
         },
-        "min": { "type": "number" },
-        "max": { "type": "number" }
-      }
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tier",
+            "status",
+            "count",
+            "null_count",
+            "distinct_count"
+          ],
+          "properties": {
+            "tier": { "const": "aggregates" },
+            "status": {
+              "type": "string",
+              "enum": ["complete", "high_cardinality_capped"]
+            },
+            "count": { "type": "integer", "minimum": 0 },
+            "null_count": { "type": "integer", "minimum": 0 },
+            "distinct_count": {
+              "oneOf": [
+                { "type": "integer", "minimum": 0 },
+                {
+                  "type": "string",
+                  "pattern": "^(>=|<)[0-9]+$"
+                }
+              ]
+            },
+            "shape": {
+              "type": "string",
+              "enum": [
+                "opaque_string",
+                "all_numeric",
+                "uuid_shaped",
+                "email_shaped",
+                "freeform"
+              ]
+            },
+            "length": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min", "max", "mean"],
+              "properties": {
+                "min": { "type": "integer", "minimum": 0 },
+                "max": { "type": "integer", "minimum": 0 },
+                "mean": { "type": "number" }
+              }
+            }
+          }
+        }
+      ]
     },
     "aggregate_output": {
       "type": "object",

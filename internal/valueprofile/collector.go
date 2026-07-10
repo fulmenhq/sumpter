@@ -20,15 +20,17 @@ type Profile struct {
 }
 
 // FieldResult is one field's Tier-A or Tier-B emission.
+// Distinct is a pointer so Tier A can emit an empty object after small-cell
+// suppression (required by the provenance schema) while Tier B omits the key.
 type FieldResult struct {
-	Tier          string         `json:"tier"`
-	Status        string         `json:"status"`
-	Count         int            `json:"count"`
-	NullCount     int            `json:"null_count"`
-	DistinctCount interface{}    `json:"distinct_count"`
-	Distinct      map[string]int `json:"distinct,omitempty"`
-	Shape         string         `json:"shape,omitempty"`
-	Length        *LengthStats   `json:"length,omitempty"`
+	Tier          string          `json:"tier"`
+	Status        string          `json:"status"`
+	Count         int             `json:"count"`
+	NullCount     int             `json:"null_count"`
+	DistinctCount interface{}     `json:"distinct_count"`
+	Distinct      *map[string]int `json:"distinct,omitempty"`
+	Shape         string          `json:"shape,omitempty"`
+	Length        *LengthStats    `json:"length,omitempty"`
 	// Numeric range is Tier-A only (sensitive numerics never emit min/max).
 	Min *float64 `json:"min,omitempty"`
 	Max *float64 `json:"max,omitempty"`
@@ -42,10 +44,17 @@ type LengthStats struct {
 }
 
 // Collector accumulates streaming per-field observations under the guard.
+//
+// Transactional inputs use BeginInput/CommitInput/DiscardInput so failed or
+// floor-rejected records never enter the shareable profile. Direct
+// ObserveRecords (no open input) commits immediately — only for paths that
+// already know the records are durable.
 type Collector struct {
-	cfg    Config
-	mu     sync.Mutex
-	fields map[string]*fieldState
+	cfg       Config
+	mu        sync.Mutex
+	committed map[string]*fieldState
+	// staged is non-nil while an input transaction is open.
+	staged map[string]*fieldState
 }
 
 type fieldState struct {
@@ -89,19 +98,83 @@ func NewCollector(cfg Config) (*Collector, error) {
 	if !normalized.Active() {
 		return nil, nil
 	}
-	fields := make(map[string]*fieldState, len(normalized.Fields))
-	for _, f := range normalized.Fields {
-		fields[f.Field] = &fieldState{
+	return &Collector{
+		cfg:       normalized,
+		committed: newFieldStates(normalized.Fields),
+	}, nil
+}
+
+func newFieldStates(fields []FieldConfig) map[string]*fieldState {
+	out := make(map[string]*fieldState, len(fields))
+	for _, f := range fields {
+		out[f.Field] = &fieldState{
 			cfg:        f,
 			distinct:   make(map[string]int),
 			lenMin:     math.MaxInt,
 			allNumeric: true,
 		}
 	}
-	return &Collector{cfg: normalized, fields: fields}, nil
+	return out
+}
+
+// BeginInput opens a staging transaction for the current input. Subsequent
+// observations go to the stage until CommitInput or DiscardInput.
+func (c *Collector) BeginInput() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.staged = newFieldStates(c.cfg.Fields)
+}
+
+// BeginInputIfNeeded opens a stage only when none is open (safe for paths that
+// stage records before an explicit Begin).
+func (c *Collector) BeginInputIfNeeded() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.staged == nil {
+		c.staged = newFieldStates(c.cfg.Fields)
+	}
+}
+
+// CommitInput merges the staged observations into the committed profile.
+func (c *Collector) CommitInput() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.staged == nil {
+		return
+	}
+	for name, pending := range c.staged {
+		committed := c.committed[name]
+		if committed == nil {
+			continue
+		}
+		committed.mergeFrom(pending, c.cfg.MaxDistinct)
+	}
+	c.staged = nil
+}
+
+// DiscardInput drops staged observations so failed/floor-rejected inputs never
+// influence the shareable profile.
+func (c *Collector) DiscardInput() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.staged = nil
 }
 
 // ObserveRecords profiles extract.data from complete extract record envelopes.
+// When an input transaction is open, observations are staged; otherwise they
+// commit immediately (for already-durable record sets only).
 func (c *Collector) ObserveRecords(records []map[string]interface{}) {
 	if c == nil {
 		return
@@ -122,7 +195,15 @@ func (c *Collector) ObserveData(data map[string]interface{}) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for name, state := range c.fields {
+	target := c.committed
+	if c.staged != nil {
+		target = c.staged
+	}
+	observeDataInto(target, data, c.cfg.MaxDistinct)
+}
+
+func observeDataInto(fields map[string]*fieldState, data map[string]interface{}, maxDistinct int) {
+	for name, state := range fields {
 		raw, ok := data[name]
 		state.count++
 		if !ok || raw == nil {
@@ -134,7 +215,72 @@ func (c *Collector) ObserveData(data map[string]interface{}) {
 			state.nullCount++
 			continue
 		}
-		state.observeValue(text, raw, c.cfg.MaxDistinct)
+		state.observeValue(text, raw, maxDistinct)
+	}
+}
+
+// mergeFrom folds a staged field state into the committed state.
+func (s *fieldState) mergeFrom(other *fieldState, maxDistinct int) {
+	if other == nil {
+		return
+	}
+	s.count += other.count
+	s.nullCount += other.nullCount
+	if other.sawNonEmpty {
+		s.sawNonEmpty = true
+	}
+	if other.lenN > 0 {
+		if s.lenN == 0 || other.lenMin < s.lenMin {
+			s.lenMin = other.lenMin
+		}
+		if other.lenMax > s.lenMax {
+			s.lenMax = other.lenMax
+		}
+		s.lenSum += other.lenSum
+		s.lenN += other.lenN
+	}
+	if other.hasNumeric {
+		if !s.hasNumeric {
+			s.numMin, s.numMax = other.numMin, other.numMax
+			s.hasNumeric = true
+		} else {
+			if other.numMin < s.numMin {
+				s.numMin = other.numMin
+			}
+			if other.numMax > s.numMax {
+				s.numMax = other.numMax
+			}
+		}
+	}
+	if !other.allNumeric {
+		s.allNumeric = false
+	}
+	s.shape.merge(other.shape)
+
+	if s.capped {
+		return
+	}
+	if other.capped {
+		s.capped = true
+		s.distinct = nil
+		return
+	}
+	if other.distinct == nil {
+		return
+	}
+	if s.distinct == nil {
+		s.distinct = make(map[string]int)
+	}
+	for value, n := range other.distinct {
+		if s.capped {
+			return
+		}
+		s.distinct[value] += n
+		if len(s.distinct) > maxDistinct {
+			s.capped = true
+			s.distinct = nil
+			return
+		}
 	}
 }
 
@@ -196,19 +342,21 @@ func (c *Collector) Snapshot() *Profile {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Snapshot only committed state — open staged inputs are excluded until
+	// CommitInput (and are dropped by DiscardInput on failure).
 	out := &Profile{
 		Version:            ProfileVersion,
 		MaxDistinct:        c.cfg.MaxDistinct,
 		SmallCellThreshold: c.cfg.SmallCellThreshold,
-		Fields:             make(map[string]FieldResult, len(c.fields)),
+		Fields:             make(map[string]FieldResult, len(c.committed)),
 	}
-	names := make([]string, 0, len(c.fields))
-	for name := range c.fields {
+	names := make([]string, 0, len(c.committed))
+	for name := range c.committed {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		out.Fields[name] = c.fields[name].result(c.cfg)
+		out.Fields[name] = c.committed[name].result(c.cfg)
 	}
 	return out
 }
@@ -226,13 +374,16 @@ func (s *fieldState) result(cfg Config) FieldResult {
 		if s.hasTag(TagQuasiIdentifier) || s.hasTag(TagLinkageKey) {
 			distinct = suppressSmallCells(distinct, cfg.SmallCellThreshold)
 		}
+		if distinct == nil {
+			distinct = map[string]int{}
+		}
 		res := FieldResult{
 			Tier:          TierEnumeration,
 			Status:        status,
 			Count:         s.count,
 			NullCount:     s.nullCount,
 			DistinctCount: len(s.distinct),
-			Distinct:      distinct,
+			Distinct:      &distinct,
 		}
 		// Numeric range only under Tier A (and only when all observed values numeric).
 		if s.hasNumeric && s.allNumeric {
@@ -325,6 +476,28 @@ func (a *shapeAccumulator) observe(text string) {
 		a.uuid = false
 	}
 	if a.email && !emailRE.MatchString(text) {
+		a.email = false
+	}
+	if !a.uuid && !a.email {
+		a.free = true
+	}
+}
+
+func (a *shapeAccumulator) merge(other shapeAccumulator) {
+	if !other.init && !other.empty {
+		return
+	}
+	if !a.init {
+		*a = other
+		return
+	}
+	if other.empty {
+		a.empty = true
+	}
+	if a.uuid && !other.uuid {
+		a.uuid = false
+	}
+	if a.email && !other.email {
 		a.email = false
 	}
 	if !a.uuid && !a.email {

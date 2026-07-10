@@ -428,6 +428,59 @@ func TestRunExtractValueProfileGuardedEmission(t *testing.T) {
 	}
 }
 
+func TestRunExtractValueProfileNotDoubledForMultiFormat(t *testing.T) {
+	// Representation duplication must not cross small_cell_threshold.
+	dir := createExtractManifestFixture(t)
+	mustWriteFile(t, filepath.Join(dir, "input.xml"),
+		`<root><item><name>only</name></item></root>`)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	opts := &ExtractOptions{
+		Files:              filepath.Join(dir, "input.xml"),
+		Formats:            []string{"json", "parquet"},
+		OutputPath:         outputDir,
+		OutputPattern:      "records.jsonl",
+		OutputPatterns:     map[string]string{"json": "records.jsonl", "parquet": "records.parquet"},
+		SignatureConfig:    filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:      filepath.Join(dir, "extract.yaml"),
+		ParquetCompression: "none",
+		ValueProfile: &valueprofile.Config{
+			Enabled:            true,
+			SmallCellThreshold: 2,
+			Fields: []valueprofile.FieldConfig{
+				{
+					Field:          "name",
+					SafeToProfile:  true,
+					Sensitivity:    valueprofile.SensitivityPublic,
+					ProtectionTags: []string{valueprofile.TagQuasiIdentifier},
+				},
+			},
+		},
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(outputDir, provenance.ManifestFileName))
+	if len(manifest.ValueProfile) == 0 {
+		t.Fatal("expected value_profile")
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(manifest.ValueProfile, &profile); err != nil {
+		t.Fatal(err)
+	}
+	nameField := profile["fields"].(map[string]interface{})["name"].(map[string]interface{})
+	// Singleton frequency is 1 (not 2 from dual formats) → suppressed under threshold 2.
+	if nameField["tier"] != valueprofile.TierEnumeration {
+		t.Fatalf("tier = %#v", nameField["tier"])
+	}
+	distinct, _ := nameField["distinct"].(map[string]interface{})
+	if _, ok := distinct["only"]; ok {
+		t.Fatalf("singleton quasi cell must stay suppressed; dual-format must not double-count: %#v", distinct)
+	}
+}
+
 func TestRunExtractWithoutValueProfileOmitsField(t *testing.T) {
 	dir := createExtractManifestFixture(t)
 	outputDir := filepath.Join(dir, "outputs")
