@@ -2900,7 +2900,18 @@ func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manif
 	if err != nil {
 		return fmt.Errorf("generate artifact id: %w", err)
 	}
-	descriptor, err := dataartifact.BuildRecordStreamDescriptor(manifest, artifactUUID)
+	// Portable descriptor URIs must not publish host-local absolute paths. Use the
+	// same SanitizePath hygiene as provenance inputs/outputs (relative under known
+	// roots, else basename). The local filesystem path is only used to count rows.
+	localIndexPath := strings.TrimSpace(opts.RecordIndex)
+	descriptorOpts := dataartifact.DescriptorOptions{}
+	if localIndexPath != "" {
+		descriptorOpts.RecordIndexPath = provenance.SanitizePath(localIndexPath, manifestSanitizeRoots(opts)...)
+		if n, cerr := countIndexedRecords(localIndexPath); cerr == nil {
+			descriptorOpts.RecordIndexRowCount = n
+		}
+	}
+	descriptor, err := dataartifact.BuildExtractDescriptor(manifest, artifactUUID, descriptorOpts)
 	if err != nil {
 		return err
 	}

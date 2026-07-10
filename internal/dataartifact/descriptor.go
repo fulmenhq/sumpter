@@ -14,7 +14,23 @@ const (
 	ProducerProfile    = "sumpter.extract-artifact/v0"
 	FieldCatalogRef    = "fields/records.fields.json"
 	ProvenanceRef      = provenance.ManifestFileName
+
+	GrainIDRecords     = "records"
+	GrainIDRecordIndex = "record_index"
+
+	GrainKindRecordStream = "record_stream"
+	GrainKindObjectIndex  = "object_index"
+	GrainKindAggregation  = "aggregation"
 )
+
+// DescriptorOptions controls optional B2.2b grains beyond the base record stream.
+type DescriptorOptions struct {
+	// RecordIndexPath, when set, adds an object_index grain + representation for
+	// the sumpter record-index file used by --record-index extraction.
+	RecordIndexPath string
+	// RecordIndexRowCount is the index summary total when known (0 if unknown).
+	RecordIndexRowCount int
+}
 
 type Descriptor struct {
 	Capabilities []string         `json:"capabilities"`
@@ -58,7 +74,7 @@ type Grain struct {
 	RecordKind      string `json:"record_kind"`
 	RowCount        int    `json:"row_count"`
 	SemanticOrder   string `json:"semantic_order,omitempty"`
-	FieldCatalogRef string `json:"field_catalog_ref"`
+	FieldCatalogRef string `json:"field_catalog_ref,omitempty"`
 	ProvenanceRef   string `json:"provenance_ref,omitempty"`
 }
 
@@ -134,24 +150,94 @@ func BuildRecordFieldCatalog(fields []provenance.FieldProvenance) FieldCatalog {
 	return catalog
 }
 
+// BuildRecordStreamDescriptor builds the portable extract artifact descriptor
+// for the record-stream (or aggregate-mode) output. Optional B2.2b grains are
+// selected via DescriptorOptions.
 func BuildRecordStreamDescriptor(manifest provenance.Manifest, artifactUUID string) (Descriptor, error) {
+	return BuildExtractDescriptor(manifest, artifactUUID, DescriptorOptions{})
+}
+
+// BuildExtractDescriptor builds the portable extract artifact descriptor with
+// optional object_index (record-index) and aggregation (SUM-063 aggregate-mode)
+// grains.
+//
+// Grain selection:
+//   - Always emits a primary records grain for extract.data outputs.
+//   - Primary grain kind is aggregation when the run used aggregate output mode
+//     (SUM-063 multi-input fan-in); otherwise record_stream.
+//   - When RecordIndexPath is set, also emits an object_index grain for the
+//     record-index file (seekable XML record boundary catalog).
+//
+// Protection floors on representations stay no looser than the record-stream
+// posture (NDJSON: row; Parquet: artifact). Derived-artifact monotonicity for
+// aggregate-mode is satisfied by keeping that same floor on the aggregation
+// grain's representations.
+func BuildExtractDescriptor(manifest provenance.Manifest, artifactUUID string, opts DescriptorOptions) (Descriptor, error) {
 	artifactUUID = strings.TrimSpace(artifactUUID)
 	if artifactUUID == "" {
 		return Descriptor{}, fmt.Errorf("artifact UUID is required")
 	}
 	recordKind := recordKind(manifest.CountsByRecordType)
 	rowCount := totalRecordCount(manifest.CountsByRecordType, manifest.Outputs)
+	aggregateMode := isAggregateMode(manifest)
+	primaryKind := GrainKindRecordStream
+	semanticOrder := "source_order"
+	if aggregateMode {
+		primaryKind = GrainKindAggregation
+		semanticOrder = "input_order_record_num"
+	}
 
-	reps := make([]Representation, 0, len(manifest.Outputs))
+	reps := make([]Representation, 0, len(manifest.Outputs)+1)
 	for i, output := range sortedOutputs(manifest.Outputs) {
-		rep, ok := representationForOutput(output, i+1, manifest.AggregateOutputs)
+		rep, ok := representationForOutput(output, i+1, manifest.AggregateOutputs, aggregateMode)
 		if !ok {
 			continue
 		}
 		reps = append(reps, rep)
 	}
 	if len(reps) == 0 {
-		return Descriptor{}, fmt.Errorf("record-stream descriptor requires at least one record representation")
+		return Descriptor{}, fmt.Errorf("extract descriptor requires at least one record representation")
+	}
+
+	grains := []Grain{{
+		ID:              GrainIDRecords,
+		Kind:            primaryKind,
+		RecordKind:      recordKind,
+		RowCount:        rowCount,
+		SemanticOrder:   semanticOrder,
+		FieldCatalogRef: FieldCatalogRef,
+		ProvenanceRef:   ProvenanceRef,
+	}}
+
+	if path := strings.TrimSpace(opts.RecordIndexPath); path != "" {
+		grains = append(grains, Grain{
+			ID:            GrainIDRecordIndex,
+			Kind:          GrainKindObjectIndex,
+			RecordKind:    "xml_record_boundary",
+			RowCount:      opts.RecordIndexRowCount,
+			SemanticOrder: "source_byte_order",
+			ProvenanceRef: ProvenanceRef,
+		})
+		reps = append(reps, Representation{
+			ID:                               "record_index_json",
+			Grain:                            GrainIDRecordIndex,
+			Role:                             "object_index",
+			Format:                           "json",
+			URI:                              path,
+			RowCount:                         opts.RecordIndexRowCount,
+			ProtectionEnforceableGranularity: "artifact",
+			ReadPath: ReadPath{
+				RangeReadable:           true,
+				Partitioned:             false,
+				Sharded:                 false,
+				Appendable:              false,
+				ScanCapabilities:        []string{"random_access"},
+				ReadPathGranularity:     "row",
+				GateableUnitGranularity: "artifact",
+				SidecarRequired:         false,
+				PhysicalOrdering:        "index_order",
+			},
+		})
 	}
 
 	return Descriptor{
@@ -164,16 +250,8 @@ func BuildRecordStreamDescriptor(manifest provenance.Manifest, artifactUUID stri
 			Profile: ProducerProfile,
 			RunID:   manifest.RunID,
 		},
-		Grains: []Grain{{
-			ID:              "records",
-			Kind:            "record_stream",
-			RecordKind:      recordKind,
-			RowCount:        rowCount,
-			SemanticOrder:   "source_order",
-			FieldCatalogRef: FieldCatalogRef,
-			ProvenanceRef:   ProvenanceRef,
-		}},
-		Reps: reps,
+		Grains: grains,
+		Reps:   reps,
 		Provenance: &Provenance{
 			JobRef: ProvenanceRef,
 		},
@@ -183,6 +261,13 @@ func BuildRecordStreamDescriptor(manifest provenance.Manifest, artifactUUID stri
 			ProfileRef:         "profile:" + ProducerProfile,
 		},
 	}, nil
+}
+
+func isAggregateMode(manifest provenance.Manifest) bool {
+	if strings.EqualFold(strings.TrimSpace(manifest.OutputMode), "aggregate") {
+		return true
+	}
+	return len(manifest.AggregateOutputs) > 0
 }
 
 func sortedOutputs(outputs []provenance.Output) []provenance.Output {
@@ -196,12 +281,15 @@ func sortedOutputs(outputs []provenance.Output) []provenance.Output {
 	return out
 }
 
-func representationForOutput(output provenance.Output, ordinal int, aggregateOutputs []provenance.AggregateOutput) (Representation, bool) {
+func representationForOutput(output provenance.Output, ordinal int, aggregateOutputs []provenance.AggregateOutput, aggregateMode bool) (Representation, bool) {
+	sharded := aggregateMode && len(aggregateOutputs) > 1
 	switch output.Format {
 	case "json", "ndjson":
+		// Aggregate-mode fan-in still emits full extract record envelopes; keep
+		// audit_stream + row gate so protection is no looser than per-input NDJSON.
 		rep := Representation{
 			ID:                               fmt.Sprintf("records_ndjson_%d", ordinal),
-			Grain:                            "records",
+			Grain:                            GrainIDRecords,
 			Role:                             "audit_stream",
 			Format:                           "ndjson",
 			URI:                              output.Path,
@@ -211,7 +299,7 @@ func representationForOutput(output provenance.Output, ordinal int, aggregateOut
 			ReadPath: ReadPath{
 				RangeReadable:           true,
 				Partitioned:             false,
-				Sharded:                 false,
+				Sharded:                 sharded,
 				Appendable:              false,
 				ScanCapabilities:        []string{},
 				ReadPathGranularity:     "row",
@@ -227,7 +315,7 @@ func representationForOutput(output provenance.Output, ordinal int, aggregateOut
 	case "parquet":
 		return Representation{
 			ID:                               fmt.Sprintf("records_parquet_%d", ordinal),
-			Grain:                            "records",
+			Grain:                            GrainIDRecords,
 			Role:                             "analytics_scan",
 			Format:                           "parquet",
 			URI:                              output.Path,

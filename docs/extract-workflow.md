@@ -33,15 +33,35 @@ sumpter extract files \
   --contract-base ./contracts/data-artifact/v0
 ```
 
-This descriptor surface covers only the record-stream grain. The field catalog
-sidecar is default-deny protection metadata: source-structure-derived field keys
-are withheld by count rather than disclosed. The sidecar is validated against
-the pinned data-artifact field-catalog shape before publish. With the pinned
-Crucible `v0.1.19` baseline, a fully withheld catalog is valid as `fields: []`
-plus a positive `withheld_field_count`, so all-XPath XML extraction recipes can
-emit descriptors without disclosing source-structure field keys. Object-index
-grains, aggregate grains, value profiles, and protection enforcement metadata
-are separate follow-on surfaces.
+The field catalog sidecar is default-deny protection metadata: source-structure-
+derived field keys are withheld by count rather than disclosed. The sidecar is
+validated against the pinned data-artifact field-catalog shape before publish.
+With the pinned Crucible `v0.1.19` baseline, a fully withheld catalog is valid
+as `fields: []` plus a positive `withheld_field_count`, so all-XPath XML
+extraction recipes can emit descriptors without disclosing source-structure
+field keys.
+
+**Grains.** The primary grain describes extract record outputs:
+
+| Run shape | Primary grain `kind` |
+| --- | --- |
+| Default / per-input extract | `record_stream` |
+| `--output-mode aggregate` (SUM-063 multi-input fan-in) | `aggregation` |
+
+Aggregate-mode NDJSON representations keep the same protection floor as
+per-input NDJSON (`protection_enforceable_granularity: row`) so multi-input
+fan-in cannot launder a looser export class than the record stream. Multi-shard
+aggregate runs mark those representations `sharded` and attach per-shard
+`whole_digest` integrity when present.
+
+When extract used `--record-index`, the descriptor also emits an `object_index`
+grain for the record-index file (JSON, role `object_index`, artifact-gated). The
+representation `uri` is path-sanitized like provenance inputs/outputs (relative
+under known roots, otherwise basename only) so host-local absolute paths are
+never published into the portable sidecar.
+
+Value profiles and protection enforcement metadata remain separate follow-on
+surfaces.
 
 **Descriptor `lifecycle`.** The portable data-artifact/v0 lifecycle field is
 mapped from existing provenance completeness signals — no new accounting is

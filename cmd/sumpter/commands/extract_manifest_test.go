@@ -1167,6 +1167,110 @@ func TestRunExtractWritesParallelProvenanceManifest(t *testing.T) {
 	}
 }
 
+func TestRunExtractArtifactDescriptorSanitizesRecordIndexURI(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	outputDir := filepath.Join(dir, "outputs")
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll output: %v", err)
+	}
+
+	xmlPath := filepath.Join(dir, "input.xml")
+	indexPath := filepath.Join(dir, "input.recordindex.json")
+	builder := index.NewBuilder(index.BuildOptions{
+		InputPath:  xmlPath,
+		OutputPath: indexPath,
+		Selector:   "//item",
+	})
+	recordIndex, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build index: %v", err)
+	}
+	if err := builder.WriteToFile(recordIndex, indexPath); err != nil {
+		t.Fatalf("WriteToFile index: %v", err)
+	}
+
+	contractBase := filepath.Join("..", "..", "..", "tests", "fixtures", "data-artifact-contract", "v0")
+	opts := &ExtractOptions{
+		Files:                xmlPath,
+		Format:               "json",
+		OutputPath:           outputDir,
+		OutputPattern:        "records.jsonl",
+		SignatureConfig:      filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:        filepath.Join(dir, "extract.yaml"),
+		RecordIndex:          indexPath,
+		Workers:              2,
+		RunID:                testMultiRunID,
+		ArtifactDescriptor:   true,
+		ArtifactContractBase: contractBase,
+		CommandName:          "sumpter extract files",
+	}
+	if err := runExtract(opts); err != nil {
+		t.Fatalf("runExtract: %v", err)
+	}
+
+	descriptorPath := filepath.Join(outputDir, dataartifact.DescriptorFileName)
+	result, _, err := artifactcontract.ValidateDescriptorFile(contractBase, descriptorPath)
+	if err != nil {
+		t.Fatalf("validate generated descriptor: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("generated descriptor did not validate: %+v", result.Errors)
+	}
+
+	raw, err := os.ReadFile(descriptorPath)
+	if err != nil {
+		t.Fatalf("read descriptor: %v", err)
+	}
+	// Host-local absolute index paths (temp/home/workspace) must not appear.
+	if strings.Contains(string(raw), indexPath) {
+		t.Fatalf("descriptor contains absolute record-index path %q:\n%s", indexPath, raw)
+	}
+	if strings.Contains(string(raw), dir) {
+		t.Fatalf("descriptor contains workspace absolute path %q:\n%s", dir, raw)
+	}
+	if strings.Contains(string(raw), os.TempDir()) {
+		t.Fatalf("descriptor contains temp dir path:\n%s", raw)
+	}
+
+	var descriptor map[string]interface{}
+	if err := json.Unmarshal(raw, &descriptor); err != nil {
+		t.Fatalf("unmarshal descriptor: %v", err)
+	}
+	reps, ok := descriptor["representations"].([]interface{})
+	if !ok {
+		t.Fatalf("representations missing: %#v", descriptor["representations"])
+	}
+	foundIndex := false
+	for _, rawRep := range reps {
+		rep, ok := rawRep.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if rep["grain"] != dataartifact.GrainIDRecordIndex {
+			continue
+		}
+		foundIndex = true
+		uri, _ := rep["uri"].(string)
+		if uri == "" || filepath.IsAbs(uri) {
+			t.Fatalf("object_index uri = %q, want portable non-absolute ref", uri)
+		}
+		if uri != "input.recordindex.json" {
+			// SanitizePath with Files parent dir as root should yield the basename/rel name.
+			t.Fatalf("object_index uri = %q, want input.recordindex.json", uri)
+		}
+		if rep["role"] != "object_index" {
+			t.Fatalf("object_index role = %#v", rep["role"])
+		}
+	}
+	if !foundIndex {
+		t.Fatal("descriptor missing object_index representation")
+	}
+	grains, ok := descriptor["grains"].([]interface{})
+	if !ok || len(grains) < 2 {
+		t.Fatalf("grains = %#v, want record_stream + object_index", descriptor["grains"])
+	}
+}
+
 func TestRunExtractParallelMinOccurrencesUsesIndexedMatchCount(t *testing.T) {
 	dir := createExtractManifestFixture(t)
 	outputDir := filepath.Join(dir, "outputs")
