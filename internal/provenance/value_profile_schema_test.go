@@ -165,6 +165,189 @@ func TestValueProfileSchemaForbidsCappedEnumeration(t *testing.T) {
 	}
 }
 
+func TestValueProfileSchemaForbidsCappedStatusWithExactInteger(t *testing.T) {
+	// status high_cardinality_capped must not allow a precise distinct_count integer.
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "schemas"))
+	raw := []byte(`{
+  "schema_version": "sumpter.provenance/v1",
+  "run_id": "00000000-0000-7000-8000-000000000001",
+  "sumpter_version": "0.3.0-dev",
+  "started_at": "2026-07-10T00:00:00Z",
+  "completed_at": "2026-07-10T00:00:01Z",
+  "cli": {"command": "sumpter extract files", "argv_sanitized": ["extract","files"]},
+  "inputs": [],
+  "outputs": [],
+  "counts_by_record_type": {},
+  "value_profile": {
+    "version": "sumpter.value-profile/v0",
+    "max_distinct": 100,
+    "small_cell_threshold": 5,
+    "fields": {
+      "id": {
+        "tier": "aggregates",
+        "status": "high_cardinality_capped",
+        "count": 200,
+        "null_count": 0,
+        "distinct_count": 1234567
+      }
+    }
+  }
+}`)
+	result, err := validator.ValidateProvenanceManifest(raw, "manifest.json")
+	if err != nil {
+		t.Fatalf("ValidateProvenanceManifest: %v", err)
+	}
+	if result.Valid {
+		t.Fatal("capped status with exact integer distinct_count must fail")
+	}
+}
+
+func TestValueProfileSchemaForbidsCompleteStatusWithGteForm(t *testing.T) {
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "schemas"))
+	raw := []byte(`{
+  "schema_version": "sumpter.provenance/v1",
+  "run_id": "00000000-0000-7000-8000-000000000001",
+  "sumpter_version": "0.3.0-dev",
+  "started_at": "2026-07-10T00:00:00Z",
+  "completed_at": "2026-07-10T00:00:01Z",
+  "cli": {"command": "sumpter extract files", "argv_sanitized": ["extract","files"]},
+  "inputs": [],
+  "outputs": [],
+  "counts_by_record_type": {},
+  "value_profile": {
+    "version": "sumpter.value-profile/v0",
+    "max_distinct": 100,
+    "small_cell_threshold": 5,
+    "fields": {
+      "id": {
+        "tier": "aggregates",
+        "status": "complete",
+        "count": 200,
+        "null_count": 0,
+        "distinct_count": ">=100"
+      }
+    }
+  }
+}`)
+	result, err := validator.ValidateProvenanceManifest(raw, "manifest.json")
+	if err != nil {
+		t.Fatalf("ValidateProvenanceManifest: %v", err)
+	}
+	if result.Valid {
+		t.Fatal("complete status with >=N distinct_count must fail")
+	}
+}
+
+func TestValueProfileSchemaForbidsCappedStatusWithLtForm(t *testing.T) {
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "schemas"))
+	raw := []byte(`{
+  "schema_version": "sumpter.provenance/v1",
+  "run_id": "00000000-0000-7000-8000-000000000001",
+  "sumpter_version": "0.3.0-dev",
+  "started_at": "2026-07-10T00:00:00Z",
+  "completed_at": "2026-07-10T00:00:01Z",
+  "cli": {"command": "sumpter extract files", "argv_sanitized": ["extract","files"]},
+  "inputs": [],
+  "outputs": [],
+  "counts_by_record_type": {},
+  "value_profile": {
+    "version": "sumpter.value-profile/v0",
+    "max_distinct": 100,
+    "small_cell_threshold": 5,
+    "fields": {
+      "id": {
+        "tier": "aggregates",
+        "status": "high_cardinality_capped",
+        "count": 3,
+        "null_count": 0,
+        "distinct_count": "<5"
+      }
+    }
+  }
+}`)
+	result, err := validator.ValidateProvenanceManifest(raw, "manifest.json")
+	if err != nil {
+		t.Fatalf("ValidateProvenanceManifest: %v", err)
+	}
+	if result.Valid {
+		t.Fatal("capped status with <N distinct_count must fail")
+	}
+}
+
+func TestValueProfileSchemaForbidsZeroFrequencyDistinctKey(t *testing.T) {
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "schemas"))
+	raw := []byte(`{
+  "schema_version": "sumpter.provenance/v1",
+  "run_id": "00000000-0000-7000-8000-000000000001",
+  "sumpter_version": "0.3.0-dev",
+  "started_at": "2026-07-10T00:00:00Z",
+  "completed_at": "2026-07-10T00:00:01Z",
+  "cli": {"command": "sumpter extract files", "argv_sanitized": ["extract","files"]},
+  "inputs": [],
+  "outputs": [],
+  "counts_by_record_type": {},
+  "value_profile": {
+    "version": "sumpter.value-profile/v0",
+    "max_distinct": 10,
+    "small_cell_threshold": 5,
+    "fields": {
+      "status": {
+        "tier": "enumeration",
+        "status": "complete",
+        "count": 1,
+        "null_count": 0,
+        "distinct_count": 1,
+        "distinct": {"ghost": 0}
+      }
+    }
+  }
+}`)
+	result, err := validator.ValidateProvenanceManifest(raw, "manifest.json")
+	if err != nil {
+		t.Fatalf("ValidateProvenanceManifest: %v", err)
+	}
+	if result.Valid {
+		t.Fatal("zero-frequency concrete distinct key must fail")
+	}
+}
+
+func TestValueProfileSchemaAllowsCappedGteForm(t *testing.T) {
+	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "schemas"))
+	raw := []byte(`{
+  "schema_version": "sumpter.provenance/v1",
+  "run_id": "00000000-0000-7000-8000-000000000001",
+  "sumpter_version": "0.3.0-dev",
+  "started_at": "2026-07-10T00:00:00Z",
+  "completed_at": "2026-07-10T00:00:01Z",
+  "cli": {"command": "sumpter extract files", "argv_sanitized": ["extract","files"]},
+  "inputs": [],
+  "outputs": [],
+  "counts_by_record_type": {},
+  "value_profile": {
+    "version": "sumpter.value-profile/v0",
+    "max_distinct": 100,
+    "small_cell_threshold": 5,
+    "fields": {
+      "id": {
+        "tier": "aggregates",
+        "status": "high_cardinality_capped",
+        "count": 200,
+        "null_count": 0,
+        "distinct_count": ">=100",
+        "shape": "freeform"
+      }
+    }
+  }
+}`)
+	result, err := validator.ValidateProvenanceManifest(raw, "manifest.json")
+	if err != nil {
+		t.Fatalf("ValidateProvenanceManifest: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("valid capped >=N form rejected: %+v", result.Errors)
+	}
+}
+
 func TestValueProfileSchemaForbidsOverHardCapMaxDistinct(t *testing.T) {
 	validator := validation.NewSchemaValidator(filepath.Join("..", "..", "schemas"))
 	raw := []byte(`{

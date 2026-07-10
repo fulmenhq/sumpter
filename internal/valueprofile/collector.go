@@ -425,16 +425,34 @@ func (s *fieldState) result(cfg Config) FieldResult {
 	return res
 }
 
+// neverEnumerateTags force Tier B even when an operator also sets
+// safe_to_profile + public|internal. They are load-bearing on a portable
+// shareable diagnostic so a copy-paste safe_to_profile on an identifier
+// field cannot enumerate raw values.
+var neverEnumerateTags = map[string]struct{}{
+	TagDirectIdentifier:      {},
+	TagSourceStructure:       {},
+	TagOpaquePayload:         {},
+	TagAccessControlMetadata: {},
+}
+
 func (s *fieldState) allowsTierA() bool {
 	if !s.cfg.SafeToProfile {
 		return false
 	}
 	switch s.cfg.Sensitivity {
 	case SensitivityPublic, SensitivityInternal:
-		return true
 	default:
 		return false
 	}
+	// Never-enumerate tags dominate the affirmative Tier-A gate (same
+	// fail-closed posture as sensitivity winning over safe_to_profile).
+	for _, tag := range s.cfg.ProtectionTags {
+		if _, blocked := neverEnumerateTags[tag]; blocked {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *fieldState) hasTag(tag string) bool {

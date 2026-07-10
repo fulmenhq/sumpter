@@ -168,7 +168,7 @@
               "maxProperties": 10000,
               "additionalProperties": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 1
               }
             },
             "min": { "type": "number" },
@@ -176,6 +176,7 @@
           }
         },
         {
+          "$comment": "Aggregates + complete: exact distinct_count (capped) or small-cell <N form only.",
           "type": "object",
           "additionalProperties": false,
           "required": [
@@ -187,20 +188,59 @@
           ],
           "properties": {
             "tier": { "const": "aggregates" },
-            "status": {
-              "type": "string",
-              "enum": ["complete", "high_cardinality_capped"]
-            },
+            "status": { "const": "complete" },
             "count": { "type": "integer", "minimum": 0 },
             "null_count": { "type": "integer", "minimum": 0 },
             "distinct_count": {
               "oneOf": [
-                { "type": "integer", "minimum": 0 },
+                { "type": "integer", "minimum": 0, "maximum": 10000 },
                 {
                   "type": "string",
-                  "pattern": "^(>=|<)[0-9]+$"
+                  "pattern": "^<[0-9]+$"
                 }
               ]
+            },
+            "shape": {
+              "type": "string",
+              "enum": [
+                "opaque_string",
+                "all_numeric",
+                "uuid_shaped",
+                "email_shaped",
+                "freeform"
+              ]
+            },
+            "length": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min", "max", "mean"],
+              "properties": {
+                "min": { "type": "integer", "minimum": 0 },
+                "max": { "type": "integer", "minimum": 0 },
+                "mean": { "type": "number" }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Aggregates + high_cardinality_capped: only the >=N lower-bound form; exact integers and <N forbidden.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tier",
+            "status",
+            "count",
+            "null_count",
+            "distinct_count"
+          ],
+          "properties": {
+            "tier": { "const": "aggregates" },
+            "status": { "const": "high_cardinality_capped" },
+            "count": { "type": "integer", "minimum": 0 },
+            "null_count": { "type": "integer", "minimum": 0 },
+            "distinct_count": {
+              "type": "string",
+              "pattern": "^>=[0-9]+$"
             },
             "shape": {
               "type": "string",

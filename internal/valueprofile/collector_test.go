@@ -252,6 +252,41 @@ func TestStagingDiscardExcludesFailedInput(t *testing.T) {
 	}
 }
 
+func TestNeverEnumerateTagsDominateSafeToProfile(t *testing.T) {
+	// Copy-paste safe_to_profile + public on a direct_identifier must not
+	// enumerate raw values into the portable manifest.
+	cfg := Config{
+		Enabled: true,
+		Fields: []FieldConfig{
+			{
+				Field:          "ssn",
+				SafeToProfile:  true,
+				Sensitivity:    SensitivityPublic,
+				ProtectionTags: []string{TagDirectIdentifier},
+			},
+		},
+	}
+	c, err := NewCollector(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ObserveData(map[string]interface{}{"ssn": "123-45-6789"})
+	c.ObserveData(map[string]interface{}{"ssn": "987-65-4321"})
+	fr := c.Snapshot().Fields["ssn"]
+	if fr.Tier != TierAggregates {
+		t.Fatalf("tier = %q, want aggregates (never-enumerate dominates)", fr.Tier)
+	}
+	if fr.Distinct != nil {
+		t.Fatalf("must not enumerate direct_identifier values: %#v", *fr.Distinct)
+	}
+	if fr.Shape != ShapeOpaqueString {
+		t.Fatalf("shape = %q, want opaque_string", fr.Shape)
+	}
+	if blob := mustJSON(t, c.Snapshot()); strings.Contains(blob, "123-45-6789") {
+		t.Fatalf("identifier leaked into profile JSON: %s", blob)
+	}
+}
+
 func TestRejectUnknownProtectionTag(t *testing.T) {
 	_, err := NewCollector(Config{
 		Enabled: true,
