@@ -28,26 +28,32 @@ extraction continues (fail-open). A live reused `run_id` is fail-closed.
 Layout under the runtime root:
 
 ```text
-<runtime>/proc/<run_id>/claim.json    # exclusive ownership lease (0600)
-<runtime>/proc/<run_id>/card.json     # discovery root while the run is live (0600)
+<runtime>/proc/<run_id>/claim.json    # exclusive ownership lease + identity tombstone (0600)
+<runtime>/proc/<run_id>/card.json     # discovery root while published (0600)
 <runtime>/proc/<run_id>/events.ndjson # durable event stream (0600)
 ```
 
-Directories are owner-only (`0700`).
+Directories are owner-only (`0700`). The claim carries `(pid, started_at)`, a
+unique claim token, and a state (`live` or `exited`). Cleanup and reclaim always
+verify the claim token so a loser never deletes a winner's slot.
 
 ## Card lifecycle
 
 - The card is schema-validated against the pinned process-run/v0 baseline
-  **before** it is published. Invalid or unreadable pin material withholds both
-  card and stream (never publishes an unchecked discovery root).
+  **before** it is published. The final `card.json` appears only after a complete
+  temp write (atomic no-replace link/rename); readers never observe a partial
+  discovery root. Invalid pin material withholds both card and stream.
 - The card is **telemetry-only** in this release (no control socket).
-- **Clean exit** (including a normal failed extract): the card and claim are
-  removed; the event stream is **retained** for post-run inspection.
-- **Crash / kill / unrecovered panic**: the card is left in place so operators
-  can discover the retained stream. A later start with the same `run_id`
-  reclaims the slot only when the recorded `(pid, started_at)` is not live.
-- If the event stream fail-open disables mid-run (for example a write error),
-  the card is withdrawn immediately so it never points at a removed partial.
+- **Clean exit** (including a normal failed extract): the card is withdrawn; the
+  claim becomes an `exited` tombstone with the same identity; the event stream is
+  **retained**. A later same-`run_id` open reclaims only when that identity is no
+  longer live (fail-closed while the producer process is still alive).
+- **Crash / kill / unrecovered panic**: the live claim and card remain so
+  operators can discover the retained stream. Reclaim requires a proven-stale
+  `(pid, started_at)` pair via atomic claim-token quarantine.
+- If the event stream fail-open disables for any reason (caller write, autonomous
+  heartbeat, or Sync/Close failure), the owned stream is removed and the card is
+  withdrawn immediately so the discovery root never points at a missing partial.
 
 ## How to read the stream
 

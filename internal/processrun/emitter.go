@@ -68,6 +68,11 @@ type Config struct {
 	PID               int
 	Producer          Producer
 	HeartbeatInterval time.Duration // zero → DefaultHeartbeatInterval
+	// OnWithhold is invoked (at most once) when fail-open disables emission and
+	// removes the owned stream file. Used by the process card to withdraw the
+	// discovery root for heartbeat and Sync/Close failures that bypass callers.
+	// Must not block; must not call back into the emitter under its lock.
+	OnWithhold func()
 }
 
 // streamWriter is the narrow I/O surface for the append-only event file.
@@ -170,6 +175,7 @@ func newFileEmitter(cfg Config, w streamWriter, path string, removeOnDisable boo
 		producer:          cfg.Producer,
 		heartbeatInterval: cfg.HeartbeatInterval,
 		removeOnDisable:   removeOnDisable,
+		onWithhold:        cfg.OnWithhold,
 		stopHeartbeat:     make(chan struct{}),
 	}
 }
@@ -183,6 +189,8 @@ type fileEmitter struct {
 	producer          Producer
 	heartbeatInterval time.Duration
 	removeOnDisable   bool
+	onWithhold        func()
+	withholdFired     bool
 	seq               int
 	disabled          bool
 	terminal          bool
@@ -311,6 +319,7 @@ func (e *fileEmitter) Close() {
 		if syncErr != nil || closeErr != nil {
 			if e.removeOnDisable && e.path != "" {
 				_ = os.Remove(e.path)
+				e.fireWithholdLocked()
 			}
 			e.terminal = false
 		}
@@ -389,7 +398,23 @@ func (e *fileEmitter) disableLocked() {
 	// No partial publishable stream: remove the file we exclusively created.
 	if e.removeOnDisable && e.path != "" && !e.terminal {
 		_ = os.Remove(e.path)
+		e.fireWithholdLocked()
 	}
+}
+
+// fireWithholdLocked notifies the process card (or other owner) that the stream
+// file was removed. Must be called only while e.mu is held and only when the owned
+// stream was actually deleted. The callback runs outside the mutex.
+func (e *fileEmitter) fireWithholdLocked() {
+	if e.withholdFired || e.onWithhold == nil {
+		return
+	}
+	e.withholdFired = true
+	cb := e.onWithhold
+	e.onWithhold = nil
+	e.mu.Unlock()
+	cb()
+	e.mu.Lock()
 }
 
 func (e *fileEmitter) stopHeartbeatLocked() {

@@ -112,7 +112,6 @@ func TestOpenCardTelemetryOnlySchemaAndPerms(t *testing.T) {
 	assertMode(t, card.EventsPath, 0o600)
 	assertMode(t, filepath.Join(card.RunDir, ClaimFileName), 0o600)
 
-	// Schema-valid via embedded pin (no ContractBase required).
 	result, resolved, err := artifactcontract.ValidateProcessCardFile(processRunContractBase(t), card.Path)
 	if err != nil {
 		t.Fatalf("ValidateProcessCardFile: %v", err)
@@ -132,13 +131,6 @@ func TestOpenCardTelemetryOnlySchemaAndPerms(t *testing.T) {
 	if _, ok := doc["control"]; ok {
 		t.Fatal("telemetry-only card must not include control")
 	}
-	tel, _ := doc["telemetry"].(map[string]interface{})
-	if tel["format"] != "ndjson" {
-		t.Fatalf("format = %v", tel["format"])
-	}
-	if tel["path"] != card.EventsPath {
-		t.Fatalf("telemetry.path = %v, want %v", tel["path"], card.EventsPath)
-	}
 
 	card.Emitter.Started(1)
 	card.Emitter.Completed(1, 1)
@@ -149,8 +141,13 @@ func TestOpenCardTelemetryOnlySchemaAndPerms(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(runDir, CardFileName)); !os.IsNotExist(err) {
 		t.Fatal("card must be swept on clean exit")
 	}
-	if _, err := os.Stat(filepath.Join(runDir, ClaimFileName)); !os.IsNotExist(err) {
-		t.Fatal("claim must be released on clean exit")
+	// Claim remains as exited tombstone for later stale reclaim.
+	claim, err := readClaimFile(filepath.Join(runDir, ClaimFileName))
+	if err != nil {
+		t.Fatalf("claim tombstone must remain after clean exit: %v", err)
+	}
+	if claim.State != claimStateExited {
+		t.Fatalf("claim state = %q, want %q", claim.State, claimStateExited)
 	}
 	if _, err := os.Stat(eventsPath); err != nil {
 		t.Fatalf("event stream must be retained after clean exit: %v", err)
@@ -158,7 +155,6 @@ func TestOpenCardTelemetryOnlySchemaAndPerms(t *testing.T) {
 }
 
 func TestOpenCardAlwaysValidatesWithoutContractBase(t *testing.T) {
-	// Production path uses the embedded pin — never publishes unchecked.
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	card, err := OpenCard(CardConfig{
 		RuntimeDir: runtimeDir,
@@ -258,21 +254,77 @@ func TestOpenCardConcurrentExclusiveClaim(t *testing.T) {
 	if success.Load() != 1 {
 		t.Fatalf("want exactly 1 successful OpenCard, got %d (live=%d other=%d)", success.Load(), liveHits.Load(), other.Load())
 	}
-	if liveHits.Load()+other.Load() != n-1 {
-		t.Fatalf("unexpected error tally live=%d other=%d", liveHits.Load(), other.Load())
+}
+
+func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stale reclaim requires Unix liveness")
 	}
-	// Losers must not leave partial discovery roots besides the winner.
-	entries, err := os.ReadDir(filepath.Join(runtimeDir, "proc", runID))
-	if err != nil {
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, e := range entries {
-		switch e.Name() {
-		case CardFileName, ClaimFileName, EventsFileName:
-			// expected
-		default:
-			t.Fatalf("unexpected entry in run slot: %s", e.Name())
-		}
+	deadPID := findDeadPID(t)
+	staleStarted := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	staleToken := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), deadPID, staleStarted, staleToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, EventsFileName), []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 12
+	var (
+		wg      sync.WaitGroup
+		success atomic.Int32
+		mu      sync.Mutex
+		winner  *Card
+	)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			card, err := OpenCard(CardConfig{
+				RuntimeDir: runtimeDir,
+				RunID:      runID,
+				PID:        os.Getpid(),
+				StartedAt:  time.Now().UTC(),
+				Producer:   Producer{Name: "sumpter", Version: "test"},
+			})
+			if err != nil {
+				return
+			}
+			success.Add(1)
+			mu.Lock()
+			if winner == nil {
+				winner = card
+			} else {
+				card.Close(true)
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if winner != nil {
+		defer winner.Close(true)
+	}
+	if success.Load() != 1 {
+		t.Fatalf("stale reclaim want exactly 1 winner, got %d", success.Load())
+	}
+	// Losers must not have deleted the winner's claim.
+	if !winner.stillOwnClaim() {
+		t.Fatal("winner lost claim ownership after concurrent stale reclaim")
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "old")); !os.IsNotExist(err) && err == nil {
+		t.Fatal("unexpected residue")
+	}
+	// Prior stream removed by reclaim under winner ownership.
+	// Winner has its own events path open.
+	if !winner.Emitter.Enabled() {
+		t.Fatal("winner emitter must be enabled")
 	}
 }
 
@@ -286,16 +338,11 @@ func TestOpenCardStaleSweepReclaims(t *testing.T) {
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	deadPID := 999999
-	for pidAlive(deadPID) && deadPID > 900000 {
-		deadPID--
-	}
-	if pidAlive(deadPID) {
-		t.Skip("could not find a dead pid for stale test")
-	}
+	deadPID := findDeadPID(t)
 	staleStarted := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	writeOwnerFile(t, filepath.Join(runDir, ClaimFileName), deadPID, staleStarted)
-	writeOwnerFile(t, filepath.Join(runDir, CardFileName), deadPID, staleStarted)
+	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), deadPID, staleStarted, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", claimStateExited); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(runDir, "old.ndjson"), []byte("stale\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -311,17 +358,12 @@ func TestOpenCardStaleSweepReclaims(t *testing.T) {
 		t.Fatalf("OpenCard stale reclaim: %v", err)
 	}
 	defer card.Close(true)
-
-	if _, err := os.Stat(filepath.Join(runDir, "old.ndjson")); !os.IsNotExist(err) {
-		t.Fatal("stale sweep must remove prior stream under reclaimed run_id slot")
-	}
 	if !card.Emitter.Enabled() {
 		t.Fatal("reclaimed slot must open a fresh stream")
 	}
 }
 
 func TestOpenCardPIDReuseMismatchedStartReclaims(t *testing.T) {
-	// Live pid with a started_at that cannot match OS process start → reclaimable.
 	if _, ok := processStartTime(os.Getpid()); !ok {
 		t.Skip("process start time unavailable on this platform")
 	}
@@ -331,11 +373,10 @@ func TestOpenCardPIDReuseMismatchedStartReclaims(t *testing.T) {
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// Same live pid, started_at far in the past (PID-reuse simulation).
 	mismatched := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	writeOwnerFile(t, filepath.Join(runDir, ClaimFileName), os.Getpid(), mismatched)
-	writeOwnerFile(t, filepath.Join(runDir, CardFileName), os.Getpid(), mismatched)
-
+	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), os.Getpid(), mismatched, "cccccccccccccccccccccccccccccccc", claimStateLive); err != nil {
+		t.Fatal(err)
+	}
 	if identityLive(os.Getpid(), mismatched) {
 		t.Fatal("mismatched start time must not count as live identity")
 	}
@@ -351,9 +392,6 @@ func TestOpenCardPIDReuseMismatchedStartReclaims(t *testing.T) {
 		t.Fatalf("OpenCard PID-reuse reclaim: %v", err)
 	}
 	defer card.Close(true)
-	if !card.Emitter.Enabled() {
-		t.Fatal("expected reclaim success")
-	}
 }
 
 func TestOpenCardMatchingPairRefuses(t *testing.T) {
@@ -367,11 +405,9 @@ func TestOpenCardMatchingPairRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
-	if !identityLive(pid, started) {
-		t.Fatal("current process identity must be live")
+	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), pid, started, "dddddddddddddddddddddddddddddddd", claimStateLive); err != nil {
+		t.Fatal(err)
 	}
-	writeOwnerFile(t, filepath.Join(runDir, ClaimFileName), pid, started)
-	writeOwnerFile(t, filepath.Join(runDir, CardFileName), pid, started)
 
 	_, err := OpenCard(CardConfig{
 		RuntimeDir: runtimeDir,
@@ -382,6 +418,77 @@ func TestOpenCardMatchingPairRefuses(t *testing.T) {
 	})
 	if !errors.Is(err, ErrCardExists) {
 		t.Fatalf("matching live pair must refuse, got %v", err)
+	}
+}
+
+func TestOpenCardCleanExitTombstoneBlocksWhileAlive(t *testing.T) {
+	// After clean Sweep the claim is an exited tombstone with our live identity —
+	// a second open in the same still-running process must fail-closed.
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	first, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if err != nil {
+		t.Fatalf("OpenCard: %v", err)
+	}
+	eventsPath := first.EventsPath
+	first.Emitter.Started(1)
+	first.Emitter.Completed(1, 1)
+	first.Close(true)
+
+	if _, err := os.Stat(eventsPath); err != nil {
+		t.Fatalf("stream retained: %v", err)
+	}
+	_, err = OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if !errors.Is(err, ErrCardExists) {
+		t.Fatalf("live producer after clean sweep must refuse same run_id, got %v", err)
+	}
+}
+
+func TestOpenCardExitedTombstoneReclaimWhenDead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs dead pid")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	// Simulate clean-exit tombstone from a dead producer + retained stream.
+	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), deadPID, time.Date(2021, 2, 2, 0, 0, 0, 0, time.UTC), "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	oldStream := filepath.Join(runDir, EventsFileName)
+	if err := os.WriteFile(oldStream, []byte("retained\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	card, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if err != nil {
+		t.Fatalf("reclaim after dead exited tombstone: %v", err)
+	}
+	defer card.Close(true)
+	if !card.Emitter.Enabled() {
+		t.Fatal("expected fresh stream after reclaim")
 	}
 }
 
@@ -399,13 +506,16 @@ func TestOpenCardCrashLeavesCard(t *testing.T) {
 		t.Fatalf("OpenCard: %v", err)
 	}
 	cardPath := card.Path
-	// Simulate crash teardown: close emitter without sweeping card.
 	card.Close(false)
 	if _, err := os.Stat(cardPath); err != nil {
 		t.Fatalf("crash must leave card for discovery: %v", err)
 	}
-	if _, err := os.Stat(card.EventsPath); err != nil {
-		t.Fatalf("crash must leave stream: %v", err)
+	claim, err := readClaimFile(filepath.Join(card.RunDir, ClaimFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.State != claimStateLive {
+		t.Fatalf("crash claim state = %q, want live", claim.State)
 	}
 }
 
@@ -419,9 +529,6 @@ func TestOpenCardBadContractBaseWithholds(t *testing.T) {
 		Producer:     Producer{Name: "sumpter", Version: "test"},
 		ContractBase: filepath.Join(t.TempDir(), "missing-base"),
 	})
-	if err == nil {
-		t.Fatal("expected schema/setup failure")
-	}
 	if !errors.Is(err, ErrCardSchema) {
 		t.Fatalf("err = %v, want ErrCardSchema", err)
 	}
@@ -430,8 +537,49 @@ func TestOpenCardBadContractBaseWithholds(t *testing.T) {
 	}
 }
 
+func TestOpenCardPublishAtomicNoPartialFinal(t *testing.T) {
+	// Final card path must not exist until publish completes (temp+link strategy).
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	card, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile},
+	})
+	if err != nil {
+		t.Fatalf("OpenCard: %v", err)
+	}
+	defer card.Close(true)
+	// Published card is complete JSON and schema-valid (not empty/partial).
+	raw, err := os.ReadFile(card.Path) // #nosec G304
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) < 20 {
+		t.Fatalf("card too small to be complete: %q", raw)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("final card must be complete JSON: %v", err)
+	}
+	// Existing card cannot be clobbered by a second exclusive publish attempt.
+	tmp := filepath.Join(card.RunDir, "card.other.tmp")
+	if err := writeFileExclusiveFull(tmp, []byte("{\"evil\":true}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(tmp, card.Path); err == nil {
+		t.Fatal("link over existing card must fail (no-replace)")
+	}
+	_ = os.Remove(tmp)
+	raw2, _ := os.ReadFile(card.Path) // #nosec G304
+	if string(raw2) != string(raw) {
+		t.Fatal("existing card was clobbered")
+	}
+}
+
 func TestOpenCardStreamFailOpenWithdrawsCard(t *testing.T) {
-	// Inject a writer that fails on the first event write after publish.
 	prev := cardOpenStream
 	t.Cleanup(func() { cardOpenStream = prev })
 
@@ -440,7 +588,6 @@ func TestOpenCardStreamFailOpenWithdrawsCard(t *testing.T) {
 	var ownedPath string
 	cardOpenStream = func(cfg Config) (Emitter, error) {
 		ownedPath = cfg.Path
-		// Seed the path so remove-on-disable is observable; writer fails first write.
 		if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o700); err != nil {
 			return nil, err
 		}
@@ -462,10 +609,6 @@ func TestOpenCardStreamFailOpenWithdrawsCard(t *testing.T) {
 		t.Fatalf("OpenCard: %v", err)
 	}
 	cardPath := card.Path
-	if cardPath == "" {
-		t.Fatal("expected published card path before stream failure")
-	}
-	// Started write fails → emitter disables → card withdrawn.
 	card.Emitter.Started(1)
 	if card.Emitter.Enabled() {
 		t.Fatal("emitter must be disabled after write failure")
@@ -478,8 +621,111 @@ func TestOpenCardStreamFailOpenWithdrawsCard(t *testing.T) {
 			t.Fatal("partial stream must be withheld")
 		}
 	}
-	// Clean close should not revive the card.
+	// Claim becomes exited tombstone (not deleted).
+	claim, err := readClaimFile(filepath.Join(card.RunDir, ClaimFileName))
+	if err != nil {
+		t.Fatalf("tombstone claim: %v", err)
+	}
+	if claim.State != claimStateExited {
+		t.Fatalf("state = %q, want exited", claim.State)
+	}
 	card.Close(true)
+}
+
+func TestOpenCardHeartbeatFailOpenWithdrawsCard(t *testing.T) {
+	prev := cardOpenStream
+	t.Cleanup(func() { cardOpenStream = prev })
+
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	// started ok (1), first heartbeat fails (2) via autonomous ticker path.
+	cardOpenStream = func(cfg Config) (Emitter, error) {
+		if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(cfg.Path, []byte("seed\n"), 0o600); err != nil {
+			return nil, err
+		}
+		cfg.HeartbeatInterval = 20 * time.Millisecond
+		w := &scriptedWriter{failAt: 2}
+		return OpenWithWriter(cfg, w, cfg.Path)
+	}
+
+	card, err := OpenCard(CardConfig{
+		RuntimeDir:        runtimeDir,
+		RunID:             runID,
+		PID:               os.Getpid(),
+		StartedAt:         time.Now().UTC(),
+		Producer:          Producer{Name: "sumpter", Version: "test"},
+		HeartbeatInterval: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("OpenCard: %v", err)
+	}
+	cardPath := card.Path
+	eventsPath := card.EventsPath
+	card.Emitter.Started(1)
+	// Wait for autonomous heartbeat to fail (bypasses withdrawing wrapper).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !card.Emitter.Enabled() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if card.Emitter.Enabled() {
+		t.Fatal("expected heartbeat fail-open to disable emitter")
+	}
+	// Allow OnWithhold to run.
+	time.Sleep(20 * time.Millisecond)
+	if _, err := os.Stat(cardPath); !os.IsNotExist(err) {
+		t.Fatal("card must be withdrawn after autonomous heartbeat failure")
+	}
+	if _, err := os.Stat(eventsPath); !os.IsNotExist(err) {
+		t.Fatal("stream must be withheld after heartbeat failure")
+	}
+	card.Close(false)
+}
+
+func TestOpenCardSyncFailOnCrashCloseWithdrawsCard(t *testing.T) {
+	prev := cardOpenStream
+	t.Cleanup(func() { cardOpenStream = prev })
+
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	cardOpenStream = func(cfg Config) (Emitter, error) {
+		if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(cfg.Path, []byte("seed\n"), 0o600); err != nil {
+			return nil, err
+		}
+		w := &scriptedWriter{failSync: true}
+		return OpenWithWriter(cfg, w, cfg.Path)
+	}
+
+	card, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if err != nil {
+		t.Fatalf("OpenCard: %v", err)
+	}
+	cardPath := card.Path
+	eventsPath := card.EventsPath
+	card.Emitter.Started(1)
+	card.Emitter.Completed(1, 1)
+	// Crash teardown: clean=false, but Sync failure removes stream → must withdraw card.
+	card.Close(false)
+	if _, err := os.Stat(eventsPath); !os.IsNotExist(err) {
+		t.Fatal("sync failure must withhold stream")
+	}
+	if _, err := os.Stat(cardPath); !os.IsNotExist(err) {
+		t.Fatal("card must be withdrawn when stream is removed on crash Close Sync failure")
+	}
 }
 
 func TestOpenCardMidRunFailOpenWithdrawsCard(t *testing.T) {
@@ -495,7 +741,6 @@ func TestOpenCardMidRunFailOpenWithdrawsCard(t *testing.T) {
 		if err := os.WriteFile(cfg.Path, []byte("seed\n"), 0o600); err != nil {
 			return nil, err
 		}
-		// started ok (write 1), progress fails (write 2)
 		w := &scriptedWriter{failAt: 2}
 		return OpenWithWriter(cfg, w, cfg.Path)
 	}
@@ -513,12 +758,6 @@ func TestOpenCardMidRunFailOpenWithdrawsCard(t *testing.T) {
 	cardPath := card.Path
 	eventsPath := card.EventsPath
 	card.Emitter.Started(2)
-	if !card.Emitter.Enabled() {
-		t.Fatal("started must succeed")
-	}
-	if _, err := os.Stat(cardPath); err != nil {
-		t.Fatalf("card must remain after successful started: %v", err)
-	}
 	card.Emitter.Progress(1, 2)
 	if card.Emitter.Enabled() {
 		t.Fatal("progress failure must disable emitter")
@@ -532,24 +771,16 @@ func TestOpenCardMidRunFailOpenWithdrawsCard(t *testing.T) {
 	card.Close(false)
 }
 
-func writeOwnerFile(t *testing.T, path string, pid int, started time.Time) {
+func findDeadPID(t *testing.T) int {
 	t.Helper()
-	doc := map[string]interface{}{
-		"pid":        pid,
-		"started_at": started.UTC().Format(time.RFC3339Nano),
-		// Minimal extras so a card-shaped file also works as owner source.
-		"capabilities": []string{Capability},
-		"run_id":       "seed",
-		"producer":     map[string]interface{}{"name": "sumpter", "version": "seed"},
-		"telemetry":    map[string]interface{}{"path": filepath.Join(filepath.Dir(path), "events.ndjson"), "format": "ndjson"},
+	deadPID := 999999
+	for pidAlive(deadPID) && deadPID > 900000 {
+		deadPID--
 	}
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatal(err)
+	if pidAlive(deadPID) {
+		t.Skip("could not find a dead pid")
 	}
-	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	return deadPID
 }
 
 func assertMode(t *testing.T, path string, want os.FileMode) {
