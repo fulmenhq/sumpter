@@ -18,6 +18,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/logging"
+	"github.com/fulmenhq/sumpter/internal/processrun"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
 	"github.com/fulmenhq/sumpter/internal/runstats"
@@ -53,6 +54,12 @@ type multiDispatcher struct {
 	// in newMultiDispatcher and overridable by tests. 0 disables that dimension.
 	bundleMaxRecords int
 	bundleMaxBytes   int64
+
+	// processRun is the single-writer process-run event emitter (noop when disabled).
+	// Only the run/committer path may call it — never worker goroutines.
+	processRun      processrun.Emitter
+	processRunTotal int
+	processRunDone  int
 }
 
 func newMultiDispatcher(shared *multiSharedOptions, warnOut io.Writer) *multiDispatcher {
@@ -65,6 +72,7 @@ func newMultiDispatcher(shared *multiSharedOptions, warnOut io.Writer) *multiDis
 		parseFile:        extract.ParseFileForDOMDispatch,
 		bundleMaxRecords: defaultBundleMaxRecords,
 		bundleMaxBytes:   defaultBundleMaxBytes,
+		processRun:       processrun.Noop(),
 	}
 }
 
@@ -123,6 +131,37 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 			_, _ = io.WriteString(d.warnOut, runstats.Format(statsCollector.Sample(statsInputs, statsInputBytes, statsBytesKnown)))
 		}()
 	}
+
+	// Opt-in process-run/v0 event stream (fail-open). Deferred so terminal
+	// emission runs after processInputs/finalize set err. Never fails the extract.
+	// Panic-aware: a crash after started must not be recorded as completed.
+	d.processRun = processrun.Noop()
+	defer func() {
+		recovered := recover()
+		if d.processRun != nil && d.processRun.Enabled() {
+			if recovered != nil {
+				// Flight recorder must never claim success for a crash.
+				d.processRun.Failed(d.processRunDone, d.processRunTotal, "run_error")
+			} else {
+				switch classifyProcessRunTerminal(err) {
+				case "completed":
+					d.processRun.Completed(d.processRunDone, d.processRunTotal)
+				case "canceled":
+					d.processRun.Canceled(d.processRunDone, d.processRunTotal, "canceled")
+				case "partial":
+					d.processRun.Failed(d.processRunDone, d.processRunTotal, "partial")
+				default:
+					d.processRun.Failed(d.processRunDone, d.processRunTotal, "run_error")
+				}
+			}
+		}
+		if d.processRun != nil {
+			d.processRun.Close()
+		}
+		if recovered != nil {
+			panic(recovered)
+		}
+	}()
 
 	if err := validateSharedInputMode(shared); err != nil {
 		return err
@@ -268,6 +307,10 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		sort.Strings(files)
 	}
 
+	// Start process-run emission only after the input set is resolved (total known).
+	// Setup failure is fail-open: warn and continue with a no-op emitter.
+	d.openProcessRunEmitter(len(files))
+
 	states := make([]*recipeRunState, 0, len(plans))
 	for _, plan := range plans {
 		states = append(states, newRecipeRunState(plan, len(files), d.bundleMaxRecords, d.bundleMaxBytes))
@@ -291,7 +334,10 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		}
 	}()
 
-	ctx := context.Background()
+	ctx := shared.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if perr := d.processInputs(ctx, files, logicalByLocal, states, shared); perr != nil {
 		return perr
 	}
@@ -343,6 +389,9 @@ func (d *multiDispatcher) processInputs(ctx context.Context, files []string, log
 // and stays byte-identical to pre-SUM-066 behavior.
 func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
 	for fileIdx, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		o := parsedInputOutcome{idx: fileIdx, ordinal: fileIdx + 1, file: file, logical: logicalIdentity(file, logicalByLocal)}
 		o.doc, o.err = d.parseFile(file, shared.AllowLargeFiles)
 		if err := d.applyOutcome(ctx, o, states, shared); err != nil {
@@ -366,6 +415,7 @@ func (d *multiDispatcher) applyOutcome(ctx context.Context, o parsedInputOutcome
 		for _, st := range states {
 			st.recordInputFailure(o.file, o.logical, o.err)
 		}
+		d.noteSettledInput()
 		if !shared.ContinueOnError {
 			return fmt.Errorf("failed to process file %s: %w", o.logical, o.err)
 		}
@@ -380,10 +430,12 @@ func (d *multiDispatcher) applyOutcome(ctx context.Context, o parsedInputOutcome
 		// under --continue-on-error (never silently suppressed).
 		if rerr := st.dispatchParsedFile(ctx, o.file, o.logical, o.ordinal, o.doc); rerr != nil {
 			if !shared.ContinueOnError || isTerminalDispatchError(rerr) {
+				d.noteSettledInput()
 				return rerr
 			}
 		}
 	}
+	d.noteSettledInput()
 	return nil
 }
 
@@ -455,6 +507,7 @@ func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOu
 		for _, st := range states {
 			st.recordInputFailure(o.file, o.logical, o.parseErr)
 		}
+		d.noteSettledInput()
 		if !shared.ContinueOnError {
 			return fmt.Errorf("failed to process file %s: %w", o.logical, o.parseErr)
 		}
@@ -463,11 +516,105 @@ func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOu
 	for i, st := range states {
 		if rerr := o.apps[i].commit(ctx, st); rerr != nil {
 			if !shared.ContinueOnError || isTerminalDispatchError(rerr) {
+				d.noteSettledInput()
 				return rerr
 			}
 		}
 	}
+	d.noteSettledInput()
 	return nil
+}
+
+// openProcessRunEmitter starts the opt-in process-run stream after the input set
+// is known. Fail-open: setup errors disable emission and only warn.
+func (d *multiDispatcher) openProcessRunEmitter(total int) {
+	shared := d.shared
+	if shared == nil || strings.TrimSpace(shared.ProcessRunEventsPath) == "" {
+		d.processRun = processrun.Noop()
+		return
+	}
+	if err := processrun.ValidateEventsPath(shared.ProcessRunEventsPath, shared.ProcessRunBlockedRoots); err != nil {
+		_, _ = fmt.Fprintf(d.warnOut, "warning: process-run events disabled (%s)\n", processRunSetupFailureCategory(err))
+		d.processRun = processrun.Noop()
+		return
+	}
+	emitter, err := processrun.Open(processrun.Config{
+		Path:  shared.ProcessRunEventsPath,
+		RunID: shared.RunID,
+		PID:   os.Getpid(),
+		Producer: processrun.Producer{
+			Name:    "sumpter",
+			Version: getVersionFromBuild(),
+			Profile: processrun.ProducerProfile,
+		},
+		HeartbeatInterval: processrun.DefaultHeartbeatInterval,
+	})
+	if err != nil {
+		_, _ = fmt.Fprintf(d.warnOut, "warning: process-run events disabled (%s)\n", processRunSetupFailureCategory(err))
+		d.processRun = processrun.Noop()
+		return
+	}
+	d.processRun = emitter
+	d.processRunTotal = total
+	d.processRunDone = 0
+	d.processRun.Started(total)
+}
+
+// errRecipePartialFailure is the typed marker for continue-on-error partial
+// recipe outcomes. The process-run terminal class must use errors.Is, never
+// prose-matching of err.Error() (paths/messages can contain the same words).
+var errRecipePartialFailure = errors.New("recipe partial failure")
+
+// recipePartialFailure returns a durable partial-failure error for a recipe that
+// committed some inputs under --continue-on-error while recording failures.
+func recipePartialFailure(recipeID string, applied, failed int) error {
+	return fmt.Errorf("recipe %q partial failure: applied=%d failed=%d: %w", recipeID, applied, failed, errRecipePartialFailure)
+}
+
+// classifyProcessRunTerminal maps the run error to the single process-run terminal class.
+// Returns "completed", "canceled", "partial", or "run_error".
+func classifyProcessRunTerminal(err error) string {
+	if err == nil {
+		return "completed"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(err, errRecipePartialFailure) {
+		return "partial"
+	}
+	return "run_error"
+}
+
+// processRunSetupFailureCategory returns a path-free setup failure label for stderr.
+// Operator-chosen telemetry paths are withheld (same posture as argv omission).
+func processRunSetupFailureCategory(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	switch {
+	case errors.Is(err, processrun.ErrStreamExists):
+		return "path already exists"
+	case errors.Is(err, processrun.ErrStreamPlacement):
+		return "path not allowed"
+	case errors.Is(err, processrun.ErrStreamSetup):
+		return "setup failed"
+	case errors.Is(err, processrun.ErrStreamConfig):
+		return "invalid configuration"
+	default:
+		// Never echo err.Error() — may contain operator paths (PathError) or basenames.
+		return "setup failed"
+	}
+}
+
+// noteSettledInput records one committed/settled input on the single-writer path
+// and emits a process-run progress event. Must not be called from worker goroutines.
+func (d *multiDispatcher) noteSettledInput() {
+	if d.processRun == nil || !d.processRun.Enabled() {
+		return
+	}
+	d.processRunDone++
+	d.processRun.Progress(d.processRunDone, d.processRunTotal)
 }
 
 // processInputsConcurrentWorkers is the SUM-068 input-worker path for BOTH output modes.
@@ -562,14 +709,31 @@ func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context,
 	}()
 
 	// Drain: reorder outcomes into strict ordinal order and commit each exactly once in
-	// order. Out-of-order outcomes wait in pending (bounded by window).
+	// order. Out-of-order outcomes wait in pending (bounded by window). Honors parent
+	// cancellation so process-run can emit a single canceled terminal without hanging.
 	pending := make(map[int]builtInputOutcome, window)
 	next := 0
 	var runErr error
+drain:
 	for next < len(files) {
-		o, ok := <-resultChan
-		if !ok {
-			break
+		var o builtInputOutcome
+		var ok bool
+		select {
+		case <-ctx.Done():
+			if runErr == nil {
+				runErr = ctx.Err()
+			}
+			break drain
+		case o, ok = <-resultChan:
+			if !ok {
+				if runErr == nil {
+					runErr = ctx.Err()
+					if runErr == nil {
+						runErr = fmt.Errorf("extract-multi: input processing incomplete")
+					}
+				}
+				break drain
+			}
 		}
 		pending[o.idx] = o
 		for {
@@ -580,7 +744,7 @@ func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context,
 			delete(pending, next)
 			if err := d.commitBuiltOutcome(ctx, cur, states, shared); err != nil {
 				runErr = err
-				break
+				break drain
 			}
 			// Release this input's in-flight records and window slot so the feeder advances.
 			if cur.records > 0 {
@@ -592,9 +756,6 @@ func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context,
 			}
 			next++
 			<-slots
-		}
-		if runErr != nil {
-			break
 		}
 	}
 
@@ -792,7 +953,7 @@ func (st *recipeRunState) finalize(startedAt time.Time) error {
 		return st.dispositionErr
 	}
 	if opts.ContinueOnError && st.failures.Failed > 0 {
-		return fmt.Errorf("recipe %q partial failure: applied=%d failed=%d", st.plan.RecipeID, st.failures.Applied, st.failures.Failed)
+		return recipePartialFailure(st.plan.RecipeID, st.failures.Applied, st.failures.Failed)
 	}
 	return nil
 }

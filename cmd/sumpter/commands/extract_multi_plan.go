@@ -99,6 +99,21 @@ type multiSharedOptions struct {
 	// touches records, aggregate output, or the provenance manifest, so the
 	// SUM-066 byte-identical contract holds with stats on or off.
 	Stats bool
+
+	// ProcessRunEventsPath opts into process-run/v0 append-only NDJSON flight-recorder
+	// emission for this extract-multi run. Empty disables telemetry (byte-identical
+	// no-opt path). When set, events are written owner-only (0600) with fail-open
+	// setup/write behavior and are NOT recorded in Argv / cli.argv_sanitized.
+	ProcessRunEventsPath string
+
+	// ProcessRunBlockedRoots are the invocation's already-resolved SUMPTER_HOME and
+	// workdir roots under which process-run streams are rejected. Callers populate
+	// these from the same --home/--workdir resolution as the rest of the CLI.
+	ProcessRunBlockedRoots []string
+
+	// Context is the run cancellation boundary (typically cmd.Context()). Nil means
+	// context.Background(). Cancellation classifies the process-run terminal as canceled.
+	Context context.Context
 }
 
 func validateExtractMultiInternalParameters(shared *multiSharedOptions) error {

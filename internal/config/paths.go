@@ -19,33 +19,41 @@ type Paths struct {
 
 // ResolvePaths resolves all Sumpter directory paths with proper fallbacks
 func ResolvePaths(homeOverride, workdirOverride string) (*Paths, error) {
-	paths := &Paths{}
-
-	// Resolve SUMPTER_HOME
-	home, err := resolveHomeDir(homeOverride)
+	paths, err := ResolvePathLayout(homeOverride, workdirOverride)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve SUMPTER_HOME: %w", err)
+		return nil, err
 	}
-	paths.Home = home
-
-	// Resolve SUMPTER_WORKDIR
-	workdir, err := resolveWorkDir(workdirOverride, home)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve SUMPTER_WORKDIR: %w", err)
-	}
-	paths.WorkDir = workdir
-
-	// Resolve subdirectories
-	paths.Cache = filepath.Join(home, "cache")
-	paths.Logs = filepath.Join(home, "logs")
-	paths.Configs = filepath.Join(home, "configs")
-	paths.Temp = filepath.Join(workdir, "temp")
 
 	// Create directories with proper permissions
 	if err := createDirectories(paths); err != nil {
 		return nil, fmt.Errorf("failed to create directories: %w", err)
 	}
 
+	return paths, nil
+}
+
+// ResolvePathLayout resolves home/workdir and derived layout without creating
+// directories. Use this for pure path predicates (for example process-run placement
+// checks) so validation does not mutate the filesystem.
+func ResolvePathLayout(homeOverride, workdirOverride string) (*Paths, error) {
+	paths := &Paths{}
+
+	home, err := resolveHomeDir(homeOverride)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve SUMPTER_HOME: %w", err)
+	}
+	paths.Home = home
+
+	workdir, err := resolveWorkDir(workdirOverride, home)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve SUMPTER_WORKDIR: %w", err)
+	}
+	paths.WorkDir = workdir
+
+	paths.Cache = filepath.Join(home, "cache")
+	paths.Logs = filepath.Join(home, "logs")
+	paths.Configs = filepath.Join(home, "configs")
+	paths.Temp = filepath.Join(workdir, "temp")
 	return paths, nil
 }
 
