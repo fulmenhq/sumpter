@@ -235,6 +235,10 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 			return "", ErrCardSetup
 		}
 
+		// Recover durable mid-takeover crash state before reading ownership.
+		// (dual-name quarantine+claim, or quarantine-only after claim.json was removed.)
+		_ = recoverOrphanTakeoverState(runDir, claimPath)
+
 		// Slot exists: inspect ownership via claim (preferred) or card fallback.
 		owner, oerr := readSlotOwner(claimPath, cardPath)
 		if oerr != nil && !errors.Is(oerr, os.ErrNotExist) {
@@ -264,6 +268,10 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 		// default events/card residue (no proven-stale ownership). Exclusive Open
 		// / Link will fail-open if residue collides.
 		if _, cerr := os.Stat(claimPath); errors.Is(cerr, os.ErrNotExist) {
+			// Last chance: adopt orphan quarantine-only state into claim.json.
+			if recoverOrphanTakeoverState(runDir, claimPath) {
+				continue
+			}
 			if werr := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); werr == nil {
 				return myToken, nil
 			} else if errors.Is(werr, ErrCardExists) {
@@ -291,15 +299,83 @@ var (
 	publishAfterTemp func(tmpPath, finalPath string)
 )
 
+// recoverOrphanTakeoverState repairs durable mid-takeover crash residues so a
+// later process can reclaim a dead slot instead of looping into false ErrCardExists.
+//
+// Boundary 1: claim.json + claim.stale.<token> hard-linked to the same dead claim
+// inode (crash after Link, before Remove claim.json) → drop the quarantine name.
+// Boundary 2: only claim.stale.<token> remains with a dead claim (crash after
+// Remove claim.json, before new claim install) → restore claim.json from quarantine.
+//
+// Live claim objects are never restored/adopted. Returns true when state changed.
+func recoverOrphanTakeoverState(runDir, claimPath string) bool {
+	// Boundary 1: dual-name same inode.
+	if claimInfo, err := os.Lstat(claimPath); err == nil {
+		doc, derr := readClaimFile(claimPath)
+		if derr != nil || identityLive(doc.PID, doc.StartedAt) || !validClaimToken(doc.Token) {
+			return false
+		}
+		staleName := filepath.Join(runDir, "claim.stale."+doc.Token)
+		destInfo, lerr := os.Lstat(staleName)
+		if lerr != nil || !destInfo.Mode().IsRegular() || !sameFile(claimInfo, destInfo) {
+			return false
+		}
+		// Orphan dual-name of a dead claim — drop quarantine; claim.json remains.
+		_ = os.Remove(staleName)
+		return true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+
+	// Boundary 2: claim.json missing — adopt a dead quarantine marker if present.
+	entries, err := os.ReadDir(runDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "claim.stale.") {
+			continue
+		}
+		token := strings.TrimPrefix(name, "claim.stale.")
+		if !validClaimToken(token) {
+			continue
+		}
+		staleName := filepath.Join(runDir, name)
+		doc, derr := readClaimFile(staleName)
+		if derr != nil || identityLive(doc.PID, doc.StartedAt) {
+			continue
+		}
+		// Restore claim.json from the dead quarantine object.
+		restoreClaimFromQuarantine(claimPath, staleName)
+		if _, err := os.Lstat(claimPath); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // staleTakeover quarantines a proven-stale claim via hard-link no-replace CAS
 // (binds the observed inode/token), then installs a new exclusive claim.
 // Losers cannot rename-over a winner's new claim onto the quarantine name.
 //
+// Restart safety: a same-inode quarantine already present for a dead claim is
+// treated as an orphan mid-takeover (proceed), not as permanent contention.
+//
 // Returns ErrCardExists for proven live identity, errClaimContention for retryable
 // races, and ErrCardSetup for permanent filesystem/setup failures.
 func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken string, pid int, startedAt time.Time) (string, error) {
+	// If claim.json is missing, try restoring a dead quarantine before giving up.
+	if _, err := os.Lstat(claimPath); errors.Is(err, os.ErrNotExist) {
+		_ = recoverOrphanTakeoverState(runDir, claimPath)
+	}
 	if !validClaimToken(old.Token) {
-		return "", ErrCardSetup
+		// Owner may come from card fallback without a hex token; re-read claim after recovery.
+		if doc, err := readClaimFile(claimPath); err == nil && validClaimToken(doc.Token) {
+			old = doc
+		} else {
+			return "", ErrCardSetup
+		}
 	}
 
 	// Observe the live pathname and its object identity.
@@ -317,7 +393,10 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 		}
 		return "", ErrCardSetup
 	}
-	if cur.Token != old.Token {
+	// Prefer on-disk claim token after recovery; old may be card-derived.
+	if validClaimToken(cur.Token) {
+		old = cur
+	} else if cur.Token != old.Token {
 		return "", errClaimContention
 	}
 	if identityLive(cur.PID, cur.StartedAt) {
@@ -327,41 +406,51 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 		staleAfterObserve()
 	}
 
-	// No-replace quarantine: Link fails if dest exists (another reclaimer won).
 	staleName := filepath.Join(runDir, "claim.stale."+old.Token)
+	alreadyQuarantined := false
+
+	// No-replace quarantine: Link fails if dest exists.
 	if err := os.Link(claimPath, staleName); err != nil {
-		// Contention only when dest is the same old claim object (matching token AND
-		// same inode). A separate file with copied claim JSON/token is setup failure,
-		// not active contention (must not collapse to false ErrCardExists).
 		if destInfo, lerr := os.Lstat(staleName); lerr == nil && destInfo.Mode().IsRegular() {
 			if dest, derr := readClaimFile(staleName); derr == nil &&
 				dest.Token == old.Token &&
 				sameFile(info, destInfo) {
-				return "", errClaimContention
+				// Same object already linked: orphan crash after Link (boundary 1)
+				// or concurrent reclaimer mid-step. Proceed; exclusive claim install
+				// serializes winners. Do NOT treat as permanent contention.
+				if !identityLive(dest.PID, dest.StartedAt) {
+					alreadyQuarantined = true
+				} else {
+					return "", ErrCardExists
+				}
+			} else {
+				// Unrelated or copy-residue regular file blocking the quarantine path.
+				return "", ErrCardSetup
 			}
-			// Unrelated or copy-residue regular file blocking the quarantine path.
+		} else {
+			// Directories, permission errors, or unsupported links are setup failures.
 			return "", ErrCardSetup
 		}
-		// Directories, permission errors, or unsupported links are setup failures.
-		return "", ErrCardSetup
 	}
 
-	// Verify we quarantined the intended object (token + still same file as claimPath).
-	q, qerr := readClaimFile(staleName)
-	if qerr != nil || q.Token != old.Token {
-		_ = os.Remove(staleName)
-		return "", errClaimContention
-	}
-	infoAfter, aerr := os.Lstat(claimPath)
-	staleInfo, serr := os.Lstat(staleName)
-	if aerr != nil || serr != nil || !sameFile(info, infoAfter) || !sameFile(info, staleInfo) {
-		if q2, e2 := readClaimFile(staleName); e2 == nil && q2.Token == old.Token {
-			if aerr == nil && !sameFile(info, infoAfter) {
-				_ = os.Remove(staleName)
-				return "", errClaimContention
-			}
+	if !alreadyQuarantined {
+		// Verify we quarantined the intended object (token + still same file as claimPath).
+		q, qerr := readClaimFile(staleName)
+		if qerr != nil || q.Token != old.Token {
+			_ = os.Remove(staleName)
+			return "", errClaimContention
 		}
-		return "", errClaimContention
+		infoAfter, aerr := os.Lstat(claimPath)
+		staleInfo, serr := os.Lstat(staleName)
+		if aerr != nil || serr != nil || !sameFile(info, infoAfter) || !sameFile(info, staleInfo) {
+			if q2, e2 := readClaimFile(staleName); e2 == nil && q2.Token == old.Token {
+				if aerr == nil && !sameFile(info, infoAfter) {
+					_ = os.Remove(staleName)
+					return "", errClaimContention
+				}
+			}
+			return "", errClaimContention
+		}
 	}
 	if staleAfterQuarantine != nil {
 		staleAfterQuarantine()

@@ -606,9 +606,8 @@ func TestOpenCardPublishAtomicNoPartialFinal(t *testing.T) {
 }
 
 func TestOpenCardStaleTakeoverABA(t *testing.T) {
-	// Deterministic schedule: A quarantines the stale claim (link-CAS), then B
-	// attempts takeover while claim.json still names the quarantined object; B
-	// must fail (no-replace dest) and must not delete A's eventual new claim.
+	// Concurrent reclaimers on a dual-name dead claim (same inode quarantine+claim).
+	// Orphan dual-name is proceedable; exclusive claim install yields exactly one winner.
 	if runtime.GOOS == "windows" {
 		t.Skip("needs unix liveness")
 	}
@@ -618,65 +617,56 @@ func TestOpenCardStaleTakeoverABA(t *testing.T) {
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	claimPath := filepath.Join(runDir, ClaimFileName)
-	cardPath := filepath.Join(runDir, CardFileName)
 	deadPID := findDeadPID(t)
 	oldToken := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	staleStarted := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := writeClaimExclusive(claimPath, deadPID, staleStarted, oldToken, claimStateExited); err != nil {
+	claimPath := filepath.Join(runDir, ClaimFileName)
+	if err := writeClaimExclusive(claimPath, deadPID, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), oldToken, claimStateExited); err != nil {
 		t.Fatal(err)
 	}
-	old := &claimDoc{PID: deadPID, StartedAt: staleStarted, Token: oldToken, State: claimStateExited}
-
-	aAtQuarantine := make(chan struct{})
-	bFinished := make(chan struct{})
-	prevQ := staleAfterQuarantine
-	t.Cleanup(func() { staleAfterQuarantine = prevQ })
-
-	var aRunning atomic.Bool
-	staleAfterQuarantine = func() {
-		if aRunning.Load() {
-			close(aAtQuarantine)
-			<-bFinished
-		}
+	if err := os.Link(claimPath, filepath.Join(runDir, "claim.stale."+oldToken)); err != nil {
+		t.Fatal(err)
 	}
 
-	tokenA, errA := newClaimToken()
-	if errA != nil {
-		t.Fatal(errA)
+	const n = 8
+	var (
+		wg      sync.WaitGroup
+		success atomic.Int32
+		mu      sync.Mutex
+		winner  *Card
+	)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			card, err := OpenCard(CardConfig{
+				RuntimeDir: runtimeDir,
+				RunID:      runID,
+				PID:        os.Getpid(),
+				StartedAt:  time.Now().UTC(),
+				Producer:   Producer{Name: "sumpter", Version: "test"},
+			})
+			if err != nil {
+				return
+			}
+			success.Add(1)
+			mu.Lock()
+			if winner == nil {
+				winner = card
+			} else {
+				card.Close(true)
+			}
+			mu.Unlock()
+		}()
 	}
-	tokenB, errB := newClaimToken()
-	if errB != nil {
-		t.Fatal(errB)
+	wg.Wait()
+	if winner != nil {
+		defer winner.Close(true)
 	}
-
-	var bErr error
-	go func() {
-		<-aAtQuarantine
-		// B observes the same stale token while A holds the quarantine link.
-		_, bErr = staleTakeover(runDir, claimPath, cardPath, old, tokenB, os.Getpid(), time.Now().UTC())
-		close(bFinished)
-	}()
-
-	aRunning.Store(true)
-	gotA, aErr := staleTakeover(runDir, claimPath, cardPath, old, tokenA, os.Getpid(), time.Now().UTC())
-	aRunning.Store(false)
-	if aErr != nil {
-		t.Fatalf("A staleTakeover: %v", aErr)
+	if success.Load() != 1 {
+		t.Fatalf("want exactly 1 winner on dual-name reclaim, got %d", success.Load())
 	}
-	if gotA != tokenA {
-		t.Fatalf("A token = %q", gotA)
-	}
-	if bErr == nil {
-		t.Fatal("B must fail when quarantine dest already exists")
-	}
-	// A's claim must be live at claim.json.
-	cur, err := readClaimFile(claimPath)
-	if err != nil {
-		t.Fatalf("A claim missing: %v", err)
-	}
-	if cur.Token != tokenA {
-		t.Fatalf("A claim token = %q, want %q (B clobbered ownership)", cur.Token, tokenA)
+	if !winner.stillOwnClaim() {
+		t.Fatal("winner lost claim")
 	}
 }
 
@@ -962,6 +952,108 @@ func TestOpenCardUnrelatedQuarantineResidueIsSetupNotContention(t *testing.T) {
 	}
 	if errors.Is(err, ErrCardExists) {
 		t.Fatal("unrelated quarantine residue must not surface as ErrCardExists")
+	}
+}
+
+func TestOpenCardOrphanDualNameQuarantineRecovers(t *testing.T) {
+	// Crash boundary 1: claim.json + claim.stale.<token> are hardlinks of the same
+	// dead claim. A later open must reclaim, not false ErrCardExists.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs hard links + dead pid")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	oldToken := "44444444444444444444444444444444"
+	claimPath := filepath.Join(runDir, ClaimFileName)
+	if err := writeClaimExclusive(claimPath, deadPID, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), oldToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(runDir, "claim.stale."+oldToken)
+	if err := os.Link(claimPath, stalePath); err != nil {
+		t.Fatalf("seed dual-name quarantine: %v", err)
+	}
+	priorEvents := []byte("ORPHAN-DUAL-STREAM\n")
+	if err := os.WriteFile(filepath.Join(runDir, EventsFileName), priorEvents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	card, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile},
+	})
+	if err != nil {
+		t.Fatalf("orphan dual-name must reclaim, got %v", err)
+	}
+	defer card.Close(true)
+	if errors.Is(err, ErrCardExists) {
+		t.Fatal("must not report live collision for orphan dual-name state")
+	}
+	// Prior stream cleared only after successful takeover.
+	if _, err := os.Stat(filepath.Join(runDir, EventsFileName)); err == nil {
+		// may be new events path - check it's not still prior only if we auto-place
+		raw, _ := os.ReadFile(filepath.Join(runDir, EventsFileName)) // #nosec G304
+		if string(raw) == string(priorEvents) {
+			t.Fatal("successful takeover should clear prior default stream residue")
+		}
+	}
+}
+
+func TestOpenCardOrphanQuarantineOnlyRecovers(t *testing.T) {
+	// Crash boundary 2: only claim.stale.<token> remains (claim.json removed) plus
+	// crash card/stream. Later open restores and reclaims.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs hard links + dead pid")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	oldToken := "55555555555555555555555555555555"
+	claimPath := filepath.Join(runDir, ClaimFileName)
+	if err := writeClaimExclusive(claimPath, deadPID, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), oldToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(runDir, "claim.stale."+oldToken)
+	if err := os.Link(claimPath, stalePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(claimPath); err != nil {
+		t.Fatal(err)
+	}
+	priorEvents := []byte("ORPHAN-ONLY-STREAM\n")
+	if err := os.WriteFile(filepath.Join(runDir, EventsFileName), priorEvents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Crash card residue (readSlotOwner fallback while claim missing).
+	priorCard := []byte(`{"capabilities":["contract: process-run/v0"],"run_id":"x","pid":1,"started_at":"2020-01-01T00:00:00Z","producer":{"name":"x","version":"1"},"telemetry":{"path":"/tmp/x","format":"ndjson"}}` + "\n")
+	if err := os.WriteFile(filepath.Join(runDir, CardFileName), priorCard, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	card, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile},
+	})
+	if err != nil {
+		t.Fatalf("orphan quarantine-only must reclaim, got %v", err)
+	}
+	defer card.Close(true)
+	if !card.Emitter.Enabled() {
+		t.Fatal("expected enabled emitter after orphan recovery")
 	}
 }
 

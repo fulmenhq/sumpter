@@ -41,7 +41,7 @@ verify the claim token so a loser never deletes a winner's slot.
 
 - The card is schema-validated against the pinned process-run/v0 baseline
   **before** it is published. The final `card.json` appears only after a complete
-  temp write (atomic no-replace link/rename); readers never observe a partial
+  temp write (atomic no-replace hard-link only; no rename fallback); readers never observe a partial
   discovery root. Invalid pin material withholds both card and stream.
 - The card is **telemetry-only** in this release (no control socket).
 - **Clean exit** (including a normal failed extract): the card is withdrawn; the
