@@ -965,6 +965,56 @@ func TestOpenCardUnrelatedQuarantineResidueIsSetupNotContention(t *testing.T) {
 	}
 }
 
+func TestOpenCardCopiedClaimJSONQuarantineResidueIsSetupNotContention(t *testing.T) {
+	// Separate file at claim.stale.<token> with valid claim JSON + same token but a
+	// different inode must be ErrCardSetup, not contention → false ErrCardExists.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs dead pid + inode identity")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	oldToken := "33333333333333333333333333333333"
+	staleStarted := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	claimPath := filepath.Join(runDir, ClaimFileName)
+	if err := writeClaimExclusive(claimPath, deadPID, staleStarted, oldToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	// Copy claim bytes to a new file (different inode) at the quarantine path.
+	claimBytes, err := os.ReadFile(claimPath) // #nosec G304
+	if err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(runDir, "claim.stale."+oldToken)
+	if err := os.WriteFile(stalePath, claimBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Confirm different inodes.
+	cInfo, _ := os.Lstat(claimPath)
+	sInfo, _ := os.Lstat(stalePath)
+	if sameFile(cInfo, sInfo) {
+		t.Fatal("test setup: expected distinct inodes for claim and copy residue")
+	}
+
+	_, err = OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if !errors.Is(err, ErrCardSetup) {
+		t.Fatalf("err = %v, want ErrCardSetup for same-token different-inode residue", err)
+	}
+	if errors.Is(err, ErrCardExists) {
+		t.Fatal("copied claim JSON residue must not collapse to ErrCardExists")
+	}
+}
+
 func TestOpenCardQuarantineLinkSetupFailureNotLiveCollision(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs dead pid + hard links")

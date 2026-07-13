@@ -330,17 +330,16 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 	// No-replace quarantine: Link fails if dest exists (another reclaimer won).
 	staleName := filepath.Join(runDir, "claim.stale."+old.Token)
 	if err := os.Link(claimPath, staleName); err != nil {
-		// Contention only when dest is the same old claim object (same token, preferably
-		// same inode). Unrelated regular residue is setup failure, not live collision.
+		// Contention only when dest is the same old claim object (matching token AND
+		// same inode). A separate file with copied claim JSON/token is setup failure,
+		// not active contention (must not collapse to false ErrCardExists).
 		if destInfo, lerr := os.Lstat(staleName); lerr == nil && destInfo.Mode().IsRegular() {
-			if dest, derr := readClaimFile(staleName); derr == nil && dest.Token == old.Token {
-				if sameFile(info, destInfo) {
-					return "", errClaimContention
-				}
-				// Same token but different inode — treat as contention on the name.
+			if dest, derr := readClaimFile(staleName); derr == nil &&
+				dest.Token == old.Token &&
+				sameFile(info, destInfo) {
 				return "", errClaimContention
 			}
-			// Unrelated regular file blocking the quarantine path.
+			// Unrelated or copy-residue regular file blocking the quarantine path.
 			return "", ErrCardSetup
 		}
 		// Directories, permission errors, or unsupported links are setup failures.
