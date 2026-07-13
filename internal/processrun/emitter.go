@@ -1,17 +1,21 @@
 // Package processrun implements opt-in process-run/v0 flight-recorder emission.
 //
-// It is the runtime surface for long-running extract-multi telemetry (append-only
-// NDJSON events). Contract resolution and schema validation stay in
+// It is the runtime surface for long-running extract-multi telemetry: append-only
+// NDJSON events and an optional telemetry-only process card (discovery root) under
+// a platform runtime directory. Contract resolution and schema validation stay in
 // internal/artifactcontract; this package never vendors alternate identities.
 //
 // Invariants:
-//   - Fail-open: setup/write/flush failures disable emission and never fail the extract.
-//   - Single-writer: all methods are mutex-serialized; call only from the orchestrator/
-//     committer path (never worker goroutines).
+//   - Fail-open: ordinary setup/write/flush failures disable emission and never fail
+//     the extract. Live run_id card collision is the exception (fail-closed).
+//   - Single-writer: all emitter methods are mutex-serialized; call only from the
+//     orchestrator/committer path (never worker goroutines).
 //   - Exactly one terminal event (Completed / Failed / Canceled) when Enabled.
 //   - Event data is an explicit allow-list (counts, timing, closed reasons) — no paths,
 //     xpaths, record content, or secrets.
 //   - Stream open is exclusive create (no truncate, no merge into an existing path).
+//   - Process card is 0600 under a 0700 run dir, validated before atomic publish,
+//     swept on clean exit; the durable event stream is retained.
 package processrun
 
 import (
