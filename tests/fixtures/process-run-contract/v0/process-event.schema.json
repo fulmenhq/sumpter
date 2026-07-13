@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:process-run/v0/process-event.schema.json",
+  "title": "Process Event",
+  "description": "Structural schema companion for contract: process-run/v0. One line of the append-only NDJSON event stream a running process emits. Envelope fields are contract-governed; the data payload is producer-owned (payload-open, metadata-governed). Emission is fail-open: producers must never block or crash on telemetry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ts", "event", "run_id", "seq", "severity", "pid"],
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event time (RFC3339, UTC)."
+    },
+    "event": {
+      "description": "Event kind. Core kinds have contract semantics; x- kinds are producer-specific.",
+      "anyOf": [
+        {
+          "enum": [
+            "started",
+            "heartbeat",
+            "progress",
+            "completed",
+            "canceled",
+            "failed",
+            "control_audit"
+          ]
+        },
+        { "type": "string", "pattern": "^x-[a-z0-9][a-z0-9-]*$" }
+      ]
+    },
+    "run_id": { "type": "string", "minLength": 1 },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic per-run sequence number. Gaps indicate loss; regression indicates corruption."
+    },
+    "severity": {
+      "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]
+    },
+    "pid": { "type": "integer", "minimum": 1 },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "profile": { "type": "string", "minLength": 1 }
+      },
+      "description": "Optional on events (the card is the discovery root); recommended on 'started'."
+    },
+    "context_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Larger execution scope (batch pipeline, scheduled job, CLI session)."
+    },
+    "trace_id": { "type": "string", "minLength": 1 },
+    "span_id": { "type": "string", "minLength": 1 },
+    "data": {
+      "type": "object",
+      "description": "Producer-owned payload (payload-open). Terminal events SHOULD carry data.artifacts (see $defs.artifactRef) linking produced data-artifact descriptors; progress events SHOULD carry data.done/data.total."
+    }
+  },
+  "$defs": {
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id"],
+      "properties": {
+        "artifact_id": { "type": "string", "minLength": 1 },
+        "lifecycle": {
+          "enum": ["draft", "building", "complete", "partial", "incomplete", "retired"],
+          "description": "The produced artifact's lifecycle claim, per contract: data-artifact/v0."
+        },
+        "descriptor": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path or reference to the artifact descriptor."
+        }
+      },
+      "description": "Recommended shape for entries of data.artifacts on terminal events — the bridge to contract: data-artifact/v0. Not enforced by this schema (data is payload-open)."
+    }
+  }
+}

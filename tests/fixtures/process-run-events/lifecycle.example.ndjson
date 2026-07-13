@@ -1,0 +1,6 @@
+{"ts":"2026-07-04T10:59:48.719Z","event":"started","run_id":"demo-run","seq":0,"severity":"INFO","pid":27414,"producer":{"name":"pipeline-runner","version":"1.0.0","profile":"example.pipeline-run/v0"},"data":{"total":90}}
+{"ts":"2026-07-04T10:59:53.724Z","event":"heartbeat","run_id":"demo-run","seq":1,"severity":"INFO","pid":27414,"data":{"done":4}}
+{"ts":"2026-07-04T10:59:54.723Z","event":"progress","run_id":"demo-run","seq":2,"severity":"INFO","pid":27414,"data":{"done":5,"total":90}}
+{"ts":"2026-07-04T11:00:12.001Z","event":"control_audit","run_id":"demo-run","seq":3,"severity":"WARN","pid":27414,"data":{"verb":"status","outcome":"denied"}}
+{"ts":"2026-07-04T11:00:41.313Z","event":"control_audit","run_id":"demo-run","seq":4,"severity":"WARN","pid":27414,"data":{"verb":"stop","outcome":"accepted","mode":"graceful"}}
+{"ts":"2026-07-04T11:00:42.330Z","event":"canceled","run_id":"demo-run","seq":5,"severity":"WARN","pid":27414,"data":{"reason":"control stop (graceful)","progress":{"done":52,"total":90},"artifacts":[{"artifact_id":"urn:uuid:0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9","lifecycle":"partial","descriptor":"out/demo-run/artifact-descriptor.json"}]}}
