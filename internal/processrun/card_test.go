@@ -538,9 +538,34 @@ func TestOpenCardBadContractBaseWithholds(t *testing.T) {
 }
 
 func TestOpenCardPublishAtomicNoPartialFinal(t *testing.T) {
-	// Final card path must not exist until publish completes (temp+link strategy).
+	// Final path is absent while temp is complete (injected barrier before link).
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	finalPath := filepath.Join(runtimeDir, "proc", runID, CardFileName)
+	var sawCompleteTemp bool
+	prev := publishAfterTemp
+	t.Cleanup(func() { publishAfterTemp = prev })
+	publishAfterTemp = func(tmpPath, final string) {
+		if final != finalPath {
+			t.Fatalf("final path = %q, want %q", final, finalPath)
+		}
+		if _, err := os.Lstat(final); !os.IsNotExist(err) {
+			t.Fatal("final discovery root must be absent until link completes")
+		}
+		raw, err := os.ReadFile(tmpPath) // #nosec G304
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(raw) < 20 {
+			t.Fatalf("temp incomplete: %q", raw)
+		}
+		var doc map[string]interface{}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("temp must be complete JSON before link: %v", err)
+		}
+		sawCompleteTemp = true
+	}
+
 	card, err := OpenCard(CardConfig{
 		RuntimeDir: runtimeDir,
 		RunID:      runID,
@@ -552,19 +577,18 @@ func TestOpenCardPublishAtomicNoPartialFinal(t *testing.T) {
 		t.Fatalf("OpenCard: %v", err)
 	}
 	defer card.Close(true)
-	// Published card is complete JSON and schema-valid (not empty/partial).
+	if !sawCompleteTemp {
+		t.Fatal("publishAfterTemp hook did not run")
+	}
 	raw, err := os.ReadFile(card.Path) // #nosec G304
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(raw) < 20 {
-		t.Fatalf("card too small to be complete: %q", raw)
 	}
 	var doc map[string]interface{}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("final card must be complete JSON: %v", err)
 	}
-	// Existing card cannot be clobbered by a second exclusive publish attempt.
+	// Existing card cannot be clobbered by link.
 	tmp := filepath.Join(card.RunDir, "card.other.tmp")
 	if err := writeFileExclusiveFull(tmp, []byte("{\"evil\":true}\n")); err != nil {
 		t.Fatal(err)
@@ -573,9 +597,221 @@ func TestOpenCardPublishAtomicNoPartialFinal(t *testing.T) {
 		t.Fatal("link over existing card must fail (no-replace)")
 	}
 	_ = os.Remove(tmp)
-	raw2, _ := os.ReadFile(card.Path) // #nosec G304
-	if string(raw2) != string(raw) {
-		t.Fatal("existing card was clobbered")
+}
+
+func TestOpenCardStaleTakeoverABA(t *testing.T) {
+	// Deterministic schedule: A quarantines the stale claim (link-CAS), then B
+	// attempts takeover while claim.json still names the quarantined object; B
+	// must fail (no-replace dest) and must not delete A's eventual new claim.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs unix liveness")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claimPath := filepath.Join(runDir, ClaimFileName)
+	cardPath := filepath.Join(runDir, CardFileName)
+	deadPID := findDeadPID(t)
+	oldToken := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	staleStarted := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := writeClaimExclusive(claimPath, deadPID, staleStarted, oldToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	old := &claimDoc{PID: deadPID, StartedAt: staleStarted, Token: oldToken, State: claimStateExited}
+
+	aAtQuarantine := make(chan struct{})
+	bFinished := make(chan struct{})
+	prevQ := staleAfterQuarantine
+	t.Cleanup(func() { staleAfterQuarantine = prevQ })
+
+	var aRunning atomic.Bool
+	staleAfterQuarantine = func() {
+		if aRunning.Load() {
+			close(aAtQuarantine)
+			<-bFinished
+		}
+	}
+
+	tokenA, errA := newClaimToken()
+	if errA != nil {
+		t.Fatal(errA)
+	}
+	tokenB, errB := newClaimToken()
+	if errB != nil {
+		t.Fatal(errB)
+	}
+
+	var bErr error
+	go func() {
+		<-aAtQuarantine
+		// B observes the same stale token while A holds the quarantine link.
+		_, bErr = staleTakeover(runDir, claimPath, cardPath, old, tokenB, os.Getpid(), time.Now().UTC())
+		close(bFinished)
+	}()
+
+	aRunning.Store(true)
+	gotA, aErr := staleTakeover(runDir, claimPath, cardPath, old, tokenA, os.Getpid(), time.Now().UTC())
+	aRunning.Store(false)
+	if aErr != nil {
+		t.Fatalf("A staleTakeover: %v", aErr)
+	}
+	if gotA != tokenA {
+		t.Fatalf("A token = %q", gotA)
+	}
+	if bErr == nil {
+		t.Fatal("B must fail when quarantine dest already exists")
+	}
+	// A's claim must be live at claim.json.
+	cur, err := readClaimFile(claimPath)
+	if err != nil {
+		t.Fatalf("A claim missing: %v", err)
+	}
+	if cur.Token != tokenA {
+		t.Fatalf("A claim token = %q, want %q (B clobbered ownership)", cur.Token, tokenA)
+	}
+}
+
+func TestOpenCardExplicitEventsCollisionNoClobber(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	// Pre-existing explicit events path (regular file).
+	eventsPath := filepath.Join(t.TempDir(), "prior-events.ndjson")
+	prior := []byte("PRIOR-BYTES-MUST-REMAIN\n")
+	if err := os.WriteFile(eventsPath, prior, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+		EventsPath: eventsPath,
+	})
+	if err == nil {
+		t.Fatal("expected fail-open on existing events path")
+	}
+	got, err := os.ReadFile(eventsPath) // #nosec G304
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(prior) {
+		t.Fatalf("prior events clobbered: got %q", got)
+	}
+}
+
+func TestOpenCardExplicitEventsSymlinkNoClobber(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	target := filepath.Join(t.TempDir(), "real.ndjson")
+	prior := []byte("SYMLINK-TARGET-BYTES\n")
+	if err := os.WriteFile(target, prior, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(t.TempDir(), "events-link.ndjson")
+	if err := os.Symlink(target, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	_, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+		EventsPath: linkPath,
+	})
+	if err == nil {
+		t.Fatal("expected fail-open on existing symlink events path")
+	}
+	got, err := os.ReadFile(target) // #nosec G304
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(prior) {
+		t.Fatalf("symlink target clobbered: got %q", got)
+	}
+}
+
+func TestOpenCardUnexpectedFinalCardNoClobber(t *testing.T) {
+	// Plant card.json after temp is ready but before link — Link must fail and
+	// abandonSetup must not delete the unowned final path.
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	finalPath := filepath.Join(runtimeDir, "proc", runID, CardFileName)
+	priorCard := []byte("{\"not\":\"ours\"}\n")
+
+	prev := publishAfterTemp
+	t.Cleanup(func() { publishAfterTemp = prev })
+	publishAfterTemp = func(tmpPath, final string) {
+		if err := os.WriteFile(final, priorCard, 0o600); err != nil {
+			t.Fatalf("plant card: %v", err)
+		}
+		_ = tmpPath
+	}
+
+	_, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile},
+	})
+	if err == nil {
+		t.Fatal("expected publish fail on pre-existing final card")
+	}
+	if !errors.Is(err, ErrCardExists) {
+		t.Fatalf("err = %v, want ErrCardExists", err)
+	}
+	got, rerr := os.ReadFile(finalPath) // #nosec G304
+	if rerr != nil {
+		t.Fatalf("unowned card removed: %v", rerr)
+	}
+	if string(got) != string(priorCard) {
+		t.Fatalf("unowned card clobbered: %q", got)
+	}
+}
+
+func TestOpenCardStaleReclaimDoesNotDeleteExplicitEvents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs dead pid")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), deadPID, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), "cccccccccccccccccccccccccccccccc", claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	// Unrelated allowed events file outside the slot — must not be deleted on reclaim.
+	external := filepath.Join(t.TempDir(), "external.ndjson")
+	prior := []byte("EXTERNAL-UNRELATED\n")
+	if err := os.WriteFile(external, prior, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	card, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+		EventsPath: external, // will fail exclusive create — and must not delete prior
+	})
+	if err == nil {
+		card.Close(true)
+		t.Fatal("expected events collision fail-open")
+	}
+	got, err := os.ReadFile(external) // #nosec G304
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(prior) {
+		t.Fatalf("external events deleted/clobbered: %q", got)
 	}
 }
 
