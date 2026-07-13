@@ -746,6 +746,36 @@ func TestExtractMultiProcessRun_CardLiveCollisionFailClosed(t *testing.T) {
 	}
 }
 
+func TestExtractMultiProcessRun_CardClaimSetupFailureFailOpen(t *testing.T) {
+	// Injected claim write failure must not abort extract (fail-open telemetry).
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 1)
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	prev := processrun.ClaimWriteHook
+	t.Cleanup(func() { processrun.ClaimWriteHook = prev })
+	processrun.ClaimWriteHook = func(string) error { return processrun.ErrCardSetup }
+
+	var warn strings.Builder
+	outRoot, err := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+		FileList:             fileList,
+		ProcessRun:           true,
+		ProcessRunRuntimeDir: runtimeDir,
+	}, ws, &warn)
+	if err != nil {
+		t.Fatalf("extract must proceed fail-open: %v", err)
+	}
+	_ = outRoot
+	if !strings.Contains(warn.String(), "process-run disabled") {
+		t.Fatalf("want setup warning, got %q", warn.String())
+	}
+	if strings.Contains(warn.String(), runtimeDir) {
+		t.Fatalf("stderr leaked path: %q", warn.String())
+	}
+	if !strings.Contains(warn.String(), "setup failed") {
+		t.Fatalf("want setup failed category, got %q", warn.String())
+	}
+}
+
 func TestExtractMultiProcessRun_CardRuntimeUnderHomeFailOpen(t *testing.T) {
 	ws := writeMultiRecipeWorkspace(t, "summary")
 	fileList, _ := writeMultiInputSet(t, 1)

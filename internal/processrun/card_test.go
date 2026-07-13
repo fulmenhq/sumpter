@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -260,6 +261,11 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("stale reclaim requires Unix liveness")
 	}
+	// Ensure no leftover test seams from other cases.
+	ClaimWriteHook = nil
+	staleAfterObserve = nil
+	staleAfterQuarantine = nil
+	publishAfterTemp = nil
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
 	runDir := RunDir(runtimeDir, runID)
@@ -771,6 +777,117 @@ func TestOpenCardUnexpectedFinalCardNoClobber(t *testing.T) {
 	}
 	if string(got) != string(priorCard) {
 		t.Fatalf("unowned card clobbered: %q", got)
+	}
+}
+
+func TestOpenCardClaimlessSlotPreservesDefaultEvents(t *testing.T) {
+	// Run dir with pre-existing default events and no claim: must not delete residue.
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	eventsPath := filepath.Join(runDir, EventsFileName)
+	prior := []byte("CLAIMLESS-DEFAULT-EVENTS\n")
+	if err := os.WriteFile(eventsPath, prior, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Malformed card residue without a claim.
+	if err := os.WriteFile(filepath.Join(runDir, CardFileName), []byte("not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if err == nil {
+		t.Fatal("expected fail-open when default events already exist")
+	}
+	// Setup / stream collision — not a live identity failure.
+	if errors.Is(err, ErrCardExists) {
+		t.Fatalf("claimless residue must not surface as live collision: %v", err)
+	}
+	got, rerr := os.ReadFile(eventsPath) // #nosec G304
+	if rerr != nil {
+		t.Fatalf("default events removed: %v", rerr)
+	}
+	if string(got) != string(prior) {
+		t.Fatalf("default events clobbered: %q", got)
+	}
+	// Malformed card may remain or be left alone — never replaced with our card on fail.
+	if raw, err := os.ReadFile(filepath.Join(runDir, CardFileName)); err == nil {
+		if string(raw) != "not-json" && !strings.Contains(string(raw), "capabilities") {
+			// if still there as not-json good; if our full card was published that's wrong on fail
+			_ = raw
+		}
+		if strings.Contains(string(raw), `"run_id"`) {
+			t.Fatal("must not publish card when stream open failed over pre-existing events")
+		}
+	}
+}
+
+func TestOpenCardClaimWriteSetupFailureNotLiveCollision(t *testing.T) {
+	prev := ClaimWriteHook
+	t.Cleanup(func() { ClaimWriteHook = prev })
+	ClaimWriteHook = func(string) error { return ErrCardSetup }
+
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	_, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c",
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if !errors.Is(err, ErrCardSetup) {
+		t.Fatalf("err = %v, want ErrCardSetup", err)
+	}
+	if errors.Is(err, ErrCardExists) {
+		t.Fatal("setup failure must not be ErrCardExists")
+	}
+}
+
+func TestOpenCardQuarantineLinkSetupFailureNotLiveCollision(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs dead pid + hard links")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	oldToken := "ffffffffffffffffffffffffffffffff"
+	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), deadPID, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), oldToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	// Block hard-link quarantine dest with a directory → Link fails as setup.
+	if err := os.Mkdir(filepath.Join(runDir, "claim.stale."+oldToken), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if !errors.Is(err, ErrCardSetup) {
+		t.Fatalf("err = %v, want ErrCardSetup (not live collision)", err)
+	}
+	if errors.Is(err, ErrCardExists) {
+		t.Fatal("quarantine link failure must not be ErrCardExists")
+	}
+	// Stale claim must remain (no successful takeover).
+	if _, err := os.Stat(filepath.Join(runDir, ClaimFileName)); err != nil {
+		t.Fatalf("stale claim removed after setup failure: %v", err)
 	}
 }
 

@@ -22,6 +22,9 @@ var (
 	ErrCardConfig    = errors.New("process-run: invalid process card configuration")
 	ErrCardPlacement = errors.New("process-run: runtime dir not allowed")
 	ErrCardSchema    = errors.New("process-run: process card schema validation failed")
+	// errClaimContention is retryable active contention (not a proven live identity).
+	// After bounded retries, claimRunSlot may surface ErrCardExists as unresolved contention.
+	errClaimContention = errors.New("process-run: claim slot contention")
 )
 
 const (
@@ -193,11 +196,17 @@ func validateCardConfig(cfg *CardConfig) error {
 //
 // Fresh slot: Mkdir + exclusive claim.json create.
 // Existing slot: read claim identity; live → ErrCardExists; stale → link-CAS
-// quarantine of the observed claim object then exclusive new claim.
-// Never RemoveAll a live winner; never delete caller-selected external events paths.
+// quarantine then exclusive new claim (only then may clear proven-stale residue).
+// Claimless/no-identity: install claim without mutating pre-existing default
+// residue — exclusive stream/card open fail-open without deletion.
+//
+// Error classes: ErrCardExists only for a proven live identity (or exhausted
+// active contention). Filesystem/claim/link/write failures return ErrCardSetup
+// so the dispatcher can fail-open telemetry without aborting extract.
 func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, startedAt time.Time) (string, error) {
-	_ = eventsPath // reclaim cleans only slot-owned default residue, not arbitrary paths
+	_ = eventsPath
 	const attempts = 12
+	sawContention := false
 	for i := 0; i < attempts; i++ {
 		myToken, err := newClaimToken()
 		if err != nil {
@@ -212,7 +221,13 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 				if _, rerr := os.Stat(claimPath); errors.Is(rerr, os.ErrNotExist) {
 					_ = removeIfEmpty(runDir)
 				}
-				continue
+				if errors.Is(werr, ErrCardExists) {
+					sawContention = true
+					time.Sleep(time.Duration(2*(i+1)) * time.Millisecond)
+					continue
+				}
+				// Write/fsync/setup failure — fail open, do not mask as live collision.
+				return "", ErrCardSetup
 			}
 			return myToken, nil
 		}
@@ -229,26 +244,41 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 			if identityLive(owner.PID, owner.StartedAt) {
 				return "", ErrCardExists
 			}
-			if tok, terr := staleTakeover(runDir, claimPath, cardPath, owner, myToken, pid, startedAt); terr == nil {
+			tok, terr := staleTakeover(runDir, claimPath, cardPath, owner, myToken, pid, startedAt)
+			if terr == nil {
 				return tok, nil
-			} else if errors.Is(terr, ErrCardExists) {
+			}
+			if errors.Is(terr, ErrCardExists) {
 				return "", ErrCardExists
 			}
-			time.Sleep(time.Duration(2*(i+1)) * time.Millisecond)
-			continue
+			if errors.Is(terr, errClaimContention) {
+				sawContention = true
+				time.Sleep(time.Duration(2*(i+1)) * time.Millisecond)
+				continue
+			}
+			// Permanent setup failure (link denied, write fail after quarantine, …).
+			return "", ErrCardSetup
 		}
 
-		// No claim/card identity. Wait, then try exclusive claim without deleting
-		// any external path. Only clear slot-local default residue after we own claim.
+		// No claim/card identity. Install claim only — do NOT delete pre-existing
+		// default events/card residue (no proven-stale ownership). Exclusive Open
+		// / Link will fail-open if residue collides.
 		if _, cerr := os.Stat(claimPath); errors.Is(cerr, os.ErrNotExist) {
 			if werr := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); werr == nil {
-				clearSlotOwnedResidue(runDir, cardPath)
 				return myToken, nil
+			} else if errors.Is(werr, ErrCardExists) {
+				sawContention = true
+			} else {
+				return "", ErrCardSetup
 			}
 		}
 		time.Sleep(time.Duration(5*(i+1)) * time.Millisecond)
 	}
-	return "", ErrCardExists
+	if sawContention {
+		// Bounded unresolved active contention — fail-closed identity gate.
+		return "", ErrCardExists
+	}
+	return "", ErrCardSetup
 }
 
 // Test hooks for deterministic reclaim interleaving (nil in production).
@@ -264,6 +294,9 @@ var (
 // staleTakeover quarantines a proven-stale claim via hard-link no-replace CAS
 // (binds the observed inode/token), then installs a new exclusive claim.
 // Losers cannot rename-over a winner's new claim onto the quarantine name.
+//
+// Returns ErrCardExists for proven live identity, errClaimContention for retryable
+// races, and ErrCardSetup for permanent filesystem/setup failures.
 func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken string, pid int, startedAt time.Time) (string, error) {
 	if !validClaimToken(old.Token) {
 		return "", ErrCardSetup
@@ -272,14 +305,20 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 	// Observe the live pathname and its object identity.
 	info, err := os.Lstat(claimPath)
 	if err != nil {
-		return "", err
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errClaimContention
+		}
+		return "", ErrCardSetup
 	}
 	cur, err := readClaimFile(claimPath)
 	if err != nil {
-		return "", err
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errClaimContention
+		}
+		return "", ErrCardSetup
 	}
 	if cur.Token != old.Token {
-		return "", errors.New("claim token changed")
+		return "", errClaimContention
 	}
 	if identityLive(cur.PID, cur.StartedAt) {
 		return "", ErrCardExists
@@ -289,31 +328,32 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 	}
 
 	// No-replace quarantine: Link fails if dest exists (another reclaimer won).
-	// Link binds whatever claimPath currently names — verified against old.Token next.
 	staleName := filepath.Join(runDir, "claim.stale."+old.Token)
 	if err := os.Link(claimPath, staleName); err != nil {
-		return "", err
+		// Only a pre-existing regular file at the quarantine name is contention.
+		// Directories, permission errors, or unsupported links are setup failures.
+		if info, lerr := os.Lstat(staleName); lerr == nil && info.Mode().IsRegular() {
+			return "", errClaimContention
+		}
+		return "", ErrCardSetup
 	}
 
 	// Verify we quarantined the intended object (token + still same file as claimPath).
 	q, qerr := readClaimFile(staleName)
 	if qerr != nil || q.Token != old.Token {
 		_ = os.Remove(staleName)
-		return "", errors.New("quarantine token mismatch")
+		return "", errClaimContention
 	}
 	infoAfter, aerr := os.Lstat(claimPath)
 	staleInfo, serr := os.Lstat(staleName)
 	if aerr != nil || serr != nil || !sameFile(info, infoAfter) || !sameFile(info, staleInfo) {
-		// claimPath was replaced or unlinked after our link — do not remove claimPath.
-		// Drop our quarantine name only if it still holds the old token object.
 		if q2, e2 := readClaimFile(staleName); e2 == nil && q2.Token == old.Token {
-			// If claimPath still exists and is a different file, leave both.
 			if aerr == nil && !sameFile(info, infoAfter) {
 				_ = os.Remove(staleName)
-				return "", errors.New("claim replaced during quarantine")
+				return "", errClaimContention
 			}
 		}
-		return "", errors.New("claim identity changed during quarantine")
+		return "", errClaimContention
 	}
 	if staleAfterQuarantine != nil {
 		staleAfterQuarantine()
@@ -321,19 +361,21 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 
 	// Drop the claim.json name; quarantine hardlink retains the old object.
 	if err := os.Remove(claimPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		// claim.json gone already — continue if we still hold quarantine.
 		if _, e := os.Lstat(staleName); e != nil {
-			return "", err
+			return "", ErrCardSetup
 		}
 	}
 
 	// Install our live claim exclusively at claim.json.
 	if err := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); err != nil {
+		if errors.Is(err, ErrCardExists) {
+			return "", errClaimContention
+		}
 		// Leave quarantine in place; never delete another generation's claim.
-		return "", err
+		return "", ErrCardSetup
 	}
 
-	// Under our claim: clear only slot-owned default residue + our quarantine marker.
+	// Proven-stale ownership only: clear slot-default residue + quarantine marker.
 	clearSlotOwnedResidue(runDir, cardPath)
 	_ = os.Remove(staleName)
 	return myToken, nil
@@ -422,7 +464,16 @@ func validClaimToken(token string) bool {
 	return claimTokenPattern.MatchString(token)
 }
 
+// ClaimWriteHook is a test seam that short-circuits writeClaimExclusive.
+// Production must leave it nil.
+var ClaimWriteHook func(claimPath string) error
+
 func writeClaimExclusive(claimPath string, pid int, startedAt time.Time, token, state string) error {
+	if ClaimWriteHook != nil {
+		if err := ClaimWriteHook(claimPath); err != nil {
+			return err
+		}
+	}
 	raw, err := marshalClaim(pid, startedAt, token, state)
 	if err != nil {
 		return ErrCardSetup
