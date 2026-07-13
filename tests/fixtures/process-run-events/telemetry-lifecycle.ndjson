@@ -1,0 +1,6 @@
+{"ts":"2026-07-13T14:00:00.010Z","event":"started","run_id":"018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c","seq":0,"severity":"INFO","pid":4242,"producer":{"name":"sumpter","version":"0.3.1-dev","profile":"sumpter.extract-process-run/v0"},"data":{"total":3}}
+{"ts":"2026-07-13T14:00:01.000Z","event":"heartbeat","run_id":"018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c","seq":1,"severity":"INFO","pid":4242,"data":{"done":0}}
+{"ts":"2026-07-13T14:00:02.000Z","event":"progress","run_id":"018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c","seq":2,"severity":"INFO","pid":4242,"data":{"done":1,"total":3}}
+{"ts":"2026-07-13T14:00:03.000Z","event":"progress","run_id":"018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c","seq":3,"severity":"INFO","pid":4242,"data":{"done":2,"total":3}}
+{"ts":"2026-07-13T14:00:04.000Z","event":"progress","run_id":"018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c","seq":4,"severity":"INFO","pid":4242,"data":{"done":3,"total":3}}
+{"ts":"2026-07-13T14:00:04.500Z","event":"completed","run_id":"018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c","seq":5,"severity":"INFO","pid":4242,"data":{"done":3,"total":3}}

@@ -15,9 +15,31 @@ import (
 
 const (
 	DataArtifactCapability = "contract: data-artifact/v0"
-	BaselineSource         = "3leaps/crucible"
-	BaselineReleasedTag    = "v0.1.19"
-	BaselineBundleSHA256   = "sha256:37eca167cfa9a86357c14239eb9c3274c40c5cfee48f48ebb81480d737104b82"
+	ProcessRunCapability   = "contract: process-run/v0"
+
+	// Data-artifact pin metadata (independently evolvable from process-run).
+	BaselineSource      = "3leaps/crucible"
+	BaselineReleasedTag = "v0.1.19"
+	// Data-artifact resolved-bundle pin (contract.json + entry schema only).
+	BaselineBundleSHA256 = "sha256:37eca167cfa9a86357c14239eb9c3274c40c5cfee48f48ebb81480d737104b82"
+
+	// Process-run pin metadata (independently evolvable from data-artifact).
+	ProcessRunBaselineSource      = "3leaps/crucible"
+	ProcessRunBaselineReleasedTag = "v0.1.19"
+	// Process-run L2 entry-bundle pin (contract.json + process-card entry schema only).
+	// Derived with the same digest inputs/order as data-artifact against Crucible v0.1.19.
+	ProcessRunBaselineBundleSHA256 = "sha256:4589befc1d0d3485744c7eea3dfb569ff79457f99996f2ee8313595489a7091b"
+	// Process-run event-schema pin (sibling of the L2 entry; not part of the entry-bundle hash).
+	// Derived with the same path|bytes digest discipline against Crucible v0.1.19.
+	ProcessRunEventSchemaSHA256 = "sha256:7138fba72fea862d7964d6c235b1b93da0047e9eb76862be4d111701f887b12d"
+
+	dataArtifactLogicalDir = "schemas/data-artifact/v0"
+	processRunLogicalDir   = "schemas/process-run/v0"
+
+	// ProcessEventSchemaFile is the sibling event-line schema under a process-run contract base.
+	// It is not part of the resolved-bundle pin (entry schema is the process card only) but is
+	// integrity-bound via ProcessRunEventSchemaSHA256 before event validation.
+	ProcessEventSchemaFile = "process-event.schema.json"
 )
 
 type Manifest struct {
@@ -32,6 +54,7 @@ type ResolvedContract struct {
 	EntrySchemaPath      string
 	EntrySchemaBytes     []byte
 	BundleSHA256         string
+	LogicalDir           string
 	ContractManifest     Manifest
 	ContractManifestPath string
 }
@@ -48,7 +71,31 @@ type ValidationError struct {
 	Message string `json:"message"`
 }
 
+// Resolve resolves a known host-less contract capability from an explicit local base.
+// Logical bundle paths used in the digest match Crucible's schemas/<family>/v0/ layout.
 func Resolve(baseDir, capability string) (*ResolvedContract, error) {
+	logicalDir, err := logicalDirForCapability(capability)
+	if err != nil {
+		return nil, err
+	}
+	return resolveContract(baseDir, capability, logicalDir)
+}
+
+// ResolveContract is the shared host-less resolution primitive. Callers that already
+// know the Crucible logical directory may use it directly; capability-specific
+// wrappers should prefer Resolve / ResolveBaseline / ResolveProcessRunBaseline.
+func ResolveContract(baseDir, capability, logicalDir string) (*ResolvedContract, error) {
+	logicalDir = strings.Trim(strings.TrimSpace(logicalDir), "/")
+	if logicalDir == "" {
+		return nil, errors.New("contract logical directory is required")
+	}
+	if strings.Contains(logicalDir, "..") {
+		return nil, errors.New("contract logical directory must not contain parent path segments")
+	}
+	return resolveContract(baseDir, capability, logicalDir)
+}
+
+func resolveContract(baseDir, capability, logicalDir string) (*ResolvedContract, error) {
 	if strings.TrimSpace(baseDir) == "" {
 		return nil, errors.New("contract base is required")
 	}
@@ -87,8 +134,8 @@ func Resolve(baseDir, capability string) (*ResolvedContract, error) {
 	}
 
 	bundleSHA := bundleHash([]bundleFile{
-		{LogicalPath: "schemas/data-artifact/v0/contract.json", Bytes: manifestBytes},
-		{LogicalPath: "schemas/data-artifact/v0/" + entryRel, Bytes: entryBytes},
+		{LogicalPath: logicalDir + "/contract.json", Bytes: manifestBytes},
+		{LogicalPath: logicalDir + "/" + entryRel, Bytes: entryBytes},
 	})
 
 	return &ResolvedContract{
@@ -98,11 +145,13 @@ func Resolve(baseDir, capability string) (*ResolvedContract, error) {
 		EntrySchemaPath:      entryPath,
 		EntrySchemaBytes:     entryBytes,
 		BundleSHA256:         bundleSHA,
+		LogicalDir:           logicalDir,
 		ContractManifest:     manifest,
 		ContractManifestPath: manifestPath,
 	}, nil
 }
 
+// ResolveBaseline resolves and pins the data-artifact/v0 Crucible baseline.
 func ResolveBaseline(baseDir string) (*ResolvedContract, error) {
 	resolved, err := Resolve(baseDir, DataArtifactCapability)
 	if err != nil {
@@ -110,6 +159,18 @@ func ResolveBaseline(baseDir string) (*ResolvedContract, error) {
 	}
 	if resolved.BundleSHA256 != BaselineBundleSHA256 {
 		return nil, fmt.Errorf("contract baseline hash mismatch: got %s, want %s", resolved.BundleSHA256, BaselineBundleSHA256)
+	}
+	return resolved, nil
+}
+
+// ResolveProcessRunBaseline resolves and pins the process-run/v0 Crucible baseline.
+func ResolveProcessRunBaseline(baseDir string) (*ResolvedContract, error) {
+	resolved, err := Resolve(baseDir, ProcessRunCapability)
+	if err != nil {
+		return nil, err
+	}
+	if resolved.BundleSHA256 != ProcessRunBaselineBundleSHA256 {
+		return nil, fmt.Errorf("contract baseline hash mismatch: got %s, want %s", resolved.BundleSHA256, ProcessRunBaselineBundleSHA256)
 	}
 	return resolved, nil
 }
@@ -131,35 +192,7 @@ func ValidateDescriptorBytes(resolved *ResolvedContract, data []byte, descriptor
 	if resolved == nil {
 		return nil, errors.New("resolved contract is required")
 	}
-	var descriptor interface{}
-	if err := json.Unmarshal(data, &descriptor); err != nil {
-		return nil, fmt.Errorf("parse descriptor JSON: %w", err)
-	}
-	var schemaDoc interface{}
-	if err := json.Unmarshal(resolved.EntrySchemaBytes, &schemaDoc); err != nil {
-		return nil, fmt.Errorf("parse entry schema JSON: %w", err)
-	}
-	schemaBytes, err := json.Marshal(schemaDoc)
-	if err != nil {
-		return nil, fmt.Errorf("normalize entry schema: %w", err)
-	}
-	schemaResult, err := schema.ValidateFromBytes(schemaBytes, descriptor)
-	if err != nil {
-		return nil, fmt.Errorf("validate descriptor: %w", err)
-	}
-
-	result := &ValidationResult{
-		Valid:  schemaResult.Valid,
-		File:   descriptorName,
-		Schema: resolved.EntrySchema,
-	}
-	for _, validationErr := range schemaResult.Errors {
-		result.Errors = append(result.Errors, ValidationError{
-			Path:    validationErr.Path,
-			Message: validationErr.Message,
-		})
-	}
-	return result, nil
+	return validateAgainstSchema(resolved.EntrySchemaBytes, resolved.EntrySchema, data, descriptorName)
 }
 
 func ValidateFieldCatalogBytes(resolved *ResolvedContract, data []byte, catalogName string) (*ValidationResult, error) {
@@ -211,6 +244,163 @@ func ValidateFieldCatalogBytes(resolved *ResolvedContract, data []byte, catalogN
 		result.File = catalogName
 	}
 	return result, err
+}
+
+// ValidateProcessCardFile resolves the process-run baseline and validates a card document.
+func ValidateProcessCardFile(contractBase, cardPath string) (*ValidationResult, *ResolvedContract, error) {
+	resolved, err := ResolveProcessRunBaseline(contractBase)
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := os.ReadFile(cardPath) // #nosec G304 - explicit user-selected card path
+	if err != nil {
+		return nil, resolved, fmt.Errorf("read process card: %w", err)
+	}
+	result, err := ValidateProcessCardBytes(resolved, data, cardPath)
+	return result, resolved, err
+}
+
+// ValidateProcessCardBytes validates a process card against the resolved entry schema.
+func ValidateProcessCardBytes(resolved *ResolvedContract, data []byte, cardName string) (*ValidationResult, error) {
+	if resolved == nil {
+		return nil, errors.New("resolved contract is required")
+	}
+	if resolved.Capability != ProcessRunCapability {
+		return nil, fmt.Errorf("process card validation requires %q, got %q", ProcessRunCapability, resolved.Capability)
+	}
+	return validateAgainstSchema(resolved.EntrySchemaBytes, resolved.EntrySchema, data, cardName)
+}
+
+// ValidateProcessEventStreamFile validates every non-blank NDJSON line against the pinned
+// process-event.schema.json. Card validation alone does not prove event conformance.
+func ValidateProcessEventStreamFile(contractBase, streamPath string) ([]*ValidationResult, *ResolvedContract, error) {
+	resolved, err := ResolveProcessRunBaseline(contractBase)
+	if err != nil {
+		return nil, nil, err
+	}
+	eventSchema, err := LoadPinnedProcessEventSchema(resolved)
+	if err != nil {
+		return nil, resolved, err
+	}
+	data, err := os.ReadFile(streamPath) // #nosec G304 - explicit user-selected stream path
+	if err != nil {
+		return nil, resolved, fmt.Errorf("read process event stream: %w", err)
+	}
+	results, err := ValidateProcessEventStreamBytes(eventSchema, data, streamPath)
+	return results, resolved, err
+}
+
+// LoadPinnedProcessEventSchema reads process-event.schema.json from the resolved base and
+// fail-closes when its digest does not match ProcessRunEventSchemaSHA256.
+func LoadPinnedProcessEventSchema(resolved *ResolvedContract) ([]byte, error) {
+	if resolved == nil {
+		return nil, errors.New("resolved contract is required")
+	}
+	if resolved.Capability != ProcessRunCapability {
+		return nil, fmt.Errorf("process event schema requires %q, got %q", ProcessRunCapability, resolved.Capability)
+	}
+	eventSchema, err := ReadContainedFile(resolved.BaseDir, ProcessEventSchemaFile)
+	if err != nil {
+		return nil, fmt.Errorf("load process event schema: %w", err)
+	}
+	got := bundleHash([]bundleFile{
+		{LogicalPath: processRunLogicalDir + "/" + ProcessEventSchemaFile, Bytes: eventSchema},
+	})
+	if got != ProcessRunEventSchemaSHA256 {
+		return nil, fmt.Errorf("process event schema hash mismatch: got %s, want %s", got, ProcessRunEventSchemaSHA256)
+	}
+	return eventSchema, nil
+}
+
+// ValidateProcessEventStreamBytes validates every non-blank NDJSON line.
+// Returns one ValidationResult per non-blank line (in order). On the first invalid line
+// (parse failure or schema Valid=false), returns the results collected so far and a non-nil error.
+func ValidateProcessEventStreamBytes(eventSchema []byte, stream []byte, streamName string) ([]*ValidationResult, error) {
+	if len(eventSchema) == 0 {
+		return nil, errors.New("process event schema is required")
+	}
+	lines := strings.Split(string(stream), "\n")
+	var results []*ValidationResult
+	lineNo := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		lineNo++
+		name := fmt.Sprintf("%s:%d", streamName, lineNo)
+		result, err := validateAgainstSchema(eventSchema, ProcessEventSchemaFile, []byte(line), name)
+		if err != nil {
+			return results, fmt.Errorf("%s: %w", name, err)
+		}
+		results = append(results, result)
+		if !result.Valid {
+			return results, fmt.Errorf("%s: event failed process-event schema validation", name)
+		}
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("%s: no non-blank event lines", streamName)
+	}
+	return results, nil
+}
+
+// ReadContainedFile reads a relative path that must stay inside the contract base (symlink-safe).
+func ReadContainedFile(baseDir, relativePath string) ([]byte, error) {
+	rel, err := cleanRelativeEntry(relativePath)
+	if err != nil {
+		return nil, err
+	}
+	path, err := resolveContainedEntryPath(baseDir, rel)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path) // #nosec G304 - path constrained to contract base
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", rel, err)
+	}
+	return data, nil
+}
+
+func validateAgainstSchema(schemaBytes []byte, schemaName string, data []byte, fileName string) (*ValidationResult, error) {
+	var document interface{}
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("parse JSON: %w", err)
+	}
+	var schemaDoc interface{}
+	if err := json.Unmarshal(schemaBytes, &schemaDoc); err != nil {
+		return nil, fmt.Errorf("parse schema JSON: %w", err)
+	}
+	normalized, err := json.Marshal(schemaDoc)
+	if err != nil {
+		return nil, fmt.Errorf("normalize schema: %w", err)
+	}
+	schemaResult, err := schema.ValidateFromBytes(normalized, document)
+	if err != nil {
+		return nil, fmt.Errorf("validate against schema: %w", err)
+	}
+
+	result := &ValidationResult{
+		Valid:  schemaResult.Valid,
+		File:   fileName,
+		Schema: schemaName,
+	}
+	for _, validationErr := range schemaResult.Errors {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    validationErr.Path,
+			Message: validationErr.Message,
+		})
+	}
+	return result, nil
+}
+
+func logicalDirForCapability(capability string) (string, error) {
+	switch capability {
+	case DataArtifactCapability:
+		return dataArtifactLogicalDir, nil
+	case ProcessRunCapability:
+		return processRunLogicalDir, nil
+	default:
+		return "", fmt.Errorf("unsupported contract capability %q", capability)
+	}
 }
 
 func cleanRelativeEntry(entry string) (string, error) {

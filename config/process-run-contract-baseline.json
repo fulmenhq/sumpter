@@ -1,0 +1,7 @@
+{
+  "capability": "contract: process-run/v0",
+  "source": "3leaps/crucible",
+  "released_tag": "v0.1.19",
+  "resolved_bundle_sha256": "sha256:4589befc1d0d3485744c7eea3dfb569ff79457f99996f2ee8313595489a7091b",
+  "event_schema_sha256": "sha256:7138fba72fea862d7964d6c235b1b93da0047e9eb76862be4d111701f887b12d"
+}

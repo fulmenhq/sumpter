@@ -1,0 +1,20 @@
+{
+  "capabilities": ["contract: process-run/v0"],
+  "run_id": "demo-run",
+  "pid": 27414,
+  "started_at": "2026-07-04T10:59:48.712Z",
+  "producer": {
+    "name": "pipeline-runner",
+    "version": "1.0.0",
+    "profile": "example.pipeline-run/v0"
+  },
+  "telemetry": {
+    "path": "/var/run/pipeline-runner/events/demo-run.ndjson",
+    "format": "ndjson"
+  },
+  "control": {
+    "socket": "/var/run/pipeline-runner/proc/demo-run/control.sock",
+    "key_file": "/var/run/pipeline-runner/proc/demo-run/control.key",
+    "verbs": ["describe", "status", "stop"]
+  }
+}

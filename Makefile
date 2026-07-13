@@ -88,7 +88,7 @@ dev: ## Set up development environment
 
 # Quality checks
 .PHONY: check-all
-check-all: fmt-strict vet lint safety-check schema-validate extract-output-contract-check data-artifact-contract-check ## Run all quality checks (fast)
+check-all: fmt-strict vet lint safety-check schema-validate extract-output-contract-check data-artifact-contract-check process-run-contract-check ## Run all quality checks (fast)
 	@echo "$(GREEN)✅ All quality checks passed!$(NC)"
 
 # Schema validation
@@ -113,6 +113,7 @@ extract-output-contract-check: ## Meta-validate extract record-envelope fixtures
 	echo "$(GREEN)✅ Extract record-envelope contract check passed ($$count fixtures)$(NC)"
 
 DATA_ARTIFACT_CONTRACT_BASE ?= tests/fixtures/data-artifact-contract/v0
+PROCESS_RUN_CONTRACT_BASE ?= tests/fixtures/process-run-contract/v0
 
 .PHONY: data-artifact-contract-check
 data-artifact-contract-check: ## Validate data-artifact/v0 contract resolver and descriptor fixtures
@@ -126,6 +127,31 @@ data-artifact-contract-check: ## Validate data-artifact/v0 contract resolver and
 	done; \
 	if [ "$$count" -lt 1 ]; then echo "$(RED)❌ expected ≥1 data-artifact descriptor fixtures, found $$count$(NC)"; exit 1; fi; \
 	echo "$(GREEN)✅ Data-artifact contract check passed ($$count fixtures)$(NC)"
+
+.PHONY: process-run-contract-check
+process-run-contract-check: ## Validate process-run/v0 contract resolver, card, and NDJSON event fixtures
+	@echo "$(BLUE)Validating process-run/v0 contract baseline...$(NC)"
+	@test -f "$(PROCESS_RUN_CONTRACT_BASE)/contract.json" || { echo "$(RED)❌ missing process-run contract base$(NC)"; exit 1; }
+	@test -f "$(PROCESS_RUN_CONTRACT_BASE)/process-card.schema.json" || { echo "$(RED)❌ missing process-card schema$(NC)"; exit 1; }
+	@test -f "$(PROCESS_RUN_CONTRACT_BASE)/process-event.schema.json" || { echo "$(RED)❌ missing process-event schema$(NC)"; exit 1; }
+	@test -f config/process-run-contract-baseline.json || { echo "$(RED)❌ missing process-run baseline pin$(NC)"; exit 1; }
+	@# Export the selected base so Go tests hash/validate THAT tree (not a hard-coded path).
+	@PROCESS_RUN_CONTRACT_BASE="$(abspath $(PROCESS_RUN_CONTRACT_BASE))" go test ./internal/artifactcontract -count=1
+	@card_count=0; \
+	for f in tests/fixtures/process-run-card/*.json; do \
+		[ -e "$$f" ] || continue; \
+		echo "  ✓ $$f"; \
+		card_count=$$((card_count + 1)); \
+	done; \
+	event_count=0; \
+	for f in tests/fixtures/process-run-events/*.ndjson; do \
+		[ -e "$$f" ] || continue; \
+		echo "  ✓ $$f"; \
+		event_count=$$((event_count + 1)); \
+	done; \
+	if [ "$$card_count" -lt 2 ]; then echo "$(RED)❌ expected ≥2 process-run card fixtures, found $$card_count$(NC)"; exit 1; fi; \
+	if [ "$$event_count" -lt 2 ]; then echo "$(RED)❌ expected ≥2 process-run event fixtures, found $$event_count$(NC)"; exit 1; fi; \
+	echo "$(GREEN)✅ Process-run contract check passed ($$card_count cards, $$event_count event streams)$(NC)"
 
 # Code formatting
 .PHONY: fmt
