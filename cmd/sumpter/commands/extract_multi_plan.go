@@ -119,9 +119,10 @@ type multiSharedOptions struct {
 	// sit under SUMPTER_HOME/work. NOT recorded in Argv.
 	ProcessRunRuntimeDir string
 
-	// ProcessRunContractBase, when non-empty, schema-validates the process card
-	// against the pinned process-run baseline before publication. Optional; tests
-	// and PROCESS_RUN_CONTRACT_BASE populate it. NOT recorded in Argv.
+	// ProcessRunContractBase optionally overrides the embedded process-run pin
+	// used to schema-validate the process card before publication. Empty uses the
+	// embedded Crucible baseline. Wrong/unreadable material fails open (withholds
+	// card+stream). Tests may set PROCESS_RUN_CONTRACT_BASE. NOT recorded in Argv.
 	ProcessRunContractBase string
 
 	// ProcessRunBlockedRoots are the invocation's already-resolved SUMPTER_HOME and

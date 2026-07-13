@@ -1,0 +1,4 @@
+{
+  "capability": "contract: process-run/v0",
+  "entry_schema": "process-card.schema.json"
+}

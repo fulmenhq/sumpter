@@ -124,6 +124,15 @@ var SumpterEnvironmentVariables = map[string]EnvVarDefinition{
 		Example:     "sumpter-prod",
 		Category:    "telemetry",
 	},
+	"SUMPTER_PROCESS_RUN_RUNTIME_DIR": {
+		Name:        "SUMPTER_PROCESS_RUN_RUNTIME_DIR",
+		Description: "Override process-run/v0 runtime directory for the opt-in process card (flag wins when set). Must not sit under SUMPTER_HOME/work. Default resolves from XDG_RUNTIME_DIR or TMPDIR when --process-run is enabled",
+		Type:        EnvVarTypePath,
+		Default:     "",
+		Required:    false,
+		Example:     "/run/user/1000/sumpter",
+		Category:    "telemetry",
+	},
 }
 
 // GetSumpterEnvVars returns all SUMPTER environment variables

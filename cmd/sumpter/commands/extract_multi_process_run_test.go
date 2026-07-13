@@ -18,6 +18,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/artifactcontract"
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/processrun"
 )
 
 func runMultiWithProcessRunOpts(t *testing.T, shared *multiSharedOptions, ws string, warnOut io.Writer) (outRoot string, runErr error) {
@@ -714,41 +715,33 @@ func TestExtractMultiProcessRun_CardLiveCollisionFailClosed(t *testing.T) {
 	ws := writeMultiRecipeWorkspace(t, "summary")
 	fileList, _ := writeMultiInputSet(t, 1)
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
-	runDir := filepath.Join(runtimeDir, "proc", testMultiRunID)
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		t.Fatal(err)
+	// Hold a live card from a real OpenCard so (pid, started_at) matches OS identity.
+	holder, err := processrun.OpenCard(processrun.CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      testMultiRunID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   processrun.Producer{Name: "sumpter", Version: "seed"},
+	})
+	if err != nil {
+		t.Fatalf("seed live card: %v", err)
 	}
-	// Seed a live card for this process so reclaim refuses.
-	live := map[string]interface{}{
-		"capabilities": []string{"contract: process-run/v0"},
-		"run_id":       testMultiRunID,
-		"pid":          os.Getpid(),
-		"started_at":   time.Now().UTC().Format(time.RFC3339Nano),
-		"producer":     map[string]interface{}{"name": "sumpter", "version": "seed"},
-		"telemetry": map[string]interface{}{
-			"path":   filepath.Join(runDir, "events.ndjson"),
-			"format": "ndjson",
-		},
-	}
-	raw, _ := json.Marshal(live)
-	if err := os.WriteFile(filepath.Join(runDir, "card.json"), append(raw, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	defer holder.Close(true)
 
 	var warn strings.Builder
-	_, err := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+	_, runErr := runMultiWithProcessRunOpts(t, &multiSharedOptions{
 		FileList:             fileList,
 		ProcessRun:           true,
 		ProcessRunRuntimeDir: runtimeDir,
 	}, ws, &warn)
-	if err == nil {
+	if runErr == nil {
 		t.Fatal("expected fail-closed live run_id error")
 	}
-	if !strings.Contains(err.Error(), "run_id already in use") {
-		t.Fatalf("want live identity error, got %v", err)
+	if !strings.Contains(runErr.Error(), "run_id already in use") {
+		t.Fatalf("want live identity error, got %v", runErr)
 	}
 	// Seed card must remain (not clobbered).
-	if _, serr := os.Stat(filepath.Join(runDir, "card.json")); serr != nil {
+	if _, serr := os.Stat(holder.Path); serr != nil {
 		t.Fatalf("live card must remain: %v", serr)
 	}
 }

@@ -9,7 +9,7 @@ func TestGetSumpterEnvVars(t *testing.T) {
 	vars := GetSumpterEnvVars()
 
 	// Verify we get the expected number of variables
-	expectedCount := 11
+	expectedCount := 12
 	if len(vars) != expectedCount {
 		t.Errorf("Expected %d environment variables, got %d", expectedCount, len(vars))
 	}
@@ -27,6 +27,7 @@ func TestGetSumpterEnvVars(t *testing.T) {
 		"SUMPTER_TIMEOUT",
 		"SUMPTER_TELEMETRY_ENABLED",
 		"SUMPTER_SERVICE_NAME",
+		"SUMPTER_PROCESS_RUN_RUNTIME_DIR",
 	}
 
 	for _, varName := range expectedVars {
