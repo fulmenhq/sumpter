@@ -852,6 +852,119 @@ func TestOpenCardClaimWriteSetupFailureNotLiveCollision(t *testing.T) {
 	}
 }
 
+func TestOpenCardPostQuarantineClaimWriteRestoresAndRetries(t *testing.T) {
+	// If new-claim install fails after quarantine, restore claim.json so the next
+	// open can reclaim a dead identity (not poison into false ErrCardExists).
+	if runtime.GOOS == "windows" {
+		t.Skip("needs dead pid + hard links")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	oldToken := "11111111111111111111111111111111"
+	staleStarted := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	claimPath := filepath.Join(runDir, ClaimFileName)
+	if err := writeClaimExclusive(claimPath, deadPID, staleStarted, oldToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	// Crash residue: dead card + stream that must not be lost before successful takeover.
+	priorEvents := []byte("CRASH-STREAM-BYTES\n")
+	if err := os.WriteFile(filepath.Join(runDir, EventsFileName), priorEvents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	priorCard := []byte(`{"capabilities":["contract: process-run/v0"],"run_id":"x","pid":1,"started_at":"2020-01-01T00:00:00Z","producer":{"name":"x","version":"1"},"telemetry":{"path":"/tmp/x","format":"ndjson"}}` + "\n")
+	if err := os.WriteFile(filepath.Join(runDir, CardFileName), priorCard, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := ClaimWriteHook
+	t.Cleanup(func() { ClaimWriteHook = prev })
+	ClaimWriteHook = func(string) error { return ErrCardSetup }
+
+	_, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if !errors.Is(err, ErrCardSetup) {
+		t.Fatalf("first open: %v, want ErrCardSetup", err)
+	}
+	// claim.json must be restored for the next attempt.
+	cur, cerr := readClaimFile(claimPath)
+	if cerr != nil {
+		t.Fatalf("claim.json not restored after setup failure: %v", cerr)
+	}
+	if cur.Token != oldToken {
+		t.Fatalf("restored claim token = %q, want %q", cur.Token, oldToken)
+	}
+	// Prior stream bytes preserved (no successful takeover cleanup).
+	got, _ := os.ReadFile(filepath.Join(runDir, EventsFileName)) // #nosec G304
+	if string(got) != string(priorEvents) {
+		t.Fatalf("prior stream mutated: %q", got)
+	}
+
+	// Clear injection — next call reclaims successfully.
+	ClaimWriteHook = nil
+	card, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile},
+	})
+	if err != nil {
+		t.Fatalf("second open after restore must reclaim, got %v", err)
+	}
+	defer card.Close(true)
+	if !card.Emitter.Enabled() {
+		t.Fatal("expected enabled emitter after successful reclaim")
+	}
+	if errors.Is(err, ErrCardExists) {
+		t.Fatal("must not report live collision after restore")
+	}
+}
+
+func TestOpenCardUnrelatedQuarantineResidueIsSetupNotContention(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs dead pid")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	runDir := RunDir(runtimeDir, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	oldToken := "22222222222222222222222222222222"
+	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), deadPID, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), oldToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	// Unrelated regular file blocking quarantine name (not the old claim object).
+	if err := os.WriteFile(filepath.Join(runDir, "claim.stale."+oldToken), []byte("unrelated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := OpenCard(CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      runID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   Producer{Name: "sumpter", Version: "test"},
+	})
+	if !errors.Is(err, ErrCardSetup) {
+		t.Fatalf("err = %v, want ErrCardSetup (not live/contention collapse)", err)
+	}
+	if errors.Is(err, ErrCardExists) {
+		t.Fatal("unrelated quarantine residue must not surface as ErrCardExists")
+	}
+}
+
 func TestOpenCardQuarantineLinkSetupFailureNotLiveCollision(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs dead pid + hard links")

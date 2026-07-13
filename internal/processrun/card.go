@@ -330,11 +330,20 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 	// No-replace quarantine: Link fails if dest exists (another reclaimer won).
 	staleName := filepath.Join(runDir, "claim.stale."+old.Token)
 	if err := os.Link(claimPath, staleName); err != nil {
-		// Only a pre-existing regular file at the quarantine name is contention.
-		// Directories, permission errors, or unsupported links are setup failures.
-		if info, lerr := os.Lstat(staleName); lerr == nil && info.Mode().IsRegular() {
-			return "", errClaimContention
+		// Contention only when dest is the same old claim object (same token, preferably
+		// same inode). Unrelated regular residue is setup failure, not live collision.
+		if destInfo, lerr := os.Lstat(staleName); lerr == nil && destInfo.Mode().IsRegular() {
+			if dest, derr := readClaimFile(staleName); derr == nil && dest.Token == old.Token {
+				if sameFile(info, destInfo) {
+					return "", errClaimContention
+				}
+				// Same token but different inode — treat as contention on the name.
+				return "", errClaimContention
+			}
+			// Unrelated regular file blocking the quarantine path.
+			return "", ErrCardSetup
 		}
+		// Directories, permission errors, or unsupported links are setup failures.
 		return "", ErrCardSetup
 	}
 
@@ -369,9 +378,13 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 	// Install our live claim exclusively at claim.json.
 	if err := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); err != nil {
 		if errors.Is(err, ErrCardExists) {
+			// Another process installed a claim — do not clobber it; leave quarantine.
 			return "", errClaimContention
 		}
-		// Leave quarantine in place; never delete another generation's claim.
+		// Setup failure after quarantine: restore claim.json from the quarantined
+		// object so the next invocation can still prove staleness (not poison into
+		// a permanent false live collision via crash-card fallback without claim).
+		restoreClaimFromQuarantine(claimPath, staleName)
 		return "", ErrCardSetup
 	}
 
@@ -379,6 +392,23 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 	clearSlotOwnedResidue(runDir, cardPath)
 	_ = os.Remove(staleName)
 	return myToken, nil
+}
+
+// restoreClaimFromQuarantine re-links claim.json from a quarantine hardlink when
+// the path is still free. Best-effort; leaves quarantine in place if restore fails.
+func restoreClaimFromQuarantine(claimPath, staleName string) {
+	if _, err := os.Lstat(claimPath); err == nil {
+		// claim.json already present — do not overwrite.
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err := os.Link(staleName, claimPath); err != nil {
+		return
+	}
+	// Prefer a single claim.json name after successful restore.
+	_ = os.Remove(staleName)
+	_ = os.Chmod(claimPath, 0o600)
 }
 
 // clearSlotOwnedResidue removes the slot card and the default events.ndjson under
