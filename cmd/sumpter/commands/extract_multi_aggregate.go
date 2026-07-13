@@ -141,7 +141,7 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 	// A continue-on-error recipe that committed its successful inputs still signals
 	// partial failure so the pass exits non-zero, mirroring per-input finalize.
 	if opts.ContinueOnError && st.failures.Failed > 0 {
-		return fmt.Errorf("recipe %q partial failure: applied=%d failed=%d", st.plan.RecipeID, st.failures.Applied, st.failures.Failed)
+		return recipePartialFailure(st.plan.RecipeID, st.failures.Applied, st.failures.Failed)
 	}
 	return nil
 }

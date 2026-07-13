@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fulmenhq/sumpter/internal/config"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
@@ -45,6 +46,7 @@ type recipeRunExtractMultiOptions struct {
 	CredentialOverrides    []string
 	InputCredentialsHandle string
 	Stats                  bool
+	ProcessRunEventsPath   string
 }
 
 func newRecipeRunExtractMultiCommand() *cobra.Command {
@@ -95,6 +97,14 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 			if err != nil {
 				return err
 			}
+			// Effective home/workdir for this invocation (same flag overrides as PersistentPreRun),
+			// without creating directories — used only for process-run placement rejection.
+			homeOverride, _ := cmd.Flags().GetString("home")
+			workdirOverride, _ := cmd.Flags().GetString("workdir")
+			var blockedRoots []string
+			if layout, lerr := config.ResolvePathLayout(homeOverride, workdirOverride); lerr == nil && layout != nil {
+				blockedRoots = []string{layout.Home, layout.WorkDir}
+			}
 			shared := &multiSharedOptions{
 				Argv:                   buildExtractMultiArgv(args, opts),
 				Files:                  opts.Files,
@@ -123,6 +133,9 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				CredentialOverrides:    opts.CredentialOverrides,
 				InputCredentialsHandle: opts.InputCredentialsHandle,
 				Stats:                  opts.Stats,
+				ProcessRunEventsPath:   opts.ProcessRunEventsPath,
+				ProcessRunBlockedRoots: blockedRoots,
+				Context:                cmd.Context(),
 			}
 			return runExtractMulti(shared, args, cmd.ErrOrStderr(), time.Now().UTC())
 		},
@@ -153,6 +166,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input")
 	cmd.Flags().BoolVar(&opts.Stats, "stats", false, "Print an end-of-run diagnostic summary (wall, inputs/s, effective CPU vs --input-workers, GOMAXPROCS) to stderr to help tune --input-workers. Observed counters only; does not change records, output, or the provenance manifest")
+	cmd.Flags().StringVar(&opts.ProcessRunEventsPath, "process-run-events", "", "Opt-in process-run/v0 append-only NDJSON event stream path (owner-only 0600). Empty disables process-run telemetry (default). Fail-open: setup/write failures disable events without failing extract. Not recorded in provenance argv")
 
 	return cmd
 }

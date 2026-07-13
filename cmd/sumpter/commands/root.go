@@ -1,11 +1,14 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/fulmenhq/sumpter/internal/config"
 	"github.com/fulmenhq/sumpter/internal/logging"
@@ -34,9 +37,13 @@ Inspired by the Fulmen ecosystem and the American West's "sumpter" horses.`,
 	SilenceUsage:     true,
 }
 
-// Execute runs the root command
+// Execute runs the root command under a cancelable context bound to SIGINT/SIGTERM.
+// That context is the production source of process-run "canceled" terminals for
+// extract-multi (Cobra cmd.Context()), without introducing a control socket (C4).
 func Execute() error {
-	return rootCmd.Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return rootCmd.ExecuteContext(ctx)
 }
 
 func init() {
