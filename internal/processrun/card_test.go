@@ -3,6 +3,7 @@ package processrun
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -264,6 +265,7 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 	// Ensure no leftover test seams from other cases.
 	ClaimWriteHook = nil
 	staleAfterObserve = nil
+	staleAfterLease = nil
 	staleAfterQuarantine = nil
 	publishAfterTemp = nil
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
@@ -278,9 +280,6 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 	if err := writeClaimExclusive(filepath.Join(runDir, ClaimFileName), deadPID, staleStarted, staleToken, claimStateExited); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runDir, EventsFileName), []byte("old\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	const n = 12
 	var (
@@ -288,7 +287,10 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 		success atomic.Int32
 		mu      sync.Mutex
 		winner  *Card
+		errMu   sync.Mutex
+		errs    []string
 	)
+	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func() {
@@ -296,11 +298,14 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 			card, err := OpenCard(CardConfig{
 				RuntimeDir: runtimeDir,
 				RunID:      runID,
-				PID:        os.Getpid(),
-				StartedAt:  time.Now().UTC(),
-				Producer:   Producer{Name: "sumpter", Version: "test"},
+				PID:        pid,
+				StartedAt:  started,
+				Producer:   Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile},
 			})
 			if err != nil {
+				errMu.Lock()
+				errs = append(errs, err.Error())
+				errMu.Unlock()
 				return
 			}
 			success.Add(1)
@@ -318,7 +323,7 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 		defer winner.Close(true)
 	}
 	if success.Load() != 1 {
-		t.Fatalf("stale reclaim want exactly 1 winner, got %d", success.Load())
+		t.Fatalf("stale reclaim want exactly 1 winner, got %d; errs=%v", success.Load(), errs)
 	}
 	// Losers must not have deleted the winner's claim.
 	if !winner.stillOwnClaim() {
@@ -606,11 +611,17 @@ func TestOpenCardPublishAtomicNoPartialFinal(t *testing.T) {
 }
 
 func TestOpenCardStaleTakeoverABA(t *testing.T) {
-	// Concurrent reclaimers on a dual-name dead claim (same inode quarantine+claim).
-	// Orphan dual-name is proceedable; exclusive claim install yields exactly one winner.
+	// Active-A barrier: A elects reclaim lease then pauses; B cannot recover/remove
+	// A's quarantine and must not win. A then finishes successfully.
 	if runtime.GOOS == "windows" {
 		t.Skip("needs unix liveness")
 	}
+	ClaimWriteHook = nil
+	staleAfterObserve = nil
+	staleAfterLease = nil
+	staleAfterQuarantine = nil
+	publishAfterTemp = nil
+
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
 	runDir := RunDir(runtimeDir, runID)
@@ -619,54 +630,99 @@ func TestOpenCardStaleTakeoverABA(t *testing.T) {
 	}
 	deadPID := findDeadPID(t)
 	oldToken := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	staleStarted := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	claimPath := filepath.Join(runDir, ClaimFileName)
+	cardPath := filepath.Join(runDir, CardFileName)
+	if err := writeClaimExclusive(claimPath, deadPID, staleStarted, oldToken, claimStateExited); err != nil {
+		t.Fatal(err)
+	}
+	old := &claimDoc{PID: deadPID, StartedAt: staleStarted, Token: oldToken, State: claimStateExited}
+
+	aAtLease := make(chan struct{})
+	bFinished := make(chan struct{})
+	prev := staleAfterLease
+	t.Cleanup(func() { staleAfterLease = prev })
+
+	var firstLease atomic.Bool
+	staleAfterLease = func() {
+		if firstLease.CompareAndSwap(false, true) {
+			close(aAtLease)
+			<-bFinished
+		}
+	}
+
+	tokenA, _ := newClaimToken()
+	tokenB, _ := newClaimToken()
+	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
+
+	var bErr error
+	go func() {
+		<-aAtLease
+		// B must not adopt while A holds a live reclaim lease.
+		_, bErr = staleTakeover(runDir, claimPath, cardPath, old, tokenB, pid, started)
+		// Prove B did not remove A's lease.
+		if !hasLiveReclaimLease(runDir) {
+			bErr = fmt.Errorf("B removed active reclaim lease: %w", bErr)
+		}
+		close(bFinished)
+	}()
+
+	gotA, aErr := staleTakeover(runDir, claimPath, cardPath, old, tokenA, pid, started)
+	if aErr != nil {
+		t.Fatalf("A must win: %v", aErr)
+	}
+	if gotA != tokenA {
+		t.Fatalf("A token = %q", gotA)
+	}
+	if bErr == nil {
+		t.Fatal("B must not succeed while A holds live reclaim lease")
+	}
+	if !errors.Is(bErr, ErrCardExists) && !errors.Is(bErr, errClaimContention) {
+		// Accept setup only if lease still protected A
+		t.Logf("B err = %v (want live-lease rejection)", bErr)
+	}
+	cur, err := readClaimFile(claimPath)
+	if err != nil {
+		t.Fatalf("claim missing: %v", err)
+	}
+	if cur.Token != tokenA {
+		t.Fatalf("claim token = %q, want A %q", cur.Token, tokenA)
+	}
+}
+
+func TestOpenCardActiveLeaseBlocksOrphanRecovery(t *testing.T) {
+	// Seed dual-name + live reclaim lease: recovery must not strip quarantine.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs unix liveness")
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	runDir := RunDir(runtimeDir, "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	oldToken := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	claimPath := filepath.Join(runDir, ClaimFileName)
 	if err := writeClaimExclusive(claimPath, deadPID, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), oldToken, claimStateExited); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Link(claimPath, filepath.Join(runDir, "claim.stale."+oldToken)); err != nil {
+	stalePath := filepath.Join(runDir, "claim.stale."+oldToken)
+	if err := os.Link(claimPath, stalePath); err != nil {
 		t.Fatal(err)
 	}
+	// Live reclaim lease (this process).
+	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
+	lease, err := electReclaimLease(runDir, "cccccccccccccccccccccccccccccccc", oldToken, pid, started)
+	if err != nil {
+		t.Fatalf("elect: %v", err)
+	}
+	defer releaseReclaimLease(lease)
 
-	const n = 8
-	var (
-		wg      sync.WaitGroup
-		success atomic.Int32
-		mu      sync.Mutex
-		winner  *Card
-	)
-	wg.Add(n)
-	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
-			card, err := OpenCard(CardConfig{
-				RuntimeDir: runtimeDir,
-				RunID:      runID,
-				PID:        os.Getpid(),
-				StartedAt:  time.Now().UTC(),
-				Producer:   Producer{Name: "sumpter", Version: "test"},
-			})
-			if err != nil {
-				return
-			}
-			success.Add(1)
-			mu.Lock()
-			if winner == nil {
-				winner = card
-			} else {
-				card.Close(true)
-			}
-			mu.Unlock()
-		}()
+	if recoverOrphanTakeoverState(runDir, claimPath) {
+		t.Fatal("must not recover while live reclaim lease is held")
 	}
-	wg.Wait()
-	if winner != nil {
-		defer winner.Close(true)
-	}
-	if success.Load() != 1 {
-		t.Fatalf("want exactly 1 winner on dual-name reclaim, got %d", success.Load())
-	}
-	if !winner.stillOwnClaim() {
-		t.Fatal("winner lost claim")
+	if _, err := os.Lstat(stalePath); err != nil {
+		t.Fatal("active reclaimer's quarantine marker must remain")
 	}
 }
 

@@ -291,25 +291,47 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 
 // Test hooks for deterministic reclaim interleaving (nil in production).
 var (
-	// staleAfterObserve runs after the stale claim is re-read and validated, before link-CAS.
+	// staleAfterObserve runs after the stale claim is re-read and validated, before election.
 	staleAfterObserve func()
+	// staleAfterLease runs after the reclaim lease is durable, before quarantine/link.
+	staleAfterLease func()
 	// staleAfterQuarantine runs after successful quarantine link, before unlinking claim.json.
 	staleAfterQuarantine func()
 	// publishAfterTemp runs after the complete card temp is written, before link into final path.
 	publishAfterTemp func(tmpPath, finalPath string)
 )
 
-// recoverOrphanTakeoverState repairs durable mid-takeover crash residues so a
-// later process can reclaim a dead slot instead of looping into false ErrCardExists.
+// reclaimLeaseFile is a single per-slot election file (not per-token) so only one
+// reclaimer can hold the durable takeover lease at a time.
+const reclaimLeaseFile = "claim.taking"
+
+// reclaimLease holds the active reclaimer's identity on disk so another process
+// can distinguish an in-flight takeover from a dead orphan.
+type reclaimLease struct {
+	PID       int
+	StartedAt time.Time
+	Token     string
+	OldToken  string
+	Path      string
+}
+
+// recoverOrphanTakeoverState repairs durable mid-takeover crash residues only when
+// no live reclaimer lease is present. An active reclaimer's claim.taking.<token>
+// (with live pid,started_at) blocks recovery so B cannot remove/adopt A's marker.
 //
-// Boundary 1: claim.json + claim.stale.<token> hard-linked to the same dead claim
-// inode (crash after Link, before Remove claim.json) → drop the quarantine name.
-// Boundary 2: only claim.stale.<token> remains with a dead claim (crash after
-// Remove claim.json, before new claim install) → restore claim.json from quarantine.
+// Boundary 1: dual-name same dead inode + dead/no lease → drop quarantine name.
+// Boundary 2: quarantine-only dead claim + dead/no lease → restore claim.json.
 //
-// Live claim objects are never restored/adopted. Returns true when state changed.
+// Returns true when state changed.
 func recoverOrphanTakeoverState(runDir, claimPath string) bool {
-	// Boundary 1: dual-name same inode.
+	// Never touch residues while a live reclaimer holds a lease.
+	if hasLiveReclaimLease(runDir) {
+		return false
+	}
+	// Drop dead reclaim leases first so orphan cleanup can proceed.
+	_ = cleanDeadReclaimLeases(runDir)
+
+	// Boundary 1: dual-name same inode of a dead claim.
 	if claimInfo, err := os.Lstat(claimPath); err == nil {
 		doc, derr := readClaimFile(claimPath)
 		if derr != nil || identityLive(doc.PID, doc.StartedAt) || !validClaimToken(doc.Token) {
@@ -320,14 +342,13 @@ func recoverOrphanTakeoverState(runDir, claimPath string) bool {
 		if lerr != nil || !destInfo.Mode().IsRegular() || !sameFile(claimInfo, destInfo) {
 			return false
 		}
-		// Orphan dual-name of a dead claim — drop quarantine; claim.json remains.
 		_ = os.Remove(staleName)
 		return true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false
 	}
 
-	// Boundary 2: claim.json missing — adopt a dead quarantine marker if present.
+	// Boundary 2: claim.json missing — restore a dead quarantine marker.
 	entries, err := os.ReadDir(runDir)
 	if err != nil {
 		return false
@@ -346,7 +367,6 @@ func recoverOrphanTakeoverState(runDir, claimPath string) bool {
 		if derr != nil || identityLive(doc.PID, doc.StartedAt) {
 			continue
 		}
-		// Restore claim.json from the dead quarantine object.
 		restoreClaimFromQuarantine(claimPath, staleName)
 		if _, err := os.Lstat(claimPath); err == nil {
 			return true
@@ -355,22 +375,138 @@ func recoverOrphanTakeoverState(runDir, claimPath string) bool {
 	return false
 }
 
-// staleTakeover quarantines a proven-stale claim via hard-link no-replace CAS
-// (binds the observed inode/token), then installs a new exclusive claim.
-// Losers cannot rename-over a winner's new claim onto the quarantine name.
+func reclaimLeasePath(runDir string) string {
+	return filepath.Join(runDir, reclaimLeaseFile)
+}
+
+func hasLiveReclaimLease(runDir string) bool {
+	lease, err := readReclaimLease(reclaimLeasePath(runDir))
+	if err != nil {
+		return false
+	}
+	return identityLive(lease.PID, lease.StartedAt)
+}
+
+func cleanDeadReclaimLeases(runDir string) int {
+	path := reclaimLeasePath(runDir)
+	lease, err := readReclaimLease(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			_ = os.Remove(path)
+			return 1
+		}
+		return 0
+	}
+	if !identityLive(lease.PID, lease.StartedAt) {
+		_ = os.Remove(path)
+		return 1
+	}
+	return 0
+}
+
+func readReclaimLease(path string) (*reclaimLease, error) {
+	data, err := os.ReadFile(path) // #nosec G304
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		PID       int    `json:"pid"`
+		StartedAt string `json:"started_at"`
+		Token     string `json:"token"`
+		OldToken  string `json:"old_token"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	if raw.PID < 1 || !validClaimToken(raw.Token) {
+		return nil, os.ErrNotExist
+	}
+	ts, err := time.Parse(time.RFC3339Nano, raw.StartedAt)
+	if err != nil {
+		ts, err = time.Parse(time.RFC3339, raw.StartedAt)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &reclaimLease{
+		PID:       raw.PID,
+		StartedAt: ts.UTC(),
+		Token:     raw.Token,
+		OldToken:  strings.TrimSpace(raw.OldToken),
+		Path:      path,
+	}, nil
+}
+
+// electReclaimLease creates the single per-slot claim.taking file exclusively with
+// the reclaimer's live identity. Fails with ErrCardExists if another live reclaimer
+// already holds the lease.
+func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time.Time) (*reclaimLease, error) {
+	if hasLiveReclaimLease(runDir) {
+		return nil, ErrCardExists
+	}
+	_ = cleanDeadReclaimLeases(runDir)
+	if hasLiveReclaimLease(runDir) {
+		return nil, ErrCardExists
+	}
+	path := reclaimLeasePath(runDir)
+	doc := map[string]interface{}{
+		"pid":        pid,
+		"started_at": startedAt.UTC().Format(time.RFC3339Nano),
+		"token":      myToken,
+		"old_token":  oldToken,
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, ErrCardSetup
+	}
+	raw = append(raw, '\n')
+	if err := writeFileExclusiveFull(path, raw); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			if hasLiveReclaimLease(runDir) {
+				return nil, ErrCardExists
+			}
+			// Dead lease raced in — clean and signal retry.
+			_ = cleanDeadReclaimLeases(runDir)
+			return nil, errClaimContention
+		}
+		return nil, ErrCardSetup
+	}
+	return &reclaimLease{
+		PID:       pid,
+		StartedAt: startedAt.UTC(),
+		Token:     myToken,
+		OldToken:  oldToken,
+		Path:      path,
+	}, nil
+}
+
+func releaseReclaimLease(lease *reclaimLease) {
+	if lease == nil || lease.Path == "" {
+		return
+	}
+	// Only remove if we still own this path (token match).
+	cur, err := readReclaimLease(lease.Path)
+	if err != nil || cur.Token != lease.Token {
+		return
+	}
+	_ = os.Remove(lease.Path)
+}
+
+// staleTakeover elects a reclaim lease (reclaimer identity), quarantines the proven-
+// stale claim, then installs a new exclusive claim.
 //
-// Restart safety: a same-inode quarantine already present for a dead claim is
-// treated as an orphan mid-takeover (proceed), not as permanent contention.
+// An active reclaimer's lease is fail-closed to other callers. A dead reclaimer's
+// lease is cleaned and residues are recovered. Losers never remove a live winner's
+// quarantine/lease.
 //
-// Returns ErrCardExists for proven live identity, errClaimContention for retryable
-// races, and ErrCardSetup for permanent filesystem/setup failures.
+// Returns ErrCardExists for proven live identity or live reclaimer lease,
+// errClaimContention for retryable races, and ErrCardSetup for permanent failures.
 func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken string, pid int, startedAt time.Time) (string, error) {
-	// If claim.json is missing, try restoring a dead quarantine before giving up.
+	// If claim.json is missing, try restoring a dead quarantine only when no live reclaimer.
 	if _, err := os.Lstat(claimPath); errors.Is(err, os.ErrNotExist) {
 		_ = recoverOrphanTakeoverState(runDir, claimPath)
 	}
 	if !validClaimToken(old.Token) {
-		// Owner may come from card fallback without a hex token; re-read claim after recovery.
 		if doc, err := readClaimFile(claimPath); err == nil && validClaimToken(doc.Token) {
 			old = doc
 		} else {
@@ -393,7 +529,6 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 		}
 		return "", ErrCardSetup
 	}
-	// Prefer on-disk claim token after recovery; old may be card-derived.
 	if validClaimToken(cur.Token) {
 		old = cur
 	} else if cur.Token != old.Token {
@@ -406,6 +541,29 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 		staleAfterObserve()
 	}
 
+	// Elect durable reclaimer ownership before mutating claim/quarantine.
+	lease, lerr := electReclaimLease(runDir, myToken, old.Token, pid, startedAt)
+	if lerr != nil {
+		// A live reclaim lease means another reclaimer is mid-takeover — retryable
+		// contention, not a permanent live process-run identity conflict. Only a
+		// live claim.json identity is fail-closed ErrCardExists.
+		if errors.Is(lerr, ErrCardExists) {
+			if cur2, cerr := readClaimFile(claimPath); cerr == nil && identityLive(cur2.PID, cur2.StartedAt) {
+				return "", ErrCardExists
+			}
+			return "", errClaimContention
+		}
+		return "", lerr
+	}
+	// Ensure lease is released on all failure paths; success path clears it too.
+	defer func() {
+		// Success path removes lease explicitly; defer is no-op if already gone.
+		releaseReclaimLease(lease)
+	}()
+	if staleAfterLease != nil {
+		staleAfterLease()
+	}
+
 	staleName := filepath.Join(runDir, "claim.stale."+old.Token)
 	alreadyQuarantined := false
 
@@ -415,26 +573,22 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 			if dest, derr := readClaimFile(staleName); derr == nil &&
 				dest.Token == old.Token &&
 				sameFile(info, destInfo) {
-				// Same object already linked: orphan crash after Link (boundary 1)
-				// or concurrent reclaimer mid-step. Proceed; exclusive claim install
-				// serializes winners. Do NOT treat as permanent contention.
+				// Same object already linked under our elected lease (restart after Link
+				// while we still hold claim.taking). Proceed with uninstall+install.
 				if !identityLive(dest.PID, dest.StartedAt) {
 					alreadyQuarantined = true
 				} else {
 					return "", ErrCardExists
 				}
 			} else {
-				// Unrelated or copy-residue regular file blocking the quarantine path.
 				return "", ErrCardSetup
 			}
 		} else {
-			// Directories, permission errors, or unsupported links are setup failures.
 			return "", ErrCardSetup
 		}
 	}
 
 	if !alreadyQuarantined {
-		// Verify we quarantined the intended object (token + still same file as claimPath).
 		q, qerr := readClaimFile(staleName)
 		if qerr != nil || q.Token != old.Token {
 			_ = os.Remove(staleName)
@@ -466,19 +620,17 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 	// Install our live claim exclusively at claim.json.
 	if err := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); err != nil {
 		if errors.Is(err, ErrCardExists) {
-			// Another process installed a claim — do not clobber it; leave quarantine.
 			return "", errClaimContention
 		}
-		// Setup failure after quarantine: restore claim.json from the quarantined
-		// object so the next invocation can still prove staleness (not poison into
-		// a permanent false live collision via crash-card fallback without claim).
+		// Setup failure: restore claim.json from quarantine for retryability.
 		restoreClaimFromQuarantine(claimPath, staleName)
 		return "", ErrCardSetup
 	}
 
-	// Proven-stale ownership only: clear slot-default residue + quarantine marker.
+	// Proven-stale ownership only: clear slot-default residue + quarantine + lease.
 	clearSlotOwnedResidue(runDir, cardPath)
 	_ = os.Remove(staleName)
+	releaseReclaimLease(lease)
 	return myToken, nil
 }
 
@@ -505,6 +657,7 @@ func restoreClaimFromQuarantine(claimPath, staleName string) {
 func clearSlotOwnedResidue(runDir, cardPath string) {
 	_ = os.Remove(cardPath)
 	_ = os.Remove(filepath.Join(runDir, EventsFileName))
+	_ = os.Remove(reclaimLeasePath(runDir))
 	if entries, rerr := os.ReadDir(runDir); rerr == nil {
 		for _, e := range entries {
 			name := e.Name()
