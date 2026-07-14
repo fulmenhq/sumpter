@@ -678,7 +678,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	// later sidecar failures (including the optional descriptor) should fail the run
 	// without overwriting a complete manifest.
 	manifestFinalized = true
-	if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+	if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 		return err
 	}
 	if err := maybeValidateExtractOutput(opts, manifest); err != nil {

@@ -83,6 +83,31 @@ Process-complete is also independent of artifact completeness: a process may
 finish (or cancel) while output lifecycle is incomplete. That composition is
 formalized when terminal events link to data-artifact descriptors.
 
+### Terminal → data-artifact bridge (opt-in)
+
+When both `--process-run` (or stream path) and `--artifact-descriptor` are
+enabled, the sole terminal event may carry `data.artifacts[]` after each
+referenced descriptor has been **successfully published**. Each entry uses the
+process-run/v0 `artifactRef` shape:
+
+| Field | Value |
+| --- | --- |
+| `artifact_id` | Exact `artifact_id` from the published descriptor (`urn:uuid:…`) |
+| `lifecycle` | Exact descriptor lifecycle (never re-derived from the process terminal) |
+| `descriptor` | Portable non-locator ref: `<artifact_id>#descriptor` |
+
+Rules:
+
+- Without `--artifact-descriptor`, `data.artifacts` is **omitted** (not `[]`).
+- A descriptor that fails to publish contributes no ref; publish failure remains
+  an extract failure (not fail-open telemetry).
+- Process terminal class (`completed` / `failed` / `canceled`) never rewrites
+  artifact lifecycle — a failed process may still list a `complete` artifact.
+- Refs are collected on the finalize/committer path only (single-writer); never
+  from worker goroutines.
+- The bridge is reference-only: no output paths, cloud URIs, recipe IDs/slugs,
+  or secret-bearing locators appear in the event stream.
+
 ## Provenance
 
 Process-run flags and paths are omitted from the sanitized provenance argv.

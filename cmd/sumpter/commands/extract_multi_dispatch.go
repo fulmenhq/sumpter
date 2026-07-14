@@ -327,7 +327,11 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 
 	states := make([]*recipeRunState, 0, len(plans))
 	for _, plan := range plans {
-		states = append(states, newRecipeRunState(plan, len(files), d.bundleMaxRecords, d.bundleMaxBytes))
+		st := newRecipeRunState(plan, len(files), d.bundleMaxRecords, d.bundleMaxBytes)
+		// Thread the single-writer emitter so finalize can register bridge refs
+		// immediately after descriptor Publish (committer path only).
+		st.processRun = d.processRun
+		states = append(states, st)
 	}
 	// On an early return (parse/recipe failure): for a cloud recipe that already
 	// published shards, record them in an incomplete (R8) manifest so the orphaned
@@ -917,6 +921,11 @@ type recipeRunState struct {
 	inputCount int  // resolved input count, for the aggregate zero-record shard range
 	finalized  bool // aggregate: this recipe's finalize committed + wrote its manifest
 
+	// processRun is the dispatcher's single-writer emitter (noop when telemetry
+	// is off). Finalize registers published data-artifact refs here; workers never
+	// touch it.
+	processRun processrun.Emitter
+
 	// bundleMaxRecords/bundleMaxBytes bound one input's in-flight aggregate bundle during
 	// construction (SUM-068 G4). Threaded from the dispatcher so they apply uniformly on the
 	// serial and worker build paths (an over-budget input fails identically at every worker
@@ -1022,7 +1031,7 @@ func (st *recipeRunState) finalize(startedAt time.Time) error {
 			return err
 		}
 		logger.Info("Provenance manifest written")
-		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if err := st.publishAndBridgeDataArtifact(manifest); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -1036,5 +1045,26 @@ func (st *recipeRunState) finalize(startedAt time.Time) error {
 	if opts.ContinueOnError && st.failures.Failed > 0 {
 		return recipePartialFailure(st.plan.RecipeID, st.failures.Applied, st.failures.Failed)
 	}
+	return nil
+}
+
+// publishAndBridgeDataArtifact writes the optional data-artifact descriptor and,
+// only after successful Publish, registers a process-run terminal bridge ref.
+// Descriptor publication failures remain extract failures (not fail-open telemetry).
+// A published descriptor that is followed by a later validation error still remains
+// on the terminal event list.
+func (st *recipeRunState) publishAndBridgeDataArtifact(manifest provenance.Manifest) error {
+	published, err := writeDataArtifactDescriptor(st.plan.opts, manifest)
+	if err != nil {
+		return err
+	}
+	if published == nil || st.processRun == nil {
+		return nil
+	}
+	st.processRun.ArtifactPublished(processrun.ArtifactRef{
+		ArtifactID: published.ArtifactID,
+		Lifecycle:  published.Lifecycle,
+		Descriptor: processrun.DescriptorRefFromArtifactID(published.ArtifactID),
+	})
 	return nil
 }
