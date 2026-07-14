@@ -268,6 +268,8 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 	staleAfterLease = nil
 	staleAfterQuarantine = nil
 	publishAfterTemp = nil
+	electAfterTemp = nil
+	cleanDeadAfterObserve = nil
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
 	runDir := RunDir(runtimeDir, runID)
@@ -621,6 +623,8 @@ func TestOpenCardStaleTakeoverABA(t *testing.T) {
 	staleAfterLease = nil
 	staleAfterQuarantine = nil
 	publishAfterTemp = nil
+	electAfterTemp = nil
+	cleanDeadAfterObserve = nil
 
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
@@ -723,6 +727,160 @@ func TestOpenCardActiveLeaseBlocksOrphanRecovery(t *testing.T) {
 	}
 	if _, err := os.Lstat(stalePath); err != nil {
 		t.Fatal("active reclaimer's quarantine marker must remain")
+	}
+}
+
+func TestElectReclaimLeaseAtomicPublication(t *testing.T) {
+	// Mid-publish barrier: complete temp exists before hard-link; final claim.taking
+	// is still absent. cleanDead must not remove mid-publish state; readers never
+	// observe a partial final lease object.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs hard-link + unix paths")
+	}
+	ClaimWriteHook = nil
+	electAfterTemp = nil
+	cleanDeadAfterObserve = nil
+
+	runDir := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
+	tokenA := "dddddddddddddddddddddddddddddddd"
+	oldToken := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+	prev := electAfterTemp
+	t.Cleanup(func() { electAfterTemp = prev })
+	var midPublishOK atomic.Bool
+	electAfterTemp = func(tmpPath, finalPath string) {
+		if _, err := os.Lstat(finalPath); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("final claim.taking must be absent mid-publish, err=%v", err)
+			return
+		}
+		lease, err := readReclaimLease(tmpPath)
+		if err != nil || lease.Token != tokenA {
+			t.Errorf("temp lease incomplete mid-publish: err=%v", err)
+			return
+		}
+		// Peer cleanup sees no complete final and must leave the temp alone.
+		if n := cleanDeadReclaimLeases(runDir); n != 0 {
+			t.Errorf("cleanDead must not remove mid-publish state, n=%d", n)
+			return
+		}
+		if _, err := os.Lstat(tmpPath); err != nil {
+			t.Errorf("mid-publish temp deleted: %v", err)
+			return
+		}
+		if hasLiveReclaimLease(runDir) {
+			t.Error("hasLiveReclaimLease true while final path still absent")
+			return
+		}
+		midPublishOK.Store(true)
+	}
+
+	lease, err := electReclaimLease(runDir, tokenA, oldToken, pid, started)
+	if err != nil {
+		t.Fatalf("elect: %v", err)
+	}
+	defer releaseReclaimLease(lease)
+	if !midPublishOK.Load() {
+		t.Fatal("mid-publish barrier did not run successfully")
+	}
+	got, err := readReclaimLease(lease.Path)
+	if err != nil {
+		t.Fatalf("final lease unreadable: %v", err)
+	}
+	if got.Token != tokenA {
+		t.Fatalf("final token = %q, want %q", got.Token, tokenA)
+	}
+	// Temp name cleaned after successful Link.
+	tmp := filepath.Join(runDir, "claim.taking."+tokenA+".tmp")
+	if _, err := os.Lstat(tmp); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temp must be removed after publish, err=%v", err)
+	}
+}
+
+func TestCleanDeadReclaimLeaseObjectBoundABA(t *testing.T) {
+	// Pathname ABA: cleaner observes a complete dead lease; before object-bound
+	// unlink, a different complete live election replaces the same claim.taking
+	// pathname (new inode). Cleaner must not delete the live election.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs hard-link + unix liveness")
+	}
+	ClaimWriteHook = nil
+	electAfterTemp = nil
+	cleanDeadAfterObserve = nil
+
+	runDir := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	deadToken := "11111111111111111111111111111111"
+	path := reclaimLeasePath(runDir)
+	deadDoc := map[string]interface{}{
+		"pid":        deadPID,
+		"started_at": time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		"token":      deadToken,
+		"old_token":  "00000000000000000000000000000000",
+	}
+	raw, err := json.Marshal(deadDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw, '\n')
+	if err := writeFileExclusiveFull(path, raw); err != nil {
+		t.Fatal(err)
+	}
+
+	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
+	liveToken := "22222222222222222222222222222222"
+	liveDoc := map[string]interface{}{
+		"pid":        pid,
+		"started_at": started.UTC().Format(time.RFC3339Nano),
+		"token":      liveToken,
+		"old_token":  "33333333333333333333333333333333",
+	}
+	liveRaw, err := json.Marshal(liveDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveRaw = append(liveRaw, '\n')
+
+	prev := cleanDeadAfterObserve
+	t.Cleanup(func() { cleanDeadAfterObserve = prev })
+	cleanDeadAfterObserve = func(p string, lease *reclaimLease, info os.FileInfo) {
+		if lease == nil || lease.Token != deadToken {
+			t.Errorf("observed unexpected lease: %+v", lease)
+		}
+		_ = info
+		// Replace pathname with a new complete live object (different inode).
+		if err := os.Remove(p); err != nil {
+			t.Errorf("remove dead for ABA plant: %v", err)
+			return
+		}
+		if err := writeFileExclusiveFull(p, liveRaw); err != nil {
+			t.Errorf("plant live lease: %v", err)
+		}
+	}
+
+	n := cleanDeadReclaimLeases(runDir)
+	if n != 0 {
+		t.Fatalf("cleanDead must not report success after live replacement, n=%d", n)
+	}
+	got, err := readReclaimLease(path)
+	if err != nil {
+		t.Fatalf("live lease missing after ABA clean: %v", err)
+	}
+	if got.Token != liveToken {
+		t.Fatalf("live lease clobbered: token=%q want %q", got.Token, liveToken)
+	}
+	if !identityLive(got.PID, got.StartedAt) {
+		t.Fatal("remaining lease must still be live identity")
+	}
+	// Trash probe names must not linger.
+	if _, err := os.Lstat(path + ".dead." + deadToken); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dead trash residue left behind: %v", err)
 	}
 }
 

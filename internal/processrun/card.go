@@ -299,6 +299,12 @@ var (
 	staleAfterQuarantine func()
 	// publishAfterTemp runs after the complete card temp is written, before link into final path.
 	publishAfterTemp func(tmpPath, finalPath string)
+	// electAfterTemp runs after a complete lease temp is written, before hard-link into claim.taking.
+	// Final claim.taking must still be absent (atomic publication).
+	electAfterTemp func(tmpPath, finalPath string)
+	// cleanDeadAfterObserve runs after observing a complete dead lease (token+inode),
+	// before object-bound unlink — used to interleave replacement with live election.
+	cleanDeadAfterObserve func(path string, lease *reclaimLease, info os.FileInfo)
 )
 
 // reclaimLeaseFile is a single per-slot election file (not per-token) so only one
@@ -316,7 +322,7 @@ type reclaimLease struct {
 }
 
 // recoverOrphanTakeoverState repairs durable mid-takeover crash residues only when
-// no live reclaimer lease is present. An active reclaimer's claim.taking.<token>
+// no live reclaimer lease is present. An active reclaimer's claim.taking
 // (with live pid,started_at) blocks recovery so B cannot remove/adopt A's marker.
 //
 // Boundary 1: dual-name same dead inode + dead/no lease → drop quarantine name.
@@ -380,28 +386,108 @@ func reclaimLeasePath(runDir string) string {
 }
 
 func hasLiveReclaimLease(runDir string) bool {
-	lease, err := readReclaimLease(reclaimLeasePath(runDir))
+	path := reclaimLeasePath(runDir)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return false
+	}
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	lease, err := readReclaimLease(path)
+	if err != nil {
+		// Incomplete/partial/malformed final path: treat as active contention
+		// (may still be publishing). Never report "not live" in a way that
+		// authorizes deletion — that is handled separately in cleanDead.
+		return true
 	}
 	return identityLive(lease.PID, lease.StartedAt)
 }
 
+// cleanDeadReclaimLeases removes a complete, proven-dead lease object only.
+// Incomplete/partial/malformed claim.taking is never deleted (may be mid-publish).
+// Removal is token+inode bound so a cleaner cannot unlink a later live election
+// at the same pathname (pathname ABA).
 func cleanDeadReclaimLeases(runDir string) int {
 	path := reclaimLeasePath(runDir)
-	lease, err := readReclaimLease(path)
+	info, err := os.Lstat(path)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			_ = os.Remove(path)
-			return 1
-		}
 		return 0
 	}
-	if !identityLive(lease.PID, lease.StartedAt) {
-		_ = os.Remove(path)
+	if !info.Mode().IsRegular() {
+		return 0
+	}
+	lease, err := readReclaimLease(path)
+	if err != nil {
+		// Incomplete or corrupt — do NOT delete (active publisher may still hold the inode).
+		return 0
+	}
+	if identityLive(lease.PID, lease.StartedAt) {
+		return 0
+	}
+	if cleanDeadAfterObserve != nil {
+		cleanDeadAfterObserve(path, lease, info)
+	}
+	if removeReclaimLeaseObject(path, lease, info) {
 		return 1
 	}
 	return 0
+}
+
+// removeReclaimLeaseObject unlinks claim.taking only when it still names the exact
+// proven-dead lease object previously observed (matching token + inode). Uses a
+// hard-link probe so a pathname ABA cannot delete a later live election.
+func removeReclaimLeaseObject(path string, observed *reclaimLease, observedInfo os.FileInfo) bool {
+	return removeReclaimLeaseObjectMode(path, observed, observedInfo, false)
+}
+
+// removeReclaimLeaseObjectMode unlinks the observed lease object by token+inode.
+// When allowLive is false (cleaners), a live identity aborts. When true (owner
+// release), the holder may drop their own still-live lease without allowing a
+// different live election at the same pathname to be unlinked.
+func removeReclaimLeaseObjectMode(path string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
+	if observed == nil || !validClaimToken(observed.Token) {
+		return false
+	}
+	// Probe: hard-link current path content to a unique trash name (no-replace).
+	// If path now names a different object, trash reflects that object and we abort.
+	trash := path + ".dead." + observed.Token
+	_ = os.Remove(trash) // best-effort clear leftover from a prior crashed cleaner
+	if err := os.Link(path, trash); err != nil {
+		return false
+	}
+	trashInfo, err := os.Lstat(trash)
+	if err != nil {
+		return false
+	}
+	// Must still be the observed object (same inode when known).
+	if observedInfo != nil && !sameFile(trashInfo, observedInfo) {
+		_ = os.Remove(trash)
+		return false
+	}
+	cur, err := readReclaimLease(trash)
+	if err != nil || cur.Token != observed.Token {
+		_ = os.Remove(trash)
+		return false
+	}
+	if !allowLive && identityLive(cur.PID, cur.StartedAt) {
+		_ = os.Remove(trash)
+		return false
+	}
+	// Unlink the final name only if it still points at the same inode as trash.
+	// Pathname ABA (new election at the same name) must not report success.
+	removed := false
+	pathInfo, err := os.Lstat(path)
+	if err == nil && sameFile(pathInfo, trashInfo) {
+		if rerr := os.Remove(path); rerr == nil {
+			removed = true
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		// Observed object no longer at final name; trash cleanup is enough.
+		removed = true
+	}
+	_ = os.Remove(trash)
+	return removed
 }
 
 func readReclaimLease(path string) (*reclaimLease, error) {
@@ -419,7 +505,7 @@ func readReclaimLease(path string) (*reclaimLease, error) {
 		return nil, err
 	}
 	if raw.PID < 1 || !validClaimToken(raw.Token) {
-		return nil, os.ErrNotExist
+		return nil, errors.New("invalid reclaim lease")
 	}
 	ts, err := time.Parse(time.RFC3339Nano, raw.StartedAt)
 	if err != nil {
@@ -437,10 +523,13 @@ func readReclaimLease(path string) (*reclaimLease, error) {
 	}, nil
 }
 
-// electReclaimLease creates the single per-slot claim.taking file exclusively with
-// the reclaimer's live identity. Fails with ErrCardExists if another live reclaimer
-// already holds the lease.
+// electReclaimLease publishes a complete claim.taking via temp+fsync+hard-link
+// no-replace so the final pathname never appears partial. Fails with ErrCardExists
+// if another live reclaimer already holds a complete lease.
 func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time.Time) (*reclaimLease, error) {
+	if !validClaimToken(myToken) {
+		return nil, ErrCardSetup
+	}
 	if hasLiveReclaimLease(runDir) {
 		return nil, ErrCardExists
 	}
@@ -448,7 +537,29 @@ func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time
 	if hasLiveReclaimLease(runDir) {
 		return nil, ErrCardExists
 	}
+
 	path := reclaimLeasePath(runDir)
+	// Final path present but incomplete/malformed: active publisher or corrupt —
+	// do not delete; treat as contention.
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return nil, ErrCardSetup
+		}
+		lease, rerr := readReclaimLease(path)
+		if rerr != nil {
+			return nil, errClaimContention
+		}
+		if identityLive(lease.PID, lease.StartedAt) {
+			return nil, ErrCardExists
+		}
+		// Complete dead lease left behind — object-bound clean, then continue.
+		if !removeReclaimLeaseObject(path, lease, info) {
+			return nil, errClaimContention
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, ErrCardSetup
+	}
+
 	doc := map[string]interface{}{
 		"pid":        pid,
 		"started_at": startedAt.UTC().Format(time.RFC3339Nano),
@@ -460,15 +571,33 @@ func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time
 		return nil, ErrCardSetup
 	}
 	raw = append(raw, '\n')
-	if err := writeFileExclusiveFull(path, raw); err != nil {
+
+	// Atomic publication: complete temp first, then hard-link into claim.taking
+	// (final path appears only when fully written/fsynced).
+	tmp := filepath.Join(runDir, "claim.taking."+myToken+".tmp")
+	_ = os.Remove(tmp)
+	if err := writeFileExclusiveFull(tmp, raw); err != nil {
+		return nil, ErrCardSetup
+	}
+	if electAfterTemp != nil {
+		electAfterTemp(tmp, path)
+	}
+	if err := os.Link(tmp, path); err != nil {
+		_ = os.Remove(tmp)
 		if errors.Is(err, os.ErrExist) {
 			if hasLiveReclaimLease(runDir) {
 				return nil, ErrCardExists
 			}
-			// Dead lease raced in — clean and signal retry.
-			_ = cleanDeadReclaimLeases(runDir)
 			return nil, errClaimContention
 		}
+		return nil, ErrCardSetup
+	}
+	_ = os.Remove(tmp)
+	_ = os.Chmod(path, 0o600)
+
+	// Confirm the published object is ours.
+	got, err := readReclaimLease(path)
+	if err != nil || got.Token != myToken {
 		return nil, ErrCardSetup
 	}
 	return &reclaimLease{
@@ -481,15 +610,19 @@ func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time
 }
 
 func releaseReclaimLease(lease *reclaimLease) {
-	if lease == nil || lease.Path == "" {
+	if lease == nil || lease.Path == "" || !validClaimToken(lease.Token) {
 		return
 	}
-	// Only remove if we still own this path (token match).
+	info, err := os.Lstat(lease.Path)
+	if err != nil {
+		return
+	}
 	cur, err := readReclaimLease(lease.Path)
 	if err != nil || cur.Token != lease.Token {
 		return
 	}
-	_ = os.Remove(lease.Path)
+	// Owner release: token+inode bound, allowed while still live (unlike cleaners).
+	_ = removeReclaimLeaseObjectMode(lease.Path, cur, info, true)
 }
 
 // staleTakeover elects a reclaim lease (reclaimer identity), quarantines the proven-
