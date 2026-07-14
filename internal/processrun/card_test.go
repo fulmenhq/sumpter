@@ -3,7 +3,6 @@ package processrun
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -269,10 +268,6 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 	staleAfterQuarantine = nil
 	publishAfterTemp = nil
 	electAfterTemp = nil
-	cleanDeadAfterObserve = nil
-	removeAfterSameInodeCheck = nil
-	cleanLockAfterTemp = nil
-	cleanLockReapBeforeUnlink = nil
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
 	runDir := RunDir(runtimeDir, runID)
@@ -627,8 +622,6 @@ func TestOpenCardStaleTakeoverABA(t *testing.T) {
 	staleAfterQuarantine = nil
 	publishAfterTemp = nil
 	electAfterTemp = nil
-	cleanDeadAfterObserve = nil
-	removeAfterSameInodeCheck = nil
 
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
@@ -666,12 +659,8 @@ func TestOpenCardStaleTakeoverABA(t *testing.T) {
 	var bErr error
 	go func() {
 		<-aAtLease
-		// B must not adopt while A holds a live reclaim lease.
+		// B must not adopt while A holds reclaim.lock (kernel advisory lock).
 		_, bErr = staleTakeover(runDir, claimPath, cardPath, old, tokenB, pid, started)
-		// Prove B did not remove A's lease.
-		if !hasLiveReclaimLease(runDir) {
-			bErr = fmt.Errorf("B removed active reclaim lease: %w", bErr)
-		}
 		close(bFinished)
 	}()
 
@@ -683,11 +672,10 @@ func TestOpenCardStaleTakeoverABA(t *testing.T) {
 		t.Fatalf("A token = %q", gotA)
 	}
 	if bErr == nil {
-		t.Fatal("B must not succeed while A holds live reclaim lease")
+		t.Fatal("B must not succeed while A holds reclaim.lock")
 	}
-	if !errors.Is(bErr, ErrCardExists) && !errors.Is(bErr, errClaimContention) {
-		// Accept setup only if lease still protected A
-		t.Logf("B err = %v (want live-lease rejection)", bErr)
+	if !errors.Is(bErr, errClaimContention) && !errors.Is(bErr, ErrCardExists) {
+		t.Logf("B err = %v (want reclaim lock contention)", bErr)
 	}
 	cur, err := readClaimFile(claimPath)
 	if err != nil {
@@ -699,9 +687,10 @@ func TestOpenCardStaleTakeoverABA(t *testing.T) {
 }
 
 func TestOpenCardActiveLeaseBlocksOrphanRecovery(t *testing.T) {
-	// Seed dual-name + live reclaim lease: recovery must not strip quarantine.
+	// While reclaim.lock is held (active takeover), a concurrent contender
+	// cannot acquire the lock / strip quarantine residue.
 	if runtime.GOOS == "windows" {
-		t.Skip("needs unix liveness")
+		t.Skip("needs unix flock + liveness")
 	}
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runDir := RunDir(runtimeDir, "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c")
@@ -718,19 +707,21 @@ func TestOpenCardActiveLeaseBlocksOrphanRecovery(t *testing.T) {
 	if err := os.Link(claimPath, stalePath); err != nil {
 		t.Fatal(err)
 	}
-	// Live reclaim lease (this process).
-	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
-	lease, err := electReclaimLease(runDir, "cccccccccccccccccccccccccccccccc", oldToken, pid, started)
+	rl, err := tryAcquireReclaimLock(runDir)
 	if err != nil {
-		t.Fatalf("elect: %v", err)
+		t.Fatalf("acquire reclaim.lock: %v", err)
 	}
-	defer releaseReclaimLease(lease)
+	defer rl.Release()
 
-	if recoverOrphanTakeoverState(runDir, claimPath) {
-		t.Fatal("must not recover while live reclaim lease is held")
+	// Second handle must be busy while first holds the kernel lock.
+	if _, err2 := tryAcquireReclaimLock(runDir); !errors.Is(err2, errReclaimLockBusy) {
+		t.Fatalf("second acquire err=%v, want busy", err2)
 	}
+	// Recovery under lock is the production path; dual-name dead residue may
+	// be repaired by the lock holder — quarantine-only strip by a peer cannot
+	// race because peers cannot enter without the lock.
 	if _, err := os.Lstat(stalePath); err != nil {
-		t.Fatal("active reclaimer's quarantine marker must remain")
+		t.Fatal("quarantine marker must remain while holder decides")
 	}
 }
 
@@ -743,8 +734,6 @@ func TestElectReclaimLeaseAtomicPublication(t *testing.T) {
 	}
 	ClaimWriteHook = nil
 	electAfterTemp = nil
-	cleanDeadAfterObserve = nil
-	removeAfterSameInodeCheck = nil
 
 	runDir := filepath.Join(t.TempDir(), "run")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
@@ -776,8 +765,8 @@ func TestElectReclaimLeaseAtomicPublication(t *testing.T) {
 			t.Errorf("mid-publish temp deleted: %v", err)
 			return
 		}
-		if hasLiveReclaimLease(runDir) {
-			t.Error("hasLiveReclaimLease true while final path still absent")
+		if _, err := os.Lstat(finalPath); !errors.Is(err, os.ErrNotExist) {
+			t.Error("final claim.taking must still be absent mid-publish")
 			return
 		}
 		midPublishOK.Store(true)
@@ -802,531 +791,6 @@ func TestElectReclaimLeaseAtomicPublication(t *testing.T) {
 	tmp := filepath.Join(runDir, "claim.taking."+tokenA+".tmp")
 	if _, err := os.Lstat(tmp); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("temp must be removed after publish, err=%v", err)
-	}
-}
-
-func TestCleanDeadReclaimLeaseObjectBoundABA(t *testing.T) {
-	// Pathname ABA (early): cleaner observes a complete dead lease; before the
-	// exclusive probe, a different complete live election replaces claim.taking.
-	// Cleaner must not delete the live election.
-	if runtime.GOOS == "windows" {
-		t.Skip("needs hard-link + unix liveness")
-	}
-	ClaimWriteHook = nil
-	electAfterTemp = nil
-	cleanDeadAfterObserve = nil
-	removeAfterSameInodeCheck = nil
-
-	runDir := filepath.Join(t.TempDir(), "run")
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	deadPID := findDeadPID(t)
-	deadToken := "11111111111111111111111111111111"
-	path := reclaimLeasePath(runDir)
-	deadDoc := map[string]interface{}{
-		"pid":        deadPID,
-		"started_at": time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		"token":      deadToken,
-		"old_token":  "00000000000000000000000000000000",
-	}
-	raw, err := json.Marshal(deadDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw = append(raw, '\n')
-	if err := writeFileExclusiveFull(path, raw); err != nil {
-		t.Fatal(err)
-	}
-
-	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
-	liveToken := "22222222222222222222222222222222"
-	liveDoc := map[string]interface{}{
-		"pid":        pid,
-		"started_at": started.UTC().Format(time.RFC3339Nano),
-		"token":      liveToken,
-		"old_token":  "33333333333333333333333333333333",
-	}
-	liveRaw, err := json.Marshal(liveDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	liveRaw = append(liveRaw, '\n')
-
-	prev := cleanDeadAfterObserve
-	t.Cleanup(func() { cleanDeadAfterObserve = prev })
-	cleanDeadAfterObserve = func(p string, lease *reclaimLease, info os.FileInfo) {
-		if lease == nil || lease.Token != deadToken {
-			t.Errorf("observed unexpected lease: %+v", lease)
-		}
-		_ = info
-		// Replace pathname with a new complete live object (different inode).
-		if err := os.Remove(p); err != nil {
-			t.Errorf("remove dead for ABA plant: %v", err)
-			return
-		}
-		if err := writeFileExclusiveFull(p, liveRaw); err != nil {
-			t.Errorf("plant live lease: %v", err)
-		}
-	}
-
-	n := cleanDeadReclaimLeases(runDir)
-	if n != 0 {
-		t.Fatalf("cleanDead must not report success after live replacement, n=%d", n)
-	}
-	got, err := readReclaimLease(path)
-	if err != nil {
-		t.Fatalf("live lease missing after ABA clean: %v", err)
-	}
-	if got.Token != liveToken {
-		t.Fatalf("live lease clobbered: token=%q want %q", got.Token, liveToken)
-	}
-	if !identityLive(got.PID, got.StartedAt) {
-		t.Fatal("remaining lease must still be live identity")
-	}
-	// Trash probe names must not linger.
-	if _, err := os.Lstat(path + ".dead." + deadToken); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dead trash residue left behind: %v", err)
-	}
-}
-
-func TestCleanDeadReclaimLeaseLateUnlinkABA(t *testing.T) {
-	// Late check-to-unlink ABA: cleaner has exclusive probe + same-inode
-	// authorization, then a live lease replaces claim.taking before Remove.
-	// Re-bind before unlink must preserve the live election. Also proves a
-	// second cleaner cannot steal the exclusive probe by unlinking it first.
-	if runtime.GOOS == "windows" {
-		t.Skip("needs hard-link + unix liveness")
-	}
-	ClaimWriteHook = nil
-	electAfterTemp = nil
-	cleanDeadAfterObserve = nil
-	removeAfterSameInodeCheck = nil
-
-	runDir := filepath.Join(t.TempDir(), "run")
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	deadPID := findDeadPID(t)
-	deadToken := "44444444444444444444444444444444"
-	path := reclaimLeasePath(runDir)
-	deadDoc := map[string]interface{}{
-		"pid":        deadPID,
-		"started_at": time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		"token":      deadToken,
-		"old_token":  "00000000000000000000000000000000",
-	}
-	raw, err := json.Marshal(deadDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw = append(raw, '\n')
-	if err := writeFileExclusiveFull(path, raw); err != nil {
-		t.Fatal(err)
-	}
-
-	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
-	liveToken := "55555555555555555555555555555555"
-	liveDoc := map[string]interface{}{
-		"pid":        pid,
-		"started_at": started.UTC().Format(time.RFC3339Nano),
-		"token":      liveToken,
-		"old_token":  "66666666666666666666666666666666",
-	}
-	liveRaw, err := json.Marshal(liveDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	liveRaw = append(liveRaw, '\n')
-
-	prev := removeAfterSameInodeCheck
-	t.Cleanup(func() { removeAfterSameInodeCheck = prev })
-	var barrierHit atomic.Bool
-	removeAfterSameInodeCheck = func(p, trash string, observed *reclaimLease, trashInfo os.FileInfo) {
-		if observed == nil || observed.Token != deadToken {
-			t.Errorf("authorized unexpected lease: %+v", observed)
-		}
-		_ = trashInfo
-		// Probe must still pin the dead object (exclusive; not stolen).
-		if _, err := os.Lstat(trash); err != nil {
-			t.Errorf("exclusive probe missing mid-cleanup: %v", err)
-			return
-		}
-		// Second cleaner must not steal the probe by unlinking it then re-linking.
-		// Exclusive hard-link no-replace yields EEXIST while the first probe is held.
-		if err := os.Link(p, trash); err == nil {
-			t.Error("second cleaner must not recreate exclusive probe")
-			return
-		} else if !errors.Is(err, os.ErrExist) {
-			t.Errorf("second cleaner Link: %v, want ErrExist", err)
-			return
-		}
-		// Prior bug: os.Remove(trash) then Link would steal the pin. Ensure that
-		// sequence is not how production cleanup works — probe still present.
-		if _, err := os.Lstat(trash); err != nil {
-			t.Errorf("exclusive probe vanished: %v", err)
-			return
-		}
-		// Plant live replacement at the final pathname (late ABA window).
-		if err := os.Remove(p); err != nil {
-			t.Errorf("remove dead for late ABA plant: %v", err)
-			return
-		}
-		if err := writeFileExclusiveFull(p, liveRaw); err != nil {
-			t.Errorf("plant live lease: %v", err)
-			return
-		}
-		barrierHit.Store(true)
-	}
-
-	n := cleanDeadReclaimLeases(runDir)
-	if !barrierHit.Load() {
-		t.Fatal("late unlink barrier did not run")
-	}
-	// Success is allowed only for clearing the dead object name; live must remain.
-	got, err := readReclaimLease(path)
-	if err != nil {
-		t.Fatalf("live lease missing after late ABA clean: %v", err)
-	}
-	if got.Token != liveToken {
-		t.Fatalf("live lease clobbered: token=%q want %q", got.Token, liveToken)
-	}
-	if !identityLive(got.PID, got.StartedAt) {
-		t.Fatal("remaining lease must still be live identity")
-	}
-	if n != 0 {
-		// Path still holds live replacement — cleaner must not report pathname success.
-		t.Fatalf("cleanDead must not report pathname success after live replacement, n=%d", n)
-	}
-	if _, err := os.Lstat(path + ".dead." + deadToken); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dead trash residue left behind: %v", err)
-	}
-	if _, err := os.Lstat(path + ".clean." + deadToken); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("clean lock residue left behind: %v", err)
-	}
-}
-
-func TestCleanDeadReclaimTwoCleanerCollision(t *testing.T) {
-	// Production two-cleaner schedule: cleaner X holds the exclusive clean lock
-	// and is past same-inode authorization; cleaner Y invokes production
-	// cleanDead/remove and must not join the unlink path. After X unlinks the
-	// dead object and a live contender publishes N, Y must not delete N.
-	if runtime.GOOS == "windows" {
-		t.Skip("needs hard-link + unix liveness")
-	}
-	ClaimWriteHook = nil
-	electAfterTemp = nil
-	cleanDeadAfterObserve = nil
-	removeAfterSameInodeCheck = nil
-
-	runDir := filepath.Join(t.TempDir(), "run")
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	deadPID := findDeadPID(t)
-	deadToken := "77777777777777777777777777777777"
-	path := reclaimLeasePath(runDir)
-	deadDoc := map[string]interface{}{
-		"pid":        deadPID,
-		"started_at": time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		"token":      deadToken,
-		"old_token":  "00000000000000000000000000000000",
-	}
-	raw, err := json.Marshal(deadDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw = append(raw, '\n')
-	if err := writeFileExclusiveFull(path, raw); err != nil {
-		t.Fatal(err)
-	}
-
-	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
-	liveToken := "88888888888888888888888888888888"
-	liveDoc := map[string]interface{}{
-		"pid":        pid,
-		"started_at": started.UTC().Format(time.RFC3339Nano),
-		"token":      liveToken,
-		"old_token":  "99999999999999999999999999999999",
-	}
-	liveRaw, err := json.Marshal(liveDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	liveRaw = append(liveRaw, '\n')
-
-	xAtAuthorize := make(chan struct{})
-	yFinished := make(chan struct{})
-	var yRemoved atomic.Int32
-	var yOK atomic.Bool
-
-	prev := removeAfterSameInodeCheck
-	t.Cleanup(func() { removeAfterSameInodeCheck = prev })
-	removeAfterSameInodeCheck = func(p, trash string, observed *reclaimLease, trashInfo os.FileInfo) {
-		if observed == nil || observed.Token != deadToken {
-			t.Errorf("authorized unexpected lease: %+v", observed)
-		}
-		_ = trash
-		_ = trashInfo
-		close(xAtAuthorize)
-		<-yFinished
-		// Winner unlinks dead O; live contender publishes N before loser would resume.
-		if err := os.Remove(p); err != nil {
-			t.Errorf("winner remove dead: %v", err)
-			return
-		}
-		if err := writeFileExclusiveFull(p, liveRaw); err != nil {
-			t.Errorf("publish live after winner unlink: %v", err)
-		}
-	}
-
-	go func() {
-		<-xAtAuthorize
-		// Production cleanup path (not a raw Link). Must not join X's unlink.
-		yRemoved.Store(int32(cleanDeadReclaimLeases(runDir)))
-		// Also exercise object remove directly against the observed dead object.
-		if info, err := os.Lstat(path); err == nil {
-			if lease, rerr := readReclaimLease(path); rerr == nil && lease.Token == deadToken {
-				if removeReclaimLeaseObject(path, lease, info) {
-					yOK.Store(true) // true means Y incorrectly completed removal
-				}
-			}
-		}
-		// Y may see live N already; remove of live must fail.
-		if info, err := os.Lstat(path); err == nil {
-			if lease, rerr := readReclaimLease(path); rerr == nil {
-				if removeReclaimLeaseObject(path, lease, info) {
-					yOK.Store(true)
-				}
-			}
-		}
-		close(yFinished)
-	}()
-
-	n := cleanDeadReclaimLeases(runDir)
-	if yRemoved.Load() != 0 {
-		t.Fatalf("loser cleanDead must not report removal while winner holds clean lock, n=%d", yRemoved.Load())
-	}
-	if yOK.Load() {
-		t.Fatal("loser must not complete object remove against winner's pin or live replacement")
-	}
-	got, err := readReclaimLease(path)
-	if err != nil {
-		t.Fatalf("live lease missing after two-cleaner collision: %v", err)
-	}
-	if got.Token != liveToken {
-		t.Fatalf("live lease clobbered: token=%q want %q", got.Token, liveToken)
-	}
-	if !identityLive(got.PID, got.StartedAt) {
-		t.Fatal("remaining lease must still be live identity")
-	}
-	// Winner planted live before its Remove; re-bind should leave N (n==0).
-	if n != 0 {
-		t.Fatalf("winner must not report pathname success after live replacement, n=%d", n)
-	}
-	if _, err := os.Lstat(path + ".dead." + deadToken); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dead probe residue: %v", err)
-	}
-	if _, err := os.Lstat(path + ".clean." + deadToken); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("clean lock residue: %v", err)
-	}
-}
-
-func TestCleanDeadReclaimAbandonedCleanLockRecovers(t *testing.T) {
-	// Crash residue: dead clean lock + dual-name dead lease probe. A later
-	// cleaner must reap the abandoned (dead-identity) lock and finish cleanup.
-	if runtime.GOOS == "windows" {
-		t.Skip("needs hard-link + unix liveness")
-	}
-	ClaimWriteHook = nil
-	removeAfterSameInodeCheck = nil
-
-	runDir := filepath.Join(t.TempDir(), "run")
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	deadPID := findDeadPID(t)
-	deadToken := "abababababababababababababababab"
-	path := reclaimLeasePath(runDir)
-	deadDoc := map[string]interface{}{
-		"pid":        deadPID,
-		"started_at": time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		"token":      deadToken,
-		"old_token":  "00000000000000000000000000000000",
-	}
-	raw, err := json.Marshal(deadDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw = append(raw, '\n')
-	if err := writeFileExclusiveFull(path, raw); err != nil {
-		t.Fatal(err)
-	}
-	// Abandoned cleaner: probe dual-name + dead clean lock.
-	trash := path + ".dead." + deadToken
-	if err := os.Link(path, trash); err != nil {
-		t.Fatal(err)
-	}
-	lockPath := path + ".clean." + deadToken
-	lockDoc := map[string]interface{}{
-		"pid":        deadPID,
-		"started_at": time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-	}
-	lockRaw, err := json.Marshal(lockDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lockRaw = append(lockRaw, '\n')
-	if err := writeFileExclusiveFull(lockPath, lockRaw); err != nil {
-		t.Fatal(err)
-	}
-
-	n := cleanDeadReclaimLeases(runDir)
-	if n != 1 {
-		t.Fatalf("abandoned clean lock must allow cleanup, n=%d", n)
-	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dead claim.taking should be gone, err=%v", err)
-	}
-	if _, err := os.Lstat(trash); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dead probe should be gone, err=%v", err)
-	}
-	if _, err := os.Lstat(lockPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("clean lock should be released, err=%v", err)
-	}
-	if _, err := os.Lstat(lockPath + ".reaping"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("reaping marker should be released, err=%v", err)
-	}
-}
-
-func TestCleanLockAtomicPublication(t *testing.T) {
-	// Mid-publish barrier: complete temp exists; final clean lock absent until Link.
-	// Peer must not treat a partial final as permanent poison (final never partial).
-	if runtime.GOOS == "windows" {
-		t.Skip("needs hard-link")
-	}
-	cleanLockAfterTemp = nil
-	cleanLockReapBeforeUnlink = nil
-
-	runDir := filepath.Join(t.TempDir(), "run")
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	lockPath := filepath.Join(runDir, "claim.taking.clean.acacacacacacacacacacacacacacacac")
-
-	prev := cleanLockAfterTemp
-	t.Cleanup(func() { cleanLockAfterTemp = prev })
-	var midOK atomic.Bool
-	cleanLockAfterTemp = func(tmpPath, finalPath string) {
-		if _, err := os.Lstat(finalPath); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("final clean lock must be absent mid-publish, err=%v", err)
-			return
-		}
-		if _, _, err := readReclaimCleanLock(tmpPath); err != nil {
-			t.Errorf("temp clean lock incomplete: %v", err)
-			return
-		}
-		// Peer acquire while final absent must not see permanent contention from partial final.
-		// (May win the race by Linking first — that's fine; final still never partial.)
-		midOK.Store(true)
-	}
-
-	lock, ok := acquireReclaimCleanLock(lockPath)
-	if !ok {
-		// Peer could have won if we extended the barrier; for single-threaded barrier, must win.
-		t.Fatal("acquire must succeed")
-	}
-	defer releaseReclaimCleanLock(lock)
-	if !midOK.Load() {
-		t.Fatal("mid-publish barrier did not run")
-	}
-	got, _, err := readReclaimCleanLock(lockPath)
-	if err != nil {
-		t.Fatalf("final lock unreadable: %v", err)
-	}
-	if !identityLive(got.PID, got.StartedAt) {
-		t.Fatal("published clean lock must be live identity")
-	}
-}
-
-func TestCleanLockTwoReaperCannotDeleteReplacement(t *testing.T) {
-	// Dead-lock reaping single-winner: X holds exclusive .reaping marker past
-	// re-validation; Y's production acquire cannot join Remove. After X unlinks
-	// dead D and publishes live N, Y must not have deleted N or acquired concurrently.
-	if runtime.GOOS == "windows" {
-		t.Skip("needs hard-link + unix liveness")
-	}
-	cleanLockAfterTemp = nil
-	cleanLockReapBeforeUnlink = nil
-
-	runDir := filepath.Join(t.TempDir(), "run")
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	deadPID := findDeadPID(t)
-	lockPath := filepath.Join(runDir, "claim.taking.clean.bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd")
-	lockDoc := map[string]interface{}{
-		"pid":        deadPID,
-		"started_at": time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-	}
-	lockRaw, err := json.Marshal(lockDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lockRaw = append(lockRaw, '\n')
-	// Seed a complete dead lock object (test fixture; production uses temp+link).
-	if err := writeFileExclusiveFull(lockPath, lockRaw); err != nil {
-		t.Fatal(err)
-	}
-
-	xAtReap := make(chan struct{})
-	yFinished := make(chan struct{})
-	var yAcquired atomic.Bool
-
-	prev := cleanLockReapBeforeUnlink
-	t.Cleanup(func() { cleanLockReapBeforeUnlink = prev })
-	cleanLockReapBeforeUnlink = func(lp, marker string, observed *reclaimCleanLock, info os.FileInfo) {
-		if observed == nil || observed.PID != deadPID {
-			t.Errorf("unexpected observed lock: %+v", observed)
-		}
-		_ = info
-		if _, err := os.Lstat(marker); err != nil {
-			t.Errorf("reaping marker missing: %v", err)
-		}
-		close(xAtReap)
-		<-yFinished
-	}
-
-	go func() {
-		<-xAtReap
-		// Production acquire while X holds .reaping marker over dead D.
-		if lock, ok := acquireReclaimCleanLock(lockPath); ok {
-			yAcquired.Store(true)
-			releaseReclaimCleanLock(lock)
-		}
-		close(yFinished)
-	}()
-
-	lock, ok := acquireReclaimCleanLock(lockPath)
-	if !ok {
-		t.Fatal("X must acquire after reaping dead lock")
-	}
-	defer releaseReclaimCleanLock(lock)
-	if yAcquired.Load() {
-		t.Fatal("Y must not acquire clean lock while X holds exclusive reaping marker")
-	}
-	got, _, err := readReclaimCleanLock(lockPath)
-	if err != nil {
-		t.Fatalf("live clean lock missing after two-reaper schedule: %v", err)
-	}
-	if !identityLive(got.PID, got.StartedAt) {
-		t.Fatal("replacement clean lock must be live")
-	}
-	if got.PID != lock.PID || got.StartedAt.UTC().Format(time.RFC3339Nano) != lock.StartedAt.UTC().Format(time.RFC3339Nano) {
-		t.Fatal("X's published clean lock was replaced or deleted")
-	}
-	if _, err := os.Lstat(lockPath + ".reaping"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("reaping marker residue: %v", err)
 	}
 }
 

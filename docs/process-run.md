@@ -28,8 +28,9 @@ extraction continues (fail-open). A live reused `run_id` is fail-closed.
 Layout under the runtime root:
 
 ```text
+<runtime>/proc/<run_id>/reclaim.lock  # stable OS advisory lock for stale takeover (0600; never unlinked)
 <runtime>/proc/<run_id>/claim.json    # exclusive ownership lease + identity tombstone (0600)
-<runtime>/proc/<run_id>/claim.taking  # single-slot reclaim election (0600; present only mid-takeover)
+<runtime>/proc/<run_id>/claim.taking  # optional mid-takeover diagnostic (0600; non-authoritative)
 <runtime>/proc/<run_id>/card.json     # discovery root while published (0600)
 <runtime>/proc/<run_id>/events.ndjson # durable event stream (0600)
 ```
@@ -37,10 +38,11 @@ Layout under the runtime root:
 Directories are owner-only (`0700`). The claim carries `(pid, started_at)`, a
 unique claim token, and a state (`live` or `exited`). Cleanup and reclaim always
 verify the claim token so a loser never deletes a winner's slot. Stale reclaim
-elects a single per-slot `claim.taking` lease (reclaimer identity) via
-temp+fsync+hard-link no-replace so the final name is never partial; dead-lease
-cleanup is token+inode object-bound so a pathname ABA cannot unlink a later
-live election.
+is serialized by an exclusive non-blocking kernel lock on `reclaim.lock` (flock
+on Unix, LockFileEx on Windows); process death releases ownership automatically.
+The lock file inode is never removed while the slot directory remains usable.
+`claim.taking` may still be published for diagnostics while the OS lock is held,
+but it is not the mutual-exclusion authority.
 
 ## Card lifecycle
 
@@ -55,9 +57,8 @@ live election.
   longer live (fail-closed while the producer process is still alive).
 - **Crash / kill / unrecovered panic**: the live claim and card remain so
   operators can discover the retained stream. Reclaim requires a proven-stale
-  `(pid, started_at)` pair via atomic claim-token quarantine, gated by the
-  reclaimer's durable `claim.taking` lease (active takeover is contention, not
-  an orphan).
+  `(pid, started_at)` pair via atomic claim-token quarantine, serialized by
+  `reclaim.lock` (active takeover holds the OS lock; busy peers see contention).
 - If the event stream fail-open disables for any reason (caller write, autonomous
   heartbeat, or Sync/Close failure), the owned stream is removed and the card is
   withdrawn immediately so the discovery root never points at a missing partial.

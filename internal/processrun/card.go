@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -217,8 +216,9 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 		err = os.Mkdir(runDir, 0o700)
 		if err == nil {
 			_ = os.Chmod(runDir, 0o700)
+			// Stable reclaim.lock inode for later contenders (no exclusive lock held yet).
+			_ = ensureReclaimLockFile(runDir)
 			if werr := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); werr != nil {
-				// Did not install claim — do not RemoveAll (another contender may own it).
 				if _, rerr := os.Stat(claimPath); errors.Is(rerr, os.ErrNotExist) {
 					_ = removeIfEmpty(runDir)
 				}
@@ -227,7 +227,6 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 					time.Sleep(time.Duration(2*(i+1)) * time.Millisecond)
 					continue
 				}
-				// Write/fsync/setup failure — fail open, do not mask as live collision.
 				return "", ErrCardSetup
 			}
 			return myToken, nil
@@ -236,94 +235,91 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 			return "", ErrCardSetup
 		}
 
-		// Recover durable mid-takeover crash state before reading ownership.
-		// (dual-name quarantine+claim, or quarantine-only after claim.json was removed.)
-		_ = recoverOrphanTakeoverState(runDir, claimPath)
-
-		// Slot exists: inspect ownership via claim (preferred) or card fallback.
-		owner, oerr := readSlotOwner(claimPath, cardPath)
-		if oerr != nil && !errors.Is(oerr, os.ErrNotExist) {
-			return "", ErrCardSetup
+		// Existing slot: kernel reclaim.lock is the sole mutual-exclusion authority
+		// for recovery + stale takeover (process death auto-releases).
+		rl, lerr := tryAcquireReclaimLock(runDir)
+		if errors.Is(lerr, errReclaimLockBusy) {
+			sawContention = true
+			time.Sleep(time.Duration(2*(i+1)) * time.Millisecond)
+			continue
 		}
-		if owner != nil {
-			if identityLive(owner.PID, owner.StartedAt) {
-				return "", ErrCardExists
-			}
-			tok, terr := staleTakeover(runDir, claimPath, cardPath, owner, myToken, pid, startedAt)
-			if terr == nil {
-				return tok, nil
-			}
-			if errors.Is(terr, ErrCardExists) {
-				return "", ErrCardExists
-			}
-			if errors.Is(terr, errClaimContention) {
-				sawContention = true
-				time.Sleep(time.Duration(2*(i+1)) * time.Millisecond)
-				continue
-			}
-			// Permanent setup failure (link denied, write fail after quarantine, …).
+		if lerr != nil {
 			return "", ErrCardSetup
 		}
 
-		// No claim/card identity. Install claim only — do NOT delete pre-existing
-		// default events/card residue (no proven-stale ownership). Exclusive Open
-		// / Link will fail-open if residue collides.
-		if _, cerr := os.Stat(claimPath); errors.Is(cerr, os.ErrNotExist) {
-			// Last chance: adopt orphan quarantine-only state into claim.json.
-			if recoverOrphanTakeoverState(runDir, claimPath) {
-				continue
-			}
-			if werr := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); werr == nil {
-				return myToken, nil
-			} else if errors.Is(werr, ErrCardExists) {
-				sawContention = true
-			} else {
-				return "", ErrCardSetup
-			}
+		tok, terr := claimExistingUnderLock(runDir, claimPath, cardPath, myToken, pid, startedAt)
+		rl.Release()
+		if terr == nil {
+			return tok, nil
 		}
-		time.Sleep(time.Duration(5*(i+1)) * time.Millisecond)
+		if errors.Is(terr, ErrCardExists) {
+			return "", ErrCardExists
+		}
+		if errors.Is(terr, errClaimContention) {
+			sawContention = true
+			time.Sleep(time.Duration(2*(i+1)) * time.Millisecond)
+			continue
+		}
+		return "", terr
 	}
 	if sawContention {
-		// Bounded unresolved active contention — fail-closed identity gate.
 		return "", ErrCardExists
 	}
 	return "", ErrCardSetup
+}
+
+// claimExistingUnderLock mutates an existing slot. Caller must hold reclaim.lock.
+func claimExistingUnderLock(runDir, claimPath, cardPath, myToken string, pid int, startedAt time.Time) (string, error) {
+	_ = recoverOrphanTakeoverState(runDir, claimPath)
+
+	owner, oerr := readSlotOwner(claimPath, cardPath)
+	if oerr != nil && !errors.Is(oerr, os.ErrNotExist) {
+		return "", ErrCardSetup
+	}
+	if owner != nil {
+		if identityLive(owner.PID, owner.StartedAt) {
+			return "", ErrCardExists
+		}
+		return staleTakeoverLocked(runDir, claimPath, cardPath, owner, myToken, pid, startedAt)
+	}
+
+	// No claim/card identity. Install claim only — do NOT delete pre-existing residue.
+	if _, cerr := os.Stat(claimPath); errors.Is(cerr, os.ErrNotExist) {
+		if recoverOrphanTakeoverState(runDir, claimPath) {
+			return "", errClaimContention // retry under lock after restore
+		}
+		if werr := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); werr == nil {
+			return myToken, nil
+		} else if errors.Is(werr, ErrCardExists) {
+			return "", errClaimContention
+		}
+		return "", ErrCardSetup
+	}
+	return "", errClaimContention
 }
 
 // Test hooks for deterministic reclaim interleaving (nil in production).
 var (
 	// staleAfterObserve runs after the stale claim is re-read and validated, before election.
 	staleAfterObserve func()
-	// staleAfterLease runs after the reclaim lease is durable, before quarantine/link.
+	// staleAfterLease runs after reclaim.lock is held and optional claim.taking is published,
+	// before quarantine/link.
 	staleAfterLease func()
 	// staleAfterQuarantine runs after successful quarantine link, before unlinking claim.json.
 	staleAfterQuarantine func()
 	// publishAfterTemp runs after the complete card temp is written, before link into final path.
 	publishAfterTemp func(tmpPath, finalPath string)
-	// electAfterTemp runs after a complete lease temp is written, before hard-link into claim.taking.
-	// Final claim.taking must still be absent (atomic publication).
+	// electAfterTemp runs after a complete claim.taking temp is written, before hard-link.
 	electAfterTemp func(tmpPath, finalPath string)
-	// cleanDeadAfterObserve runs after observing a complete dead lease (token+inode),
-	// before object-bound unlink — used to interleave replacement with live election.
-	cleanDeadAfterObserve func(path string, lease *reclaimLease, info os.FileInfo)
-	// removeAfterSameInodeCheck runs after the final same-inode authorization to unlink
-	// claim.taking, immediately before the pathname Remove. Used to plant a replacement
-	// live lease in the late check-to-unlink ABA window.
-	removeAfterSameInodeCheck func(path, trash string, observed *reclaimLease, trashInfo os.FileInfo)
-	// cleanLockAfterTemp runs after a complete clean-lock temp is written, before
-	// hard-link into claim.taking.clean.<token>. Final path must still be absent.
-	cleanLockAfterTemp func(tmpPath, finalPath string)
-	// cleanLockReapBeforeUnlink runs after a reaper holds the exclusive .reaping
-	// marker and has re-validated the dead clean lock, immediately before Remove.
-	cleanLockReapBeforeUnlink func(lockPath, markerPath string, observed *reclaimCleanLock, info os.FileInfo)
+	// reclaimLockHeld is a test seam: runs while reclaim.lock is held in staleTakeover.
+	reclaimLockHeld func()
 )
 
-// reclaimLeaseFile is a single per-slot election file (not per-token) so only one
-// reclaimer can hold the durable takeover lease at a time.
+// reclaimLeaseFile is optional durable diagnostics of who is reclaiming. Mutual
+// exclusion for takeover is reclaim.lock (kernel advisory lock), not this file.
 const reclaimLeaseFile = "claim.taking"
 
-// reclaimLease holds the active reclaimer's identity on disk so another process
-// can distinguish an in-flight takeover from a dead orphan.
+// reclaimLease holds reclaimer identity for operator diagnostics / recovery hints.
 type reclaimLease struct {
 	PID       int
 	StartedAt time.Time
@@ -332,20 +328,15 @@ type reclaimLease struct {
 	Path      string
 }
 
-// recoverOrphanTakeoverState repairs durable mid-takeover crash residues only when
-// no live reclaimer lease is present. An active reclaimer's claim.taking
-// (with live pid,started_at) blocks recovery so B cannot remove/adopt A's marker.
+// recoverOrphanTakeoverState repairs durable mid-takeover crash residues.
+// Caller must hold reclaim.lock so an active reclaimer cannot race recovery.
 //
-// Boundary 1: dual-name same dead inode + dead/no lease → drop quarantine name.
-// Boundary 2: quarantine-only dead claim + dead/no lease → restore claim.json.
+// Boundary 1: dual-name same dead inode + dead/no live claim.taking → drop quarantine name.
+// Boundary 2: quarantine-only dead claim → restore claim.json.
 //
 // Returns true when state changed.
 func recoverOrphanTakeoverState(runDir, claimPath string) bool {
-	// Never touch residues while a live reclaimer holds a lease.
-	if hasLiveReclaimLease(runDir) {
-		return false
-	}
-	// Drop dead reclaim leases first so orphan cleanup can proceed.
+	// Drop abandoned claim.taking residue (under reclaim.lock; process death released the OS lock).
 	_ = cleanDeadReclaimLeases(runDir)
 
 	// Boundary 1: dual-name same inode of a dead claim.
@@ -396,460 +387,28 @@ func reclaimLeasePath(runDir string) string {
 	return filepath.Join(runDir, reclaimLeaseFile)
 }
 
-func hasLiveReclaimLease(runDir string) bool {
-	path := reclaimLeasePath(runDir)
-	info, err := os.Lstat(path)
-	if err != nil {
-		return false
-	}
-	if !info.Mode().IsRegular() {
-		return false
-	}
-	lease, err := readReclaimLease(path)
-	if err != nil {
-		// Incomplete/partial/malformed final path: treat as active contention
-		// (may still be publishing). Never report "not live" in a way that
-		// authorizes deletion — that is handled separately in cleanDead.
-		return true
-	}
-	return identityLive(lease.PID, lease.StartedAt)
-}
-
-// cleanDeadReclaimLeases removes a complete, proven-dead lease object only.
-// Incomplete/partial/malformed claim.taking is never deleted (may be mid-publish).
-// Removal is token+inode bound so a cleaner cannot unlink a later live election
-// at the same pathname (pathname ABA).
+// cleanDeadReclaimLeases removes abandoned claim.taking residue. Caller should
+// hold reclaim.lock. Live identity is left alone (unexpected under lock).
 func cleanDeadReclaimLeases(runDir string) int {
 	path := reclaimLeasePath(runDir)
-	info, err := os.Lstat(path)
-	if err != nil {
-		return 0
-	}
-	if !info.Mode().IsRegular() {
-		return 0
-	}
 	lease, err := readReclaimLease(path)
 	if err != nil {
-		// Incomplete or corrupt — do NOT delete (active publisher may still hold the inode).
+		if errors.Is(err, os.ErrNotExist) {
+			return 0
+		}
+		// Corrupt/partial under exclusive reclaim.lock — safe to clear.
+		if rerr := os.Remove(path); rerr == nil || errors.Is(rerr, os.ErrNotExist) {
+			return 1
+		}
 		return 0
 	}
 	if identityLive(lease.PID, lease.StartedAt) {
 		return 0
 	}
-	if cleanDeadAfterObserve != nil {
-		cleanDeadAfterObserve(path, lease, info)
-	}
-	if removeReclaimLeaseObject(path, lease, info) {
+	if rerr := os.Remove(path); rerr == nil || errors.Is(rerr, os.ErrNotExist) {
 		return 1
 	}
 	return 0
-}
-
-// removeReclaimLeaseObject unlinks claim.taking only when it still names the exact
-// proven-dead lease object previously observed (matching token + inode).
-func removeReclaimLeaseObject(path string, observed *reclaimLease, observedInfo os.FileInfo) bool {
-	return removeReclaimLeaseObjectMode(path, observed, observedInfo, false)
-}
-
-// removeReclaimLeaseObjectMode unlinks the observed lease object by token+inode.
-// When allowLive is false (cleaners), a live identity aborts. When true (owner
-// release), the holder may drop their own still-live lease without allowing a
-// different live election at the same pathname to be unlinked.
-//
-// Single-winner cleanup:
-//  1. Exclusive cleaner lock claim.taking.clean.<token> carries the cleaner's
-//     (pid, started_at), published via temp+fsync+hard-link no-replace so the
-//     final name is never partial. A second cleaner that sees a live lock holder
-//     returns immediately and never joins the unlink path.
-//  2. Dead clean locks are reaped only under an exclusive claim.taking.clean.<token>.reaping
-//     marker (also temp+link, reaper identity). Multi-reaper unique-probe Remove
-//     races are not used — only the reaping-marker holder may unlink the dead lock.
-//  3. Dead object pin claim.taking.dead.<token> is hard-link no-replace only.
-//     Probe collision while holding the clean lock may finish crash residue.
-func removeReclaimLeaseObjectMode(path string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
-	if observed == nil || !validClaimToken(observed.Token) {
-		return false
-	}
-	lockPath := path + ".clean." + observed.Token
-	lock, ok := acquireReclaimCleanLock(lockPath)
-	if !ok {
-		return false
-	}
-	defer releaseReclaimCleanLock(lock)
-
-	trash := path + ".dead." + observed.Token
-	// Exclusive pin: hard-link no-replace. Do NOT remove an existing probe first.
-	if err := os.Link(path, trash); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			// Only the clean-lock holder may complete residue against this probe.
-			return completeReclaimLeaseProbeCollision(path, trash, observed, observedInfo, allowLive)
-		}
-		return false
-	}
-	return finishReclaimLeaseUnlink(path, trash, observed, observedInfo, allowLive)
-}
-
-type reclaimCleanLock struct {
-	Path      string
-	PID       int
-	StartedAt time.Time
-}
-
-// acquireReclaimCleanLock publishes claim.taking.clean.<token> as a complete
-// fsynced object (temp + hard-link no-replace) with this process's live identity.
-// Live holders block. Dead holders are reaped under an exclusive .reaping marker
-// before retrying publication — never via multi-winner unique-probe Removes.
-func acquireReclaimCleanLock(lockPath string) (*reclaimCleanLock, bool) {
-	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
-	if pid < 1 {
-		return nil, false
-	}
-	startedStr := started.UTC().Format(time.RFC3339Nano)
-	ts, perr := time.Parse(time.RFC3339Nano, startedStr)
-	if perr != nil {
-		ts = started.UTC()
-	}
-	doc := map[string]interface{}{
-		"pid":        pid,
-		"started_at": startedStr,
-	}
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		return nil, false
-	}
-	raw = append(raw, '\n')
-
-	for attempt := 0; attempt < 6; attempt++ {
-		tmp := fmt.Sprintf("%s.%d.%d.tmp", lockPath, pid, time.Now().UnixNano())
-		_ = os.Remove(tmp)
-		if err := writeFileExclusiveFull(tmp, raw); err != nil {
-			return nil, false
-		}
-		if cleanLockAfterTemp != nil {
-			cleanLockAfterTemp(tmp, lockPath)
-		}
-		lerr := os.Link(tmp, lockPath)
-		_ = os.Remove(tmp)
-		if lerr == nil {
-			_ = os.Chmod(lockPath, 0o600)
-			return &reclaimCleanLock{Path: lockPath, PID: pid, StartedAt: ts.UTC()}, true
-		}
-		if !errors.Is(lerr, os.ErrExist) {
-			return nil, false
-		}
-		holder, _, rerr := readReclaimCleanLock(lockPath)
-		if rerr != nil {
-			// Unreadable final (legacy partial / corrupt). Clear only under
-			// exclusive reaping marker so we do not race a live publisher.
-			if !reapUnreadableCleanLock(lockPath) {
-				return nil, false
-			}
-			continue
-		}
-		if identityLive(holder.PID, holder.StartedAt) {
-			return nil, false
-		}
-		if !reapDeadCleanLock(lockPath, holder) {
-			return nil, false
-		}
-	}
-	return nil, false
-}
-
-func readReclaimCleanLock(path string) (*reclaimCleanLock, os.FileInfo, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, nil, errors.New("invalid reclaim clean lock")
-	}
-	data, err := os.ReadFile(path) // #nosec G304
-	if err != nil {
-		return nil, nil, err
-	}
-	var raw struct {
-		PID       int    `json:"pid"`
-		StartedAt string `json:"started_at"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, nil, err
-	}
-	if raw.PID < 1 {
-		return nil, nil, errors.New("invalid reclaim clean lock")
-	}
-	ts, err := time.Parse(time.RFC3339Nano, raw.StartedAt)
-	if err != nil {
-		ts, err = time.Parse(time.RFC3339, raw.StartedAt)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	return &reclaimCleanLock{Path: path, PID: raw.PID, StartedAt: ts.UTC()}, info, nil
-}
-
-func cleanIdentityMatch(a, b *reclaimCleanLock) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	if a.PID != b.PID {
-		return false
-	}
-	return a.StartedAt.UTC().Format(time.RFC3339Nano) == b.StartedAt.UTC().Format(time.RFC3339Nano)
-}
-
-// acquireReapingMarker publishes lockPath+".reaping" with this process's identity
-// via temp+link. Live reapers block; abandoned (dead) markers are claimed by
-// rename (single-winner) then discarded.
-func acquireReapingMarker(markerPath string) (*reclaimCleanLock, bool) {
-	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
-	if pid < 1 {
-		return nil, false
-	}
-	startedStr := started.UTC().Format(time.RFC3339Nano)
-	ts, perr := time.Parse(time.RFC3339Nano, startedStr)
-	if perr != nil {
-		ts = started.UTC()
-	}
-	doc := map[string]interface{}{
-		"pid":        pid,
-		"started_at": startedStr,
-	}
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		return nil, false
-	}
-	raw = append(raw, '\n')
-
-	for attempt := 0; attempt < 4; attempt++ {
-		tmp := fmt.Sprintf("%s.%d.%d.tmp", markerPath, pid, time.Now().UnixNano())
-		_ = os.Remove(tmp)
-		if err := writeFileExclusiveFull(tmp, raw); err != nil {
-			return nil, false
-		}
-		lerr := os.Link(tmp, markerPath)
-		_ = os.Remove(tmp)
-		if lerr == nil {
-			_ = os.Chmod(markerPath, 0o600)
-			return &reclaimCleanLock{Path: markerPath, PID: pid, StartedAt: ts.UTC()}, true
-		}
-		if !errors.Is(lerr, os.ErrExist) {
-			return nil, false
-		}
-		holder, _, rerr := readReclaimCleanLock(markerPath)
-		if rerr != nil {
-			// Partial marker should not exist with atomic publish; fail closed.
-			return nil, false
-		}
-		if identityLive(holder.PID, holder.StartedAt) {
-			return nil, false
-		}
-		// Abandoned marker: rename is the exclusive claim (second renamer loses).
-		trash := fmt.Sprintf("%s.gone.%d.%d", markerPath, os.Getpid(), time.Now().UnixNano())
-		if rerr := os.Rename(markerPath, trash); rerr != nil {
-			continue
-		}
-		th, _, err := readReclaimCleanLock(trash)
-		if err != nil || identityLive(th.PID, th.StartedAt) || !cleanIdentityMatch(th, holder) {
-			// Moved unexpected object — restore if path free.
-			if _, e := os.Lstat(markerPath); errors.Is(e, os.ErrNotExist) {
-				_ = os.Rename(trash, markerPath)
-			} else {
-				_ = os.Remove(trash)
-			}
-			return nil, false
-		}
-		_ = os.Remove(trash)
-	}
-	return nil, false
-}
-
-func releaseReapingMarker(marker *reclaimCleanLock) {
-	releaseReclaimCleanLock(marker)
-}
-
-// reapDeadCleanLock removes a proven-dead clean lock under an exclusive .reaping
-// marker so only one reaper can unlink the pathname (no multi-winner Remove ABA).
-func reapDeadCleanLock(lockPath string, observed *reclaimCleanLock) bool {
-	if observed == nil || observed.PID < 1 {
-		return false
-	}
-	markerPath := lockPath + ".reaping"
-	marker, ok := acquireReapingMarker(markerPath)
-	if !ok {
-		return false
-	}
-	defer releaseReapingMarker(marker)
-
-	cur, info, err := readReclaimCleanLock(lockPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return true
-	}
-	if err != nil {
-		return false
-	}
-	if identityLive(cur.PID, cur.StartedAt) || !cleanIdentityMatch(cur, observed) {
-		return false
-	}
-	if cleanLockReapBeforeUnlink != nil {
-		cleanLockReapBeforeUnlink(lockPath, markerPath, observed, info)
-	}
-	// Re-bind immediately before Remove: a replacement live lock must survive.
-	cur2, info2, err2 := readReclaimCleanLock(lockPath)
-	if errors.Is(err2, os.ErrNotExist) {
-		return true
-	}
-	if err2 != nil {
-		return false
-	}
-	if identityLive(cur2.PID, cur2.StartedAt) || !cleanIdentityMatch(cur2, observed) {
-		return false
-	}
-	if info != nil && info2 != nil && !sameFile(info, info2) {
-		return false
-	}
-	if rerr := os.Remove(lockPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-		return false
-	}
-	return true
-}
-
-// reapUnreadableCleanLock clears a non-parseable final lock only under the
-// exclusive reaping marker (legacy partial residue / corruption).
-func reapUnreadableCleanLock(lockPath string) bool {
-	markerPath := lockPath + ".reaping"
-	marker, ok := acquireReapingMarker(markerPath)
-	if !ok {
-		return false
-	}
-	defer releaseReapingMarker(marker)
-
-	_, _, err := readReclaimCleanLock(lockPath)
-	if err == nil {
-		// Became readable (complete lock appeared) — do not delete.
-		return false
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return true
-	}
-	// Still unreadable / invalid: remove pathname only while marker held.
-	if rerr := os.Remove(lockPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-		return false
-	}
-	return true
-}
-
-func releaseReclaimCleanLock(lock *reclaimCleanLock) {
-	if lock == nil || lock.Path == "" {
-		return
-	}
-	cur, info, err := readReclaimCleanLock(lock.Path)
-	if err != nil || !cleanIdentityMatch(cur, lock) {
-		return
-	}
-	// Owner release of our still-live clean lock (identity + inode bound).
-	pathInfo, err := os.Lstat(lock.Path)
-	if err != nil || (info != nil && !sameFile(pathInfo, info)) {
-		return
-	}
-	_ = os.Remove(lock.Path)
-}
-
-// completeReclaimLeaseProbeCollision handles Link EEXIST on the exclusive dead
-// probe while this cleaner already holds the clean lock. Without the clean lock,
-// callers never reach here via removeReclaimLeaseObjectMode. A second cleaner
-// blocked on a live clean lock never joins this path.
-//
-// Dual-name same-inode completion is therefore single-winner: only the clean-lock
-// holder may finish crash residue left by an abandoned cleaner that linked the
-// probe then died before unlinking path.
-func completeReclaimLeaseProbeCollision(path, trash string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
-	tInfo, terr := os.Lstat(trash)
-	if terr != nil {
-		return false
-	}
-	tLease, trerr := readReclaimLease(trash)
-	if trerr != nil || tLease.Token != observed.Token {
-		return false
-	}
-	if !allowLive && identityLive(tLease.PID, tLease.StartedAt) {
-		return false
-	}
-	// Probe must still name the object we observed when known.
-	if observedInfo != nil && !sameFile(tInfo, observedInfo) {
-		// Stale probe for this token name but different inode — reap probe only if
-		// path no longer references it (safe residue cleanup).
-		if pInfo, perr := os.Lstat(path); perr != nil || !sameFile(pInfo, tInfo) {
-			_ = os.Remove(trash)
-		}
-		return false
-	}
-	pInfo, perr := os.Lstat(path)
-	if errors.Is(perr, os.ErrNotExist) {
-		// Path already cleared; reap orphan probe for the observed dead object.
-		_ = os.Remove(trash)
-		return true
-	}
-	if perr != nil {
-		return false
-	}
-	if sameFile(pInfo, tInfo) {
-		// Dual-name same dead object under our exclusive clean lock: finish unlink.
-		return finishReclaimLeaseUnlinkWithProbe(path, trash, tInfo, observed, allowLive)
-	}
-	// Path names a different object; probe is crash residue of the dead object.
-	_ = os.Remove(trash)
-	return false
-}
-
-func finishReclaimLeaseUnlink(path, trash string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
-	trashInfo, err := os.Lstat(trash)
-	if err != nil {
-		return false
-	}
-	// Must still be the observed object (same inode when known).
-	if observedInfo != nil && !sameFile(trashInfo, observedInfo) {
-		_ = os.Remove(trash)
-		return false
-	}
-	return finishReclaimLeaseUnlinkWithProbe(path, trash, trashInfo, observed, allowLive)
-}
-
-func finishReclaimLeaseUnlinkWithProbe(path, trash string, trashInfo os.FileInfo, observed *reclaimLease, allowLive bool) bool {
-	cur, err := readReclaimLease(trash)
-	if err != nil || cur.Token != observed.Token {
-		_ = os.Remove(trash)
-		return false
-	}
-	if !allowLive && identityLive(cur.PID, cur.StartedAt) {
-		_ = os.Remove(trash)
-		return false
-	}
-
-	// Authorize pathname unlink only while path still names the pinned object.
-	removed := false
-	pathInfo, err := os.Lstat(path)
-	if err == nil && sameFile(pathInfo, trashInfo) {
-		if removeAfterSameInodeCheck != nil {
-			removeAfterSameInodeCheck(path, trash, observed, trashInfo)
-		}
-		// Re-bind immediately before Remove so a late replacement at the pathname
-		// survives even if the barrier planted it after authorization.
-		pathInfo2, err2 := os.Lstat(path)
-		if err2 == nil && sameFile(pathInfo2, trashInfo) {
-			if rerr := os.Remove(path); rerr == nil {
-				removed = true
-			}
-		} else if errors.Is(err2, os.ErrNotExist) {
-			// Observed object no longer at final name; probe cleanup is enough.
-			removed = true
-		}
-		// else: path now names a different object (e.g. live election) — leave it.
-	} else if errors.Is(err, os.ErrNotExist) {
-		removed = true
-	}
-	_ = os.Remove(trash)
-	return removed
 }
 
 func readReclaimLease(path string) (*reclaimLease, error) {
@@ -885,42 +444,17 @@ func readReclaimLease(path string) (*reclaimLease, error) {
 	}, nil
 }
 
-// electReclaimLease publishes a complete claim.taking via temp+fsync+hard-link
-// no-replace so the final pathname never appears partial. Fails with ErrCardExists
-// if another live reclaimer already holds a complete lease.
+// electReclaimLease publishes optional claim.taking diagnostics via temp+fsync+
+// hard-link. Mutual exclusion is reclaim.lock (caller must hold it); this file
+// is not authoritative for concurrency.
 func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time.Time) (*reclaimLease, error) {
 	if !validClaimToken(myToken) {
 		return nil, ErrCardSetup
 	}
-	if hasLiveReclaimLease(runDir) {
-		return nil, ErrCardExists
-	}
 	_ = cleanDeadReclaimLeases(runDir)
-	if hasLiveReclaimLease(runDir) {
-		return nil, ErrCardExists
-	}
-
 	path := reclaimLeasePath(runDir)
-	// Final path present but incomplete/malformed: active publisher or corrupt —
-	// do not delete; treat as contention.
-	if info, err := os.Lstat(path); err == nil {
-		if !info.Mode().IsRegular() {
-			return nil, ErrCardSetup
-		}
-		lease, rerr := readReclaimLease(path)
-		if rerr != nil {
-			return nil, errClaimContention
-		}
-		if identityLive(lease.PID, lease.StartedAt) {
-			return nil, ErrCardExists
-		}
-		// Complete dead lease left behind — object-bound clean, then continue.
-		if !removeReclaimLeaseObject(path, lease, info) {
-			return nil, errClaimContention
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, ErrCardSetup
-	}
+	// Clear any leftover final name under exclusive reclaim.lock.
+	_ = os.Remove(path)
 
 	doc := map[string]interface{}{
 		"pid":        pid,
@@ -934,8 +468,6 @@ func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time
 	}
 	raw = append(raw, '\n')
 
-	// Atomic publication: complete temp first, then hard-link into claim.taking
-	// (final path appears only when fully written/fsynced).
 	tmp := filepath.Join(runDir, "claim.taking."+myToken+".tmp")
 	_ = os.Remove(tmp)
 	if err := writeFileExclusiveFull(tmp, raw); err != nil {
@@ -947,9 +479,6 @@ func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time
 	if err := os.Link(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		if errors.Is(err, os.ErrExist) {
-			if hasLiveReclaimLease(runDir) {
-				return nil, ErrCardExists
-			}
 			return nil, errClaimContention
 		}
 		return nil, ErrCardSetup
@@ -957,7 +486,6 @@ func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time
 	_ = os.Remove(tmp)
 	_ = os.Chmod(path, 0o600)
 
-	// Confirm the published object is ours.
 	got, err := readReclaimLease(path)
 	if err != nil || got.Token != myToken {
 		return nil, ErrCardSetup
@@ -972,32 +500,37 @@ func electReclaimLease(runDir, myToken, oldToken string, pid int, startedAt time
 }
 
 func releaseReclaimLease(lease *reclaimLease) {
-	if lease == nil || lease.Path == "" || !validClaimToken(lease.Token) {
+	if lease == nil || lease.Path == "" {
 		return
 	}
-	info, err := os.Lstat(lease.Path)
-	if err != nil {
-		return
-	}
+	// Under reclaim.lock in production paths; best-effort remove our diagnostic file.
 	cur, err := readReclaimLease(lease.Path)
 	if err != nil || cur.Token != lease.Token {
 		return
 	}
-	// Owner release: token+inode bound, allowed while still live (unlike cleaners).
-	_ = removeReclaimLeaseObjectMode(lease.Path, cur, info, true)
+	_ = os.Remove(lease.Path)
 }
 
-// staleTakeover elects a reclaim lease (reclaimer identity), quarantines the proven-
-// stale claim, then installs a new exclusive claim.
-//
-// An active reclaimer's lease is fail-closed to other callers. A dead reclaimer's
-// lease is cleaned and residues are recovered. Losers never remove a live winner's
-// quarantine/lease.
-//
-// Returns ErrCardExists for proven live identity or live reclaimer lease,
-// errClaimContention for retryable races, and ErrCardSetup for permanent failures.
+// staleTakeover acquires reclaim.lock then quarantines the proven-stale claim and
+// installs a new exclusive claim. Kernel lock is the sole concurrency authority.
 func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken string, pid int, startedAt time.Time) (string, error) {
-	// If claim.json is missing, try restoring a dead quarantine only when no live reclaimer.
+	rl, err := tryAcquireReclaimLock(runDir)
+	if errors.Is(err, errReclaimLockBusy) {
+		return "", errClaimContention
+	}
+	if err != nil {
+		return "", ErrCardSetup
+	}
+	defer rl.Release()
+	if reclaimLockHeld != nil {
+		reclaimLockHeld()
+	}
+	return staleTakeoverLocked(runDir, claimPath, cardPath, old, myToken, pid, startedAt)
+}
+
+// staleTakeoverLocked performs quarantine + install. Caller must hold reclaim.lock.
+func staleTakeoverLocked(runDir, claimPath, cardPath string, old *claimDoc, myToken string, pid int, startedAt time.Time) (string, error) {
+	// Restore missing claim.json from dead quarantine under the OS lock.
 	if _, err := os.Lstat(claimPath); errors.Is(err, os.ErrNotExist) {
 		_ = recoverOrphanTakeoverState(runDir, claimPath)
 	}
@@ -1009,7 +542,6 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 		}
 	}
 
-	// Observe the live pathname and its object identity.
 	info, err := os.Lstat(claimPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1036,25 +568,12 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 		staleAfterObserve()
 	}
 
-	// Elect durable reclaimer ownership before mutating claim/quarantine.
+	// Optional diagnostic claim.taking (non-authoritative under reclaim.lock).
 	lease, lerr := electReclaimLease(runDir, myToken, old.Token, pid, startedAt)
 	if lerr != nil {
-		// A live reclaim lease means another reclaimer is mid-takeover — retryable
-		// contention, not a permanent live process-run identity conflict. Only a
-		// live claim.json identity is fail-closed ErrCardExists.
-		if errors.Is(lerr, ErrCardExists) {
-			if cur2, cerr := readClaimFile(claimPath); cerr == nil && identityLive(cur2.PID, cur2.StartedAt) {
-				return "", ErrCardExists
-			}
-			return "", errClaimContention
-		}
 		return "", lerr
 	}
-	// Ensure lease is released on all failure paths; success path clears it too.
-	defer func() {
-		// Success path removes lease explicitly; defer is no-op if already gone.
-		releaseReclaimLease(lease)
-	}()
+	defer releaseReclaimLease(lease)
 	if staleAfterLease != nil {
 		staleAfterLease()
 	}
@@ -1062,14 +581,11 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 	staleName := filepath.Join(runDir, "claim.stale."+old.Token)
 	alreadyQuarantined := false
 
-	// No-replace quarantine: Link fails if dest exists.
 	if err := os.Link(claimPath, staleName); err != nil {
 		if destInfo, lerr := os.Lstat(staleName); lerr == nil && destInfo.Mode().IsRegular() {
 			if dest, derr := readClaimFile(staleName); derr == nil &&
 				dest.Token == old.Token &&
 				sameFile(info, destInfo) {
-				// Same object already linked under our elected lease (restart after Link
-				// while we still hold claim.taking). Proceed with uninstall+install.
 				if !identityLive(dest.PID, dest.StartedAt) {
 					alreadyQuarantined = true
 				} else {
@@ -1105,24 +621,20 @@ func staleTakeover(runDir, claimPath, cardPath string, old *claimDoc, myToken st
 		staleAfterQuarantine()
 	}
 
-	// Drop the claim.json name; quarantine hardlink retains the old object.
 	if err := os.Remove(claimPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		if _, e := os.Lstat(staleName); e != nil {
 			return "", ErrCardSetup
 		}
 	}
 
-	// Install our live claim exclusively at claim.json.
 	if err := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); err != nil {
 		if errors.Is(err, ErrCardExists) {
 			return "", errClaimContention
 		}
-		// Setup failure: restore claim.json from quarantine for retryability.
 		restoreClaimFromQuarantine(claimPath, staleName)
 		return "", ErrCardSetup
 	}
 
-	// Proven-stale ownership only: clear slot-default residue + quarantine + lease.
 	clearSlotOwnedResidue(runDir, cardPath)
 	_ = os.Remove(staleName)
 	releaseReclaimLease(lease)
@@ -1148,7 +660,7 @@ func restoreClaimFromQuarantine(claimPath, staleName string) {
 
 // clearSlotOwnedResidue removes the slot card and the default events.ndjson under
 // runDir only. It never deletes an arbitrary caller-selected events path outside
-// the slot default name.
+// the slot default name. It never unlinks reclaim.lock (stable advisory-lock inode).
 func clearSlotOwnedResidue(runDir, cardPath string) {
 	_ = os.Remove(cardPath)
 	_ = os.Remove(filepath.Join(runDir, EventsFileName))
@@ -1156,9 +668,13 @@ func clearSlotOwnedResidue(runDir, cardPath string) {
 	if entries, rerr := os.ReadDir(runDir); rerr == nil {
 		for _, e := range entries {
 			name := e.Name()
-			// claim.taking.* covers .tmp, .dead.<token>, .clean.<token> sidecars
-			// without removing the final claim.taking election file itself.
-			if strings.HasPrefix(name, "claim.stale.") ||
+			if name == reclaimLockFile {
+				// Stable kernel-lock inode — never remove.
+				continue
+			}
+			// claim.taking and claim.taking.* diagnostic sidecars; claim.stale.*; temps.
+			if name == reclaimLeaseFile ||
+				strings.HasPrefix(name, "claim.stale.") ||
 				strings.HasPrefix(name, "claim.taking.") ||
 				strings.HasSuffix(name, ".tmp") {
 				_ = os.Remove(filepath.Join(runDir, name))
