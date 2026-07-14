@@ -33,8 +33,12 @@ Operator notes: [`docs/process-run.md`](docs/process-run.md). Full narrative:
 
 `process-run/v0` reuses the same host-less contract resolution discipline as
 `data-artifact/v0` (shared primitive). Pin checks cover the process-run
-entry-bundle and sibling event-schema digests (Crucible **`v0.1.19`** pin
-family). `make process-run-contract-check` is wired into `make check-all`.
+entry-bundle and sibling event-schema digests (Crucible **`v0.1.19`**:
+entry-bundle
+`sha256:4589befc1d0d3485744c7eea3dfb569ff79457f99996f2ee8313595489a7091b`,
+event-schema
+`sha256:7138fba72fea862d7964d6c235b1b93da0047e9eb76862be4d111701f887b12d`).
+`make process-run-contract-check` is wired into `make check-all`.
 
 #### Event stream
 
