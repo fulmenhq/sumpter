@@ -270,6 +270,7 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 	publishAfterTemp = nil
 	electAfterTemp = nil
 	cleanDeadAfterObserve = nil
+	removeAfterSameInodeCheck = nil
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
 	runDir := RunDir(runtimeDir, runID)
@@ -625,6 +626,7 @@ func TestOpenCardStaleTakeoverABA(t *testing.T) {
 	publishAfterTemp = nil
 	electAfterTemp = nil
 	cleanDeadAfterObserve = nil
+	removeAfterSameInodeCheck = nil
 
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
@@ -740,6 +742,7 @@ func TestElectReclaimLeaseAtomicPublication(t *testing.T) {
 	ClaimWriteHook = nil
 	electAfterTemp = nil
 	cleanDeadAfterObserve = nil
+	removeAfterSameInodeCheck = nil
 
 	runDir := filepath.Join(t.TempDir(), "run")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
@@ -801,15 +804,16 @@ func TestElectReclaimLeaseAtomicPublication(t *testing.T) {
 }
 
 func TestCleanDeadReclaimLeaseObjectBoundABA(t *testing.T) {
-	// Pathname ABA: cleaner observes a complete dead lease; before object-bound
-	// unlink, a different complete live election replaces the same claim.taking
-	// pathname (new inode). Cleaner must not delete the live election.
+	// Pathname ABA (early): cleaner observes a complete dead lease; before the
+	// exclusive probe, a different complete live election replaces claim.taking.
+	// Cleaner must not delete the live election.
 	if runtime.GOOS == "windows" {
 		t.Skip("needs hard-link + unix liveness")
 	}
 	ClaimWriteHook = nil
 	electAfterTemp = nil
 	cleanDeadAfterObserve = nil
+	removeAfterSameInodeCheck = nil
 
 	runDir := filepath.Join(t.TempDir(), "run")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
@@ -879,6 +883,119 @@ func TestCleanDeadReclaimLeaseObjectBoundABA(t *testing.T) {
 		t.Fatal("remaining lease must still be live identity")
 	}
 	// Trash probe names must not linger.
+	if _, err := os.Lstat(path + ".dead." + deadToken); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dead trash residue left behind: %v", err)
+	}
+}
+
+func TestCleanDeadReclaimLeaseLateUnlinkABA(t *testing.T) {
+	// Late check-to-unlink ABA: cleaner has exclusive probe + same-inode
+	// authorization, then a live lease replaces claim.taking before Remove.
+	// Re-bind before unlink must preserve the live election. Also proves a
+	// second cleaner cannot steal the exclusive probe by unlinking it first.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs hard-link + unix liveness")
+	}
+	ClaimWriteHook = nil
+	electAfterTemp = nil
+	cleanDeadAfterObserve = nil
+	removeAfterSameInodeCheck = nil
+
+	runDir := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	deadToken := "44444444444444444444444444444444"
+	path := reclaimLeasePath(runDir)
+	deadDoc := map[string]interface{}{
+		"pid":        deadPID,
+		"started_at": time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		"token":      deadToken,
+		"old_token":  "00000000000000000000000000000000",
+	}
+	raw, err := json.Marshal(deadDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw, '\n')
+	if err := writeFileExclusiveFull(path, raw); err != nil {
+		t.Fatal(err)
+	}
+
+	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
+	liveToken := "55555555555555555555555555555555"
+	liveDoc := map[string]interface{}{
+		"pid":        pid,
+		"started_at": started.UTC().Format(time.RFC3339Nano),
+		"token":      liveToken,
+		"old_token":  "66666666666666666666666666666666",
+	}
+	liveRaw, err := json.Marshal(liveDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveRaw = append(liveRaw, '\n')
+
+	prev := removeAfterSameInodeCheck
+	t.Cleanup(func() { removeAfterSameInodeCheck = prev })
+	var barrierHit atomic.Bool
+	removeAfterSameInodeCheck = func(p, trash string, observed *reclaimLease, trashInfo os.FileInfo) {
+		if observed == nil || observed.Token != deadToken {
+			t.Errorf("authorized unexpected lease: %+v", observed)
+		}
+		_ = trashInfo
+		// Probe must still pin the dead object (exclusive; not stolen).
+		if _, err := os.Lstat(trash); err != nil {
+			t.Errorf("exclusive probe missing mid-cleanup: %v", err)
+			return
+		}
+		// Second cleaner must not steal the probe by unlinking it then re-linking.
+		// Exclusive hard-link no-replace yields EEXIST while the first probe is held.
+		if err := os.Link(p, trash); err == nil {
+			t.Error("second cleaner must not recreate exclusive probe")
+			return
+		} else if !errors.Is(err, os.ErrExist) {
+			t.Errorf("second cleaner Link: %v, want ErrExist", err)
+			return
+		}
+		// Prior bug: os.Remove(trash) then Link would steal the pin. Ensure that
+		// sequence is not how production cleanup works — probe still present.
+		if _, err := os.Lstat(trash); err != nil {
+			t.Errorf("exclusive probe vanished: %v", err)
+			return
+		}
+		// Plant live replacement at the final pathname (late ABA window).
+		if err := os.Remove(p); err != nil {
+			t.Errorf("remove dead for late ABA plant: %v", err)
+			return
+		}
+		if err := writeFileExclusiveFull(p, liveRaw); err != nil {
+			t.Errorf("plant live lease: %v", err)
+			return
+		}
+		barrierHit.Store(true)
+	}
+
+	n := cleanDeadReclaimLeases(runDir)
+	if !barrierHit.Load() {
+		t.Fatal("late unlink barrier did not run")
+	}
+	// Success is allowed only for clearing the dead object name; live must remain.
+	got, err := readReclaimLease(path)
+	if err != nil {
+		t.Fatalf("live lease missing after late ABA clean: %v", err)
+	}
+	if got.Token != liveToken {
+		t.Fatalf("live lease clobbered: token=%q want %q", got.Token, liveToken)
+	}
+	if !identityLive(got.PID, got.StartedAt) {
+		t.Fatal("remaining lease must still be live identity")
+	}
+	if n != 0 {
+		// Path still holds live replacement — cleaner must not report pathname success.
+		t.Fatalf("cleanDead must not report pathname success after live replacement, n=%d", n)
+	}
 	if _, err := os.Lstat(path + ".dead." + deadToken); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dead trash residue left behind: %v", err)
 	}

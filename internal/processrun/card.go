@@ -305,6 +305,10 @@ var (
 	// cleanDeadAfterObserve runs after observing a complete dead lease (token+inode),
 	// before object-bound unlink — used to interleave replacement with live election.
 	cleanDeadAfterObserve func(path string, lease *reclaimLease, info os.FileInfo)
+	// removeAfterSameInodeCheck runs after the final same-inode authorization to unlink
+	// claim.taking, immediately before the pathname Remove. Used to plant a replacement
+	// live lease in the late check-to-unlink ABA window.
+	removeAfterSameInodeCheck func(path, trash string, observed *reclaimLease, trashInfo os.FileInfo)
 )
 
 // reclaimLeaseFile is a single per-slot election file (not per-token) so only one
@@ -435,8 +439,8 @@ func cleanDeadReclaimLeases(runDir string) int {
 }
 
 // removeReclaimLeaseObject unlinks claim.taking only when it still names the exact
-// proven-dead lease object previously observed (matching token + inode). Uses a
-// hard-link probe so a pathname ABA cannot delete a later live election.
+// proven-dead lease object previously observed (matching token + inode). Uses an
+// exclusive hard-link probe so a pathname ABA cannot delete a later live election.
 func removeReclaimLeaseObject(path string, observed *reclaimLease, observedInfo os.FileInfo) bool {
 	return removeReclaimLeaseObjectMode(path, observed, observedInfo, false)
 }
@@ -445,17 +449,72 @@ func removeReclaimLeaseObject(path string, observed *reclaimLease, observedInfo 
 // When allowLive is false (cleaners), a live identity aborts. When true (owner
 // release), the holder may drop their own still-live lease without allowing a
 // different live election at the same pathname to be unlinked.
+//
+// Cleanup is single-winner through unlink: the probe name claim.taking.dead.<token>
+// is created only via hard-link no-replace (never by deleting another cleaner's
+// live probe first). While the probe holds the dead object, concurrent electors
+// cannot clear that probe to publish a replacement under the same pathname.
 func removeReclaimLeaseObjectMode(path string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
 	if observed == nil || !validClaimToken(observed.Token) {
 		return false
 	}
-	// Probe: hard-link current path content to a unique trash name (no-replace).
-	// If path now names a different object, trash reflects that object and we abort.
 	trash := path + ".dead." + observed.Token
-	_ = os.Remove(trash) // best-effort clear leftover from a prior crashed cleaner
+	// Exclusive pin: hard-link no-replace. Do NOT remove an existing probe first —
+	// that would let a second cleaner steal the first cleaner's pin and re-open a
+	// late check-to-unlink ABA against a live replacement.
 	if err := os.Link(path, trash); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return completeReclaimLeaseProbeCollision(path, trash, observed, observedInfo, allowLive)
+		}
 		return false
 	}
+	return finishReclaimLeaseUnlink(path, trash, observed, observedInfo, allowLive)
+}
+
+// completeReclaimLeaseProbeCollision handles Link EEXIST on the exclusive dead probe.
+// Another cleaner may hold the pin, or a prior cleaner may have crashed mid-flight.
+// Never steals a live cleaner probe by unlinking it up front.
+func completeReclaimLeaseProbeCollision(path, trash string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
+	tInfo, terr := os.Lstat(trash)
+	if terr != nil {
+		return false
+	}
+	tLease, trerr := readReclaimLease(trash)
+	if trerr != nil || tLease.Token != observed.Token {
+		return false
+	}
+	if !allowLive && identityLive(tLease.PID, tLease.StartedAt) {
+		return false
+	}
+	// Probe must still name the object we observed when known.
+	if observedInfo != nil && !sameFile(tInfo, observedInfo) {
+		// Stale probe for this token name but different inode — reap probe only if
+		// path no longer references it (safe residue cleanup).
+		if pInfo, perr := os.Lstat(path); perr != nil || !sameFile(pInfo, tInfo) {
+			_ = os.Remove(trash)
+		}
+		return false
+	}
+	pInfo, perr := os.Lstat(path)
+	if errors.Is(perr, os.ErrNotExist) {
+		// Path already cleared; reap orphan probe for the observed dead object.
+		_ = os.Remove(trash)
+		return true
+	}
+	if perr != nil {
+		return false
+	}
+	if sameFile(pInfo, tInfo) {
+		// Dual-name same dead object: prior cleaner likely crashed after Link.
+		// Complete the unlink without recreating the probe.
+		return finishReclaimLeaseUnlinkWithProbe(path, trash, tInfo, observed, allowLive)
+	}
+	// Path names a different object; probe is crash residue of the dead object.
+	_ = os.Remove(trash)
+	return false
+}
+
+func finishReclaimLeaseUnlink(path, trash string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
 	trashInfo, err := os.Lstat(trash)
 	if err != nil {
 		return false
@@ -465,6 +524,10 @@ func removeReclaimLeaseObjectMode(path string, observed *reclaimLease, observedI
 		_ = os.Remove(trash)
 		return false
 	}
+	return finishReclaimLeaseUnlinkWithProbe(path, trash, trashInfo, observed, allowLive)
+}
+
+func finishReclaimLeaseUnlinkWithProbe(path, trash string, trashInfo os.FileInfo, observed *reclaimLease, allowLive bool) bool {
 	cur, err := readReclaimLease(trash)
 	if err != nil || cur.Token != observed.Token {
 		_ = os.Remove(trash)
@@ -474,16 +537,27 @@ func removeReclaimLeaseObjectMode(path string, observed *reclaimLease, observedI
 		_ = os.Remove(trash)
 		return false
 	}
-	// Unlink the final name only if it still points at the same inode as trash.
-	// Pathname ABA (new election at the same name) must not report success.
+
+	// Authorize pathname unlink only while path still names the pinned object.
 	removed := false
 	pathInfo, err := os.Lstat(path)
 	if err == nil && sameFile(pathInfo, trashInfo) {
-		if rerr := os.Remove(path); rerr == nil {
+		if removeAfterSameInodeCheck != nil {
+			removeAfterSameInodeCheck(path, trash, observed, trashInfo)
+		}
+		// Re-bind immediately before Remove so a late replacement at the pathname
+		// (planted above or by a concurrent contender after a stolen probe) survives.
+		pathInfo2, err2 := os.Lstat(path)
+		if err2 == nil && sameFile(pathInfo2, trashInfo) {
+			if rerr := os.Remove(path); rerr == nil {
+				removed = true
+			}
+		} else if errors.Is(err2, os.ErrNotExist) {
+			// Observed object no longer at final name; probe cleanup is enough.
 			removed = true
 		}
+		// else: path now names a different object (e.g. live election) — leave it.
 	} else if errors.Is(err, os.ErrNotExist) {
-		// Observed object no longer at final name; trash cleanup is enough.
 		removed = true
 	}
 	_ = os.Remove(trash)
