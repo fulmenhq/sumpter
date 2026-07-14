@@ -276,4 +276,3 @@ Record indexes now carry namespace context so indexed extraction can re-evaluate
 - **Release ceremony.** Use the standard draft-release and signing flow in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md): CI builds the tag, then the operator signing ceremony uploads checksums, signatures, public keys, and release notes before publishing.
 
 See [`docs/releases/v0.2.6.md`](docs/releases/v0.2.6.md) for the full release narrative.
-
