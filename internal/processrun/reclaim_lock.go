@@ -32,7 +32,9 @@ func tryAcquireReclaimLock(runDir string) (*reclaimLock, error) {
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(runDir, 0o700)
+	// Owner-only runtime slot directory (process-run discovery root). G302
+	// expects ≤0600 which applies to files; directories need execute for traversal.
+	_ = os.Chmod(runDir, 0o700) // #nosec G302 - intentional owner-only 0700 directory mode for process-run runtime slot
 	path := reclaimLockPath(runDir)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) // #nosec G304
 	if err != nil {

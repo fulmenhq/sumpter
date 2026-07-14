@@ -9,7 +9,9 @@ import (
 )
 
 func tryLockFileExclusive(f *os.File) error {
-	err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	// Fd() is a live OS file descriptor; flock(2) requires int. Conversion is
+	// the standard Go pattern for unix.Flock and cannot overflow a valid fd.
+	err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB) // #nosec G115 - Fd is a valid OS fd; unix.Flock requires int
 	if err == nil {
 		return nil
 	}
@@ -20,5 +22,5 @@ func tryLockFileExclusive(f *os.File) error {
 }
 
 func unlockFileExclusive(f *os.File) error {
-	return unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	return unix.Flock(int(f.Fd()), unix.LOCK_UN) // #nosec G115 - Fd is a valid OS fd; unix.Flock requires int
 }
