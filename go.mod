@@ -67,3 +67,10 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+// Interim reviewed pin for xpath-sum-multiply (numeric operand context isolation).
+// Base tip: antchfx/xpath d645baed50e0ccf0201cb696779bc7badfdc5bbd (v1.3.6 + #121)
+// plus focused numericQuery patch. xmlquery remains v1.5.1 (no bump).
+// Remove replace + third_party when upstream tags a fixed xpath release.
+// See third_party/antchfx-xpath/SUMPTER-PIN-README.md.
+replace github.com/antchfx/xpath => ./third_party/antchfx-xpath
