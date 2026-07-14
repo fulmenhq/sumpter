@@ -122,7 +122,7 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 		// After the normal manifest is durable, the run-level incomplete:true failure
 		// handler must not overwrite it if a later optional sidecar write fails.
 		st.finalized = true
-		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if err := st.publishAndBridgeDataArtifact(manifest); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {

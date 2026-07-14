@@ -795,7 +795,7 @@ func runExtract(opts *ExtractOptions) error {
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
-		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -1231,7 +1231,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
-		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -1665,7 +1665,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
-		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -1740,7 +1740,7 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
-		if err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -3036,13 +3036,25 @@ func writeProvenanceManifest(opts *ExtractOptions, path string, manifest provena
 	return provenance.WriteManifestVia(context.Background(), tgt, manifest)
 }
 
-func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manifest) error {
+// publishedDataArtifact is returned only after the descriptor target.Publish
+// succeeds. Values are copied from the exact validated Descriptor instance that
+// was serialized — callers must not re-derive them for process-run bridging.
+type publishedDataArtifact struct {
+	ArtifactID string
+	Lifecycle  string
+}
+
+// writeDataArtifactDescriptor validates, stages, and publishes the data-artifact
+// descriptor when --artifact-descriptor is set. The receipt is non-nil only after
+// Publish returns nil (create/validate/stage alone is insufficient). Flag-off
+// returns (nil, nil).
+func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manifest) (*publishedDataArtifact, error) {
 	if opts == nil || !opts.ArtifactDescriptor {
-		return nil
+		return nil, nil
 	}
 	artifactUUID, err := provenance.NewRunID()
 	if err != nil {
-		return fmt.Errorf("generate artifact id: %w", err)
+		return nil, fmt.Errorf("generate artifact id: %w", err)
 	}
 	// Portable descriptor URIs must not publish host-local absolute paths. Use the
 	// same SanitizePath hygiene as provenance inputs/outputs (relative under known
@@ -3057,39 +3069,48 @@ func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manif
 	}
 	descriptor, err := dataartifact.BuildExtractDescriptor(manifest, artifactUUID, descriptorOpts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	data, err := json.MarshalIndent(descriptor, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal data artifact descriptor: %w", err)
+		return nil, fmt.Errorf("marshal data artifact descriptor: %w", err)
 	}
 	data = append(data, '\n')
 
 	resolved, err := artifactcontract.ResolveBaseline(opts.ArtifactContractBase)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	result, err := artifactcontract.ValidateDescriptorBytes(resolved, data, dataartifact.DescriptorFileName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !result.Valid {
-		return fmt.Errorf("generated data artifact descriptor failed validation: %s", artifactValidationSummary(result))
+		return nil, fmt.Errorf("generated data artifact descriptor failed validation: %s", artifactValidationSummary(result))
 	}
 
 	if err := writeDataArtifactFieldCatalog(opts, resolved); err != nil {
-		return err
+		return nil, err
 	}
 
 	path := outputRefJoin(opts.OutputPath, dataartifact.DescriptorFileName)
 	tgt, err := openOutputTarget(context.Background(), opts, path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := writeOutputTargetBytesAtomically(tgt, data, 0o600); err != nil {
-		return fmt.Errorf("write data artifact descriptor %s: %w", tgt.LogicalURI, err)
+		return nil, fmt.Errorf("write data artifact descriptor %s: %w", tgt.LogicalURI, err)
 	}
-	return tgt.Publish(context.Background())
+	// Publication boundary: only a successful Publish yields a bridge receipt.
+	// For local targets Publish is a no-op after the atomic write, but still the
+	// single success gate used by cloud outputs.
+	if err := tgt.Publish(context.Background()); err != nil {
+		return nil, err
+	}
+	return &publishedDataArtifact{
+		ArtifactID: descriptor.ArtifactID,
+		Lifecycle:  descriptor.Lifecycle,
+	}, nil
 }
 
 func writeDataArtifactFieldCatalog(opts *ExtractOptions, resolved *artifactcontract.ResolvedContract) error {

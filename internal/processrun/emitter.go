@@ -11,16 +11,19 @@
 //   - Single-writer: all emitter methods are mutex-serialized; call only from the
 //     orchestrator/committer path (never worker goroutines).
 //   - Exactly one terminal event (Completed / Failed / Canceled) when Enabled.
-//   - Event data is an explicit allow-list (counts, timing, closed reasons) — no paths,
-//     xpaths, record content, or secrets.
+//   - Event data is an explicit allow-list (counts, timing, closed reasons, optional
+//     terminal artifact refs) — no paths, xpaths, record content, or secrets.
 //   - Stream open is exclusive create (no truncate, no merge into an existing path).
 //   - Process card is 0600 under a 0700 run dir, validated before atomic publish,
 //     swept on clean exit; the durable event stream is retained.
+//   - data.artifacts on the terminal is reference-only (artifact_id + lifecycle +
+//     ID-derived descriptor); process terminal class never rewrites artifact lifecycle.
 package processrun
 
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -43,6 +46,11 @@ const (
 	dataKeyTotal              = "total"
 	dataKeyHeartbeatIntervalS = "heartbeat_interval_s"
 	dataKeyReason             = "reason"
+	dataKeyArtifacts          = "artifacts"
+
+	// DescriptorRefSuffix is the fixed fragment used to form a portable, non-locator
+	// descriptor reference from artifact_id (e.g. urn:uuid:…#descriptor).
+	DescriptorRefSuffix = "#descriptor"
 )
 
 // Path-free setup errors for fail-open operator warnings (never embed the
@@ -83,6 +91,54 @@ type streamWriter interface {
 	Close() error
 }
 
+// ArtifactRef is a process-run/v0 $defs.artifactRef: opaque identity + lifecycle +
+// a controlled ID-derived descriptor reference. It must never carry output locators,
+// filesystem paths, cloud URIs, or recipe identity.
+type ArtifactRef struct {
+	ArtifactID string
+	Lifecycle  string
+	Descriptor string
+}
+
+// DescriptorRefFromArtifactID builds the portable non-locator descriptor field
+// from a published artifact_id. Callers must pass the exact published id.
+func DescriptorRefFromArtifactID(artifactID string) string {
+	return strings.TrimSpace(artifactID) + DescriptorRefSuffix
+}
+
+// Validate checks the closed artifactRef shape used on terminal data.artifacts.
+// Invalid refs are dropped fail-open by ArtifactPublished (never fail the extract).
+func (r ArtifactRef) Validate() error {
+	id := strings.TrimSpace(r.ArtifactID)
+	if id == "" {
+		return errors.New("process-run: artifact_id is required")
+	}
+	if !strings.HasPrefix(id, "urn:uuid:") {
+		return fmt.Errorf("process-run: artifact_id must be urn:uuid:…")
+	}
+	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "://") {
+		return errors.New("process-run: artifact_id must not be a locator")
+	}
+	switch strings.TrimSpace(r.Lifecycle) {
+	case "draft", "building", "complete", "partial", "incomplete", "retired":
+	default:
+		return fmt.Errorf("process-run: invalid artifact lifecycle %q", r.Lifecycle)
+	}
+	desc := strings.TrimSpace(r.Descriptor)
+	if desc == "" {
+		return errors.New("process-run: descriptor is required")
+	}
+	// Controlled syntax only: artifact_id + "#descriptor" (no paths/schemes/hosts).
+	want := DescriptorRefFromArtifactID(id)
+	if desc != want {
+		return errors.New("process-run: descriptor must be artifact_id#descriptor")
+	}
+	if strings.Contains(desc, "://") || strings.ContainsAny(desc, "/\\") {
+		return errors.New("process-run: descriptor must not be a locator")
+	}
+	return nil
+}
+
 // Emitter is the single-writer process-run event surface.
 type Emitter interface {
 	// Enabled reports whether emission is active (false for no-op / fail-open disabled).
@@ -92,6 +148,11 @@ type Emitter interface {
 	Started(total int)
 	Progress(done, total int)
 	Heartbeat(done int)
+	// ArtifactPublished records a successfully published data-artifact descriptor
+	// for attachment to the eventual terminal event. Emits no event itself.
+	// Invalid or duplicate (by artifact_id) refs are dropped. Call only after
+	// target.Publish succeeds, from the committer/finalize path.
+	ArtifactPublished(ref ArtifactRef)
 	Completed(done, total int)
 	Failed(done, total int, reason string)
 	Canceled(done, total int, reason string)
@@ -195,9 +256,12 @@ type fileEmitter struct {
 	disabled          bool
 	terminal          bool
 	started           bool
-	stopHeartbeat     chan struct{}
-	heartbeatOnce     sync.Once
-	closeOnce         sync.Once
+	// artifacts accumulates successfully published data-artifact refs for the
+	// sole terminal event (plan/finalize order; defensive dedupe by artifact_id).
+	artifacts     []ArtifactRef
+	stopHeartbeat chan struct{}
+	heartbeatOnce sync.Once
+	closeOnce     sync.Once
 	// doneSnapshot is updated on Progress for heartbeat reads.
 	doneSnapshot atomic.Int64
 }
@@ -264,6 +328,28 @@ func (e *fileEmitter) Heartbeat(done int) {
 	_ = e.writeLocked("heartbeat", "INFO", map[string]interface{}{
 		dataKeyDone: done,
 	}, false)
+}
+
+func (e *fileEmitter) ArtifactPublished(ref ArtifactRef) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.disabled || e.terminal {
+		return
+	}
+	if err := ref.Validate(); err != nil {
+		// Fail-open telemetry: drop a bad ref; never fail the extract.
+		return
+	}
+	// Normalize whitespace for stable emission.
+	ref.ArtifactID = strings.TrimSpace(ref.ArtifactID)
+	ref.Lifecycle = strings.TrimSpace(ref.Lifecycle)
+	ref.Descriptor = strings.TrimSpace(ref.Descriptor)
+	for _, existing := range e.artifacts {
+		if existing.ArtifactID == ref.ArtifactID {
+			return
+		}
+	}
+	e.artifacts = append(e.artifacts, ref)
 }
 
 func (e *fileEmitter) Completed(done, total int) {
@@ -336,10 +422,30 @@ func (e *fileEmitter) terminalLocked(event, severity string, data map[string]int
 	if !e.started {
 		return
 	}
+	if data == nil {
+		data = map[string]interface{}{}
+	}
+	if len(e.artifacts) > 0 {
+		data[dataKeyArtifacts] = artifactRefsJSON(e.artifacts)
+	}
 	if e.writeLocked(event, severity, data, false) {
 		e.terminal = true
 	}
 	e.stopHeartbeatLocked()
+}
+
+// artifactRefsJSON maps collected refs to the exact nested key set
+// (artifact_id, lifecycle, descriptor) with no extra fields.
+func artifactRefsJSON(refs []ArtifactRef) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, map[string]interface{}{
+			"artifact_id": r.ArtifactID,
+			"lifecycle":   r.Lifecycle,
+			"descriptor":  r.Descriptor,
+		})
+	}
+	return out
 }
 
 // writeLocked appends one NDJSON line. On failure, disables the emitter (fail-open)
@@ -465,15 +571,16 @@ func closedReason(reason string) string {
 // noopEmitter is used when telemetry is off or fail-open disabled.
 type noopEmitter struct{}
 
-func (noopEmitter) Enabled() bool             { return false }
-func (noopEmitter) Path() string              { return "" }
-func (noopEmitter) Started(int)               {}
-func (noopEmitter) Progress(int, int)         {}
-func (noopEmitter) Heartbeat(int)             {}
-func (noopEmitter) Completed(int, int)        {}
-func (noopEmitter) Failed(int, int, string)   {}
-func (noopEmitter) Canceled(int, int, string) {}
-func (noopEmitter) Close()                    {}
+func (noopEmitter) Enabled() bool                 { return false }
+func (noopEmitter) Path() string                  { return "" }
+func (noopEmitter) Started(int)                   {}
+func (noopEmitter) Progress(int, int)             {}
+func (noopEmitter) Heartbeat(int)                 {}
+func (noopEmitter) ArtifactPublished(ArtifactRef) {}
+func (noopEmitter) Completed(int, int)            {}
+func (noopEmitter) Failed(int, int, string)       {}
+func (noopEmitter) Canceled(int, int, string)     {}
+func (noopEmitter) Close()                        {}
 
 // Noop returns a disabled emitter.
 func Noop() Emitter { return noopEmitter{} }

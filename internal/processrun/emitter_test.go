@@ -417,3 +417,265 @@ func TestValidateEventsPathHonorsExplicitOverrideRoots(t *testing.T) {
 // Ensure streamWriter is satisfied by *os.File.
 var _ streamWriter = (*os.File)(nil)
 var _ io.Writer = (*scriptedWriter)(nil)
+
+func TestArtifactPublishedOnTerminals(t *testing.T) {
+	for _, terminal := range []string{"completed", "failed", "canceled"} {
+		t.Run(terminal, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "e.ndjson")
+			e, err := Open(Config{Path: path, RunID: "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c", PID: 1, Producer: Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile}, HeartbeatInterval: time.Hour})
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			id := "urn:uuid:018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+			e.Started(1)
+			e.ArtifactPublished(ArtifactRef{
+				ArtifactID: id,
+				Lifecycle:  "complete",
+				Descriptor: DescriptorRefFromArtifactID(id),
+			})
+			switch terminal {
+			case "completed":
+				e.Completed(1, 1)
+			case "failed":
+				e.Failed(1, 1, "partial")
+			case "canceled":
+				e.Canceled(1, 1, "canceled")
+			}
+			e.Close()
+
+			raw, err := os.ReadFile(path) // #nosec G304
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			assertSchemaValidEmitterStream(t, raw, path)
+			term := lastEventData(t, raw)
+			arts, ok := term["artifacts"].([]interface{})
+			if !ok || len(arts) != 1 {
+				t.Fatalf("want one artifacts entry, got %#v in %s", term, raw)
+			}
+			a, _ := arts[0].(map[string]interface{})
+			if len(a) != 3 {
+				t.Fatalf("artifact keys = %v, want exactly 3", keysOf(a))
+			}
+			for _, k := range []string{"artifact_id", "lifecycle", "descriptor"} {
+				if _, ok := a[k]; !ok {
+					t.Fatalf("missing key %q in %#v", k, a)
+				}
+			}
+			if a["artifact_id"] != id || a["lifecycle"] != "complete" || a["descriptor"] != id+"#descriptor" {
+				t.Fatalf("artifact = %#v", a)
+			}
+			// Exactly one terminal; no second event from ArtifactPublished.
+			kinds := eventKindsFromRaw(string(raw))
+			assertOneTerminalLastKinds(t, kinds, terminal)
+		})
+	}
+}
+
+func TestArtifactPublishedEmptyOmitsKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "e.ndjson")
+	e, err := Open(Config{Path: path, RunID: "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c", PID: 1, Producer: Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile}, HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	e.Started(1)
+	e.Completed(1, 1)
+	e.Close()
+	raw, _ := os.ReadFile(path) // #nosec G304
+	term := lastEventData(t, raw)
+	if _, ok := term["artifacts"]; ok {
+		t.Fatalf("artifacts must be omitted when empty, got %#v", term)
+	}
+}
+
+func TestArtifactPublishedInvalidAndDuplicateDropped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "e.ndjson")
+	e, err := Open(Config{Path: path, RunID: "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c", PID: 1, Producer: Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile}, HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	id := "urn:uuid:018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	e.Started(2)
+	// Invalid shapes (fail-open drop).
+	e.ArtifactPublished(ArtifactRef{ArtifactID: "", Lifecycle: "complete", Descriptor: "#descriptor"})
+	e.ArtifactPublished(ArtifactRef{ArtifactID: id, Lifecycle: "complete", Descriptor: "s3://bucket/key"})
+	e.ArtifactPublished(ArtifactRef{ArtifactID: id, Lifecycle: "not-a-lifecycle", Descriptor: DescriptorRefFromArtifactID(id)})
+	e.ArtifactPublished(ArtifactRef{ArtifactID: "not-a-uuid", Lifecycle: "complete", Descriptor: "not-a-uuid#descriptor"})
+	// Valid then duplicate id.
+	e.ArtifactPublished(ArtifactRef{ArtifactID: id, Lifecycle: "complete", Descriptor: DescriptorRefFromArtifactID(id)})
+	e.ArtifactPublished(ArtifactRef{ArtifactID: id, Lifecycle: "partial", Descriptor: DescriptorRefFromArtifactID(id)})
+	id2 := "urn:uuid:11111111-2222-3333-4444-555555555555"
+	e.ArtifactPublished(ArtifactRef{ArtifactID: id2, Lifecycle: "partial", Descriptor: DescriptorRefFromArtifactID(id2)})
+	e.Failed(2, 2, "partial")
+	e.Close()
+
+	term := lastEventData(t, mustRead(t, path))
+	arts, _ := term["artifacts"].([]interface{})
+	if len(arts) != 2 {
+		t.Fatalf("want 2 artifacts after drops/dedupe, got %d: %#v", len(arts), arts)
+	}
+	a0 := arts[0].(map[string]interface{})
+	a1 := arts[1].(map[string]interface{})
+	if a0["artifact_id"] != id || a0["lifecycle"] != "complete" {
+		t.Fatalf("first = %#v", a0)
+	}
+	if a1["artifact_id"] != id2 || a1["lifecycle"] != "partial" {
+		t.Fatalf("second = %#v", a1)
+	}
+}
+
+func TestArtifactPublishedAfterTerminalIgnored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "e.ndjson")
+	e, err := Open(Config{Path: path, RunID: "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c", PID: 1, Producer: Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile}, HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	id := "urn:uuid:018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	e.Started(1)
+	e.Completed(1, 1)
+	e.ArtifactPublished(ArtifactRef{
+		ArtifactID: id,
+		Lifecycle:  "complete",
+		Descriptor: DescriptorRefFromArtifactID(id),
+	})
+	e.Close()
+	term := lastEventData(t, mustRead(t, path))
+	if _, ok := term["artifacts"]; ok {
+		t.Fatalf("post-terminal publish must not appear: %#v", term)
+	}
+}
+
+func TestArtifactPublishedWriterFailureWithholdsStream(t *testing.T) {
+	w := &scriptedWriter{failAt: 2} // started ok, terminal write fails
+	e, err := OpenWithWriter(Config{Path: "virtual", RunID: "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c", PID: 1, Producer: Producer{Name: "sumpter", Version: "test", Profile: ProducerProfile}, HeartbeatInterval: time.Hour}, w, "")
+	if err != nil {
+		t.Fatalf("OpenWithWriter: %v", err)
+	}
+	id := "urn:uuid:018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	e.Started(1)
+	e.ArtifactPublished(ArtifactRef{
+		ArtifactID: id,
+		Lifecycle:  "complete",
+		Descriptor: DescriptorRefFromArtifactID(id),
+	})
+	e.Completed(1, 1)
+	e.Close()
+	if e.Enabled() {
+		t.Fatal("emitter must disable after write failure")
+	}
+	// No durable terminal with artifacts — buffer has only started line (or less after disable).
+	raw := w.buf.String()
+	if strings.Contains(raw, `"artifacts"`) {
+		t.Fatalf("failed terminal must not publish artifacts payload: %s", raw)
+	}
+}
+
+func TestArtifactRefValidate(t *testing.T) {
+	id := "urn:uuid:018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
+	good := ArtifactRef{ArtifactID: id, Lifecycle: "complete", Descriptor: DescriptorRefFromArtifactID(id)}
+	if err := good.Validate(); err != nil {
+		t.Fatalf("good: %v", err)
+	}
+	for _, bad := range []ArtifactRef{
+		{ArtifactID: id, Lifecycle: "complete", Descriptor: "summary/artifact-descriptor.json"},
+		{ArtifactID: id, Lifecycle: "complete", Descriptor: "s3://b/k"},
+		{ArtifactID: "s3://b/k", Lifecycle: "complete", Descriptor: "s3://b/k#descriptor"},
+		{ArtifactID: id, Lifecycle: "finished", Descriptor: DescriptorRefFromArtifactID(id)},
+	} {
+		if err := bad.Validate(); err == nil {
+			t.Fatalf("expected invalid for %#v", bad)
+		}
+	}
+}
+
+func assertSchemaValidEmitterStream(t *testing.T, raw []byte, path string) {
+	t.Helper()
+	base := filepath.Join("..", "..", "tests", "fixtures", "process-run-contract", "v0")
+	resolved, err := artifactcontract.ResolveProcessRunBaseline(base)
+	if err != nil {
+		t.Fatalf("ResolveProcessRunBaseline: %v", err)
+	}
+	schema, err := artifactcontract.LoadPinnedProcessEventSchema(resolved)
+	if err != nil {
+		t.Fatalf("LoadPinnedProcessEventSchema: %v", err)
+	}
+	if _, err := artifactcontract.ValidateProcessEventStreamBytes(schema, raw, path); err != nil {
+		t.Fatalf("stream schema validation: %v\n%s", err, raw)
+	}
+}
+
+func lastEventData(t *testing.T, raw []byte) map[string]interface{} {
+	t.Helper()
+	var last map[string]interface{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var env map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		last = env
+	}
+	if last == nil {
+		t.Fatal("no events")
+	}
+	data, _ := last["data"].(map[string]interface{})
+	if data == nil {
+		return map[string]interface{}{}
+	}
+	return data
+}
+
+func eventKindsFromRaw(raw string) []string {
+	var kinds []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var env map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
+			continue
+		}
+		if k, ok := env["event"].(string); ok {
+			kinds = append(kinds, k)
+		}
+	}
+	return kinds
+}
+
+func assertOneTerminalLastKinds(t *testing.T, kinds []string, want string) {
+	t.Helper()
+	terminals := 0
+	for _, k := range kinds {
+		switch k {
+		case "completed", "failed", "canceled":
+			terminals++
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("want 1 terminal, got %d in %v", terminals, kinds)
+	}
+	if kinds[len(kinds)-1] != want {
+		t.Fatalf("last = %q want %q in %v", kinds[len(kinds)-1], want, kinds)
+	}
+}
+
+func keysOf(m map[string]interface{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path) // #nosec G304
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return raw
+}
