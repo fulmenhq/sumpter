@@ -310,6 +310,12 @@ var (
 	// claim.taking, immediately before the pathname Remove. Used to plant a replacement
 	// live lease in the late check-to-unlink ABA window.
 	removeAfterSameInodeCheck func(path, trash string, observed *reclaimLease, trashInfo os.FileInfo)
+	// cleanLockAfterTemp runs after a complete clean-lock temp is written, before
+	// hard-link into claim.taking.clean.<token>. Final path must still be absent.
+	cleanLockAfterTemp func(tmpPath, finalPath string)
+	// cleanLockReapBeforeUnlink runs after a reaper holds the exclusive .reaping
+	// marker and has re-validated the dead clean lock, immediately before Remove.
+	cleanLockReapBeforeUnlink func(lockPath, markerPath string, observed *reclaimCleanLock, info os.FileInfo)
 )
 
 // reclaimLeaseFile is a single per-slot election file (not per-token) so only one
@@ -452,12 +458,14 @@ func removeReclaimLeaseObject(path string, observed *reclaimLease, observedInfo 
 //
 // Single-winner cleanup:
 //  1. Exclusive cleaner lock claim.taking.clean.<token> carries the cleaner's
-//     (pid, started_at). A second cleaner that sees a live lock holder returns
-//     immediately and never joins the unlink path. A dead lock holder is
-//     reclaimed (abandoned crash residue) before a new exclusive create.
-//  2. Dead object pin claim.taking.dead.<token> is hard-link no-replace only
-//     (never pre-deleted). Probe collision while holding the clean lock may
-//     finish crash residue; without the lock, collision never unlinks path.
+//     (pid, started_at), published via temp+fsync+hard-link no-replace so the
+//     final name is never partial. A second cleaner that sees a live lock holder
+//     returns immediately and never joins the unlink path.
+//  2. Dead clean locks are reaped only under an exclusive claim.taking.clean.<token>.reaping
+//     marker (also temp+link, reaper identity). Multi-reaper unique-probe Remove
+//     races are not used — only the reaping-marker holder may unlink the dead lock.
+//  3. Dead object pin claim.taking.dead.<token> is hard-link no-replace only.
+//     Probe collision while holding the clean lock may finish crash residue.
 func removeReclaimLeaseObjectMode(path string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
 	if observed == nil || !validClaimToken(observed.Token) {
 		return false
@@ -487,17 +495,23 @@ type reclaimCleanLock struct {
 	StartedAt time.Time
 }
 
-// acquireReclaimCleanLock creates claim.taking.clean.<token> exclusively with
-// this process's live identity. Live holders block; dead holders are reaped so
-// crash residue can be completed by a later cleaner.
+// acquireReclaimCleanLock publishes claim.taking.clean.<token> as a complete
+// fsynced object (temp + hard-link no-replace) with this process's live identity.
+// Live holders block. Dead holders are reaped under an exclusive .reaping marker
+// before retrying publication — never via multi-winner unique-probe Removes.
 func acquireReclaimCleanLock(lockPath string) (*reclaimCleanLock, bool) {
 	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
 	if pid < 1 {
 		return nil, false
 	}
+	startedStr := started.UTC().Format(time.RFC3339Nano)
+	ts, perr := time.Parse(time.RFC3339Nano, startedStr)
+	if perr != nil {
+		ts = started.UTC()
+	}
 	doc := map[string]interface{}{
 		"pid":        pid,
-		"started_at": started.UTC().Format(time.RFC3339Nano),
+		"started_at": startedStr,
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
@@ -505,31 +519,37 @@ func acquireReclaimCleanLock(lockPath string) (*reclaimCleanLock, bool) {
 	}
 	raw = append(raw, '\n')
 
-	for attempt := 0; attempt < 4; attempt++ {
-		werr := writeFileExclusiveFull(lockPath, raw)
-		if werr == nil {
-			// Store round-tripped started_at so release token match is stable.
-			startedStr := started.UTC().Format(time.RFC3339Nano)
-			ts, perr := time.Parse(time.RFC3339Nano, startedStr)
-			if perr != nil {
-				ts = started.UTC()
-			}
+	for attempt := 0; attempt < 6; attempt++ {
+		tmp := fmt.Sprintf("%s.%d.%d.tmp", lockPath, pid, time.Now().UnixNano())
+		_ = os.Remove(tmp)
+		if err := writeFileExclusiveFull(tmp, raw); err != nil {
+			return nil, false
+		}
+		if cleanLockAfterTemp != nil {
+			cleanLockAfterTemp(tmp, lockPath)
+		}
+		lerr := os.Link(tmp, lockPath)
+		_ = os.Remove(tmp)
+		if lerr == nil {
+			_ = os.Chmod(lockPath, 0o600)
 			return &reclaimCleanLock{Path: lockPath, PID: pid, StartedAt: ts.UTC()}, true
 		}
-		if !errors.Is(werr, os.ErrExist) {
+		if !errors.Is(lerr, os.ErrExist) {
 			return nil, false
 		}
-		holder, info, rerr := readReclaimCleanLock(lockPath)
+		holder, _, rerr := readReclaimCleanLock(lockPath)
 		if rerr != nil {
-			// Incomplete/corrupt lock: treat as active contention (may still be publishing).
-			return nil, false
+			// Unreadable final (legacy partial / corrupt). Clear only under
+			// exclusive reaping marker so we do not race a live publisher.
+			if !reapUnreadableCleanLock(lockPath) {
+				return nil, false
+			}
+			continue
 		}
 		if identityLive(holder.PID, holder.StartedAt) {
-			// Active cleaner — never join its unlink path.
 			return nil, false
 		}
-		// Abandoned clean lock from a dead cleaner: object-bound reap, then retry.
-		if !removeDeadCleanLock(lockPath, holder, info) {
+		if !reapDeadCleanLock(lockPath, holder) {
 			return nil, false
 		}
 	}
@@ -568,49 +588,155 @@ func readReclaimCleanLock(path string) (*reclaimCleanLock, os.FileInfo, error) {
 	return &reclaimCleanLock{Path: path, PID: raw.PID, StartedAt: ts.UTC()}, info, nil
 }
 
-// removeDeadCleanLock unlinks a proven-dead clean lock object (token-named path)
-// only while it still names the observed dead holder inode.
-func removeDeadCleanLock(path string, observed *reclaimCleanLock, observedInfo os.FileInfo) bool {
+func cleanIdentityMatch(a, b *reclaimCleanLock) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.PID != b.PID {
+		return false
+	}
+	return a.StartedAt.UTC().Format(time.RFC3339Nano) == b.StartedAt.UTC().Format(time.RFC3339Nano)
+}
+
+// acquireReapingMarker publishes lockPath+".reaping" with this process's identity
+// via temp+link. Live reapers block; abandoned (dead) markers are claimed by
+// rename (single-winner) then discarded.
+func acquireReapingMarker(markerPath string) (*reclaimCleanLock, bool) {
+	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
+	if pid < 1 {
+		return nil, false
+	}
+	startedStr := started.UTC().Format(time.RFC3339Nano)
+	ts, perr := time.Parse(time.RFC3339Nano, startedStr)
+	if perr != nil {
+		ts = started.UTC()
+	}
+	doc := map[string]interface{}{
+		"pid":        pid,
+		"started_at": startedStr,
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, false
+	}
+	raw = append(raw, '\n')
+
+	for attempt := 0; attempt < 4; attempt++ {
+		tmp := fmt.Sprintf("%s.%d.%d.tmp", markerPath, pid, time.Now().UnixNano())
+		_ = os.Remove(tmp)
+		if err := writeFileExclusiveFull(tmp, raw); err != nil {
+			return nil, false
+		}
+		lerr := os.Link(tmp, markerPath)
+		_ = os.Remove(tmp)
+		if lerr == nil {
+			_ = os.Chmod(markerPath, 0o600)
+			return &reclaimCleanLock{Path: markerPath, PID: pid, StartedAt: ts.UTC()}, true
+		}
+		if !errors.Is(lerr, os.ErrExist) {
+			return nil, false
+		}
+		holder, _, rerr := readReclaimCleanLock(markerPath)
+		if rerr != nil {
+			// Partial marker should not exist with atomic publish; fail closed.
+			return nil, false
+		}
+		if identityLive(holder.PID, holder.StartedAt) {
+			return nil, false
+		}
+		// Abandoned marker: rename is the exclusive claim (second renamer loses).
+		trash := fmt.Sprintf("%s.gone.%d.%d", markerPath, os.Getpid(), time.Now().UnixNano())
+		if rerr := os.Rename(markerPath, trash); rerr != nil {
+			continue
+		}
+		th, _, err := readReclaimCleanLock(trash)
+		if err != nil || identityLive(th.PID, th.StartedAt) || !cleanIdentityMatch(th, holder) {
+			// Moved unexpected object — restore if path free.
+			if _, e := os.Lstat(markerPath); errors.Is(e, os.ErrNotExist) {
+				_ = os.Rename(trash, markerPath)
+			} else {
+				_ = os.Remove(trash)
+			}
+			return nil, false
+		}
+		_ = os.Remove(trash)
+	}
+	return nil, false
+}
+
+func releaseReapingMarker(marker *reclaimCleanLock) {
+	releaseReclaimCleanLock(marker)
+}
+
+// reapDeadCleanLock removes a proven-dead clean lock under an exclusive .reaping
+// marker so only one reaper can unlink the pathname (no multi-winner Remove ABA).
+func reapDeadCleanLock(lockPath string, observed *reclaimCleanLock) bool {
 	if observed == nil || observed.PID < 1 {
 		return false
 	}
-	// Unique reap probe so we never pre-delete another cleaner's lock pin.
-	reap := fmt.Sprintf("%s.reap.%d.%d", path, os.Getpid(), time.Now().UnixNano())
-	if err := os.Link(path, reap); err != nil {
+	markerPath := lockPath + ".reaping"
+	marker, ok := acquireReapingMarker(markerPath)
+	if !ok {
 		return false
 	}
-	reapInfo, err := os.Lstat(reap)
+	defer releaseReapingMarker(marker)
+
+	cur, info, err := readReclaimCleanLock(lockPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
 	if err != nil {
 		return false
 	}
-	if observedInfo != nil && !sameFile(reapInfo, observedInfo) {
-		_ = os.Remove(reap)
+	if identityLive(cur.PID, cur.StartedAt) || !cleanIdentityMatch(cur, observed) {
 		return false
 	}
-	cur, _, err := readReclaimCleanLock(reap)
-	if err != nil || cur.PID != observed.PID || identityLive(cur.PID, cur.StartedAt) {
-		_ = os.Remove(reap)
+	if cleanLockReapBeforeUnlink != nil {
+		cleanLockReapBeforeUnlink(lockPath, markerPath, observed, info)
+	}
+	// Re-bind immediately before Remove: a replacement live lock must survive.
+	cur2, info2, err2 := readReclaimCleanLock(lockPath)
+	if errors.Is(err2, os.ErrNotExist) {
+		return true
+	}
+	if err2 != nil {
 		return false
 	}
-	// Compare via RFC3339Nano strings so parse round-trips match write format.
-	if cur.StartedAt.UTC().Format(time.RFC3339Nano) != observed.StartedAt.UTC().Format(time.RFC3339Nano) {
-		_ = os.Remove(reap)
+	if identityLive(cur2.PID, cur2.StartedAt) || !cleanIdentityMatch(cur2, observed) {
 		return false
 	}
-	removed := false
-	pathInfo, err := os.Lstat(path)
-	if err == nil && sameFile(pathInfo, reapInfo) {
-		pathInfo2, err2 := os.Lstat(path)
-		if err2 == nil && sameFile(pathInfo2, reapInfo) {
-			if rerr := os.Remove(path); rerr == nil {
-				removed = true
-			}
-		}
-	} else if errors.Is(err, os.ErrNotExist) {
-		removed = true
+	if info != nil && info2 != nil && !sameFile(info, info2) {
+		return false
 	}
-	_ = os.Remove(reap)
-	return removed
+	if rerr := os.Remove(lockPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+		return false
+	}
+	return true
+}
+
+// reapUnreadableCleanLock clears a non-parseable final lock only under the
+// exclusive reaping marker (legacy partial residue / corruption).
+func reapUnreadableCleanLock(lockPath string) bool {
+	markerPath := lockPath + ".reaping"
+	marker, ok := acquireReapingMarker(markerPath)
+	if !ok {
+		return false
+	}
+	defer releaseReapingMarker(marker)
+
+	_, _, err := readReclaimCleanLock(lockPath)
+	if err == nil {
+		// Became readable (complete lock appeared) — do not delete.
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	// Still unreadable / invalid: remove pathname only while marker held.
+	if rerr := os.Remove(lockPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+		return false
+	}
+	return true
 }
 
 func releaseReclaimCleanLock(lock *reclaimCleanLock) {
@@ -618,13 +744,10 @@ func releaseReclaimCleanLock(lock *reclaimCleanLock) {
 		return
 	}
 	cur, info, err := readReclaimCleanLock(lock.Path)
-	if err != nil || cur.PID != lock.PID {
+	if err != nil || !cleanIdentityMatch(cur, lock) {
 		return
 	}
-	if cur.StartedAt.UTC().Format(time.RFC3339Nano) != lock.StartedAt.UTC().Format(time.RFC3339Nano) {
-		return
-	}
-	// Owner release of our still-live clean lock (token/inode bound via same content).
+	// Owner release of our still-live clean lock (identity + inode bound).
 	pathInfo, err := os.Lstat(lock.Path)
 	if err != nil || (info != nil && !sameFile(pathInfo, info)) {
 		return

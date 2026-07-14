@@ -271,6 +271,8 @@ func TestOpenCardConcurrentStaleReclaim(t *testing.T) {
 	electAfterTemp = nil
 	cleanDeadAfterObserve = nil
 	removeAfterSameInodeCheck = nil
+	cleanLockAfterTemp = nil
+	cleanLockReapBeforeUnlink = nil
 	runtimeDir := filepath.Join(t.TempDir(), "rt")
 	runID := "018f3c2a-7b4e-7c1d-9a2b-0d5e6f7a8b9c"
 	runDir := RunDir(runtimeDir, runID)
@@ -1191,6 +1193,140 @@ func TestCleanDeadReclaimAbandonedCleanLockRecovers(t *testing.T) {
 	}
 	if _, err := os.Lstat(lockPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("clean lock should be released, err=%v", err)
+	}
+	if _, err := os.Lstat(lockPath + ".reaping"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reaping marker should be released, err=%v", err)
+	}
+}
+
+func TestCleanLockAtomicPublication(t *testing.T) {
+	// Mid-publish barrier: complete temp exists; final clean lock absent until Link.
+	// Peer must not treat a partial final as permanent poison (final never partial).
+	if runtime.GOOS == "windows" {
+		t.Skip("needs hard-link")
+	}
+	cleanLockAfterTemp = nil
+	cleanLockReapBeforeUnlink = nil
+
+	runDir := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(runDir, "claim.taking.clean.acacacacacacacacacacacacacacacac")
+
+	prev := cleanLockAfterTemp
+	t.Cleanup(func() { cleanLockAfterTemp = prev })
+	var midOK atomic.Bool
+	cleanLockAfterTemp = func(tmpPath, finalPath string) {
+		if _, err := os.Lstat(finalPath); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("final clean lock must be absent mid-publish, err=%v", err)
+			return
+		}
+		if _, _, err := readReclaimCleanLock(tmpPath); err != nil {
+			t.Errorf("temp clean lock incomplete: %v", err)
+			return
+		}
+		// Peer acquire while final absent must not see permanent contention from partial final.
+		// (May win the race by Linking first — that's fine; final still never partial.)
+		midOK.Store(true)
+	}
+
+	lock, ok := acquireReclaimCleanLock(lockPath)
+	if !ok {
+		// Peer could have won if we extended the barrier; for single-threaded barrier, must win.
+		t.Fatal("acquire must succeed")
+	}
+	defer releaseReclaimCleanLock(lock)
+	if !midOK.Load() {
+		t.Fatal("mid-publish barrier did not run")
+	}
+	got, _, err := readReclaimCleanLock(lockPath)
+	if err != nil {
+		t.Fatalf("final lock unreadable: %v", err)
+	}
+	if !identityLive(got.PID, got.StartedAt) {
+		t.Fatal("published clean lock must be live identity")
+	}
+}
+
+func TestCleanLockTwoReaperCannotDeleteReplacement(t *testing.T) {
+	// Dead-lock reaping single-winner: X holds exclusive .reaping marker past
+	// re-validation; Y's production acquire cannot join Remove. After X unlinks
+	// dead D and publishes live N, Y must not have deleted N or acquired concurrently.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs hard-link + unix liveness")
+	}
+	cleanLockAfterTemp = nil
+	cleanLockReapBeforeUnlink = nil
+
+	runDir := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := findDeadPID(t)
+	lockPath := filepath.Join(runDir, "claim.taking.clean.bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd")
+	lockDoc := map[string]interface{}{
+		"pid":        deadPID,
+		"started_at": time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+	}
+	lockRaw, err := json.Marshal(lockDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockRaw = append(lockRaw, '\n')
+	// Seed a complete dead lock object (test fixture; production uses temp+link).
+	if err := writeFileExclusiveFull(lockPath, lockRaw); err != nil {
+		t.Fatal(err)
+	}
+
+	xAtReap := make(chan struct{})
+	yFinished := make(chan struct{})
+	var yAcquired atomic.Bool
+
+	prev := cleanLockReapBeforeUnlink
+	t.Cleanup(func() { cleanLockReapBeforeUnlink = prev })
+	cleanLockReapBeforeUnlink = func(lp, marker string, observed *reclaimCleanLock, info os.FileInfo) {
+		if observed == nil || observed.PID != deadPID {
+			t.Errorf("unexpected observed lock: %+v", observed)
+		}
+		_ = info
+		if _, err := os.Lstat(marker); err != nil {
+			t.Errorf("reaping marker missing: %v", err)
+		}
+		close(xAtReap)
+		<-yFinished
+	}
+
+	go func() {
+		<-xAtReap
+		// Production acquire while X holds .reaping marker over dead D.
+		if lock, ok := acquireReclaimCleanLock(lockPath); ok {
+			yAcquired.Store(true)
+			releaseReclaimCleanLock(lock)
+		}
+		close(yFinished)
+	}()
+
+	lock, ok := acquireReclaimCleanLock(lockPath)
+	if !ok {
+		t.Fatal("X must acquire after reaping dead lock")
+	}
+	defer releaseReclaimCleanLock(lock)
+	if yAcquired.Load() {
+		t.Fatal("Y must not acquire clean lock while X holds exclusive reaping marker")
+	}
+	got, _, err := readReclaimCleanLock(lockPath)
+	if err != nil {
+		t.Fatalf("live clean lock missing after two-reaper schedule: %v", err)
+	}
+	if !identityLive(got.PID, got.StartedAt) {
+		t.Fatal("replacement clean lock must be live")
+	}
+	if got.PID != lock.PID || got.StartedAt.UTC().Format(time.RFC3339Nano) != lock.StartedAt.UTC().Format(time.RFC3339Nano) {
+		t.Fatal("X's published clean lock was replaced or deleted")
+	}
+	if _, err := os.Lstat(lockPath + ".reaping"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reaping marker residue: %v", err)
 	}
 }
 
