@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -439,8 +440,7 @@ func cleanDeadReclaimLeases(runDir string) int {
 }
 
 // removeReclaimLeaseObject unlinks claim.taking only when it still names the exact
-// proven-dead lease object previously observed (matching token + inode). Uses an
-// exclusive hard-link probe so a pathname ABA cannot delete a later live election.
+// proven-dead lease object previously observed (matching token + inode).
 func removeReclaimLeaseObject(path string, observed *reclaimLease, observedInfo os.FileInfo) bool {
 	return removeReclaimLeaseObjectMode(path, observed, observedInfo, false)
 }
@@ -450,20 +450,30 @@ func removeReclaimLeaseObject(path string, observed *reclaimLease, observedInfo 
 // release), the holder may drop their own still-live lease without allowing a
 // different live election at the same pathname to be unlinked.
 //
-// Cleanup is single-winner through unlink: the probe name claim.taking.dead.<token>
-// is created only via hard-link no-replace (never by deleting another cleaner's
-// live probe first). While the probe holds the dead object, concurrent electors
-// cannot clear that probe to publish a replacement under the same pathname.
+// Single-winner cleanup:
+//  1. Exclusive cleaner lock claim.taking.clean.<token> carries the cleaner's
+//     (pid, started_at). A second cleaner that sees a live lock holder returns
+//     immediately and never joins the unlink path. A dead lock holder is
+//     reclaimed (abandoned crash residue) before a new exclusive create.
+//  2. Dead object pin claim.taking.dead.<token> is hard-link no-replace only
+//     (never pre-deleted). Probe collision while holding the clean lock may
+//     finish crash residue; without the lock, collision never unlinks path.
 func removeReclaimLeaseObjectMode(path string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
 	if observed == nil || !validClaimToken(observed.Token) {
 		return false
 	}
+	lockPath := path + ".clean." + observed.Token
+	lock, ok := acquireReclaimCleanLock(lockPath)
+	if !ok {
+		return false
+	}
+	defer releaseReclaimCleanLock(lock)
+
 	trash := path + ".dead." + observed.Token
-	// Exclusive pin: hard-link no-replace. Do NOT remove an existing probe first —
-	// that would let a second cleaner steal the first cleaner's pin and re-open a
-	// late check-to-unlink ABA against a live replacement.
+	// Exclusive pin: hard-link no-replace. Do NOT remove an existing probe first.
 	if err := os.Link(path, trash); err != nil {
 		if errors.Is(err, os.ErrExist) {
+			// Only the clean-lock holder may complete residue against this probe.
 			return completeReclaimLeaseProbeCollision(path, trash, observed, observedInfo, allowLive)
 		}
 		return false
@@ -471,9 +481,165 @@ func removeReclaimLeaseObjectMode(path string, observed *reclaimLease, observedI
 	return finishReclaimLeaseUnlink(path, trash, observed, observedInfo, allowLive)
 }
 
-// completeReclaimLeaseProbeCollision handles Link EEXIST on the exclusive dead probe.
-// Another cleaner may hold the pin, or a prior cleaner may have crashed mid-flight.
-// Never steals a live cleaner probe by unlinking it up front.
+type reclaimCleanLock struct {
+	Path      string
+	PID       int
+	StartedAt time.Time
+}
+
+// acquireReclaimCleanLock creates claim.taking.clean.<token> exclusively with
+// this process's live identity. Live holders block; dead holders are reaped so
+// crash residue can be completed by a later cleaner.
+func acquireReclaimCleanLock(lockPath string) (*reclaimCleanLock, bool) {
+	pid, started := resolveIdentity(os.Getpid(), time.Now().UTC())
+	if pid < 1 {
+		return nil, false
+	}
+	doc := map[string]interface{}{
+		"pid":        pid,
+		"started_at": started.UTC().Format(time.RFC3339Nano),
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, false
+	}
+	raw = append(raw, '\n')
+
+	for attempt := 0; attempt < 4; attempt++ {
+		werr := writeFileExclusiveFull(lockPath, raw)
+		if werr == nil {
+			// Store round-tripped started_at so release token match is stable.
+			startedStr := started.UTC().Format(time.RFC3339Nano)
+			ts, perr := time.Parse(time.RFC3339Nano, startedStr)
+			if perr != nil {
+				ts = started.UTC()
+			}
+			return &reclaimCleanLock{Path: lockPath, PID: pid, StartedAt: ts.UTC()}, true
+		}
+		if !errors.Is(werr, os.ErrExist) {
+			return nil, false
+		}
+		holder, info, rerr := readReclaimCleanLock(lockPath)
+		if rerr != nil {
+			// Incomplete/corrupt lock: treat as active contention (may still be publishing).
+			return nil, false
+		}
+		if identityLive(holder.PID, holder.StartedAt) {
+			// Active cleaner — never join its unlink path.
+			return nil, false
+		}
+		// Abandoned clean lock from a dead cleaner: object-bound reap, then retry.
+		if !removeDeadCleanLock(lockPath, holder, info) {
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func readReclaimCleanLock(path string) (*reclaimCleanLock, os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, nil, errors.New("invalid reclaim clean lock")
+	}
+	data, err := os.ReadFile(path) // #nosec G304
+	if err != nil {
+		return nil, nil, err
+	}
+	var raw struct {
+		PID       int    `json:"pid"`
+		StartedAt string `json:"started_at"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, nil, err
+	}
+	if raw.PID < 1 {
+		return nil, nil, errors.New("invalid reclaim clean lock")
+	}
+	ts, err := time.Parse(time.RFC3339Nano, raw.StartedAt)
+	if err != nil {
+		ts, err = time.Parse(time.RFC3339, raw.StartedAt)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return &reclaimCleanLock{Path: path, PID: raw.PID, StartedAt: ts.UTC()}, info, nil
+}
+
+// removeDeadCleanLock unlinks a proven-dead clean lock object (token-named path)
+// only while it still names the observed dead holder inode.
+func removeDeadCleanLock(path string, observed *reclaimCleanLock, observedInfo os.FileInfo) bool {
+	if observed == nil || observed.PID < 1 {
+		return false
+	}
+	// Unique reap probe so we never pre-delete another cleaner's lock pin.
+	reap := fmt.Sprintf("%s.reap.%d.%d", path, os.Getpid(), time.Now().UnixNano())
+	if err := os.Link(path, reap); err != nil {
+		return false
+	}
+	reapInfo, err := os.Lstat(reap)
+	if err != nil {
+		return false
+	}
+	if observedInfo != nil && !sameFile(reapInfo, observedInfo) {
+		_ = os.Remove(reap)
+		return false
+	}
+	cur, _, err := readReclaimCleanLock(reap)
+	if err != nil || cur.PID != observed.PID || identityLive(cur.PID, cur.StartedAt) {
+		_ = os.Remove(reap)
+		return false
+	}
+	// Compare via RFC3339Nano strings so parse round-trips match write format.
+	if cur.StartedAt.UTC().Format(time.RFC3339Nano) != observed.StartedAt.UTC().Format(time.RFC3339Nano) {
+		_ = os.Remove(reap)
+		return false
+	}
+	removed := false
+	pathInfo, err := os.Lstat(path)
+	if err == nil && sameFile(pathInfo, reapInfo) {
+		pathInfo2, err2 := os.Lstat(path)
+		if err2 == nil && sameFile(pathInfo2, reapInfo) {
+			if rerr := os.Remove(path); rerr == nil {
+				removed = true
+			}
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		removed = true
+	}
+	_ = os.Remove(reap)
+	return removed
+}
+
+func releaseReclaimCleanLock(lock *reclaimCleanLock) {
+	if lock == nil || lock.Path == "" {
+		return
+	}
+	cur, info, err := readReclaimCleanLock(lock.Path)
+	if err != nil || cur.PID != lock.PID {
+		return
+	}
+	if cur.StartedAt.UTC().Format(time.RFC3339Nano) != lock.StartedAt.UTC().Format(time.RFC3339Nano) {
+		return
+	}
+	// Owner release of our still-live clean lock (token/inode bound via same content).
+	pathInfo, err := os.Lstat(lock.Path)
+	if err != nil || (info != nil && !sameFile(pathInfo, info)) {
+		return
+	}
+	_ = os.Remove(lock.Path)
+}
+
+// completeReclaimLeaseProbeCollision handles Link EEXIST on the exclusive dead
+// probe while this cleaner already holds the clean lock. Without the clean lock,
+// callers never reach here via removeReclaimLeaseObjectMode. A second cleaner
+// blocked on a live clean lock never joins this path.
+//
+// Dual-name same-inode completion is therefore single-winner: only the clean-lock
+// holder may finish crash residue left by an abandoned cleaner that linked the
+// probe then died before unlinking path.
 func completeReclaimLeaseProbeCollision(path, trash string, observed *reclaimLease, observedInfo os.FileInfo, allowLive bool) bool {
 	tInfo, terr := os.Lstat(trash)
 	if terr != nil {
@@ -505,8 +671,7 @@ func completeReclaimLeaseProbeCollision(path, trash string, observed *reclaimLea
 		return false
 	}
 	if sameFile(pInfo, tInfo) {
-		// Dual-name same dead object: prior cleaner likely crashed after Link.
-		// Complete the unlink without recreating the probe.
+		// Dual-name same dead object under our exclusive clean lock: finish unlink.
 		return finishReclaimLeaseUnlinkWithProbe(path, trash, tInfo, observed, allowLive)
 	}
 	// Path names a different object; probe is crash residue of the dead object.
@@ -546,7 +711,7 @@ func finishReclaimLeaseUnlinkWithProbe(path, trash string, trashInfo os.FileInfo
 			removeAfterSameInodeCheck(path, trash, observed, trashInfo)
 		}
 		// Re-bind immediately before Remove so a late replacement at the pathname
-		// (planted above or by a concurrent contender after a stolen probe) survives.
+		// survives even if the barrier planted it after authorization.
 		pathInfo2, err2 := os.Lstat(path)
 		if err2 == nil && sameFile(pathInfo2, trashInfo) {
 			if rerr := os.Remove(path); rerr == nil {
@@ -868,7 +1033,11 @@ func clearSlotOwnedResidue(runDir, cardPath string) {
 	if entries, rerr := os.ReadDir(runDir); rerr == nil {
 		for _, e := range entries {
 			name := e.Name()
-			if strings.HasPrefix(name, "claim.stale.") || strings.HasSuffix(name, ".tmp") {
+			// claim.taking.* covers .tmp, .dead.<token>, .clean.<token> sidecars
+			// without removing the final claim.taking election file itself.
+			if strings.HasPrefix(name, "claim.stale.") ||
+				strings.HasPrefix(name, "claim.taking.") ||
+				strings.HasSuffix(name, ".tmp") {
 				_ = os.Remove(filepath.Join(runDir, name))
 			}
 		}
