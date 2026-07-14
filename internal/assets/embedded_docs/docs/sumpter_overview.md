@@ -32,6 +32,10 @@ Sumpter is a **Go-based XML extraction engine** designed for:
   catalogs, protection declarations, guarded value profiles, and
   `--validate-output` — additive and byte-compatible when unused. See
   [Data-Artifact Producer Profile](data-artifact-producer-profile.md).
+- **Optional process-run flight recorder**: on `extract-multi`, opt-in
+  `process-run/v0` event stream and process card (observe-only), with an
+  optional terminal bridge to published data-artifact descriptors. See
+  [Process-run producer notes](process-run.md).
 
 This combination enables teams to move from raw XML to queryable tables **in minutes, not weeks**.
 

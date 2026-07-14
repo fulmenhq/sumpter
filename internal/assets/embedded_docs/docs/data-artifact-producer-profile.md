@@ -286,7 +286,9 @@ unqualified full semantic conformance for every grain.
 - Implement consumer-side export gates or any reader binding.
 - Activate reserved contract slots (for example richer lineage or
   disclosure-control objects) reserved for later contract advances.
-- Conform to the sibling `process-run/v0` process contract (tracked separately).
+- Implement the sibling `process-run/v0` flight recorder (available separately
+  on `extract-multi`; see [Process-run producer notes](process-run.md)). Control
+  surfaces and contract graduation remain later work.
 - Force recipe rewrites or change default high-volume extract performance
   characteristics.
 
