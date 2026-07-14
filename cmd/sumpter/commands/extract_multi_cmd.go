@@ -46,6 +46,8 @@ type recipeRunExtractMultiOptions struct {
 	CredentialOverrides    []string
 	InputCredentialsHandle string
 	Stats                  bool
+	ProcessRun             bool
+	ProcessRunRuntimeDir   string
 	ProcessRunEventsPath   string
 }
 
@@ -133,7 +135,10 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				CredentialOverrides:    opts.CredentialOverrides,
 				InputCredentialsHandle: opts.InputCredentialsHandle,
 				Stats:                  opts.Stats,
+				ProcessRun:             opts.ProcessRun || strings.TrimSpace(opts.ProcessRunRuntimeDir) != "",
+				ProcessRunRuntimeDir:   opts.ProcessRunRuntimeDir,
 				ProcessRunEventsPath:   opts.ProcessRunEventsPath,
+				ProcessRunContractBase: strings.TrimSpace(os.Getenv("PROCESS_RUN_CONTRACT_BASE")),
 				ProcessRunBlockedRoots: blockedRoots,
 				Context:                cmd.Context(),
 			}
@@ -166,7 +171,9 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input")
 	cmd.Flags().BoolVar(&opts.Stats, "stats", false, "Print an end-of-run diagnostic summary (wall, inputs/s, effective CPU vs --input-workers, GOMAXPROCS) to stderr to help tune --input-workers. Observed counters only; does not change records, output, or the provenance manifest")
-	cmd.Flags().StringVar(&opts.ProcessRunEventsPath, "process-run-events", "", "Opt-in process-run/v0 append-only NDJSON event stream path (owner-only 0600). Empty disables process-run telemetry (default). Fail-open: setup/write failures disable events without failing extract. Not recorded in provenance argv")
+	cmd.Flags().BoolVar(&opts.ProcessRun, "process-run", false, "Opt-in process-run/v0 telemetry: publish an owner-only process card under the runtime dir and emit an append-only NDJSON event stream. Runtime dir resolves as --process-run-runtime-dir > SUMPTER_PROCESS_RUN_RUNTIME_DIR > $XDG_RUNTIME_DIR/sumpter > $TMPDIR/sumpter-process-run (never under SUMPTER_HOME/work). Card is swept on clean exit; the event stream is retained. Fail-open on ordinary setup failure; live run_id collision is fail-closed. Not recorded in provenance argv")
+	cmd.Flags().StringVar(&opts.ProcessRunRuntimeDir, "process-run-runtime-dir", "", "Override process-run runtime directory (implies --process-run). Must not be under SUMPTER_HOME/work. Not recorded in provenance argv")
+	cmd.Flags().StringVar(&opts.ProcessRunEventsPath, "process-run-events", "", "Optional explicit process-run/v0 NDJSON event stream path (owner-only 0600). With --process-run, defaults to <runtime>/proc/<run_id>/events.ndjson when empty. Without --process-run, enables stream-only (no process card). Fail-open: setup/write failures disable events without failing extract. Not recorded in provenance argv")
 
 	return cmd
 }
@@ -234,5 +241,7 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 	if mode := normalizeValidateOutput(opts.ValidateOutput); mode != validateOutputOff {
 		appendFlag("--validate-output", mode)
 	}
+	// process-run flags are operator telemetry surfaces — intentionally omitted
+	// from portable argv (same posture as --stats and credential flags).
 	return args
 }

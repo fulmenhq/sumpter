@@ -5,6 +5,7 @@ topics:
     include:
       - sumpter_overview.md
       - data-artifact-producer-profile.md
+      - process-run.md
       - output_rendering.md
       - dsl-reference.md
       - technical/**/*.md

@@ -18,6 +18,7 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/artifactcontract"
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/processrun"
 )
 
 func runMultiWithProcessRunOpts(t *testing.T, shared *multiSharedOptions, ws string, warnOut io.Writer) (outRoot string, runErr error) {
@@ -505,6 +506,8 @@ func TestExtractMultiProcessRun_BlockedRootsFromHomeWorkdirOverrides(t *testing.
 
 func TestBuildExtractMultiArgv_OmitsProcessRunEvents(t *testing.T) {
 	argv := buildExtractMultiArgv([]string{"ws"}, &recipeRunExtractMultiOptions{
+		ProcessRun:           true,
+		ProcessRunRuntimeDir: "/tmp/runtime",
 		ProcessRunEventsPath: "/tmp/events.ndjson",
 		OutputPath:           "out",
 		InputWorkers:         4,
@@ -652,4 +655,230 @@ func TestExtractMultiProcessRun_SetupWarningWithholdsPath(t *testing.T) {
 	if !strings.Contains(got, "path already exists") {
 		t.Fatalf("want category label, got %q", got)
 	}
+}
+
+// --- C2: process card + runtime dir ---
+
+func TestExtractMultiProcessRun_CardModeSuccess(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 2)
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	var warn strings.Builder
+	outRoot, err := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+		FileList:               fileList,
+		InputWorkers:           2,
+		ProcessRun:             true,
+		ProcessRunRuntimeDir:   runtimeDir,
+		ProcessRunContractBase: processRunContractBase(t),
+	}, ws, &warn)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	_ = outRoot
+	if strings.Contains(warn.String(), "process-run disabled") {
+		t.Fatalf("unexpected fail-open warning: %q", warn.String())
+	}
+
+	// Card swept on clean exit; stream retained under proc/<run_id>/.
+	runDir := filepath.Join(runtimeDir, "proc", testMultiRunID)
+	cardPath := filepath.Join(runDir, "card.json")
+	eventsPath := filepath.Join(runDir, "events.ndjson")
+	if _, err := os.Stat(cardPath); !os.IsNotExist(err) {
+		t.Fatal("card must be swept on clean exit")
+	}
+	if _, err := os.Stat(eventsPath); err != nil {
+		t.Fatalf("event stream must be retained: %v", err)
+	}
+	assertSchemaValidStream(t, eventsPath)
+	kinds := readEventKinds(t, eventsPath)
+	assertOneTerminalLast(t, kinds, "completed")
+	assertMonotonicSettledProgress(t, eventsPath, 2)
+
+	// Stream mode 0600; run dir 0700.
+	info, err := os.Stat(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("stream mode = %o, want 0600", info.Mode().Perm())
+	}
+	rd, err := os.Stat(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rd.Mode().Perm() != 0o700 {
+		t.Fatalf("run dir mode = %o, want 0700", rd.Mode().Perm())
+	}
+}
+
+func TestExtractMultiProcessRun_CardLiveCollisionFailClosed(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 1)
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	// Hold a live card from a real OpenCard so (pid, started_at) matches OS identity.
+	holder, err := processrun.OpenCard(processrun.CardConfig{
+		RuntimeDir: runtimeDir,
+		RunID:      testMultiRunID,
+		PID:        os.Getpid(),
+		StartedAt:  time.Now().UTC(),
+		Producer:   processrun.Producer{Name: "sumpter", Version: "seed"},
+	})
+	if err != nil {
+		t.Fatalf("seed live card: %v", err)
+	}
+	defer holder.Close(true)
+
+	var warn strings.Builder
+	_, runErr := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+		FileList:             fileList,
+		ProcessRun:           true,
+		ProcessRunRuntimeDir: runtimeDir,
+	}, ws, &warn)
+	if runErr == nil {
+		t.Fatal("expected fail-closed live run_id error")
+	}
+	if !strings.Contains(runErr.Error(), "run_id already in use") {
+		t.Fatalf("want live identity error, got %v", runErr)
+	}
+	// Seed card must remain (not clobbered).
+	if _, serr := os.Stat(holder.Path); serr != nil {
+		t.Fatalf("live card must remain: %v", serr)
+	}
+}
+
+func TestExtractMultiProcessRun_CardClaimSetupFailureFailOpen(t *testing.T) {
+	// Injected claim write failure must not abort extract (fail-open telemetry).
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 1)
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	prev := processrun.ClaimWriteHook
+	t.Cleanup(func() { processrun.ClaimWriteHook = prev })
+	processrun.ClaimWriteHook = func(string) error { return processrun.ErrCardSetup }
+
+	var warn strings.Builder
+	outRoot, err := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+		FileList:             fileList,
+		ProcessRun:           true,
+		ProcessRunRuntimeDir: runtimeDir,
+	}, ws, &warn)
+	if err != nil {
+		t.Fatalf("extract must proceed fail-open: %v", err)
+	}
+	_ = outRoot
+	if !strings.Contains(warn.String(), "process-run disabled") {
+		t.Fatalf("want setup warning, got %q", warn.String())
+	}
+	if strings.Contains(warn.String(), runtimeDir) {
+		t.Fatalf("stderr leaked path: %q", warn.String())
+	}
+	if !strings.Contains(warn.String(), "setup failed") {
+		t.Fatalf("want setup failed category, got %q", warn.String())
+	}
+}
+
+func TestExtractMultiProcessRun_CardRuntimeUnderHomeFailOpen(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 1)
+	home := t.TempDir()
+	work := filepath.Join(home, "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	badRT := filepath.Join(work, "runtime")
+	var warn strings.Builder
+	outRoot, err := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+		FileList:               fileList,
+		ProcessRun:             true,
+		ProcessRunRuntimeDir:   badRT,
+		ProcessRunBlockedRoots: []string{home, work},
+	}, ws, &warn)
+	if err != nil {
+		t.Fatalf("extract must succeed fail-open: %v", err)
+	}
+	_ = outRoot
+	if !strings.Contains(warn.String(), "process-run disabled") {
+		t.Fatalf("want fail-open warning, got %q", warn.String())
+	}
+	if strings.Contains(warn.String(), badRT) || strings.Contains(warn.String(), home) {
+		t.Fatalf("stderr leaked runtime path: %q", warn.String())
+	}
+	// No card/stream under the blocked path.
+	if entries, _ := os.ReadDir(badRT); len(entries) > 0 {
+		t.Fatalf("blocked runtime must not receive process-run files: %v", entries)
+	}
+}
+
+func TestExtractMultiProcessRun_CardNoOptByteIdentity(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 2)
+
+	var offErr, onErr strings.Builder
+	offRoot, err := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+		FileList: fileList, InputWorkers: 2, ProcessRun: false,
+	}, ws, &offErr)
+	if err != nil {
+		t.Fatalf("off: %v", err)
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	onRoot, err := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+		FileList:               fileList,
+		InputWorkers:           2,
+		ProcessRun:             true,
+		ProcessRunRuntimeDir:   runtimeDir,
+		ProcessRunContractBase: processRunContractBase(t),
+	}, ws, &onErr)
+	if err != nil {
+		t.Fatalf("on: %v", err)
+	}
+
+	// Clean success pair: stderr-class should match (no process-run warnings).
+	if offErr.String() != onErr.String() {
+		t.Fatalf("stderr-class differs on vs off\n--- off ---\n%q\n--- on ---\n%q", offErr.String(), onErr.String())
+	}
+	off := snapshotAggRecipe(t, filepath.Join(offRoot, "summary"))
+	on := snapshotAggRecipe(t, filepath.Join(onRoot, "summary"))
+	if off.records != on.records {
+		t.Errorf("records differ with process-run card on vs off")
+	}
+	if off.manifest != on.manifest {
+		t.Errorf("manifest differs with process-run card on vs off")
+	}
+	if off.failures != on.failures {
+		t.Errorf("failures differ with process-run card on vs off")
+	}
+	if strings.Contains(offErr.String(), "process-run") {
+		t.Fatalf("no-opt stderr must not mention process-run: %q", offErr.String())
+	}
+}
+
+func TestExtractMultiProcessRun_CardModeRetainsStreamOnFailure(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.xml")
+	if err := os.WriteFile(bad, []byte(`<root><unclosed`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := filepath.Join(dir, "list.txt")
+	if err := os.WriteFile(list, []byte(bad+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeDir := filepath.Join(t.TempDir(), "rt")
+	_, err := runMultiWithProcessRunOpts(t, &multiSharedOptions{
+		FileList:               list,
+		ProcessRun:             true,
+		ProcessRunRuntimeDir:   runtimeDir,
+		ProcessRunContractBase: processRunContractBase(t),
+	}, ws, io.Discard)
+	if err == nil {
+		t.Fatal("expected fail-fast error")
+	}
+	eventsPath := filepath.Join(runtimeDir, "proc", testMultiRunID, "events.ndjson")
+	cardPath := filepath.Join(runtimeDir, "proc", testMultiRunID, "card.json")
+	// Normal error is clean exit → card swept; stream retained with failed terminal.
+	if _, err := os.Stat(cardPath); !os.IsNotExist(err) {
+		t.Fatal("card must be swept on clean (non-panic) failure exit")
+	}
+	assertSchemaValidStream(t, eventsPath)
+	kinds := readEventKinds(t, eventsPath)
+	assertOneTerminalLast(t, kinds, "failed")
 }

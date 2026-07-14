@@ -102,13 +102,33 @@ type multiSharedOptions struct {
 
 	// ProcessRunEventsPath opts into process-run/v0 append-only NDJSON flight-recorder
 	// emission for this extract-multi run. Empty disables telemetry (byte-identical
-	// no-opt path). When set, events are written owner-only (0600) with fail-open
-	// setup/write behavior and are NOT recorded in Argv / cli.argv_sanitized.
+	// no-opt path) unless ProcessRun / ProcessRunRuntimeDir enable card mode (which
+	// auto-places the stream under the runtime dir). When set, events are written
+	// owner-only (0600) with fail-open setup/write behavior and are NOT recorded in
+	// Argv / cli.argv_sanitized.
 	ProcessRunEventsPath string
 
+	// ProcessRun enables the telemetry-only process card (discovery root) under a
+	// resolved runtime directory. When true (or ProcessRunRuntimeDir / env is set),
+	// a card is published pointing at the event stream. Empty events path auto-places
+	// the stream under <runtime>/proc/<run_id>/events.ndjson.
+	ProcessRun bool
+
+	// ProcessRunRuntimeDir overrides the process-run runtime root (flag > env >
+	// XDG_RUNTIME_DIR/TMPDIR). Implies process-card mode when non-empty. Must not
+	// sit under SUMPTER_HOME/work. NOT recorded in Argv.
+	ProcessRunRuntimeDir string
+
+	// ProcessRunContractBase optionally overrides the embedded process-run pin
+	// used to schema-validate the process card before publication. Empty uses the
+	// embedded Crucible baseline. Wrong/unreadable material fails open (withholds
+	// card+stream). Tests may set PROCESS_RUN_CONTRACT_BASE. NOT recorded in Argv.
+	ProcessRunContractBase string
+
 	// ProcessRunBlockedRoots are the invocation's already-resolved SUMPTER_HOME and
-	// workdir roots under which process-run streams are rejected. Callers populate
-	// these from the same --home/--workdir resolution as the rest of the CLI.
+	// workdir roots under which process-run streams and runtime dirs are rejected.
+	// Callers populate these from the same --home/--workdir resolution as the rest
+	// of the CLI.
 	ProcessRunBlockedRoots []string
 
 	// Context is the run cancellation boundary (typically cmd.Context()). Nil means

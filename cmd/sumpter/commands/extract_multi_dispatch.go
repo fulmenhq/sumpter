@@ -60,6 +60,9 @@ type multiDispatcher struct {
 	processRun      processrun.Emitter
 	processRunTotal int
 	processRunDone  int
+	// processCard is the optional discovery-root card (nil when stream-only or off).
+	// On clean exit the card is swept; the durable event stream is retained.
+	processCard *processrun.Card
 }
 
 func newMultiDispatcher(shared *multiSharedOptions, warnOut io.Writer) *multiDispatcher {
@@ -132,10 +135,13 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		}()
 	}
 
-	// Opt-in process-run/v0 event stream (fail-open). Deferred so terminal
-	// emission runs after processInputs/finalize set err. Never fails the extract.
-	// Panic-aware: a crash after started must not be recorded as completed.
+	// Opt-in process-run/v0 event stream (+ optional process card). Deferred so
+	// terminal emission runs after processInputs/finalize set err. Ordinary
+	// telemetry setup is fail-open; live run_id card collision is fail-closed at
+	// open time. Panic-aware: a crash after started must not be recorded as completed,
+	// and the process card is left in place for post-mortem discovery.
 	d.processRun = processrun.Noop()
+	d.processCard = nil
 	defer func() {
 		recovered := recover()
 		if d.processRun != nil && d.processRun.Enabled() {
@@ -155,7 +161,13 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 				}
 			}
 		}
-		if d.processRun != nil {
+		// Clean exit sweeps the card (stream retained). Crash/panic leaves the card.
+		clean := recovered == nil
+		if d.processCard != nil {
+			d.processCard.Close(clean)
+			d.processCard = nil
+			d.processRun = processrun.Noop()
+		} else if d.processRun != nil {
 			d.processRun.Close()
 		}
 		if recovered != nil {
@@ -308,8 +320,10 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	}
 
 	// Start process-run emission only after the input set is resolved (total known).
-	// Setup failure is fail-open: warn and continue with a no-op emitter.
-	d.openProcessRunEmitter(len(files))
+	// Ordinary setup failure is fail-open; live run_id card collision is fail-closed.
+	if perr := d.openProcessRunEmitter(len(files), startedAt); perr != nil {
+		return perr
+	}
 
 	states := make([]*recipeRunState, 0, len(plans))
 	for _, plan := range plans {
@@ -525,39 +539,102 @@ func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOu
 	return nil
 }
 
-// openProcessRunEmitter starts the opt-in process-run stream after the input set
-// is known. Fail-open: setup errors disable emission and only warn.
-func (d *multiDispatcher) openProcessRunEmitter(total int) {
+// openProcessRunEmitter starts the opt-in process-run stream (and optional process
+// card) after the input set is known.
+//
+// Card mode (--process-run / --process-run-runtime-dir / SUMPTER_PROCESS_RUN_RUNTIME_DIR):
+// publishes a telemetry-only card under the resolved runtime dir and opens the stream
+// (auto-placed when --process-run-events is empty). Live run_id collision returns a
+// fail-closed error; ordinary setup failures warn and disable process-run (fail-open).
+//
+// Stream-only mode (--process-run-events without card mode): C1 path — exclusive
+// stream open, no card, fail-open on setup failure.
+func (d *multiDispatcher) openProcessRunEmitter(total int, startedAt time.Time) error {
 	shared := d.shared
-	if shared == nil || strings.TrimSpace(shared.ProcessRunEventsPath) == "" {
-		d.processRun = processrun.Noop()
-		return
+	d.processRun = processrun.Noop()
+	d.processCard = nil
+	if shared == nil {
+		return nil
 	}
-	if err := processrun.ValidateEventsPath(shared.ProcessRunEventsPath, shared.ProcessRunBlockedRoots); err != nil {
+
+	cardMode := shared.ProcessRun ||
+		strings.TrimSpace(shared.ProcessRunRuntimeDir) != "" ||
+		strings.TrimSpace(os.Getenv(processrun.EnvRuntimeDir)) != ""
+	eventsPath := strings.TrimSpace(shared.ProcessRunEventsPath)
+
+	if !cardMode && eventsPath == "" {
+		return nil
+	}
+
+	producer := processrun.Producer{
+		Name:    "sumpter",
+		Version: getVersionFromBuild(),
+		Profile: processrun.ProducerProfile,
+	}
+
+	if cardMode {
+		runtimeDir, rerr := processrun.ResolveRuntimeDir(shared.ProcessRunRuntimeDir)
+		if rerr != nil {
+			_, _ = fmt.Fprintf(d.warnOut, "warning: process-run disabled (%s)\n", processRunSetupFailureCategory(rerr))
+			return nil
+		}
+		if err := processrun.ValidateRuntimeDir(runtimeDir, shared.ProcessRunBlockedRoots); err != nil {
+			_, _ = fmt.Fprintf(d.warnOut, "warning: process-run disabled (%s)\n", processRunSetupFailureCategory(err))
+			return nil
+		}
+		if eventsPath != "" {
+			if err := processrun.ValidateEventsPath(eventsPath, shared.ProcessRunBlockedRoots); err != nil {
+				_, _ = fmt.Fprintf(d.warnOut, "warning: process-run disabled (%s)\n", processRunSetupFailureCategory(err))
+				return nil
+			}
+		}
+		card, err := processrun.OpenCard(processrun.CardConfig{
+			RuntimeDir:        runtimeDir,
+			RunID:             shared.RunID,
+			PID:               os.Getpid(),
+			StartedAt:         startedAt,
+			Producer:          producer,
+			EventsPath:        eventsPath,
+			ContractBase:      shared.ProcessRunContractBase,
+			HeartbeatInterval: processrun.DefaultHeartbeatInterval,
+		})
+		if err != nil {
+			if errors.Is(err, processrun.ErrCardExists) {
+				// Fail-closed identity conflict — do not start extract under a live run_id.
+				return fmt.Errorf("process-run: run_id already in use by a live process")
+			}
+			_, _ = fmt.Fprintf(d.warnOut, "warning: process-run disabled (%s)\n", processRunSetupFailureCategory(err))
+			return nil
+		}
+		d.processCard = card
+		d.processRun = card.Emitter
+		d.processRunTotal = total
+		d.processRunDone = 0
+		d.processRun.Started(total)
+		return nil
+	}
+
+	// Stream-only (C1) path.
+	if err := processrun.ValidateEventsPath(eventsPath, shared.ProcessRunBlockedRoots); err != nil {
 		_, _ = fmt.Fprintf(d.warnOut, "warning: process-run events disabled (%s)\n", processRunSetupFailureCategory(err))
-		d.processRun = processrun.Noop()
-		return
+		return nil
 	}
 	emitter, err := processrun.Open(processrun.Config{
-		Path:  shared.ProcessRunEventsPath,
-		RunID: shared.RunID,
-		PID:   os.Getpid(),
-		Producer: processrun.Producer{
-			Name:    "sumpter",
-			Version: getVersionFromBuild(),
-			Profile: processrun.ProducerProfile,
-		},
+		Path:              eventsPath,
+		RunID:             shared.RunID,
+		PID:               os.Getpid(),
+		Producer:          producer,
 		HeartbeatInterval: processrun.DefaultHeartbeatInterval,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(d.warnOut, "warning: process-run events disabled (%s)\n", processRunSetupFailureCategory(err))
-		d.processRun = processrun.Noop()
-		return
+		return nil
 	}
 	d.processRun = emitter
 	d.processRunTotal = total
 	d.processRunDone = 0
 	d.processRun.Started(total)
+	return nil
 }
 
 // errRecipePartialFailure is the typed marker for continue-on-error partial
@@ -595,11 +672,15 @@ func processRunSetupFailureCategory(err error) string {
 	switch {
 	case errors.Is(err, processrun.ErrStreamExists):
 		return "path already exists"
-	case errors.Is(err, processrun.ErrStreamPlacement):
+	case errors.Is(err, processrun.ErrCardExists):
+		return "run_id live"
+	case errors.Is(err, processrun.ErrStreamPlacement), errors.Is(err, processrun.ErrCardPlacement):
 		return "path not allowed"
-	case errors.Is(err, processrun.ErrStreamSetup):
+	case errors.Is(err, processrun.ErrCardSchema):
+		return "card validation failed"
+	case errors.Is(err, processrun.ErrStreamSetup), errors.Is(err, processrun.ErrCardSetup):
 		return "setup failed"
-	case errors.Is(err, processrun.ErrStreamConfig):
+	case errors.Is(err, processrun.ErrStreamConfig), errors.Is(err, processrun.ErrCardConfig):
 		return "invalid configuration"
 	default:
 		// Never echo err.Error() — may contain operator paths (PathError) or basenames.
