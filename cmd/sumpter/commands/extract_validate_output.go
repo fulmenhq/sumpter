@@ -95,12 +95,26 @@ func validateValidateOutputOptions(opts *ExtractOptions) error {
 // (see validateOutputSidecarBytes / maybeValidateEnvelopeFileBeforePublish).
 func maybeValidateExtractOutput(opts *ExtractOptions, manifest provenance.Manifest) error {
 	if opts == nil || !validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
+		// Still allow the test seam so post-publish failure can be injected when
+		// the validation ladder is off (the common extract-multi path).
+		if extractOutputValidateHook != nil {
+			return extractOutputValidateHook(opts, manifest)
+		}
 		return nil
 	}
 	if opts.outputSession != nil {
+		if extractOutputValidateHook != nil {
+			return extractOutputValidateHook(opts, manifest)
+		}
 		return nil
 	}
-	return runValidateExtractOutputLocal(opts, manifest)
+	if err := runValidateExtractOutputLocal(opts, manifest); err != nil {
+		return err
+	}
+	if extractOutputValidateHook != nil {
+		return extractOutputValidateHook(opts, manifest)
+	}
+	return nil
 }
 
 func runValidateExtractOutputLocal(opts *ExtractOptions, manifest provenance.Manifest) error {

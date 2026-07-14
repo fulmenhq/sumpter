@@ -3044,6 +3044,17 @@ type publishedDataArtifact struct {
 	Lifecycle  string
 }
 
+// dataArtifactDescriptorPublishHook is a test seam that replaces tgt.Publish for
+// the data-artifact descriptor only. When non-nil it is the sole publication
+// gate (staging already completed). Production must leave this nil.
+var dataArtifactDescriptorPublishHook func(tgt *uriio.OutputTarget) error
+
+// extractOutputValidateHook is a test seam invoked after the normal
+// --validate-output end-of-run checks succeed. Tests inject a post-publish
+// failure so a durable descriptor remains bridged on a failed terminal.
+// Production must leave this nil.
+var extractOutputValidateHook func(opts *ExtractOptions, manifest provenance.Manifest) error
+
 // writeDataArtifactDescriptor validates, stages, and publishes the data-artifact
 // descriptor when --artifact-descriptor is set. The receipt is non-nil only after
 // Publish returns nil (create/validate/stage alone is insufficient). Flag-off
@@ -3103,8 +3114,12 @@ func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manif
 	}
 	// Publication boundary: only a successful Publish yields a bridge receipt.
 	// For local targets Publish is a no-op after the atomic write, but still the
-	// single success gate used by cloud outputs.
-	if err := tgt.Publish(context.Background()); err != nil {
+	// single success gate used by cloud outputs. Test seams may replace Publish.
+	if dataArtifactDescriptorPublishHook != nil {
+		if err := dataArtifactDescriptorPublishHook(tgt); err != nil {
+			return nil, err
+		}
+	} else if err := tgt.Publish(context.Background()); err != nil {
 		return nil, err
 	}
 	return &publishedDataArtifact{
