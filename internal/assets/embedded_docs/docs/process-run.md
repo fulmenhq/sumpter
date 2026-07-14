@@ -1,9 +1,32 @@
 # Process-run producer notes (extract-multi)
 
+When a multi-file `extract-multi` run takes minutes or hours, operators need a
+stable way to find the live process, watch settled progress, and read the final
+outcome — without parsing workdir trees or relying on durable extract paths.
+
 Sumpter can emit an opt-in **process-run/v0** flight recorder from
 `recipes run extract-multi`: an owner-only process card (discovery root) and an
-append-only NDJSON event stream. This is additive telemetry. Turning it off
-leaves extract outputs, exit codes, and provenance unchanged.
+append-only NDJSON event stream under a platform runtime directory. This is
+additive telemetry. Turning it off leaves extract outputs, exit codes, and
+provenance unchanged. The card is **observe-only** in this release (no control
+socket).
+
+## Minimal enable
+
+```bash
+sumpter recipes run extract-multi \
+  ./recipes/summary ./recipes/line-items \
+  --file-list ./inputs.txt \
+  --output-path ./out \
+  --process-run
+```
+
+That publishes `card.json` + `events.ndjson` under
+`<runtime>/proc/<run_id>/`. Add `--process-run-events <path>` when you want an
+explicit stream path (alone = stream-only, no card). Pair with
+`--artifact-descriptor --contract-base <dir>` so the sole terminal can carry
+reference-only links to published data-artifact descriptors (see
+[Terminal → data-artifact bridge](#terminal--data-artifact-bridge-opt-in)).
 
 ## Enabling
 
@@ -112,3 +135,12 @@ Rules:
 
 Process-run flags and paths are omitted from the sanitized provenance argv.
 They are operator telemetry surfaces, not portable replay inputs.
+
+## Where to go next
+
+| Need | Document |
+| --- | --- |
+| Multi-recipe extract-multi workflow | [Extract Workflow](extract-workflow.md#run-multiple-recipes-in-one-pass-extract-multi) |
+| Portable extract output (`data-artifact/v0`) | [Data-Artifact Producer Profile](data-artifact-producer-profile.md) |
+| Product overview | [Sumpter Overview](sumpter_overview.md) |
+| Release narrative for this surface | [v0.3.1 release notes](releases/v0.3.1.md) |

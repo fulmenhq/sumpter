@@ -436,6 +436,35 @@ Failure handling follows the input-vs-recipe boundary: a read/parse/acquire fail
 
 **Scope (v0).** `extract-multi` writes **JSON/NDJSON** output only; a recipe declaring another format (e.g. Parquet) is rejected — run it with single-recipe `recipes run extract` instead. The large-file **streaming** path is not supported: each file is parsed once into memory, so a file large enough to route to streaming is rejected (`--allow-large-files` does not relax this). Cross-recipe joins, ordering, and combined-record assembly are out of scope — the pass amortizes the read + parse, nothing more.
 
+#### Process-run flight recorder (opt-in)
+
+Long-running multi-file batches can publish an opt-in **process-run/v0** flight
+recorder so operators can discover the live (or crash-retained) run, follow
+settled progress, and read the authoritative terminal — without parsing workdir
+trees or coupling observers to durable extract paths. Surfaces:
+
+- owner-only process card under a platform runtime directory (not under
+  `SUMPTER_HOME` or the workdir)
+- append-only NDJSON stream: `started`, settled `progress`, heartbeat, exactly
+  one terminal (`completed` / `failed` / `canceled`)
+- optional reference-only terminal → published data-artifact descriptor bridge
+  when `--artifact-descriptor` is also enabled
+
+Telemetry setup and write failures are fail-open (warn and continue extraction).
+Default extract paths stay byte-compatible when process-run is unused. The card
+is observe-only in this release (no control socket).
+
+```bash
+sumpter recipes run extract-multi \
+  ./recipes/summary ./recipes/line-items \
+  --file-list ./inputs.txt \
+  --output-path ./out \
+  --process-run
+```
+
+See [Process-run producer notes](process-run.md) for runtime-dir resolution,
+reclaim semantics, stream reading rules, and the data-artifact bridge.
+
 #### Parallel input processing with `--input-workers`
 
 Once the per-recipe re-parse is amortized, the remaining per-invocation cost at high file counts is **per-input processing** — read+parse **plus** each recipe's application to that input (signature/applicability matching, extraction, `min_occurrences` checks). By default that runs single-threaded: one `extract-multi` invocation pins roughly one core regardless of how many inputs it has. `--input-workers N` runs that work across **N workers within the single invocation** — each worker parses an input and runs its full per-recipe application into a worker-local bundle — and a single ordered committer applies the bundles in input order. A large batch can then scale toward the available cores / the workload's ceiling instead of running single-file.

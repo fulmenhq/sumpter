@@ -193,7 +193,7 @@ The public-data exemplars are deliberately drawn from **five different verticals
 - **List-typed recipe parameters**: parameters can be lists of strings with `starts_with_any`, `value_in`, and `string_length` predicates for set-based classification.
 - **Observability**: Structured logs, progress tracking, and diagnostics
 - **Portable data-artifact profile (opt-in)**: emit host-less `data-artifact/v0` descriptors and field catalogs, protection floors with Parquet page-metadata suppression, an opt-in `--validate-output` ladder, and a guarded provenance `value_profile` — all byte-compatible when unused. See [Data-Artifact Producer Profile](docs/data-artifact-producer-profile.md).
-- **Process-run flight recorder (opt-in)**: on `extract-multi`, emit a host-less `process-run/v0` event stream and process card under a runtime directory, with an optional terminal bridge to published data-artifact descriptors — additive telemetry; default extract paths unchanged when unused. See [Process-run producer notes](docs/process-run.md).
+- **Process-run flight recorder (opt-in)**: for long-running `extract-multi` batches, publish a host-less `process-run/v0` process card and append-only NDJSON stream so operators can discover the run, follow settled progress, and read the authoritative terminal — with an optional reference-only bridge to published data-artifact descriptors. Additive telemetry under a platform runtime directory; default extract paths unchanged when unused. See [Process-run producer notes](docs/process-run.md).
 
 ---
 
@@ -235,7 +235,7 @@ Available today:
 - ✅ External reference-table lookup (membership + key→value enrichment)
 - ✅ List-typed recipe parameters with set-classification predicates
 - ✅ Portable data-artifact producer profile (opt-in descriptors, catalogs, protection floors, validate ladder, guarded `value_profile`)
-- ✅ Process-run flight recorder for `extract-multi` (opt-in event stream, process card, terminal → data-artifact bridge)
+- ✅ Process-run flight recorder for long-running `extract-multi` (opt-in process card, event stream, optional terminal → data-artifact bridge)
 - 🔜 DuckDB output (planned)
 
 See `docs/releases/` for detailed release notes and `docs/user-guide/` for workflow documentation.

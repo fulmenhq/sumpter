@@ -8,15 +8,17 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ## v0.3.1 (2026-07-14)
 
-**Opt-in `process-run/v0` flight recorder for `extract-multi` — pin, event stream, process card, and terminal → data-artifact bridge.**
+**Opt-in `process-run/v0` flight recorder for long-running `extract-multi` — discover the run, watch settled progress, read the sole terminal, optionally bridge to published data-artifact descriptors.**
 
 **Released:** 2026-07-14 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
 
-v0.3.1 adds an opt-in **process-run/v0** flight recorder on
-`recipes run extract-multi`: a host-less contract pin, an append-only NDJSON
-event stream, an owner-only process card under a runtime directory, and a
-reference-only bridge from the sole terminal event to successfully published
-`data-artifact/v0` descriptors.
+v0.3.1 gives operators of long-running `recipes run extract-multi` batches a
+portable local **flight recorder** under host-less `process-run/v0`: an
+owner-only process card for discovery, an append-only NDJSON event stream for
+progress and the authoritative terminal, and a reference-only bridge from that
+terminal to successfully published `data-artifact/v0` descriptors when both
+surfaces are enabled. Watch the *process* without parsing workdir trees or
+coupling observers to output paths.
 
 The release is additive and opt-in. Runs that never enable process-run telemetry
 keep extract outputs, exit codes, and provenance manifests byte-compatible with

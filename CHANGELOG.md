@@ -10,7 +10,7 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [0.3.1] - 2026-07-14
 
-**Opt-in `process-run/v0` flight recorder for `extract-multi` — host-less pin, NDJSON event stream, process card with reclaim, and a reference-only terminal bridge to published data-artifact descriptors; default paths stay byte-compatible.**
+**Opt-in `process-run/v0` flight recorder for long-running `extract-multi` — portable local discovery, settled progress, and an authoritative terminal (with an optional reference-only bridge to published data-artifact descriptors); default paths stay byte-compatible.**
 
 See [`docs/releases/v0.3.1.md`](docs/releases/v0.3.1.md) for the full release narrative. Operator notes: [`docs/process-run.md`](docs/process-run.md).
 
@@ -25,7 +25,8 @@ See [`docs/releases/v0.3.1.md`](docs/releases/v0.3.1.md) for the full release na
 
 ### Changed
 
-- **README / overview capabilities** — opt-in process-run flight recorder called out as available today for `extract-multi`.
+- **README / overview capabilities** — opt-in process-run flight recorder called out as available today for long-running `extract-multi`.
+- **Adoption discoverability** — process-run producer notes gain a minimal-enable path; extract-workflow links the flight recorder from `extract-multi`; data-artifact producer profile points operators at the sibling process-run surface.
 
 ### Security
 
