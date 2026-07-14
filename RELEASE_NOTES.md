@@ -6,6 +6,106 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.3.1 (2026-07-14)
+
+**Opt-in `process-run/v0` flight recorder for long-running `extract-multi` — discover the run, watch settled progress, read the sole terminal, optionally bridge to published data-artifact descriptors.**
+
+**Released:** 2026-07-14 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
+
+v0.3.1 gives operators of long-running `recipes run extract-multi` batches a
+portable local **flight recorder** under host-less `process-run/v0`: an
+owner-only process card for discovery, an append-only NDJSON event stream for
+progress and the authoritative terminal, and a reference-only bridge from that
+terminal to successfully published `data-artifact/v0` descriptors when both
+surfaces are enabled. Watch the *process* without parsing workdir trees or
+coupling observers to output paths.
+
+The release is additive and opt-in. Runs that never enable process-run telemetry
+keep extract outputs, exit codes, and provenance manifests byte-compatible with
+v0.3.0. Process-run flags are omitted from the sanitized provenance argv. This
+ships **observe-only** process-run surfaces — the card is telemetry-only; there
+is no control socket in this release.
+
+Operator notes: [`docs/process-run.md`](docs/process-run.md). Full narrative:
+[`docs/releases/v0.3.1.md`](docs/releases/v0.3.1.md).
+
+### Features
+
+#### Host-less process-run contract baseline
+
+`process-run/v0` reuses the same host-less contract resolution discipline as
+`data-artifact/v0` (shared primitive). Pin checks cover the process-run
+entry-bundle and sibling event-schema digests (Crucible **`v0.1.19`**:
+entry-bundle
+`sha256:4589befc1d0d3485744c7eea3dfb569ff79457f99996f2ee8313595489a7091b`,
+event-schema
+`sha256:7138fba72fea862d7964d6c235b1b93da0047e9eb76862be4d111701f887b12d`).
+`make process-run-contract-check` is wired into `make check-all`.
+
+#### Event stream
+
+`extract-multi --process-run-events <path>` (or the process-run enable path)
+emits a single-writer NDJSON stream: `started`, settled `progress`, heartbeat,
+and exactly one terminal (`completed` / `failed` / `canceled`). Exclusive
+create, owner-only `0600`, fail-open setup/write. Placement under home/workdir
+roots is rejected. CLI cancel uses SIGINT/SIGTERM via context cancellation.
+The terminal event is authoritative for run outcome — `done == total` alone is
+not success.
+
+#### Process card and reclaim
+
+With process-run enabled (not stream-only), an owner-only discovery root is
+published under `<runtime>/proc/<run_id>/` (`card.json`, `claim.json`,
+`events.ndjson`, kernel `reclaim.lock`). Cards are pin-validated before publish
+and appear only after atomic temp+hard-link publish. Clean exit withdraws the
+card and retains the stream; crash leaves the discovery root. Stale reclaim is
+fail-closed on live `(pid, started_at)` and serialized by `reclaim.lock`.
+
+#### Terminal → data-artifact bridge
+
+When process-run telemetry and `--artifact-descriptor` are both enabled,
+successfully published descriptors appear on the sole terminal as
+`data.artifacts[]` with exact `artifact_id` and `lifecycle` plus portable
+non-locator `descriptor` (`<artifact_id>#descriptor`). Refs register only after
+output Publish succeeds; multi-recipe runs list only successful publications in
+plan order. Reference-only — no paths, cloud URIs, or recipe identity in the
+event stream.
+
+### Compatibility & notes
+
+- **All-additive.** Default paths stay byte-compatible when process-run is off.
+- **Telemetry vs durable output.** Event/card failures fail open; descriptor
+  publish failures remain extract-fatal.
+- **Two contracts.** `process-run/v0` (run telemetry) composes optionally with
+  `data-artifact/v0` (portable extract output).
+- **Platforms:** unchanged — linux amd64/arm64, darwin **arm64**, windows
+  amd64/arm64. Intel-Mac users build from source.
+- **Alpha:** interfaces may still change between minor releases; external pull
+  requests are welcome.
+
+### Deferred / follow-ups
+
+- Process-run control socket / run-steering surface (later release track).
+- Contract graduation and broader process-run control vocabulary.
+- Event rotation, OTLP/forwarders, and WAN/TLS profiles.
+- Richer data-artifact validation, cross-artifact lineage, and full semantic L3
+  claims (unchanged from v0.3.0 posture).
+- Cloud range-reads, cloud-side indexing, GCS/Azure, DuckDB/Arrow, service health
+  endpoints, and repair modes remain roadmap items.
+
+### Release notes
+
+- **Version bump.** `VERSION` is `0.3.1`. Binaries from this tag emit `v0.3.1`
+  via `sumpter version`.
+- **Tag/version guard.** `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.3.1`
+  is the intended tag/version sanity check.
+- **Release ceremony.** Use the standard draft-release and signing flow in
+  [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
+
+See [`docs/releases/v0.3.1.md`](docs/releases/v0.3.1.md) for the full release narrative.
+
+---
+
 ## v0.3.0 (2026-07-10)
 
 **Portable `data-artifact/v0` producer profile — opt-in extract output legible to catalogs, query engines, and data planes.**
@@ -182,79 +282,3 @@ Record indexes now carry namespace context so indexed extraction can re-evaluate
 - **Release ceremony.** Use the standard draft-release and signing flow in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md): CI builds the tag, then the operator signing ceremony uploads checksums, signatures, public keys, and release notes before publishing.
 
 See [`docs/releases/v0.2.6.md`](docs/releases/v0.2.6.md) for the full release narrative.
-
----
-
-## v0.2.5 (2026-07-06)
-
-**Non-emitted recipe parameters for derive-only extraction inputs.**
-
-**Released:** 2026-07-06 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
-
-v0.2.5 is a focused release for parameters that drive extraction logic but should not become output data. Recipes can now mark selected parameters as **internal**: the values remain available to XPath/DSL expressions, keep the existing scalar and JSON-list typing semantics, and still satisfy required-parameter checks, but are suppressed from emitted records, Parquet output, and the provenance argv sidecar. `extract-multi` also gains a run-level `--parameter-internal` flag for shared derive-only values that should be available across a whole multi-recipe pass without appearing as stray columns in recipes that do not consume them.
-
-Everything in this release is additive. Existing recipes without internal parameters keep their current records and manifests byte-for-byte, and ordinary `--parameter` behavior is unchanged.
-
-### Features
-
-#### Per-recipe internal parameters — `parameters_internal`
-
-Recipe defaults may now include a `parameters_internal` list:
-
-```yaml
-defaults:
-  parameters:
-    curated_prefixes: ["NM_", "NR_"]
-  parameters_internal:
-    - curated_prefixes
-```
-
-Each listed key remains in expression scope exactly like any other parameter. That matters for list-typed parameters: a JSON-array default or `--parameter key='["a","b"]'` override still resolves to a list and can be consumed by helpers such as `starts_with_any` and `value_in`. The difference is at emit time: Sumpter unwraps the value for expression evaluation and then skips it when writing output records.
-
-This gives recipe authors a first-class way to pass classifier lists, lookup switches, or other derive-only run inputs through the normal parameter path without replicating those constants onto every row.
-
-- **Record suppression.** Internal parameter values are omitted from NDJSON/JSON records and Parquet projections.
-- **Provenance suppression.** CLI override values for internal parameters are redacted in `argv_sanitized` as `key=<internal>`. The key remains visible for replay and audit; the value does not.
-- **Required checks still apply.** A key may be both required and internal. If it has no default and no CLI override, the run fails as before.
-- **Collision checks still apply.** An internal parameter key still cannot collide with a mapped output field; Sumpter fails before writing output instead of silently replacing content-derived fields.
-
-#### Run-level internal parameters — `--parameter-internal` on `extract-multi`
-
-`extract-multi` already supports shared run-level `--parameter key=value`, layered over every recipe in the pass. v0.2.5 adds the derive-only twin:
-
-```bash
-sumpter recipes run extract-multi workspace/ \
-  --parameter-internal 'curated_prefixes=["NM_","NR_"]'
-```
-
-The flag is repeatable and uses the same scalar/JSON-list parsing path as `--parameter`, but marks the supplied keys internal for every recipe in the pass. This is useful when one shared run value should be available to any recipe expression that needs it, while bystander recipes must not emit it as an unused output column.
-
-- **Available everywhere, emitted nowhere.** The value is in every recipe's expression scope, but no recipe writes it to any sink.
-- **Bystander-safe provenance.** Every per-recipe manifest redacts the run-level internal value in `argv_sanitized`, including recipes that do not declare or consume the parameter.
-- **Composes with recipe declarations.** A recipe may also list the same key in `defaults.parameters_internal`; suppression is idempotent.
-- **Required checks still apply.** A recipe's `parameters_required` entry is satisfied by a run-level internal value.
-- **Conflict handling stays strict.** Supplying the same key through both `--parameter` and `--parameter-internal` in one `extract-multi` invocation is rejected because the repeatable flags do not preserve reliable cross-flag ordering. A shared key that collides with any recipe output field still fails plan loading.
-
-`--parameter-internal` is intentionally scoped to `recipes run extract-multi`. Single-recipe `recipes run extract` already has the per-recipe `parameters_internal` declaration for this purpose.
-
-### Compatibility & notes
-
-- **All-additive.** Recipes with no `parameters_internal` declaration and `extract-multi` runs with no `--parameter-internal` flag keep current behavior.
-- **Suppress-at-emit, not drop-from-scope.** Internal values stay available to expressions and retain list typing. Suppression happens only when records, Parquet columns, and provenance argv values are written.
-- **Not a general secret-transport mechanism.** Internal parameters reduce output exposure for derive-only values, but recipe authors can still deliberately re-emit a derived result. Use credential handles for credentials and other secret-bearing integration paths.
-- **Platforms:** unchanged from 0.2.0-0.2.4 — linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source.
-- **Alpha:** interfaces may still change between minor releases; external pull requests are welcome.
-
-### Deferred / follow-ups
-
-- **Namespace-aware XPath binding** is planned separately. Current recipes that need namespace portability should continue using documented namespace-safe forms until the binding surface lands.
-- **Portable data-artifact contract support** remains on its own track.
-- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, DuckDB/Arrow, service health endpoints, and repair modes** remain roadmap items, as in 0.2.4.
-
-### Release notes
-
-- **Version bump.** `VERSION` is `0.2.5`. Binaries from this tag emit `v0.2.5` via `sumpter version`.
-- **Tag/version guard.** `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.5` is the intended tag/version sanity check.
-- **Release ceremony.** Use the standard draft-release and signing flow in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md): CI builds the tag, then the operator signing ceremony uploads checksums, signatures, public keys, and release notes before publishing.
-
-See [`docs/releases/v0.2.5.md`](docs/releases/v0.2.5.md) for the full release narrative.

@@ -215,7 +215,8 @@ func claimRunSlot(runDir, claimPath, cardPath, eventsPath string, pid int, start
 
 		err = os.Mkdir(runDir, 0o700)
 		if err == nil {
-			_ = os.Chmod(runDir, 0o700)
+			// Owner-only runtime slot; G302 expects ≤0600 for files, not directories.
+			_ = os.Chmod(runDir, 0o700) // #nosec G302 - intentional owner-only 0700 directory mode for process-run runtime slot
 			// Stable reclaim.lock inode for later contenders (no exclusive lock held yet).
 			_ = ensureReclaimLockFile(runDir)
 			if werr := writeClaimExclusive(claimPath, pid, startedAt, myToken, claimStateLive); werr != nil {
@@ -1032,7 +1033,8 @@ func ensureDir0700(path string) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o700)
+	// Owner-only runtime dir; G302 expects ≤0600 for files, not directories.
+	return os.Chmod(path, 0o700) // #nosec G302 - intentional owner-only 0700 directory mode for process-run runtime dir
 }
 
 func removeIfEmpty(dir string) error {

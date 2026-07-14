@@ -8,6 +8,37 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-14
+
+**Opt-in `process-run/v0` flight recorder for long-running `extract-multi` — portable local discovery, settled progress, and an authoritative terminal (with an optional reference-only bridge to published data-artifact descriptors); default paths stay byte-compatible.**
+
+See [`docs/releases/v0.3.1.md`](docs/releases/v0.3.1.md) for the full release narrative. Operator notes: [`docs/process-run.md`](docs/process-run.md).
+
+### Added
+
+- **Host-less process-run contract baseline** — `process-run/v0` reuses the same host-less contract resolution discipline as `data-artifact/v0` (shared primitive). Pin checks cover the process-run entry-bundle and sibling event-schema digests (Crucible `v0.1.19`; entry-bundle `sha256:4589befc1d0d3485744c7eea3dfb569ff79457f99996f2ee8313595489a7091b`, event-schema `sha256:7138fba72fea862d7964d6c235b1b93da0047e9eb76862be4d111701f887b12d`), with `make process-run-contract-check` wired into `make check-all` (#151).
+- **Opt-in process-run event stream** — `extract-multi --process-run-events <path>` (or the process-run enable path) emits a single-writer NDJSON stream: `started`, settled `progress`, heartbeat, and exactly one terminal (`completed` / `failed` / `canceled`). Exclusive create, owner-only `0600`, fail-open setup/write; placement under home/workdir roots rejected; CLI cancel via SIGINT/SIGTERM context (no control socket). Flags omitted from provenance argv; no-opt runs stay byte-identical (#152).
+- **Process card under a runtime directory** — owner-only `card.json` + exclusive `claim.json` under `<runtime>/proc/<run_id>/`, pin-validated before publish, atomic card publish (temp+fsync+hard-link, no rename fallback). Stale reclaim via claim-token quarantine; live `(pid, started_at)` is fail-closed. Kernel `reclaim.lock` (flock / LockFileEx) is the sole mutual-exclusion authority for recovery and stale takeover; `claim.taking` is non-authoritative diagnostics only. Clean exit withdraws the card and retains the stream; crash leaves the discovery root for operators (#153).
+- **Terminal → data-artifact bridge** — when process-run telemetry and `--artifact-descriptor` are both enabled, successfully published descriptors appear on the sole terminal as `data.artifacts[]` with exact `artifact_id` and `lifecycle` plus portable non-locator `descriptor` (`<artifact_id>#descriptor`). Refs register only after output Publish succeeds; omitted when the descriptor flag is off or publication fails; multi-recipe runs list only successful publications in plan order. Reference-only — no paths, cloud URIs, or recipe identity in the event stream (#154).
+- **Process-run producer notes** — in-repo operator guide at [`docs/process-run.md`](docs/process-run.md) (embedded with the docs bundle).
+- **VERSION bumped to `0.3.1`.**
+
+### Changed
+
+- **README / overview capabilities** — opt-in process-run flight recorder called out as available today for long-running `extract-multi`.
+- **Adoption discoverability** — process-run producer notes gain a minimal-enable path; extract-workflow links the flight recorder from `extract-multi`; data-artifact producer profile points operators at the sibling process-run surface.
+
+### Security
+
+- Process-run stream and card files are owner-only; placement under home/workdir is rejected; live-identity reclaim is fail-closed. The terminal bridge is allow-listed (`artifact_id`, `lifecycle`, `descriptor` only) and uses an ID-derived non-locator descriptor form so cloud/path locators cannot ride the event payload. Descriptor publish failures remain extract-fatal; telemetry write failures fail open without rolling back published descriptors.
+
+### Deferred
+
+- Process-run control socket / run-steering surface remains a later release track.
+- Contract graduation and broader process-run control vocabulary remain later work.
+- Event rotation, OTLP/forwarders, and WAN/TLS profiles remain follow-on.
+- Richer data-artifact validation, cross-artifact lineage, and full semantic L3 conformance for every grain shape remain follow-on (unchanged from v0.3.0 posture).
+
 ## [0.3.0] - 2026-07-10
 
 **Portable `data-artifact/v0` producer profile — opt-in extract output that is legible to catalogs, query engines, and data planes without Sumpter-specific knowledge, while default paths stay byte-compatible.**
@@ -187,18 +218,3 @@ See [`docs/releases/v0.1.10.md`](docs/releases/v0.1.10.md) for the full release 
 
 - **Supported-platform matrix: `darwin-amd64` (Intel-Mac) prebuilt retired.** The release matrix is now five raw binaries: linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source (a source build on an Intel Mac produces a native `darwin-amd64`). Rationale: ecosystem-wide move off Intel-Mac prebuilts (most acute for CGO=1 projects).
 - **VERSION bumped to `0.1.10`** for this release.
-
-## [0.1.9] - 2026-06-09
-
-**Complete the release artifact matrix — `windows-arm64` now shipped.**
-
-See [`docs/releases/v0.1.9.md`](docs/releases/v0.1.9.md) for the full release narrative.
-
-### Added
-
-- **`sumpter-windows-arm64.exe` release binary** - the release artifact matrix now ships all six raw binaries (linux/darwin/windows × amd64/arm64), completing arch parity with the dimlox/refbolt convention. `release-checksums`, signing, and the `release.yml` upload all glob over `dist/release/*`, so the new binary flows through with no other tooling change (SUM-038).
-
-### Changed
-
-- **GitHub Actions runtimes bumped to Node 24** - `actions/checkout` (v4→v6), `actions/setup-go` (v5→v6), and `softprops/action-gh-release` (v2→v3) moved to their current Node-24 majors across all four workflows, clearing the GitHub Actions Node-20 runtime deprecation (PR #73).
-- **VERSION bumped to `0.1.9`** for this release.
