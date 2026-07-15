@@ -19,18 +19,30 @@ tree without changing xmlquery.
 
 ## Local divergence from base tip
 
-Compared to `d645baed50e0…` / v1.3.6 module cache, this directory differs by:
+Compared to `d645baed50e0ccf0201cb696779bc7badfdc5bbd` (and the v1.3.6 module
+cache where noted), this directory differs as follows.
+
+### Production / test divergence (authored here)
 
 1. **`query.go` — `numericQuery.Evaluate`** (the fix): snapshot operator
    context, evaluate + eager `asNumber` left, restore, evaluate + eager
    `asNumber` right, restore, then `Do`. Prevents predicate-moved navigators
    from poisoning a context-sensitive RHS.
 2. **`numeric_context_test.go`** — hermetic library regression for the
-   isolation class (new file).
+   isolation class (new file), including same-context and cross-context
+   (A→B→A) evaluation of one compiled expression.
 3. **`//go:build` lines** on `func_go110.go` / `func_pre_go110.go` — mechanical
    dual build-tag form (modern `//go:build` plus legacy `// +build`); no
    behavior change.
 4. **This README** (`SUMPTER-PIN-README.md`) — pin / removal notes only.
+
+### Packaging-only divergence (not runtime)
+
+5. **EOF single-newline normalization** on `.gitignore` and `LICENSE` (tree
+   format gate; no content change).
+6. **Omitted upstream CI tree** — upstream module cache / repo may carry
+   `.github/workflows/{coverage,testing}.yml`; those workflows are **not**
+   vendored here (Sumpter does not run upstream’s Actions from this tree).
 
 Upstream content already present at base tip (not authored here):
 
@@ -45,7 +57,8 @@ upstream before merge.
 
 ## Removal task
 
-Tracked follow-up (supervisor / human with GitHub write to upstream):
+Tracked follow-up: **https://github.com/fulmenhq/sumpter/issues/157**
+(supervisor / human with GitHub write to upstream):
 
 1. Open or land an upstream `antchfx/xpath` issue/PR with the `numericQuery`
    isolation fix and tests.

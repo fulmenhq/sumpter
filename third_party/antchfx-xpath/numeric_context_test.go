@@ -6,20 +6,30 @@ import (
 )
 
 // Synthetic ledger-style document for numeric operand context isolation.
-// Context node for evaluation is the Credit element.
+// Two Credit siblings (Amounts 20 and 5) so one compiled expression can be
+// evaluated across different record contexts.
 func createCreditDoc() *TNode {
-	// <Root><Credit><Entry><Amount>20</Amount></Entry></Credit></Root>
+	// <Root>
+	//   <Credit><Entry><Amount>20</Amount></Entry></Credit>
+	//   <Credit><Entry><Amount>5</Amount></Entry></Credit>
+	// </Root>
 	doc := createNode("", RootNode)
 	root := doc.createChildNode("Root", ElementNode)
-	ev := root.createChildNode("Credit", ElementNode)
-	line := ev.createChildNode("Entry", ElementNode)
-	amt := line.createChildNode("Amount", ElementNode)
-	amt.createChildNode("20", TextNode)
+	for _, amount := range []string{"20", "5"} {
+		ev := root.createChildNode("Credit", ElementNode)
+		entry := ev.createChildNode("Entry", ElementNode)
+		amt := entry.createChildNode("Amount", ElementNode)
+		amt.createChildNode(amount, TextNode)
+	}
 	return doc
 }
 
 func selectCredit(doc *TNode) *TNode {
 	return selectNode(doc, "//Credit")
+}
+
+func selectCredits(doc *TNode) []*TNode {
+	return selectNodes(doc, "//Credit")
 }
 
 func evalNumberAt(t *testing.T, context *TNode, expr string) float64 {
@@ -99,14 +109,33 @@ func TestNumericOperatorContextIsolation(t *testing.T) {
 		t.Fatalf("context navigator moved after Evaluate: got %q want %q", nav.LocalName(), beforeName)
 	}
 
-	// Same compiled expression on different contexts must not contaminate.
-	// Second event with amount 5 under a sibling structure:
-	// evaluate twice on the same Credit with a fresh navigator each time.
+	// Same compiled expression: same-context repeat (fresh navigator each time).
 	exp2 := MustCompile(predSumCS)
-	g1 := exp2.Evaluate(createNavigator(ctx)).(float64)
-	g2 := exp2.Evaluate(createNavigator(ctx)).(float64)
-	if g1 != -20 || g2 != -20 {
-		t.Fatalf("repeat Evaluate contamination: g1=%v g2=%v want both -20", g1, g2)
+	gSame1 := exp2.Evaluate(createNavigator(ctx)).(float64)
+	gSame2 := exp2.Evaluate(createNavigator(ctx)).(float64)
+	if gSame1 != -20 || gSame2 != -20 {
+		t.Fatalf("same-context repeat Evaluate: g1=%v g2=%v want both -20", gSame1, gSame2)
+	}
+
+	// Different record contexts must not contaminate query/navigator state.
+	// One compiled expression, contexts A (Amount=20) → B (Amount=5) → A.
+	credits := selectCredits(doc)
+	if len(credits) != 2 {
+		t.Fatalf("expected 2 Credit contexts, got %d", len(credits))
+	}
+	ctxA, ctxB := credits[0], credits[1]
+	expAB := MustCompile(predSumCS)
+	vA1 := expAB.Evaluate(createNavigator(ctxA))
+	vB := expAB.Evaluate(createNavigator(ctxB))
+	vA2 := expAB.Evaluate(createNavigator(ctxA))
+	gotA1, okA1 := vA1.(float64)
+	gotB, okB := vB.(float64)
+	gotA2, okA2 := vA2.(float64)
+	if !okA1 || !okB || !okA2 {
+		t.Fatalf("cross-context Evaluate types: A1=%T B=%T A2=%T", vA1, vB, vA2)
+	}
+	if gotA1 != -20 || gotB != -5 || gotA2 != -20 {
+		t.Fatalf("cross-context Evaluate contamination: A1=%v B=%v A2=%v want -20, -5, -20", gotA1, gotB, gotA2)
 	}
 
 	// Empty node-set: sum empty = 0; context-sensitive factor still non-identity.
