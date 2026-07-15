@@ -54,10 +54,13 @@ a developer/operator machine:
 
 - `make precommit` — fast pre-commit checks (the goneat pre-commit hook runs a
   subset automatically).
-- `make prepush` — pre-push validation. Its checks _match_ what CI runs, but the
-  **target itself is not invoked by CI**; CI calls the underlying `check-all` /
-  `test` / `build` directly.
-- `make pr-final` — the final local gate before opening/refreshing a PR.
+- `make prepush` — pre-push validation. Includes `format-check-tree` (whole-tree
+  format @ fail-on low) so the local gate matches CI's format trust boundary;
+  also `check-all`, short tests, coverage, security, and deps. The **target
+  itself is not invoked by CI**; CI calls the underlying hermetic targets
+  (`check-all`, `format-check-tree`, `test`, `build`, …) directly.
+- `make pr-final` — the final local gate before opening/refreshing a PR
+  (depends on `prepush`, so whole-tree format is included).
 
 > **Audit statement (2026-06-12):** `pr-final` and `prepush` are **never invoked
 > by remote CI/CD**. CI runs the individual hermetic targets (`check-all`,
@@ -202,20 +205,21 @@ one backend never blocks the others.
 | `format-check-tree`          | Remote CI + local             | No              | **Whole-tree** format gate (not `--new-issues-only`); fails on any md/json/yaml/EOF drift                    |
 | `version-check`              | Remote CI + local             | No              | Drift guard: a no-ldflags build must report the `VERSION`-file version (catches a hardcoded version literal) |
 | `seekablezstd` tests         | Dedicated CI workflow + local | No              | CGO; own build tag                                                                                           |
-| `precommit` / `prepush`      | Local only                    | No              | Mirror CI checks; not invoked by CI                                                                          |
+| `precommit`                  | Local only                    | No              | Fast local gate; format leg is Go `fmt-strict` + goneat hook (changed-file, fail-on high)                    |
+| `prepush`                    | Local only                    | No              | Includes `format-check-tree` (CI format parity); not invoked by CI                                           |
 | `test-integration-s3`        | Local / on-demand             | **Yes** (S3)    | `s3integration` tag; BYO or ephemeral moto                                                                   |
-| `pr-final`                   | Local only                    | **Yes** (S3)    | Requires the S3 suite; never on CI                                                                           |
+| `pr-final`                   | Local only                    | **Yes** (S3)    | Stacks on `prepush` (so whole-tree format is included) + S3 suite; never on CI                               |
 
 ### Whole-tree format gate (`format-check-tree`)
 
-`ci.yml` runs `make format-check-tree` (`goneat assess --categories format
---fail-on low` over the **whole tree**, NOT `--new-issues-only`). It exists
-because the format **apply** step (`goneat format`) operates whole-tree while the
-local hook's format **check** is changed-file/new-issues scoped — an asymmetry
-that let markdown/json/yaml/EOF drift accumulate on `main` and then get swept into
-whichever feature branch ran a whole-tree `goneat format` (the v0.2.2 release-docs
-contamination). This CI gate keeps the tree drift-free so that sweep is a permanent
-no-op. The local pre-commit hook stays changed-file scoped (faster feedback); CI is
-the trust-boundary gate. Fix any reported drift locally with `goneat assess
+`ci.yml` and local `make prepush` / `make pr-final` run `make format-check-tree`
+(`goneat assess --categories format --fail-on low` over the **whole tree**, NOT
+`--new-issues-only`). It exists because the format **apply** step
+(`goneat format`) operates whole-tree while the local pre-commit hook's format
+**check** is changed-file/new-issues scoped at fail-on high — an asymmetry that
+let markdown/json/yaml/EOF drift (including non-Go pin files) pass local hooks
+and only fail on CI. Whole-tree format on `prepush` closes that gap before
+push/PR. The pre-commit hook stays changed-file scoped (faster feedback); CI and
+`prepush` are the trust-boundary gates. Fix any reported drift locally with `goneat assess
 --categories format --fix` (it normalizes whitespace/EOF; `goneat format` handles
 the md/json/yaml prettier pass).
