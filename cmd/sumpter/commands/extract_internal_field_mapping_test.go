@@ -12,6 +12,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	"github.com/fulmenhq/sumpter/internal/valueprofile"
+	"github.com/parquet-go/parquet-go"
 )
 
 // TestInternalFieldMappingDisclosureSurfaces is the secrev-anchored negative:
@@ -169,12 +170,9 @@ output_schema:
 		}
 	}
 
-	// Parquet schema absence via parquet field-spec path: open and check schema names.
+	// Parquet: physical schema inspection + provenance/catalog config path.
 	parquetPath := filepath.Join(outputDir, "records.parquet")
-	if _, err := os.Stat(parquetPath); err != nil {
-		t.Fatalf("parquet missing: %v", err)
-	}
-	// Lightweight: re-run field-spec construction for the loaded config.
+	assertParquetSchemaOmitsInternalColumns(t, parquetPath, []string{"sign_factor", "doubled"}, []string{"amount", "raw"})
 	extCfg, err := extract.LoadExtractConfig(filepath.Join(dir, "extract.yaml"))
 	if err != nil {
 		t.Fatalf("reload extract: %v", err)
@@ -631,6 +629,41 @@ output_schema:
 	for _, p := range buildFieldProvenance(extCfg.FieldMappings) {
 		if p.OutputField == "sign_factor" || p.OutputField == "doubled" {
 			t.Errorf("zero-record provenance includes %q", p.OutputField)
+		}
+	}
+
+	// Direct Parquet schema inspection (not only provenance/config helper).
+	parquetPath := filepath.Join(outputDir, "records.parquet")
+	assertParquetSchemaOmitsInternalColumns(t, parquetPath, []string{"sign_factor", "doubled"}, []string{"amount"})
+}
+
+// assertParquetSchemaOmitsInternalColumns opens a written Parquet file and
+// asserts internal helper names are absent from the physical schema while
+// expected emitted columns remain present.
+func assertParquetSchemaOmitsInternalColumns(t *testing.T, path string, internals, emitted []string) {
+	t.Helper()
+	f, err := os.Open(path) // #nosec G304 - test-owned path
+	if err != nil {
+		t.Fatalf("open parquet %s: %v", path, err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat parquet: %v", err)
+	}
+	pqFile, err := parquet.OpenFile(f, st.Size())
+	if err != nil {
+		t.Fatalf("OpenFile parquet: %v", err)
+	}
+	schema := pqFile.Schema().String()
+	for _, leak := range internals {
+		if strings.Contains(schema, leak) {
+			t.Errorf("parquet schema leaked internal column %q: %s", leak, schema)
+		}
+	}
+	for _, want := range emitted {
+		if !strings.Contains(schema, want) {
+			t.Errorf("parquet schema missing emitted column %q: %s", want, schema)
 		}
 	}
 }
