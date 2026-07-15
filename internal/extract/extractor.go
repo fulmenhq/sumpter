@@ -1916,6 +1916,15 @@ func buildProjectedRecord(node *xmlquery.Node, cfg *ExtractRecordMatch, external
 		return record, nil
 	}
 
+	// Feature-scoped: top-level internal output names must not collide with
+	// externalFields, even when the internal XPath/expression yields nil. Without
+	// this check an absent internal leaves no record key, expressions fall back
+	// to the external value, and the external key is then emitted — violating
+	// both unbound-internal and collision-before-projection semantics.
+	if err := rejectExternalCollisionsWithInternalMappings(cfg.FieldMappings, externalFields); err != nil {
+		return nil, err
+	}
+
 	for j := range cfg.FieldMappings {
 		mapping := &cfg.FieldMappings[j]
 		if strings.TrimSpace(mapping.Expression) != "" {
@@ -1954,6 +1963,28 @@ func buildProjectedRecord(node *xmlquery.Node, cfg *ExtractRecordMatch, external
 
 	projectInternalMappedFields(record)
 	return record, nil
+}
+
+// rejectExternalCollisionsWithInternalMappings fails when any top-level
+// internal:true output_field shares a key with externalFields. Feature-scoped:
+// no-internal recipes keep legacy external-vs-absent-mapping behavior.
+func rejectExternalCollisionsWithInternalMappings(mappings []FieldMapping, externalFields map[string]interface{}) error {
+	if len(externalFields) == 0 {
+		return nil
+	}
+	for _, mapping := range mappings {
+		if !mapping.Internal {
+			continue
+		}
+		name := strings.TrimSpace(mapping.OutputField)
+		if name == "" {
+			continue
+		}
+		if _, ok := externalFields[name]; ok {
+			return fmt.Errorf("external field key %q collides with internal field_mappings output_field; rename one of them to keep injection vs content-extraction fidelity explicit", name)
+		}
+	}
+	return nil
 }
 
 func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, error) {

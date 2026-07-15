@@ -161,6 +161,41 @@ func TestInternalCollisionWithExternalBeforeProjection(t *testing.T) {
 	}
 }
 
+// TestAbsentInternalDoesNotFallBackToExternal locks the devrev finding: when an
+// internal XPath yields nil, a same-named external must not satisfy expressions
+// or emit. Collision is checked before expression evaluation on all routes that
+// share buildProjectedRecord (buffered + worker inherit).
+func TestAbsentInternalDoesNotFallBackToExternal(t *testing.T) {
+	doc := mustParseXML(t, `<root><item><n>1</n></item></root>`)
+	base := []FieldMapping{
+		{OutputField: "helper", XPath: "missing", Type: "number", Internal: true},
+		{OutputField: "amount", Expression: "helper * 2", Type: "number"},
+	}
+	external := map[string]interface{}{"helper": 7}
+
+	cfg := preparedInternalMappingConfig(t, base)
+	_, err := extractRecords(doc, cfg, external)
+	if err == nil {
+		t.Fatal("buffered: expected collision when absent internal shares external key")
+	}
+	if !strings.Contains(err.Error(), "helper") {
+		t.Fatalf("buffered: want helper collision, got: %v", err)
+	}
+
+	workerCfg := preparedFieldConfig(t, base, ".", nil)
+	item := xmlquery.FindOne(doc, "//item")
+	if item == nil {
+		t.Fatal("missing item")
+	}
+	_, err = ExtractFieldsWithExternal(item, workerCfg, external)
+	if err == nil {
+		t.Fatal("worker: expected collision when absent internal shares external key")
+	}
+	if !strings.Contains(err.Error(), "helper") {
+		t.Fatalf("worker: want helper collision, got: %v", err)
+	}
+}
+
 func TestInternalMappingBufferedAndWorkerParity(t *testing.T) {
 	doc := mustParseXML(t, `<root><item><n>5</n></item></root>`)
 	base := []FieldMapping{
@@ -271,6 +306,131 @@ func TestPrepareRejectsInternalInOutputSchema(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "output_schema") {
 		t.Fatalf("want output_schema error, got: %v", err)
+	}
+}
+
+func TestPrepareRejectsInternalInOutputSchemaRequiredOnly(t *testing.T) {
+	// Distinct from properties rejection: required lists an internal name without
+	// declaring it under properties.
+	cfg := &ExtractRecordMatch{
+		RecordType:     "rec",
+		MatchSelectors: []MatchSelector{{XPath: "//item"}},
+		OutputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"out": map[string]interface{}{"type": "number"},
+			},
+			"required": []interface{}{"out", "helper"},
+		},
+		FieldMappings: []FieldMapping{
+			{OutputField: "helper", XPath: "n", Type: "number", Internal: true},
+			{OutputField: "out", Expression: "helper", Type: "number"},
+		},
+	}
+	err := prepareExtractConfig(cfg)
+	if err == nil {
+		t.Fatal("expected output_schema.required rejection")
+	}
+	if !strings.Contains(err.Error(), "required") && !strings.Contains(err.Error(), "output_schema") {
+		t.Fatalf("want required/output_schema error, got: %v", err)
+	}
+}
+
+func TestInternalWithStrictOutputSchemaAndUniformSchema(t *testing.T) {
+	// Projection must precede uniform-schema fill and strict validation so
+	// internals never reappear as null columns and additionalProperties:false
+	// does not see them.
+	doc := mustParseXML(t, `<root><item><n>5</n></item></root>`)
+	cfg := preparedInternalMappingConfig(t, []FieldMapping{
+		{OutputField: "helper", XPath: "n", Type: "number", Internal: true},
+		{OutputField: "out", Expression: "helper * 2", Type: "number"},
+	})
+	cfg.OutputSchema = map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]interface{}{
+			"out": map[string]interface{}{"type": "number"},
+			"pad": map[string]interface{}{"type": "string"},
+		},
+		"required": []interface{}{"out"},
+	}
+	if err := SetUniformSchema(cfg, true); err != nil {
+		t.Fatalf("SetUniformSchema: %v", err)
+	}
+
+	records, err := extractRecords(doc, cfg, nil)
+	if err != nil {
+		t.Fatalf("extractRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records=%d", len(records))
+	}
+	rec := records[0]
+	assertNumeric(t, rec["out"], 10)
+	if _, ok := rec["helper"]; ok {
+		t.Errorf("strict+uniform resurrected helper: %#v", rec["helper"])
+	}
+	if v, ok := rec["pad"]; !ok || v != nil {
+		t.Errorf("pad = %#v, want uniform null", rec["pad"])
+	}
+	assertNoInternalWrappers(t, rec)
+}
+
+func TestPrepareRejectsArrayAndNestedInternalTable(t *testing.T) {
+	cases := []struct {
+		name    string
+		mapping FieldMapping
+	}{
+		{
+			name: "top-level array internal",
+			mapping: FieldMapping{
+				OutputField: "lines",
+				XPath:       "line",
+				Type:        "array",
+				Internal:    true,
+			},
+		},
+		{
+			name: "nested item_mapping internal",
+			mapping: FieldMapping{
+				OutputField: "lines",
+				XPath:       "line",
+				Type:        "array",
+				ItemMapping: []FieldMapping{
+					{OutputField: "hidden", XPath: "x", Type: "string", Internal: true},
+				},
+			},
+		},
+		{
+			name: "nested polymorphic internal",
+			mapping: FieldMapping{
+				OutputField: "lines",
+				XPath:       "line",
+				Type:        "array",
+				Polymorphic: []PolymorphicMapping{{
+					ItemType: "kind",
+					FieldMappings: []FieldMapping{
+						{OutputField: "hidden", XPath: "x", Type: "string", Internal: true},
+					},
+				}},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &ExtractRecordMatch{
+				RecordType:     "rec",
+				MatchSelectors: []MatchSelector{{XPath: "//item"}},
+				FieldMappings:  []FieldMapping{tc.mapping},
+			}
+			err := prepareExtractConfig(cfg)
+			if err == nil {
+				t.Fatal("expected prepare rejection")
+			}
+			if !strings.Contains(err.Error(), "internal") {
+				t.Fatalf("want internal in error, got: %v", err)
+			}
+		})
 	}
 }
 
