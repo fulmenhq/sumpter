@@ -25,7 +25,7 @@ See [`docs/releases/v0.3.2.md`](docs/releases/v0.3.2.md) for the full release na
 
 ### Changed
 
-- **Pre-push whole-tree format gate** - local pre-push validation formats the full tree so subset-touched branches cannot leave drift outside the change set (#158).
+- **Pre-push whole-tree format gate** - local pre-push validation checks the full tree for format drift so subset-touched branches cannot leave drift outside the change set (#158).
 - **README / overview capabilities** - derive-only field mappings (helpers without stray columns) and corrected XPath field arithmetic called out as available today.
 
 ### Deferred
