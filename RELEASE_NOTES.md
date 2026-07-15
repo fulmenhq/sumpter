@@ -8,28 +8,32 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ## v0.3.2 (2026-07-15)
 
-**Derive-only field mappings and correct XPath field arithmetic for same-record derivation.**
+**Same-record helpers without stray columns, and no more silent-wrong XPath sign arithmetic.**
 
 **Released:** 2026-07-15 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
 
-v0.3.2 improves recipe-author ergonomics and correctness for same-record
-intermediates. Authors can mark top-level `field_mappings` as `internal: true`
-so a helper (sign factor, scaled intermediate, etc.) is computed once, visible
-to later expressions, and never emitted as a column or portable catalog field.
-Separately, XPath field arithmetic that multiplies a predicated `sum(...)` by a
-context-sensitive factor now evaluates the factor against the correct node —
-eliminating a class of silent-wrong totals that still reported a green extract.
+v0.3.2 is for recipe authors who need same-record intermediates without
+polluting output schemas, and for anyone who multiplies a predicated `sum(...)`
+by a context-sensitive factor in XPath:
+
+- Mark a top-level `field_mappings` entry `internal: true` — compute a helper
+  once, reuse it from later expressions, never emit a column or portable
+  catalog field.
+- Trailing context-sensitive factors now evaluate against the correct node —
+  **no more silent-wrong sign totals** that still report a green extract.
 
 The internal-mapping surface is additive and byte-compatible when unused. The
 XPath fix changes results only for expressions that previously hit the wrong
 operand context. No process-run or data-artifact contract pin changes.
 
-Operator notes: [`docs/extract-workflow.md`](docs/extract-workflow.md). Full
+**Start here:** [`docs/extract-workflow.md`](docs/extract-workflow.md). Full
 narrative: [`docs/releases/v0.3.2.md`](docs/releases/v0.3.2.md).
 
 ### Features
 
 #### Derive-only field mappings (`internal-field-mappings`)
+
+**Minimal enable:**
 
 ```yaml
 field_mappings:
@@ -55,6 +59,7 @@ field_mappings:
 
 #### XPath numeric operand isolation (`xpath-sum-multiply`)
 
+Predicated `sum(...) * factor` no longer silently mis-evaluates the factor.
 Interim pin of `github.com/antchfx/xpath` under `./third_party/antchfx-xpath`
 with operand-context isolation for numeric field arithmetic (`xmlquery` stays
 v1.5.1). Hermetic regressions and factor-first authoring guidance ship with the

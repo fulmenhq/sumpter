@@ -39,11 +39,12 @@ Sumpter is a **Go-based XML extraction engine** designed for:
   published data-artifact descriptors. See
   [Process-run producer notes](process-run.md).
 - **Derive-only field mappings**: top-level `field_mappings[].internal: true`
-  computes same-record helpers for later expressions without emitting a column
-  or portable field-catalog entry. See [Extract workflow](extract-workflow.md).
-- **Correct XPath field arithmetic**: predicated `sum(...)` multiplied by a
-  context-sensitive factor evaluates operands against the right node context
-  (no silent-wrong totals). Factor-first authoring notes are in the extract
+  gives same-record helpers without stray columns or portable field-catalog
+  entries — compute once, reuse in later expressions, never emit. See
+  [Extract workflow](extract-workflow.md).
+- **Correct XPath field arithmetic**: predicated `sum(...)` × a context-sensitive
+  factor evaluates operands against the right node context — no more
+  silent-wrong sign totals. Factor-first authoring notes are in the extract
   workflow guide.
 
 This combination enables teams to move from raw XML to queryable tables **in minutes, not weeks**.

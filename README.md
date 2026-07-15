@@ -236,8 +236,8 @@ Available today:
 - ✅ List-typed recipe parameters with set-classification predicates
 - ✅ Portable data-artifact producer profile (opt-in descriptors, catalogs, protection floors, validate ladder, guarded `value_profile`)
 - ✅ Process-run flight recorder for long-running `extract-multi` (opt-in process card, event stream, optional terminal → data-artifact bridge)
-- ✅ Derive-only field mappings (`field_mappings[].internal: true`) for same-record helpers that stay out of output columns and portable field catalogs
-- ✅ Correct XPath field arithmetic for predicated sum × context-sensitive factor patterns (operand-context isolation)
+- ✅ Derive-only field mappings (`field_mappings[].internal: true`) — same-record helpers without stray columns or portable field-catalog entries
+- ✅ Correct XPath field arithmetic for predicated sum × context-sensitive factor (no more silent-wrong sign totals)
 - 🔜 DuckDB output (planned)
 
 See `docs/releases/` for detailed release notes and `docs/user-guide/` for workflow documentation.
