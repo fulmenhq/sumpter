@@ -115,6 +115,13 @@ type MatchSelector struct {
 // describing what the field captures and where it comes from. The
 // extract pipeline propagates Description into the provenance sidecar's
 // per-field manifest entry (manifest.recipe.field_provenance[]).
+//
+// Internal marks a top-level scalar mapping as derive-only: the value is
+// computed into expression scope under OutputField but projected out of the
+// record before filters, schema fill, validation, enrichment, value_profile,
+// and sinks. Nested item/polymorphic mappings must not set Internal (prepare
+// rejects them). Description still must not appear in public field_provenance
+// when Internal is true — provenance construction skips internal mappings.
 type FieldMapping struct {
 	OutputField     string                 `yaml:"output_field" json:"output_field"`
 	XPath           string                 `yaml:"xpath" json:"xpath"`
@@ -123,6 +130,7 @@ type FieldMapping struct {
 	Description     string                 `yaml:"description,omitempty" json:"description,omitempty"`
 	Transform       string                 `yaml:"transform,omitempty" json:"transform,omitempty"`
 	TransformParams map[string]interface{} `yaml:"transform_params,omitempty" json:"transform_params,omitempty"`
+	Internal        bool                   `yaml:"internal,omitempty" json:"internal,omitempty"`
 	ItemMapping     []FieldMapping         `yaml:"item_mapping,omitempty" json:"item_mapping,omitempty"`
 	Polymorphic     []PolymorphicMapping   `yaml:"polymorphic_mapping,omitempty" json:"polymorphic_mapping,omitempty"`
 	CompiledXPath   *xpath.Expr            `yaml:"-" json:"-"`
