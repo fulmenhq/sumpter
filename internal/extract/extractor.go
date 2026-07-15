@@ -191,6 +191,13 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 			cfg.OutputValidator = validator
 		}
 
+		// Structural internal:true checks before XPath compilation so direct-Go
+		// configs get the same fail-loud shape contract as schema-validated YAML.
+		if err := validateInternalFieldMappings(cfg); err != nil {
+			cfg.prepareErr = err
+			return
+		}
+
 		for i := range cfg.MatchSelectors {
 			selector := &cfg.MatchSelectors[i]
 			if strings.TrimSpace(selector.XPath) == "" {
@@ -212,11 +219,6 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 				cfg.prepareErr = err
 				return
 			}
-		}
-
-		if err := validateInternalFieldMappings(cfg); err != nil {
-			cfg.prepareErr = err
-			return
 		}
 	})
 
@@ -245,6 +247,9 @@ func validateInternalFieldMappings(cfg *ExtractRecordMatch) error {
 		name := strings.TrimSpace(mapping.OutputField)
 		if name == "" {
 			return fmt.Errorf("internal field_mappings entry at index %d requires output_field", i)
+		}
+		if err := validateInternalMappingShape(mapping); err != nil {
+			return err
 		}
 		if strings.EqualFold(strings.TrimSpace(mapping.Type), "array") {
 			return fmt.Errorf("field_mappings %q: internal:true is not supported for type array (top-level scalar only)", name)
@@ -284,6 +289,33 @@ func validateInternalFieldMappings(cfg *ExtractRecordMatch) error {
 		}
 	}
 
+	return nil
+}
+
+// validateInternalMappingShape enforces feature-scoped structural rules for
+// internal:true top-level mappings that YAML schema already encodes for file
+// loads: exactly one of xpath or expression; expression rejects transform.
+func validateInternalMappingShape(mapping *FieldMapping) error {
+	if mapping == nil || !mapping.Internal {
+		return nil
+	}
+	name := strings.TrimSpace(mapping.OutputField)
+	hasXPath := strings.TrimSpace(mapping.XPath) != ""
+	hasExpression := strings.TrimSpace(mapping.Expression) != ""
+	switch {
+	case hasXPath && hasExpression:
+		return fmt.Errorf("field_mappings %q: internal:true requires exactly one of xpath or expression, not both", name)
+	case !hasXPath && !hasExpression:
+		return fmt.Errorf("field_mappings %q: internal:true requires exactly one of xpath or expression", name)
+	}
+	if hasExpression {
+		if strings.TrimSpace(mapping.Transform) != "" {
+			return fmt.Errorf("field_mappings %q: transform is not supported with internal:true expression mappings", name)
+		}
+		if len(mapping.TransformParams) > 0 {
+			return fmt.Errorf("field_mappings %q: transform_params are not supported with internal:true expression mappings", name)
+		}
+	}
 	return nil
 }
 
@@ -1296,6 +1328,14 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 }
 
 func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]extractedRecord, map[int]int, error) {
+	// Reserve internal mapping names against externalFields before selector
+	// evaluation so zero-match paths cannot fall back to a colliding external.
+	if cfg != nil {
+		if err := rejectExternalCollisionsWithInternalMappings(cfg.FieldMappings, externalFields); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	var extractedRecords []extractedRecord
 	perSelectorCounts := make(map[int]int, len(cfg.MatchSelectors))
 	recordNum := 0
@@ -1347,6 +1387,12 @@ func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlqu
 	}
 	if sink == nil {
 		return nil, 0, fmt.Errorf("record sink is nil")
+	}
+	// Same pre-selector invariant as the buffered path (zero-match safety).
+	if cfg != nil {
+		if err := rejectExternalCollisionsWithInternalMappings(cfg.FieldMappings, externalFields); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	perSelectorCounts := make(map[int]int, len(cfg.MatchSelectors))

@@ -726,9 +726,11 @@ field_mappings:
     type: number
 ```
 
-Evaluation stays **two-phase**: every top-level XPath mapping (including internals) is bound first, then expression mappings run in declaration order. An expression may therefore reference any XPath field regardless of list position, and any **earlier** expression mapping (including an internal one). Forward references to a later expression keep the existing runtime undefined-variable failure. Internals are projected out **before** filters, uniform-schema fill, output-schema validation, enrichment, value_profile, and all sinks — and are omitted from field_provenance and the portable field catalog. They must not appear in `output_schema.properties`/`required`, `value_profile.fields`, or `filters` keys (plan-load / prepare fails loud). Top-level scalar mappings only; nested item/polymorphic `internal` is rejected. Defaults to `false` (no-opt recipes unchanged).
+Evaluation stays **two-phase**: every top-level XPath mapping (including internals) is bound first, then expression mappings run in declaration order. An expression may therefore reference any XPath field regardless of list position, and any **earlier** expression mapping (including an internal one). Forward references to a later expression keep the existing runtime undefined-variable failure. Internals are projected out **before** filters, uniform-schema fill, output-schema validation, enrichment, value_profile, and all sinks — and are omitted from field_provenance **entries**, the portable field catalog, data columns (JSON/NDJSON/Parquet), and value_profile (names and values). They must not appear in `output_schema.properties`/`required`, `value_profile.fields`, or `filters` keys (plan-load / prepare fails loud). Top-level scalar mappings only; nested item/polymorphic `internal` is rejected. Defaults to `false` (no-opt recipes unchanged).
 
 > Same posture as source/parameter internals: output shaping, not secrecy. Do not rely on it to keep sensitive values out of output.
+>
+> **Internal field *names* are not confidential.** Suppression removes internals from the portable field contract, data columns, provenance field_provenance **entries**, and value_profile — it does **not** erase names from run provenance. The full recipe still appears in `recipe.extract_yaml` (content-hash / reproducibility), and emitted fields may reference helpers by name in their `expression` lineage strings. Do not put secrets in field names (the same rule as any other mapping).
 
 ### Reference Tables
 

@@ -376,6 +376,145 @@ func TestInternalWithStrictOutputSchemaAndUniformSchema(t *testing.T) {
 	assertNoInternalWrappers(t, rec)
 }
 
+func TestPrepareRejectsInvalidInternalMappingShapes(t *testing.T) {
+	// Schema already encodes these for YAML loads; prepare must enforce the same
+	// for direct-Go / cloned configs (feature-scoped to internal:true).
+	cases := []struct {
+		name    string
+		mapping FieldMapping
+		wantSub string
+	}{
+		{
+			name: "both xpath and expression",
+			mapping: FieldMapping{
+				OutputField: "helper",
+				XPath:       "n",
+				Expression:  "1",
+				Type:        "number",
+				Internal:    true,
+			},
+			wantSub: "exactly one",
+		},
+		{
+			name: "neither xpath nor expression",
+			mapping: FieldMapping{
+				OutputField: "helper",
+				Type:        "number",
+				Internal:    true,
+			},
+			wantSub: "exactly one",
+		},
+		{
+			name: "expression plus transform",
+			mapping: FieldMapping{
+				OutputField: "helper",
+				Expression:  "1",
+				Transform:   "trim",
+				Type:        "string",
+				Internal:    true,
+			},
+			wantSub: "transform",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &ExtractRecordMatch{
+				RecordType:     "rec",
+				MatchSelectors: []MatchSelector{{XPath: "//item"}},
+				FieldMappings:  []FieldMapping{tc.mapping},
+			}
+			err := PrepareRecordMatch(cfg)
+			if err == nil {
+				t.Fatal("expected prepare rejection")
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.wantSub)) {
+				t.Fatalf("want %q in error, got: %v", tc.wantSub, err)
+			}
+		})
+	}
+
+	// Valid controls still prepare.
+	for _, name := range []string{"xpath-internal", "expression-internal"} {
+		t.Run("valid_"+name, func(t *testing.T) {
+			var mapping FieldMapping
+			if name == "xpath-internal" {
+				mapping = FieldMapping{OutputField: "helper", XPath: "n", Type: "number", Internal: true}
+			} else {
+				mapping = FieldMapping{OutputField: "helper", Expression: "1", Type: "number", Internal: true}
+			}
+			cfg := &ExtractRecordMatch{
+				RecordType:     "rec",
+				MatchSelectors: []MatchSelector{{XPath: "//item"}},
+				FieldMappings: []FieldMapping{
+					mapping,
+					{OutputField: "out", Expression: "helper", Type: "number"},
+				},
+			}
+			if err := PrepareRecordMatch(cfg); err != nil {
+				t.Fatalf("valid control prepare: %v", err)
+			}
+		})
+	}
+
+	// No-internal legacy: both xpath+expression is not newly rejected here
+	// (schema rejects YAML; direct-Go legacy outside feature scope).
+	t.Run("no-internal both not feature-scoped", func(t *testing.T) {
+		cfg := &ExtractRecordMatch{
+			RecordType:     "rec",
+			MatchSelectors: []MatchSelector{{XPath: "//item"}},
+			FieldMappings: []FieldMapping{
+				{OutputField: "weird", XPath: "n", Expression: "1", Type: "number"},
+			},
+		}
+		// May fail compile or later eval, but must not trip internal-shape gate.
+		err := PrepareRecordMatch(cfg)
+		if err != nil && strings.Contains(err.Error(), "internal:true requires exactly one") {
+			t.Fatalf("no-internal must not hit internal XOR gate: %v", err)
+		}
+	})
+}
+
+func TestZeroMatchDoesNotEmitCollidingExternalForInternalName(t *testing.T) {
+	// Entarch blocker: when no selector matches, ExtractFieldsWithExternal used
+	// to return copyExternalFields and leak a reserved internal name.
+	doc := mustParseXML(t, `<root></root>`)
+	base := []FieldMapping{
+		{OutputField: "helper", XPath: "missing", Type: "number", Internal: true},
+		{OutputField: "amount", Expression: "helper * 2", Type: "number"},
+	}
+	cfg := preparedInternalMappingConfig(t, base)
+	external := map[string]interface{}{"helper": 7}
+
+	_, err := ExtractFieldsWithExternal(doc, cfg, external)
+	if err == nil {
+		t.Fatal("expected collision on zero-match path with reserved internal name")
+	}
+	if !strings.Contains(err.Error(), "helper") {
+		t.Fatalf("want helper collision, got: %v", err)
+	}
+
+	// Buffered zero-match same invariant.
+	_, err = extractRecords(doc, cfg, external)
+	if err == nil {
+		t.Fatal("buffered: expected collision on zero-match path")
+	}
+
+	// No-internal control: zero-match still returns ordinary external fields.
+	noInternal := preparedFieldConfig(t, []FieldMapping{
+		{OutputField: "name", XPath: "name", Type: "string"},
+	}, "//item", nil)
+	fields, err := ExtractFieldsWithExternal(doc, noInternal, map[string]interface{}{"site_id": "store-17"})
+	if err != nil {
+		t.Fatalf("no-internal zero-match: %v", err)
+	}
+	if fields["site_id"] != "store-17" {
+		t.Errorf("no-internal zero-match lost external: %#v", fields)
+	}
+	if _, ok := fields["helper"]; ok {
+		t.Errorf("unexpected helper on no-internal control: %#v", fields)
+	}
+}
+
 func TestPrepareRejectsArrayAndNestedInternalTable(t *testing.T) {
 	cases := []struct {
 		name    string
