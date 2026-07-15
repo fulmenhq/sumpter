@@ -6,6 +6,92 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.3.2 (2026-07-15)
+
+**Derive-only field mappings and correct XPath field arithmetic for same-record derivation.**
+
+**Released:** 2026-07-15 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
+
+v0.3.2 improves recipe-author ergonomics and correctness for same-record
+intermediates. Authors can mark top-level `field_mappings` as `internal: true`
+so a helper (sign factor, scaled intermediate, etc.) is computed once, visible
+to later expressions, and never emitted as a column or portable catalog field.
+Separately, XPath field arithmetic that multiplies a predicated `sum(...)` by a
+context-sensitive factor now evaluates the factor against the correct node —
+eliminating a class of silent-wrong totals that still reported a green extract.
+
+The internal-mapping surface is additive and byte-compatible when unused. The
+XPath fix changes results only for expressions that previously hit the wrong
+operand context. No process-run or data-artifact contract pin changes.
+
+Operator notes: [`docs/extract-workflow.md`](docs/extract-workflow.md). Full
+narrative: [`docs/releases/v0.3.2.md`](docs/releases/v0.3.2.md).
+
+### Features
+
+#### Derive-only field mappings (`internal-field-mappings`)
+
+```yaml
+field_mappings:
+  - output_field: sign_factor
+    xpath: "1 - 2*count(self::RefundEvent)" # synthetic
+    type: number
+    internal: true
+  - output_field: amount
+    expression: "sign_factor * raw_amount"
+    type: number
+```
+
+- Two-phase evaluation: all top-level XPath mappings, then expressions in order.
+- Projected out before filters, schema fill, validation, enrichment,
+  value_profile, and sinks.
+- Omitted from record bodies, Parquet columns, field_provenance **entries**, and
+  the portable field catalog.
+- Plan-load rejects internal names in `value_profile.fields`, `output_schema`,
+  and filters.
+- Expression-only internals allowed; nested item/polymorphic internals deferred.
+- **Names are not confidential** (may appear in recipe provenance and expression
+  lineage) — do not put secrets in field names.
+
+#### XPath numeric operand isolation (`xpath-sum-multiply`)
+
+Interim pin of `github.com/antchfx/xpath` under `./third_party/antchfx-xpath`
+with operand-context isolation for numeric field arithmetic (`xmlquery` stays
+v1.5.1). Hermetic regressions and factor-first authoring guidance ship with the
+pin notes in `third_party/antchfx-xpath/SUMPTER-PIN-README.md`.
+
+### Compatibility & notes
+
+- **All-additive** for `internal: true` when unused; no-opt recipes unchanged.
+- **Corrective** for XPath expressions that previously evaluated trailing
+  context-sensitive factors against the wrong node.
+- **Platforms:** unchanged — linux amd64/arm64, darwin **arm64**, windows
+  amd64/arm64. Intel-Mac users build from source.
+- **Alpha:** interfaces may still change between minor releases; external pull
+  requests are welcome.
+
+### Deferred / follow-ups
+
+- Nested item/polymorphic internals.
+- Upstream-tagged xpath release to retire the local pin.
+- Process-run control socket / run-steering (unchanged from v0.3.1).
+- Richer data-artifact validation and full semantic L3 claims (unchanged).
+- Cloud range-reads, GCS/Azure, DuckDB/Arrow, service health endpoints, and
+  repair modes remain roadmap items.
+
+### Release notes
+
+- **Version bump.** `VERSION` is `0.3.2`. Binaries from this tag emit `v0.3.2`
+  via `sumpter version`.
+- **Tag/version guard.** `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.3.2`
+  is the intended tag/version sanity check.
+- **Release ceremony.** Use the standard draft-release and signing flow in
+  [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
+
+See [`docs/releases/v0.3.2.md`](docs/releases/v0.3.2.md) for the full release narrative.
+
+---
+
 ## v0.3.1 (2026-07-14)
 
 **Opt-in `process-run/v0` flight recorder for long-running `extract-multi` — discover the run, watch settled progress, read the sole terminal, optionally bridge to published data-artifact descriptors.**
@@ -206,79 +292,4 @@ disabled/omitted leaves manifests byte-identical.
 
 See [`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md) for the full release narrative.
 
----
-
-## v0.2.6 (2026-07-07)
-
-**Namespace-correct XML extraction across whole-document, streaming, and indexed modes.**
-
-**Released:** 2026-07-07 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
-
-v0.2.6 adds opt-in namespace-aware XPath binding for recipes that need to be portable across XML documents with different literal prefixes. Recipe authors can declare a `namespaces:` map on extract record-match configs and file signatures, bind XPath prefixes to namespace URIs, and get the same extracted records from whole-document, streaming, and indexed execution paths.
-
-The release is additive. Existing recipes without a `namespaces:` map keep their current behavior, and an absent or empty map preserves the byte-compatible floor. When a map is present, Sumpter fails closed on undeclared prefixes and treats namespace URIs as inert match keys, never as resources to fetch.
-
-### Features
-
-#### Namespace binding — `namespaces:`
-
-XPath-bearing config assets can now declare aliases once and use them in selectors:
-
-```yaml
-namespaces:
-  rec: "urn:example:sumpter-records"
-  ext: "urn:example:sumpter-records-ext"
-
-match_selectors:
-  - xpath: "//rec:Record"
-
-field_mappings:
-  - output_field: "record_id"
-    xpath: "@ext:id"
-    type: "string"
-```
-
-The map is available on extract record-match configs and file signatures. The recipe manifest schema is unchanged.
-
-- **URI binding, not prefix matching.** A recipe prefix such as `rec` is bound to a namespace URI. Input documents may use a different literal prefix, or a default namespace, and still match by URI.
-- **Fail-closed explicit maps.** If a selector uses a prefix that is not declared in the present map, config loading fails before extraction.
-- **Byte-compatible default.** Recipes with no map, or an empty map, use the legacy XPath behavior.
-- **No namespace URI dereference.** Namespace URIs are compared as strings only; Sumpter does not fetch or resolve them.
-
-#### Namespace-mode parity
-
-Namespace-bound extraction now converges across whole-document, streaming, and indexed execution for field selection inside records. The shared synthetic conformance corpus covers prefixed, default-namespace, and dual-namespace documents plus adversarial namespace URI and prefix-shadowing cases.
-
-Streaming and indexed record boundaries remain local-name-only in v0.2.6. That means URI binding applies to field selection after a record has been identified, while boundary-level URI disambiguation remains future scope.
-
-#### Record-index `v0.1.2`
-
-Record indexes now carry namespace context so indexed extraction can re-evaluate namespace-bound fields consistently.
-
-- Namespace-free recipes continue to read legacy indexes unchanged.
-- Namespace-bound recipes against pre-`v0.1.2` indexes fail loud with rebuild guidance instead of silently matching empty namespace context.
-- Indexed slice re-injection escapes captured namespace values structurally, with regression coverage for adversarial URI values.
-
-### Compatibility & notes
-
-- **All-additive.** `namespaces:` is opt-in, and the map-absent path stays compatible with earlier releases.
-- **Legacy prefixed XPath without a map.** Existing recipes keep the prior mode-dependent behavior. To get URI binding and fail-closed prefix validation, add an explicit `namespaces:` map.
-- **Applicability predicates.** Applicability predicates are not namespace-bound by the new map in this release.
-- **Record boundaries.** Streaming and indexed record-boundary selectors remain local-name-only in v0.2.6.
-- **Platforms:** unchanged from 0.2.0-0.2.5 — linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source.
-- **Alpha:** interfaces may still change between minor releases; external pull requests are welcome.
-
-### Deferred / follow-ups
-
-- **Boundary-level URI binding** for streaming/indexed record detection remains future scope.
-- **Public-domain namespace showcase corpora** are deferred to a later release; v0.2.6 uses synthetic hermetic fixtures for correctness.
-- **Portable data-artifact contract support** remains on its own track.
-- **Cloud range-reads, cloud-side indexing, GCS/Azure providers, DuckDB/Arrow, service health endpoints, and repair modes** remain roadmap items, as in 0.2.5.
-
-### Release notes
-
-- **Version bump.** `VERSION` is `0.2.6`. Binaries from this tag emit `v0.2.6` via `sumpter version`.
-- **Tag/version guard.** `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.2.6` is the intended tag/version sanity check.
-- **Release ceremony.** Use the standard draft-release and signing flow in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md): CI builds the tag, then the operator signing ceremony uploads checksums, signatures, public keys, and release notes before publishing.
-
-See [`docs/releases/v0.2.6.md`](docs/releases/v0.2.6.md) for the full release narrative.
+Older releases are retained under [`docs/releases/`](docs/releases/).
