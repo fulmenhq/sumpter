@@ -503,6 +503,9 @@ func assembleRecipePlan(recipeID, absWorkspace, outputDir string, opts *ExtractO
 	if err := validateParquetWithholdColumns(opts.ParquetWithholdColumns, extCfg.OutputSchema); err != nil {
 		return nil, err
 	}
+	if err := rejectValueProfileInternalFields(opts.ValueProfile, extCfg.FieldMappings); err != nil {
+		return nil, fmt.Errorf("recipe %q: %w", recipeID, err)
+	}
 	// extract-multi v0's dispatcher writes through the JSON sink only. Reject any
 	// non-JSON effective output format at load time (fail loud) rather than
 	// silently coercing a recipe's declared format — e.g. a `parquet` recipe must

@@ -710,6 +710,28 @@ An internal pattern's captures are available in expression scope (so `output_fie
 
 > **`internal: true` is an output-shaping control, not a redaction or secrecy mechanism.** It removes the stray intermediate column, but the captured value still lives in expression scope, so a recipe author can deliberately re-emit it (or any value derived from it) to an `output_field`. Do not rely on it to keep a sensitive value out of output; for that, do not capture the value at all.
 
+**Derive-only field mappings (`internal: true` on `field_mappings[]`).** When a same-record helper should be computed once (XPath or expression) and reused by later expressions without emitting a stray column, mark the mapping `internal: true`:
+
+```yaml
+field_mappings:
+  - output_field: sign_factor
+    xpath: "1 - 2*count(self::RefundEvent)" # synthetic
+    type: number
+    internal: true
+  - output_field: raw_amount
+    xpath: ".//Amount"
+    type: number
+  - output_field: amount
+    expression: "sign_factor * raw_amount"
+    type: number
+```
+
+Evaluation stays **two-phase**: every top-level XPath mapping (including internals) is bound first, then expression mappings run in declaration order. An expression may therefore reference any XPath field regardless of list position, and any **earlier** expression mapping (including an internal one). Forward references to a later expression keep the existing runtime undefined-variable failure. Internals are projected out **before** filters, uniform-schema fill, output-schema validation, enrichment, value_profile, and all sinks — and are omitted from field_provenance **entries**, the portable field catalog, data columns (JSON/NDJSON/Parquet), and value_profile (names and values). They must not appear in `output_schema.properties`/`required`, `value_profile.fields`, or `filters` keys (plan-load / prepare fails loud). Top-level scalar mappings only; nested item/polymorphic `internal` is rejected. Defaults to `false` (no-opt recipes unchanged).
+
+> Same posture as source/parameter internals: output shaping, not secrecy. Do not rely on it to keep sensitive values out of output.
+>
+> **Internal field *names* are not confidential.** Suppression removes internals from the portable field contract, data columns, provenance field_provenance **entries**, and value_profile — it does **not** erase names from run provenance. The full recipe still appears in `recipe.extract_yaml` (content-hash / reproducibility), and emitted fields may reference helpers by name in their `expression` lineage strings. Do not put secrets in field names (the same rule as any other mapping).
+
 ### Reference Tables
 
 A recipe can declare external **reference tables** loaded once per run to back the

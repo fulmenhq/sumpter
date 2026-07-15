@@ -191,6 +191,13 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 			cfg.OutputValidator = validator
 		}
 
+		// Structural internal:true checks before XPath compilation so direct-Go
+		// configs get the same fail-loud shape contract as schema-validated YAML.
+		if err := validateInternalFieldMappings(cfg); err != nil {
+			cfg.prepareErr = err
+			return
+		}
+
 		for i := range cfg.MatchSelectors {
 			selector := &cfg.MatchSelectors[i]
 			if strings.TrimSpace(selector.XPath) == "" {
@@ -216,6 +223,172 @@ func prepareExtractConfig(cfg *ExtractRecordMatch) error {
 	})
 
 	return cfg.prepareErr
+}
+
+// validateInternalFieldMappings enforces the top-level scalar internal:true
+// contract for field_mappings: nested rejection, output-schema exclusion,
+// feature-scoped duplicate names, and filter-key rejection.
+func validateInternalFieldMappings(cfg *ExtractRecordMatch) error {
+	if cfg == nil {
+		return nil
+	}
+
+	internalNames := make(map[string]struct{})
+	hasInternal := false
+	for i := range cfg.FieldMappings {
+		mapping := &cfg.FieldMappings[i]
+		if err := rejectNestedInternal(mapping, true); err != nil {
+			return err
+		}
+		if !mapping.Internal {
+			continue
+		}
+		hasInternal = true
+		name := strings.TrimSpace(mapping.OutputField)
+		if name == "" {
+			return fmt.Errorf("internal field_mappings entry at index %d requires output_field", i)
+		}
+		if err := validateInternalMappingShape(mapping); err != nil {
+			return err
+		}
+		if strings.EqualFold(strings.TrimSpace(mapping.Type), "array") {
+			return fmt.Errorf("field_mappings %q: internal:true is not supported for type array (top-level scalar only)", name)
+		}
+		if len(mapping.ItemMapping) > 0 || len(mapping.Polymorphic) > 0 {
+			return fmt.Errorf("field_mappings %q: internal:true is not supported with item_mapping or polymorphic_mapping (top-level scalar only)", name)
+		}
+		internalNames[name] = struct{}{}
+	}
+
+	if !hasInternal {
+		return nil
+	}
+
+	// Feature-scoped: when any mapping is internal, reject duplicate top-level
+	// output_field names so internal/emitted overwrite cannot hide visibility.
+	seen := make(map[string]struct{}, len(cfg.FieldMappings))
+	for _, mapping := range cfg.FieldMappings {
+		name := strings.TrimSpace(mapping.OutputField)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("field_mappings output_field %q is duplicated while at least one mapping is internal:true; rename one of them so emit visibility is unambiguous", name)
+		}
+		seen[name] = struct{}{}
+	}
+
+	if err := rejectInternalNamesInOutputSchema(cfg.OutputSchema, internalNames); err != nil {
+		return err
+	}
+
+	for key := range cfg.Filters {
+		name := strings.TrimSpace(key)
+		if _, ok := internalNames[name]; ok {
+			return fmt.Errorf("filters key %q names an internal field_mappings output_field; internals are not filterable (project-out would make the filter silently ineffective)", name)
+		}
+	}
+
+	return nil
+}
+
+// validateInternalMappingShape enforces feature-scoped structural rules for
+// internal:true top-level mappings that YAML schema already encodes for file
+// loads: exactly one of xpath or expression; expression rejects transform.
+func validateInternalMappingShape(mapping *FieldMapping) error {
+	if mapping == nil || !mapping.Internal {
+		return nil
+	}
+	name := strings.TrimSpace(mapping.OutputField)
+	hasXPath := strings.TrimSpace(mapping.XPath) != ""
+	hasExpression := strings.TrimSpace(mapping.Expression) != ""
+	switch {
+	case hasXPath && hasExpression:
+		return fmt.Errorf("field_mappings %q: internal:true requires exactly one of xpath or expression, not both", name)
+	case !hasXPath && !hasExpression:
+		return fmt.Errorf("field_mappings %q: internal:true requires exactly one of xpath or expression", name)
+	}
+	if hasExpression {
+		if strings.TrimSpace(mapping.Transform) != "" {
+			return fmt.Errorf("field_mappings %q: transform is not supported with internal:true expression mappings", name)
+		}
+		if len(mapping.TransformParams) > 0 {
+			return fmt.Errorf("field_mappings %q: transform_params are not supported with internal:true expression mappings", name)
+		}
+	}
+	return nil
+}
+
+func rejectNestedInternal(mapping *FieldMapping, topLevel bool) error {
+	if mapping == nil {
+		return nil
+	}
+	if !topLevel && mapping.Internal {
+		return fmt.Errorf("field_mappings %q: internal:true is not supported on nested item_mapping or polymorphic_mapping fields", strings.TrimSpace(mapping.OutputField))
+	}
+	for i := range mapping.ItemMapping {
+		if err := rejectNestedInternal(&mapping.ItemMapping[i], false); err != nil {
+			return err
+		}
+	}
+	for i := range mapping.Polymorphic {
+		for j := range mapping.Polymorphic[i].FieldMappings {
+			if err := rejectNestedInternal(&mapping.Polymorphic[i].FieldMappings[j], false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func rejectInternalNamesInOutputSchema(outputSchema map[string]interface{}, internalNames map[string]struct{}) error {
+	if len(outputSchema) == 0 || len(internalNames) == 0 {
+		return nil
+	}
+	if properties, ok := outputSchema["properties"].(map[string]interface{}); ok {
+		for name := range properties {
+			if _, ok := internalNames[strings.TrimSpace(name)]; ok {
+				return fmt.Errorf("output_schema.properties %q names an internal field_mappings output_field; remove it so uniform-schema cannot reintroduce a null column", name)
+			}
+		}
+	}
+	switch required := outputSchema["required"].(type) {
+	case []interface{}:
+		for _, raw := range required {
+			name, ok := raw.(string)
+			if !ok {
+				continue
+			}
+			if _, ok := internalNames[strings.TrimSpace(name)]; ok {
+				return fmt.Errorf("output_schema.required %q names an internal field_mappings output_field; remove it", name)
+			}
+		}
+	case []string:
+		for _, name := range required {
+			if _, ok := internalNames[strings.TrimSpace(name)]; ok {
+				return fmt.Errorf("output_schema.required %q names an internal field_mappings output_field; remove it", name)
+			}
+		}
+	}
+	return nil
+}
+
+// InternalFieldMappingNames returns the set of top-level field_mappings
+// output_field names declared internal:true. Used by command-layer plan checks
+// (value_profile) without importing recipe orchestration into extract core.
+func InternalFieldMappingNames(mappings []FieldMapping) map[string]struct{} {
+	names := make(map[string]struct{})
+	for _, mapping := range mappings {
+		if !mapping.Internal {
+			continue
+		}
+		name := strings.TrimSpace(mapping.OutputField)
+		if name == "" {
+			continue
+		}
+		names[name] = struct{}{}
+	}
+	return names
 }
 
 // PrepareRecordMatch compiles XPath expressions and validates namespace
@@ -1155,6 +1328,14 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 }
 
 func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]extractedRecord, map[int]int, error) {
+	// Reserve internal mapping names against externalFields before selector
+	// evaluation so zero-match paths cannot fall back to a colliding external.
+	if cfg != nil {
+		if err := rejectExternalCollisionsWithInternalMappings(cfg.FieldMappings, externalFields); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	var extractedRecords []extractedRecord
 	perSelectorCounts := make(map[int]int, len(cfg.MatchSelectors))
 	recordNum := 0
@@ -1172,48 +1353,9 @@ func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecor
 
 		for _, node := range nodes {
 			recordNum++
-			record := make(map[string]interface{})
-
-			// Apply field mappings
-			for j := range cfg.FieldMappings {
-				mapping := &cfg.FieldMappings[j]
-				if strings.TrimSpace(mapping.Expression) != "" {
-					continue
-				}
-				value, err := extractValue(node, mapping)
-				if err != nil {
-					return nil, nil, fmt.Errorf("failed to extract value for field %s: %w", mapping.OutputField, err)
-				}
-				if value != nil {
-					record[mapping.OutputField] = value
-				}
-			}
-
-			for j := range cfg.FieldMappings {
-				mapping := &cfg.FieldMappings[j]
-				if strings.TrimSpace(mapping.Expression) == "" {
-					continue
-				}
-				value, err := extractExpressionValue(mapping, record, externalFields, cfg.ReferenceTables)
-				if err != nil {
-					return nil, nil, err
-				}
-				if value != nil {
-					record[mapping.OutputField] = value
-				}
-			}
-
-			// Add external fields
-			for key, value := range externalFields {
-				if _, exists := record[key]; exists {
-					return nil, nil, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
-				}
-				// Internal (derive-only) captures stay out of the emitted record:
-				// they were already in expression scope above.
-				if isInternalField(value) {
-					continue
-				}
-				record[key] = value
+			record, err := buildProjectedRecord(node, cfg, externalFields)
+			if err != nil {
+				return nil, nil, err
 			}
 			applyUniformSchema(record, cfg)
 
@@ -1246,6 +1388,12 @@ func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlqu
 	if sink == nil {
 		return nil, 0, fmt.Errorf("record sink is nil")
 	}
+	// Same pre-selector invariant as the buffered path (zero-match safety).
+	if cfg != nil {
+		if err := rejectExternalCollisionsWithInternalMappings(cfg.FieldMappings, externalFields); err != nil {
+			return nil, 0, err
+		}
+	}
 
 	perSelectorCounts := make(map[int]int, len(cfg.MatchSelectors))
 	recordNum := 0
@@ -1267,46 +1415,9 @@ func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlqu
 				return nil, emittedRecords, err
 			}
 			recordNum++
-			record := make(map[string]interface{})
-
-			for j := range cfg.FieldMappings {
-				mapping := &cfg.FieldMappings[j]
-				if strings.TrimSpace(mapping.Expression) != "" {
-					continue
-				}
-				value, err := extractValue(node, mapping)
-				if err != nil {
-					return nil, emittedRecords, fmt.Errorf("failed to extract value for field %s: %w", mapping.OutputField, err)
-				}
-				if value != nil {
-					record[mapping.OutputField] = value
-				}
-			}
-
-			for j := range cfg.FieldMappings {
-				mapping := &cfg.FieldMappings[j]
-				if strings.TrimSpace(mapping.Expression) == "" {
-					continue
-				}
-				value, err := extractExpressionValue(mapping, record, externalFields, cfg.ReferenceTables)
-				if err != nil {
-					return nil, emittedRecords, err
-				}
-				if value != nil {
-					record[mapping.OutputField] = value
-				}
-			}
-
-			for key, value := range externalFields {
-				if _, exists := record[key]; exists {
-					return nil, emittedRecords, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
-				}
-				// Internal (derive-only) captures stay out of the emitted record:
-				// they were already in expression scope above.
-				if isInternalField(value) {
-					continue
-				}
-				record[key] = value
+			record, err := buildProjectedRecord(node, cfg, externalFields)
+			if err != nil {
+				return nil, emittedRecords, err
 			}
 			applyUniformSchema(record, cfg)
 
@@ -1827,17 +1938,99 @@ func extractExpressionValue(mapping *FieldMapping, record map[string]interface{}
 func buildExpressionScope(record map[string]interface{}, externalFields map[string]interface{}) (map[string]interface{}, error) {
 	scope := make(map[string]interface{}, len(record)+len(externalFields))
 	for key, value := range record {
-		scope[key] = value
+		// Unwrap mapped internals so later expressions see the real value.
+		scope[key] = unwrapInternalFieldValue(value)
 	}
 	for key, value := range externalFields {
 		if _, exists := scope[key]; exists {
 			return nil, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
 		}
 		// Internal (derive-only) captures are visible in expression scope with
-		// their real value; the record-emission merge is what skips them.
-		scope[key] = unwrapExternalFieldValue(value)
+		// their real value; projection/emit merge is what skips them.
+		scope[key] = unwrapInternalFieldValue(value)
 	}
 	return scope, nil
+}
+
+// buildProjectedRecord evaluates top-level field mappings in two phases (all
+// XPath first, then expressions in declaration order), merges non-internal
+// external fields after collision checks, and projects InternalField-wrapped
+// mapped keys out before any post-mapping stage (filters, schema, sinks).
+func buildProjectedRecord(node *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) (map[string]interface{}, error) {
+	record := make(map[string]interface{})
+	if cfg == nil {
+		return record, nil
+	}
+
+	// Feature-scoped: top-level internal output names must not collide with
+	// externalFields, even when the internal XPath/expression yields nil. Without
+	// this check an absent internal leaves no record key, expressions fall back
+	// to the external value, and the external key is then emitted — violating
+	// both unbound-internal and collision-before-projection semantics.
+	if err := rejectExternalCollisionsWithInternalMappings(cfg.FieldMappings, externalFields); err != nil {
+		return nil, err
+	}
+
+	for j := range cfg.FieldMappings {
+		mapping := &cfg.FieldMappings[j]
+		if strings.TrimSpace(mapping.Expression) != "" {
+			continue
+		}
+		value, err := extractValue(node, mapping)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract value for field %s: %w", mapping.OutputField, err)
+		}
+		storeMappedValue(record, mapping, value)
+	}
+
+	for j := range cfg.FieldMappings {
+		mapping := &cfg.FieldMappings[j]
+		if strings.TrimSpace(mapping.Expression) == "" {
+			continue
+		}
+		value, err := extractExpressionValue(mapping, record, externalFields, cfg.ReferenceTables)
+		if err != nil {
+			return nil, err
+		}
+		storeMappedValue(record, mapping, value)
+	}
+
+	for key, value := range externalFields {
+		if _, exists := record[key]; exists {
+			return nil, fmt.Errorf("external field key %q collides with extracted record field; rename one of them to keep injection vs content-extraction fidelity explicit", key)
+		}
+		// Internal (derive-only) external values stay out of the record body:
+		// they were already visible in expression scope above.
+		if isInternalField(value) {
+			continue
+		}
+		record[key] = value
+	}
+
+	projectInternalMappedFields(record)
+	return record, nil
+}
+
+// rejectExternalCollisionsWithInternalMappings fails when any top-level
+// internal:true output_field shares a key with externalFields. Feature-scoped:
+// no-internal recipes keep legacy external-vs-absent-mapping behavior.
+func rejectExternalCollisionsWithInternalMappings(mappings []FieldMapping, externalFields map[string]interface{}) error {
+	if len(externalFields) == 0 {
+		return nil
+	}
+	for _, mapping := range mappings {
+		if !mapping.Internal {
+			continue
+		}
+		name := strings.TrimSpace(mapping.OutputField)
+		if name == "" {
+			continue
+		}
+		if _, ok := externalFields[name]; ok {
+			return fmt.Errorf("external field key %q collides with internal field_mappings output_field; rename one of them to keep injection vs content-extraction fidelity explicit", name)
+		}
+	}
+	return nil
 }
 
 func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, error) {

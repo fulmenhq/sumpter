@@ -153,6 +153,14 @@ properties:
           type: object
           description: Parameters to be supplied to the transform function.
           additionalProperties: true
+        internal:
+          type: boolean
+          description: |
+            When true, the mapping is derive-only: computed into same-record
+            expression scope under output_field but never emitted as a column
+            (JSON/NDJSON/Parquet), never listed in field_provenance or the
+            portable field catalog, and invalid in output_schema / value_profile
+            / filters. Top-level scalar mappings only; defaults to false.
         item_mapping:
           type: array
           description: For array types, defines how to map each array item.
@@ -202,6 +210,27 @@ properties:
           - required:
               - expression
               - transform_params
+          # internal:true is top-level scalar only (no nested/array shapes)
+          - properties:
+              internal:
+                const: true
+            required:
+              - internal
+              - item_mapping
+          - properties:
+              internal:
+                const: true
+            required:
+              - internal
+              - polymorphic_mapping
+          - properties:
+              internal:
+                const: true
+              type:
+                const: array
+            required:
+              - internal
+              - type
       additionalProperties: false
   external_fields:
     type: array

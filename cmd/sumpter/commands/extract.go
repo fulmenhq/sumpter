@@ -448,6 +448,9 @@ func runExtract(opts *ExtractOptions) error {
 	if err := validateParquetWithholdColumns(opts.ParquetWithholdColumns, extCfg.OutputSchema); err != nil {
 		return err
 	}
+	if err := rejectValueProfileInternalFields(opts.ValueProfile, extCfg.FieldMappings); err != nil {
+		return err
+	}
 	fieldProvenance := buildFieldProvenance(extCfg.FieldMappings)
 	if opts.Recipe != nil && len(opts.Recipe.FieldProvenance) == 0 {
 		opts.Recipe.FieldProvenance = fieldProvenance
@@ -2822,11 +2825,38 @@ func isFieldMappingOutput(key string, mappings []extract.FieldMapping) bool {
 	return false
 }
 
+// rejectValueProfileInternalFields fails plan-load when value_profile.fields
+// names a top-level internal field_mappings output_field. Internals are not
+// portable profile subjects; silent ignore would produce misleading all-null
+// profiles, so reject loud before any output/session work.
+func rejectValueProfileInternalFields(cfg *valueprofile.Config, mappings []extract.FieldMapping) error {
+	if cfg == nil || !cfg.Active() {
+		return nil
+	}
+	internalNames := extract.InternalFieldMappingNames(mappings)
+	if len(internalNames) == 0 {
+		return nil
+	}
+	for _, field := range cfg.Fields {
+		name := strings.TrimSpace(field.Field)
+		if _, ok := internalNames[name]; ok {
+			return fmt.Errorf("defaults.value_profile.fields names internal field_mappings output_field %q; remove it (internals are not profiled)", name)
+		}
+	}
+	return nil
+}
+
 func buildFieldProvenance(mappings []extract.FieldMapping) []provenance.FieldProvenance {
 	var fields []provenance.FieldProvenance
 	var walk func([]extract.FieldMapping)
 	walk = func(items []extract.FieldMapping) {
 		for _, mapping := range items {
+			// Skip internal:true mappings at the config walk so they never enter
+			// field_provenance or the portable artifact field catalog. Do not
+			// rely on XPath/description incidental withholding.
+			if mapping.Internal {
+				continue
+			}
 			if strings.TrimSpace(mapping.OutputField) != "" && (strings.TrimSpace(mapping.XPath) != "" || strings.TrimSpace(mapping.Expression) != "") {
 				fields = append(fields, provenance.FieldProvenance{
 					OutputField: mapping.OutputField,

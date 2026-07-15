@@ -11,6 +11,60 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
+func TestWriteFileSkipsInternalFieldMappings(t *testing.T) {
+	cfg := &extract.ExtractRecordMatch{
+		RecordType: "order",
+		FieldMappings: []extract.FieldMapping{
+			{OutputField: "helper", XPath: "1", Type: "number", Internal: true},
+			{OutputField: "order_id", XPath: "@id", Type: "string"},
+			{OutputField: "doubled", Expression: "quantity * 2", Type: "integer", Internal: true},
+			{OutputField: "quantity", XPath: "Quantity", Type: "integer"},
+		},
+		OutputSchema: map[string]interface{}{
+			"properties": map[string]interface{}{
+				"order_id": map[string]interface{}{"type": "string"},
+				"quantity": map[string]interface{}{"type": "integer"},
+			},
+		},
+	}
+	records := []map[string]interface{}{
+		{
+			"extract": map[string]interface{}{
+				"data": map[string]interface{}{
+					"order_id": "A-1",
+					"quantity": 3,
+				},
+			},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "orders.parquet")
+	if err := WriteFile(path, cfg, records, Options{Compression: "none"}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	f, err := os.Open(path) // #nosec G304
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	pq, err := parquet.OpenFile(f, st.Size())
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	schema := pq.Schema().String()
+	for _, leak := range []string{"helper", "doubled"} {
+		if strings.Contains(schema, leak) {
+			t.Errorf("parquet schema leaked internal column %q: %s", leak, schema)
+		}
+	}
+	if !strings.Contains(schema, "order_id") || !strings.Contains(schema, "quantity") {
+		t.Fatalf("parquet schema missing emitted columns: %s", schema)
+	}
+}
+
 func TestWriteFileWritesExtractDataAndMetadata(t *testing.T) {
 	cfg := &extract.ExtractRecordMatch{
 		RecordType: "order",

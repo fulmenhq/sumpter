@@ -161,6 +161,11 @@ func buildFieldSpecs(cfg *extract.ExtractRecordMatch, records []map[string]inter
 	var ordered []fieldSpec
 
 	for _, mapping := range cfg.FieldMappings {
+		// Derive-only internals never become Parquet columns (config-derived
+		// skip; do not rely on emit-time absence alone).
+		if mapping.Internal {
+			continue
+		}
 		if _, skip := withhold[mapping.OutputField]; skip {
 			continue
 		}
