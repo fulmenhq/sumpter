@@ -827,6 +827,36 @@ output field and expression in the error message.
 
 Each scalar mapping must declare exactly one of `xpath` or `expression`. Expression mappings are only supported for top-level scalar `field_mappings`; nested `item_mapping` and `polymorphic_mapping` fields remain XPath-only.
 
+#### XPath arithmetic and context-sensitive factors
+
+Field `xpath` expressions are evaluated with the upstream XPath engine
+(`github.com/antchfx/xpath`). Multiplicative trees are **not** rewritten by
+Sumpter.
+
+When a left operand contains a **predicate** (for example
+`sum(.//Entry[not(@excluded='true')]/Amount)`) and a trailing factor is
+**context-sensitive** (for example `count(self::Credit)`), older
+evaluator pins could observe the wrong XML context for the factor and emit a
+silent-wrong number (extract still green). Putting the context-sensitive
+factor **first** was always a correct authoring form:
+
+```yaml
+field_mappings:
+  # Supported form (factor first) — always correct
+  - output_field: signed_amount
+    xpath: "(1 - 2*count(self::Credit)) * sum(.//Entry[not(@excluded='true')]/Amount)"
+    type: number
+  # Trailing context-sensitive factor after a predicated sum is also correct
+  # on the fixed evaluator pin (see go.mod / third_party pin notes).
+  - output_field: signed_amount_trailing
+    xpath: "sum(.//Entry[not(@excluded='true')]/Amount) * (1 - 2*count(self::Credit))"
+    type: number
+```
+
+A **literal** trailing factor such as `* -1` was never affected. Prefer
+factor-first for context-sensitive multipliers if you need to run against an
+older binary that still pins a vulnerable evaluator.
+
 ### XML Namespace Binding
 
 The same logical vocabulary is often serialized in more than one namespace
