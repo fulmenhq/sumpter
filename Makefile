@@ -169,11 +169,12 @@ fmt-strict: ## Strictly check Go code formatting, fails if issues found
 	@echo "$(GREEN)✅ Code formatting check passed$(NC)"
 
 .PHONY: format-check-tree
-format-check-tree: ## Check WHOLE-TREE format drift (md/json/yaml/EOF); CI gate, fails on any drift
+format-check-tree: ## Check WHOLE-TREE format drift (md/json/yaml/EOF); CI + prepush gate, fails on any drift
 	@echo "$(BLUE)Checking whole-tree format drift...$(NC)"
 	@# SUM-060 (format-normalize): whole-tree, NOT --new-issues-only, so accumulated
 	@# md/json/yaml/EOF drift cannot silently land on main. The local pre-commit hook
-	@# stays changed-file scoped; this is the CI trust-boundary gate (entarch option a).
+	@# stays changed-file scoped (fail-on high). CI and make prepush/pr-final run this
+	@# whole-tree gate at fail-on low (entarch option a + local CI format parity).
 	@goneat assess --categories format --fail-on low || { \
 		echo "$(RED)❌ Whole-tree format drift found. Fix with: goneat assess --categories format --fix$(NC)"; \
 		exit 1; \
@@ -629,11 +630,11 @@ precommit: check-all build test-cleanup test-short coverage-check-dynamic fmt-do
 	@echo "$(GREEN)✅ Pre-commit checks passed!$(NC)"
 
 .PHONY: prepush
-prepush: check-all test-cleanup test-short coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation (matches CI; use `make race-check` or `make prepush-strict` to add race detection)
+prepush: check-all format-check-tree test-cleanup test-short coverage-check-dynamic security-scan deps-check-full ## Run pre-push validation (matches CI; use `make race-check` or `make prepush-strict` to add race detection)
 	@echo "$(GREEN)✅ Pre-push checks passed!$(NC)"
 
 .PHONY: prepush-strict
-prepush-strict: check-all test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Pre-push with race detector (advisory: not run in CI as of May 2026; surfaces real races that CI cannot)
+prepush-strict: check-all format-check-tree test-cleanup test-race coverage-check-dynamic security-scan deps-check-full ## Pre-push with race detector (advisory: not run in CI as of May 2026; surfaces real races that CI cannot)
 	@echo "$(GREEN)✅ Pre-push (strict, with race detection) checks passed!$(NC)"
 
 .PHONY: race-check

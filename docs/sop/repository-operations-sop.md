@@ -115,6 +115,7 @@ must still apply the documented OSS-surface confidentiality checks.
 
 ```bash
 ✅ All check-all validations
+✅ Whole-tree format drift (format-check-tree; same gate as CI)
 ✅ Test execution (test-short)
 ✅ Dynamic coverage validation (phase-appropriate threshold)
 ✅ Security vulnerability scanning (gosec + govulncheck)
