@@ -38,6 +38,14 @@ Sumpter is a **Go-based XML extraction engine** designed for:
   plus the authoritative terminal — with an optional reference-only bridge to
   published data-artifact descriptors. See
   [Process-run producer notes](process-run.md).
+- **Derive-only field mappings**: top-level `field_mappings[].internal: true`
+  gives same-record helpers without stray columns or portable field-catalog
+  entries — compute once, reuse in later expressions, never emit. See
+  [Extract workflow](extract-workflow.md).
+- **Correct XPath field arithmetic**: predicated `sum(...)` × a context-sensitive
+  factor evaluates operands against the right node context — no more
+  silent-wrong sign totals. Factor-first authoring notes are in the extract
+  workflow guide.
 
 This combination enables teams to move from raw XML to queryable tables **in minutes, not weeks**.
 

@@ -8,6 +8,33 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-15
+
+**Same-record helpers without stray columns (`internal: true`), and correct XPath field arithmetic when a predicated sum is multiplied by a context-sensitive factor — additive helpers, corrective numbers (no more silent-wrong sign totals).**
+
+See [`docs/releases/v0.3.2.md`](docs/releases/v0.3.2.md) for the full release narrative. Operator notes: [`docs/extract-workflow.md`](docs/extract-workflow.md).
+
+### Added
+
+- **Derive-only field mappings — `field_mappings[].internal: true` (`internal-field-mappings`)** - same-record helpers without stray columns: a top-level scalar mapping may be marked derive-only, computed into expression scope (all XPath bindings first, then expressions in declaration order) but projected out before filters, uniform-schema fill, output-schema validation, enrichment, value_profile, and all sinks. Absent from NDJSON/JSON bodies, Parquet columns, field_provenance **entries**, and the portable field catalog. Expression-only internals are allowed; nested item/polymorphic internals are rejected. Internal names are invalid in `output_schema` / `value_profile.fields` / filter keys (fail loud). Feature-scoped prepare rules cover shape (XOR xpath/expression), external name reservation (including zero-match paths), and duplicates when any internal mapping is present. Internal field **names** are not confidential (they may appear in recipe provenance and expression lineage) — do not put secrets in field names. Defaults stay byte-compatible when unused (#159).
+- **VERSION bumped to `0.3.2`.**
+
+### Fixed
+
+- **XPath numeric operand context for field arithmetic (`xpath-sum-multiply`)** - no more silent-wrong sign arithmetic: field-mapping XPath that multiplies a predicated `sum(...)` (or similar left operand) by a context-sensitive trailing factor could evaluate the factor against the wrong node while extract still succeeded. An interim reviewed pin of `github.com/antchfx/xpath` under `./third_party/antchfx-xpath` isolates operand context (`xmlquery` remains v1.5.1). Hermetic regressions cover the prepared field path and signature/applicability selectors; factor-first authoring guidance is documented. Pin retirement path: `third_party/antchfx-xpath/SUMPTER-PIN-README.md` (#156).
+
+### Changed
+
+- **Pre-push whole-tree format gate** - local pre-push validation checks the full tree for format drift so subset-touched branches cannot leave drift outside the change set (#158).
+- **README / overview capabilities** - derive-only field mappings (helpers without stray columns) and corrected XPath field arithmetic called out as available today.
+
+### Deferred
+
+- Nested item/polymorphic `internal: true` remains deferred.
+- Upstream-tagged xpath release to retire the local third_party pin.
+- Process-run control socket / run-steering surface remains a later release track (unchanged from v0.3.1).
+- Richer data-artifact validation, cross-artifact lineage, and full semantic L3 claims remain follow-on (unchanged from v0.3.0/v0.3.1 posture).
+
 ## [0.3.1] - 2026-07-14
 
 **Opt-in `process-run/v0` flight recorder for long-running `extract-multi` — portable local discovery, settled progress, and an authoritative terminal (with an optional reference-only bridge to published data-artifact descriptors); default paths stay byte-compatible.**
@@ -203,18 +230,4 @@ See [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md) for the full release na
 - **`--version` out of tree** - `--version` and `index build` metadata report the build-injected version regardless of the working directory (#93).
 - **`make install` codesign inode-cache kill** - `install` removes any existing binary before copying so the new binary lands on a fresh inode, avoiding the macOS/arm64 `zsh: killed` (SIGKILL) on reinstall; removal failure is fail-loud, a missing target is not.
 
-## [0.1.10] - 2026-06-09
-
-**Homebrew + Scoop distribution; Intel-Mac (`darwin-amd64`) prebuilt retired.**
-
-See [`docs/releases/v0.1.10.md`](docs/releases/v0.1.10.md) for the full release narrative.
-
-### Added
-
-- **Homebrew + Scoop install paths** - `brew install fulmenhq/tap/sumpter` and `scoop install fulmenhq/sumpter` distribute sumpter from the fulmenhq tap/bucket using the raw-binary convention. `make update-homebrew-formula` / `make update-scoop-manifest` refresh the sibling formula/manifest from a published tag; RELEASE_CHECKLIST.md § Distribution documents the post-release housekeeping (SUM-039).
-- **README install sections** - dedicated Homebrew and Scoop quick-start sections above the direct-download block.
-
-### Changed
-
-- **Supported-platform matrix: `darwin-amd64` (Intel-Mac) prebuilt retired.** The release matrix is now five raw binaries: linux amd64/arm64, darwin **arm64**, windows amd64/arm64. Intel-Mac users build from source (a source build on an Intel Mac produces a native `darwin-amd64`). Rationale: ecosystem-wide move off Intel-Mac prebuilts (most acute for CGO=1 projects).
-- **VERSION bumped to `0.1.10`** for this release.
+Older versions are archived under [`docs/releases/`](docs/releases/).
