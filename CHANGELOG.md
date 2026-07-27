@@ -8,6 +8,23 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-27
+
+**Retire the interim local `antchfx/xpath` pin — stock module v1.3.8 carries the numeric operand-context isolation that v0.3.2 shipped via `third_party`.**
+
+See [`docs/releases/v0.3.3.md`](docs/releases/v0.3.3.md) for the full release narrative. Operator notes: [`docs/extract-workflow.md`](docs/extract-workflow.md).
+
+### Changed
+
+- **XPath dependency — stock `github.com/antchfx/xpath` v1.3.8 (`xpath-sum-multiply` pin retirement)** - drop the interim `./third_party/antchfx-xpath` tree and `go.mod` `replace`. Upstream tagged the numeric operand-context isolation fix in **v1.3.7** (merge of antchfx/xpath#124) and advanced to **v1.3.8**; Sumpter now requires **v1.3.8**. `xmlquery` remains **v1.5.1**. Hermetic extract regressions for predicated `sum(...) *` context-sensitive factors stay green against the module cache. Operator docs note that trailing factors are correct on this binary; factor-first remains a valid style and the safer form on older Sumpter releases (#157).
+- **VERSION bumped to `0.3.3`.**
+
+### Deferred
+
+- Nested item/polymorphic `internal: true` remains deferred.
+- Process-run control socket / run-steering surface remains a later release track (unchanged from v0.3.1 / v0.3.2).
+- Richer data-artifact validation, cross-artifact lineage, and full semantic L3 claims remain follow-on (unchanged).
+
 ## [0.3.2] - 2026-07-15
 
 **Same-record helpers without stray columns (`internal: true`), and correct XPath field arithmetic when a predicated sum is multiplied by a context-sensitive factor — additive helpers, corrective numbers (no more silent-wrong sign totals).**

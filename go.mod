@@ -8,7 +8,7 @@ require (
 	github.com/3leaps/gonimbus v0.3.2
 	github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251229210330-c1deba15f3cb
 	github.com/antchfx/xmlquery v1.5.1
-	github.com/antchfx/xpath v1.3.6
+	github.com/antchfx/xpath v1.3.8
 	github.com/aws/aws-sdk-go-v2 v1.41.12
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.22
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
@@ -67,10 +67,3 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-// Interim reviewed pin for xpath-sum-multiply (numeric operand context isolation).
-// Base tip: antchfx/xpath d645baed50e0ccf0201cb696779bc7badfdc5bbd (v1.3.6 + #121)
-// plus focused numericQuery patch. xmlquery remains v1.5.1 (no bump).
-// Remove replace + third_party when upstream tags a fixed xpath release.
-// See third_party/antchfx-xpath/SUMPTER-PIN-README.md.
-replace github.com/antchfx/xpath => ./third_party/antchfx-xpath

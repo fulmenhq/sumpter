@@ -6,6 +6,65 @@ Retention policy: latest 3 versions inline; older versions retained at `docs/rel
 
 ---
 
+## v0.3.3 (2026-07-27)
+
+**Stock `github.com/antchfx/xpath` v1.3.8 — interim local pin retired.**
+
+**Released:** 2026-07-27 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
+
+v0.3.3 retires the interim `./third_party/antchfx-xpath` tree that v0.3.2 used
+for numeric operand-context isolation. Upstream merged and tagged the fix
+(antchfx/xpath#124 → **v1.3.7** on the merge commit; **v1.3.8** is current).
+Sumpter now depends on the stock module at **v1.3.8** with no `replace`.
+`xmlquery` remains **v1.5.1**.
+
+Behavior for predicated `sum(...) *` context-sensitive factors matches the
+v0.3.2 pin. No new recipe surfaces; no process-run or data-artifact contract
+pin changes.
+
+**Start here:** [`docs/extract-workflow.md`](docs/extract-workflow.md). Full
+narrative: [`docs/releases/v0.3.3.md`](docs/releases/v0.3.3.md).
+
+### Changed
+
+#### XPath pin retirement (`xpath-sum-multiply`)
+
+- `go.mod` requires `github.com/antchfx/xpath v1.3.8`.
+- Deleted `third_party/antchfx-xpath` and the `go.mod` `replace`.
+- Hermetic extract regressions for the silent-wrong class stay green against
+  the module cache.
+- Operator docs: trailing factors are correct on this binary; factor-first
+  remains a valid style (and the safer form on older Sumpter builds).
+
+### Compatibility & notes
+
+- **Corrective path unchanged** vs v0.3.2 for the operand-context isolation class.
+- **Platforms:** unchanged — linux amd64/arm64, darwin **arm64**, windows
+  amd64/arm64. Intel-Mac users build from source.
+- **Alpha:** interfaces may still change between minor releases; external pull
+  requests are welcome.
+
+### Deferred / follow-ups
+
+- Nested item/polymorphic internals.
+- Process-run control socket / run-steering (unchanged from v0.3.1 / v0.3.2).
+- Richer data-artifact validation and full semantic L3 claims (unchanged).
+- Cloud range-reads, GCS/Azure, DuckDB/Arrow, service health endpoints, and
+  repair modes remain roadmap items.
+
+### Release notes
+
+- **Version bump.** `VERSION` is `0.3.3`. Binaries from this tag emit `v0.3.3`
+  via `sumpter version`.
+- **Tag/version guard.** `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.3.3`
+  is the intended tag/version sanity check.
+- **Release ceremony.** Use the standard draft-release and signing flow in
+  [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
+
+See [`docs/releases/v0.3.3.md`](docs/releases/v0.3.3.md) for the full release narrative.
+
+---
+
 ## v0.3.2 (2026-07-15)
 
 **Same-record helpers without stray columns, and no more silent-wrong XPath sign arithmetic.**
@@ -60,10 +119,9 @@ field_mappings:
 #### XPath numeric operand isolation (`xpath-sum-multiply`)
 
 Predicated `sum(...) * factor` no longer silently mis-evaluates the factor.
-Interim pin of `github.com/antchfx/xpath` under `./third_party/antchfx-xpath`
-with operand-context isolation for numeric field arithmetic (`xmlquery` stays
-v1.5.1). Hermetic regressions and factor-first authoring guidance ship with the
-pin notes in `third_party/antchfx-xpath/SUMPTER-PIN-README.md`.
+v0.3.2 used an interim pin of `github.com/antchfx/xpath` under
+`./third_party/antchfx-xpath` (`xmlquery` stayed v1.5.1). That pin is **retired
+in v0.3.3** in favor of stock **v1.3.8**.
 
 ### Compatibility & notes
 
@@ -78,7 +136,7 @@ pin notes in `third_party/antchfx-xpath/SUMPTER-PIN-README.md`.
 ### Deferred / follow-ups
 
 - Nested item/polymorphic internals.
-- Upstream-tagged xpath release to retire the local pin.
+- ~~Upstream-tagged xpath release to retire the local pin~~ → done in **v0.3.3**.
 - Process-run control socket / run-steering (unchanged from v0.3.1).
 - Richer data-artifact validation and full semantic L3 claims (unchanged).
 - Cloud range-reads, GCS/Azure, DuckDB/Arrow, service health endpoints, and
@@ -194,107 +252,3 @@ event stream.
   [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
 
 See [`docs/releases/v0.3.1.md`](docs/releases/v0.3.1.md) for the full release narrative.
-
----
-
-## v0.3.0 (2026-07-10)
-
-**Portable `data-artifact/v0` producer profile — opt-in extract output legible to catalogs, query engines, and data planes.**
-
-**Released:** 2026-07-10 · **Lifecycle:** alpha (interface-stability track; external contributions welcome)
-
-v0.3.0 makes Sumpter extract output portable under the host-less
-`contract: data-artifact/v0` capability. Catalogs, query engines, and data planes
-that understand that contract can read opted-in bundles without Sumpter-specific
-knowledge. The producer profile string on the wire is `sumpter.extract-artifact/v0`.
-
-The release is additive and opt-in. A run that never sets `--artifact-descriptor`,
-never enables `defaults.value_profile`, and leaves `--validate-output` at `off` is
-intended to stay compatible with pre-0.3.0 extract output (including ordinary
-Parquet page statistics). This documents **baseline-bound structural producer
-adoption**, not full semantic L3 export-gate conformance for every grain shape.
-
-### Features
-
-#### Host-less contract baseline
-
-Extract resolves `data-artifact/v0` from an explicit local `--contract-base`
-bundle. Production publish is baseline-gated against the pinned Crucible release
-and resolved-bundle SHA-256 (current pin: Crucible **`v0.1.19`**,
-`sha256:37eca167cfa9a86357c14239eb9c3274c40c5cfee48f48ebb81480d737104b82`).
-Hash derivation is documented under
-[Validate Command](docs/user-guide/commands/validate.md#data-artifact-contract-baseline-hash).
-CI/offline fixtures match the pin; they are not an independently evolving
-runtime identity.
-
-#### Artifact descriptor, catalog, and grains
-
-Opt-in `--artifact-descriptor` writes baseline-validated `artifact-descriptor.json`
-and `fields/records.fields.json`:
-
-- Primary grain `record_stream` by default; `--output-mode aggregate` switches the
-  primary grain to `aggregation`; `--record-index` adds an **additional**
-  `object_index` grain for the **consumed** record-index file (path-sanitized;
-  not co-located by promise).
-- Field catalog: source-structure keys withheld by count; disclosed fields default
-  `unknown` + `block_export`; fully withheld catalogs are valid under the pin.
-- Descriptor `lifecycle` maps from existing provenance completeness
-  (`incomplete` / `partial` / `complete`).
-
-#### Publication integrity
-
-Local record, Parquet, and portable sidecar paths finalize via same-directory
-temp+rename; Parquet renames only after a successful close; catalog publishes
-before the descriptor; cloud validates staging before Publish.
-`incomplete: true` inventories already-published aggregate cloud shards on failed
-runs and must not be treated as successful output.
-
-#### Protection declarations and Parquet suppression
-
-Two layers: (1) portable protection metadata for consumers to enforce; (2) when
-the descriptor is on, the Parquet writer suppresses page bounds/statistics on
-every leaf and never wires Bloom filters. Pre-profile Parquet retains page stats.
-Recipe `withhold_columns` remains a stronger projection control.
-
-#### `--validate-output` ladder and `value_profile`
-
-Cumulative opt-in modes: `off` → `sidecars` → `artifact` → `envelope-sample` →
-`strict`, plus `sumpter validate artifact-descriptor`. Structural / baseline-bound
-— not a complete L3 semantic or export-gate validator.
-
-Optional provenance `value_profile` (recipe `defaults.value_profile`): Tier A
-only under operator-declared `safe_to_profile` + `public|internal` +
-`≤ max_distinct`; never-enumerate tags dominate; Tier B aggregates only;
-disabled/omitted leaves manifests byte-identical.
-
-### Compatibility & notes
-
-- **All-additive.** Default paths stay byte-compatible when unused.
-- **Two identities.** `contract: data-artifact/v0` vs `sumpter.extract-artifact/v0`.
-- **Validation altitude.** Structural baseline, not full consumer-policy enforcement.
-- **Platforms:** unchanged from 0.2.x — linux amd64/arm64, darwin **arm64**,
-  windows amd64/arm64. Intel-Mac users build from source.
-- **Alpha:** interfaces may still change between minor releases; external pull
-  requests are welcome.
-
-### Deferred / follow-ups
-
-- Richer validation strictness, cross-artifact lineage, and reserved contract-slot
-  activations.
-- Sibling `process-run/v0` portable run observability / control (separate track).
-- Full semantic L3 conformance for every grain shape.
-- Cloud range-reads, cloud-side indexing, GCS/Azure, DuckDB/Arrow, service health
-  endpoints, and repair modes remain roadmap items, as in 0.2.x.
-
-### Release notes
-
-- **Version bump.** `VERSION` is `0.3.0`. Binaries from this tag emit `v0.3.0`
-  via `sumpter version`.
-- **Tag/version guard.** `make release-guard-tag-version SUMPTER_RELEASE_TAG=v0.3.0`
-  is the intended tag/version sanity check.
-- **Release ceremony.** Use the standard draft-release and signing flow in
-  [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
-
-See [`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md) for the full release narrative.
-
-Older releases are retained under [`docs/releases/`](docs/releases/).
