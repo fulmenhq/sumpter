@@ -858,9 +858,12 @@ Sumpter.
 When a left operand contains a **predicate** (for example
 `sum(.//Entry[not(@excluded='true')]/Amount)`) and a trailing factor is
 **context-sensitive** (for example `count(self::Credit)`), older
-evaluator pins could observe the wrong XML context for the factor and emit a
-silent-wrong number (extract still green). Putting the context-sensitive
-factor **first** was always a correct authoring form:
+`github.com/antchfx/xpath` releases (before **v1.3.7**) could observe the wrong
+XML context for the factor and emit a silent-wrong number (extract still green).
+From Sumpter **v0.3.3** onward the stock module is **v1.3.8+** (isolation fixed
+upstream); trailing factors and factor-first forms both evaluate correctly.
+Putting the context-sensitive factor **first** remains a valid authoring style
+and is the safer form if you must run an older Sumpter binary:
 
 ```yaml
 field_mappings:
@@ -868,16 +871,14 @@ field_mappings:
   - output_field: signed_amount
     xpath: "(1 - 2*count(self::Credit)) * sum(.//Entry[not(@excluded='true')]/Amount)"
     type: number
-  # Trailing context-sensitive factor after a predicated sum is also correct
-  # on the fixed evaluator pin (see go.mod / third_party pin notes).
+  # Trailing context-sensitive factor after a predicated sum — correct on
+  # antchfx/xpath v1.3.7+ (Sumpter v0.3.3+ requires v1.3.8).
   - output_field: signed_amount_trailing
     xpath: "sum(.//Entry[not(@excluded='true')]/Amount) * (1 - 2*count(self::Credit))"
     type: number
 ```
 
-A **literal** trailing factor such as `* -1` was never affected. Prefer
-factor-first for context-sensitive multipliers if you need to run against an
-older binary that still pins a vulnerable evaluator.
+A **literal** trailing factor such as `* -1` was never affected.
 
 ### XML Namespace Binding
 
