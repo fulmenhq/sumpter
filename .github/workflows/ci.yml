@@ -22,7 +22,7 @@ jobs:
     name: Quality + Test + Build
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.4.2
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.2
       # Match release.yml: non-root UID so workspace permissions align with
       # GitHub-hosted runner ownership.
       options: --user 1001
@@ -111,7 +111,7 @@ jobs:
     needs: [quality]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.4.2
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.2
       options: --user 1001
     defaults:
       run:
