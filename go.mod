@@ -2,7 +2,7 @@ module github.com/fulmenhq/sumpter
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	github.com/3leaps/gonimbus v0.4.2
@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.22
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
-	github.com/fulmenhq/goneat v0.5.16
+	github.com/fulmenhq/goneat v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/spf13/cobra v1.10.2
