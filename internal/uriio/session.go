@@ -278,20 +278,17 @@ func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provide
 	}
 	defer func() { _ = body.Close() }()
 
-	reader := io.Reader(body)
-	if maxBytes > 0 {
-		reader = io.LimitReader(body, maxBytes+1)
-	}
+	// Bound the write to admitted+1 so a longer stream cannot silently inflate
+	// the run-global byte reservation; then compare the on-disk size.
+	reader := io.LimitReader(body, size+1)
 	if err := writeStagedFile(staged, reader); err != nil {
 		releaseAdmit()
 		return nil, err
 	}
-	if maxBytes > 0 {
-		if fi, statErr := os.Stat(staged); statErr == nil && fi.Size() > maxBytes {
-			_ = os.Remove(staged)
-			releaseAdmit()
-			return nil, fmt.Errorf("uriio: object %s exceeded the %d-byte cap during staging; removed", ref.LogicalURI, maxBytes)
-		}
+	if err := StagedBytesExceedAdmit(staged, size); err != nil {
+		_ = os.Remove(staged)
+		releaseAdmit()
+		return nil, err
 	}
 	stagedPath := staged
 	budget := s.budget

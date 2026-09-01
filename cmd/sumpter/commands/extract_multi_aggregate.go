@@ -1,11 +1,8 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"time"
-
-	"github.com/antchfx/xmlquery"
 
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
@@ -56,23 +53,6 @@ func (st *recipeRunState) writeIncompleteAggregateManifestOnFailure(startedAt ti
 		return
 	}
 	writeIncompleteAggregateManifest(st.plan.opts, st.plan.runtimeProvenance, startedAt, st.manifestInputs, committed, st.counts, st.sanitizeRoots)
-}
-
-// dispatchParsedFileAggregate streams one already-parsed input's records into this
-// recipe's invocation-local aggregate writer (rolling shards), recording the
-// per-input inventory entry. Under --continue-on-error the writer buffers each input
-// (beginInput) and the records are only flushed into the shared shard on success
-// (commitInput); a failed input is discarded (discardInput) so its rows never reach
-// the shard, and is recorded as a failure. In fail-fast mode any extraction failure
-// aborts the whole run (the deferred writer.abort in the dispatcher discards every
-// recipe's uncommitted staging) — either way, no failed-input rows are committed.
-func (st *recipeRunState) dispatchParsedFileAggregate(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node) error {
-	// SUM-068 slice 1: split into a worker-safe build stage (no shared writer/ledger
-	// state) and a single-owner commit stage. Here both run on the ordered drain in
-	// immediate succession, so behavior is byte-identical to the pre-split path; a later
-	// slice hoists the build onto a worker. See extract_multi_bundle.go.
-	app := st.buildAggregateApplication(ctx, file, logical, ordinal, doc)
-	return st.commitAggregateApplication(ctx, app)
 }
 
 // finalizeAggregate commits this recipe's aggregate shards (atomic rename) and writes

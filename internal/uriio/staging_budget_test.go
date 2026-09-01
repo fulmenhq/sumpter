@@ -2,6 +2,8 @@ package uriio_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +59,28 @@ func TestStagingBudgetBackpressureAndRelease(t *testing.T) {
 	st := b.Stats()
 	if st.PeakFiles != 1 || st.PeakBytes != 60 || st.AcquiredCount != 2 {
 		t.Fatalf("stats %+v", st)
+	}
+}
+
+func TestStagedBytesExceedAdmit(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "obj")
+	if err := os.WriteFile(p, []byte("0123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := uriio.StagedBytesExceedAdmit(p, 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := uriio.StagedBytesExceedAdmit(p, 9); err == nil {
+		t.Fatal("want exceed error")
+	}
+	// Delta would breach a 10-byte global budget if 1 extra byte landed.
+	if err := os.WriteFile(p, []byte("0123456789X"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := uriio.StagedBytesExceedAdmit(p, 10)
+	if err == nil || !strings.Contains(err.Error(), "exceeds admitted") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

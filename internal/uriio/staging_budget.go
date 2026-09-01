@@ -3,6 +3,7 @@ package uriio
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -185,6 +186,19 @@ const acquireRetryLimit = 3
 
 // StagingGetSizeMismatch rejects a GET whose reported size exceeds the Head
 // size already admitted. Extra bytes would undercount the run-global budget.
+// StagedBytesExceedAdmit reports when the on-disk staged file is larger than
+// the Head/Get size already reserved in the run-global budget.
+func StagedBytesExceedAdmit(path string, admitted int64) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if fi.Size() > admitted {
+		return fmt.Errorf("uriio: staged %d bytes exceeds admitted %d; not kept", fi.Size(), admitted)
+	}
+	return nil
+}
+
 func StagingGetSizeMismatch(admitted, got int64) error {
 	if got > admitted {
 		return fmt.Errorf("uriio: object size changed during get (%d -> %d); not staged", admitted, got)

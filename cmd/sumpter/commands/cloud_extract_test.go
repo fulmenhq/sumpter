@@ -131,6 +131,47 @@ func TestExtractMultiCloudPrefetchCapsConcurrentPrepare(t *testing.T) {
 	}
 }
 
+func TestExtractMultiBoundedReapAfterBundleBeforeCommit(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 4)
+	shared := &multiSharedOptions{
+		FileList:             fileList,
+		OutputPath:           t.TempDir(),
+		OutputMode:           outputModeAggregate,
+		RunID:                testMultiRunID,
+		InputWorkers:         2,
+		CloudInputMode:       cloudInputModeBounded,
+		CloudPrefetch:        1,
+		CloudStagingMaxBytes: 1 << 20,
+		CloudStagingMaxFiles: 4,
+		CloudObjectMaxBytes:  1 << 20,
+	}
+	d := newMultiDispatcher(shared, io.Discard)
+	var held int32
+	var heldDuringBuild int32
+	d.onPrepareInput = func(enter bool) {
+		if enter {
+			atomic.AddInt32(&held, 1)
+		} else {
+			atomic.AddInt32(&held, -1)
+		}
+	}
+	d.onBuildApplication = func(ordinal int) {
+		if atomic.LoadInt32(&held) >= 1 {
+			atomic.StoreInt32(&heldDuringBuild, 1)
+		}
+	}
+	if err := d.run([]string{ws}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if atomic.LoadInt32(&heldDuringBuild) != 1 {
+		t.Fatal("acquire window was not held through bundle construction")
+	}
+	if atomic.LoadInt32(&held) != 0 {
+		t.Fatalf("acquire window not reaped after run: held=%d", atomic.LoadInt32(&held))
+	}
+}
+
 func TestFormatStagingStatsHasNoURI(t *testing.T) {
 	out := formatStagingStats(uriio.StagingStats{PeakFiles: 2, PeakBytes: 99, AcquiredCount: 3})
 	if strings.Contains(out, "s3://") || strings.Contains(strings.ToLower(out), "http") {

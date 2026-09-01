@@ -385,20 +385,6 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	return firstErr
 }
 
-// parsedInputOutcome carries one input's read+parse result from a parse worker to
-// the ordered drain. Exactly one of doc/err is meaningful: err set means an
-// input-level read/parse failure (recorded against every recipe), doc set means a
-// parsed document to dispatch to every recipe. idx is the 0-based resolved-input
-// position; ordinal is idx+1, the authoritative emit order.
-type parsedInputOutcome struct {
-	idx     int
-	ordinal int
-	file    string
-	logical string
-	doc     *xmlquery.Node
-	err     error
-}
-
 // processInputs walks the resolved input set and applies each input to every recipe state
 // in input-ordinal order. With InputWorkers <= 1 it is the audited serial loop (build then
 // commit on one goroutine), byte-identical to single-worker behavior. With InputWorkers > 1
@@ -427,18 +413,29 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 			return err
 		}
 		local, logical, cleanup, aerr := d.prepareInput(ctx, file, logicalByLocal)
-		o := parsedInputOutcome{idx: fileIdx, ordinal: fileIdx + 1, file: local, logical: logical}
-		if aerr != nil {
-			o.err = aerr
+		o := builtInputOutcome{idx: fileIdx, ordinal: fileIdx + 1, file: local, logical: logical}
+		if boundedCloudInput(d.inputOpts) {
 			o.file = logical
-		} else {
-			if boundedCloudInput(d.inputOpts) {
-				o.file = logical
-			}
-			o.doc, o.err = d.parseFile(local, shared.AllowLargeFiles)
-			cleanup()
 		}
-		if err := d.applyOutcome(ctx, o, states, shared); err != nil {
+		if aerr != nil {
+			o.parseErr = aerr
+			o.file = logical
+			cleanup()
+		} else {
+			doc, perr := d.parseFile(local, shared.AllowLargeFiles)
+			if perr != nil {
+				o.parseErr = perr
+				cleanup()
+			} else {
+				o.apps = make([]builtApplication, len(states))
+				for i, st := range states {
+					o.apps[i] = st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication)
+					o.records += o.apps[i].recordCount()
+				}
+				cleanup()
+			}
+		}
+		if err := d.commitBuiltOutcome(ctx, o, states, shared); err != nil {
 			return err
 		}
 	}
@@ -489,44 +486,6 @@ func (d *multiDispatcher) prepareInput(ctx context.Context, ref string, logicalB
 		}
 		releaseWindow()
 	}, nil
-}
-
-// applyOutcome applies one input's parse outcome to every recipe state on the SERIAL path
-// (InputWorkers <= 1): it builds and commits each recipe in turn. A non-nil return aborts
-// the run: either a fail-fast input/recipe failure, or a terminal output/sink/ledger
-// failure that ADR-0009 says must abort even under --continue-on-error. Always runs on a
-// single goroutine, so it retains sole ownership of every recipe's writers, ledgers, and
-// manifests. (The InputWorkers > 1 path uses commitBuiltOutcome, which mirrors this
-// branching but commits worker-built bundles.)
-func (d *multiDispatcher) applyOutcome(ctx context.Context, o parsedInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
-	if o.err != nil {
-		// Read/parse failure is INPUT-level: it affects every recipe's view of this
-		// file. Record it per recipe; honor continue-on-error.
-		for _, st := range states {
-			st.recordInputFailure(o.file, o.logical, o.err)
-		}
-		d.noteSettledInput()
-		if !shared.ContinueOnError {
-			return fmt.Errorf("failed to process file %s: %w", o.logical, o.err)
-		}
-		return nil
-	}
-	for _, st := range states {
-		// Extraction/applicability/signature/output failure is RECIPE-level: isolated
-		// to that recipe, never aborting the others for this file. dispatchParsedFile
-		// records recoverable per-input failures internally and returns nil under
-		// --continue-on-error; a non-nil error is therefore either a fail-fast failure
-		// OR a terminal output/sink/ledger failure that ADR-0009 says must abort even
-		// under --continue-on-error (never silently suppressed).
-		if rerr := st.dispatchParsedFile(ctx, o.file, o.logical, o.ordinal, o.doc); rerr != nil {
-			if !shared.ContinueOnError || isTerminalDispatchError(rerr) {
-				d.noteSettledInput()
-				return rerr
-			}
-		}
-	}
-	d.noteSettledInput()
-	return nil
 }
 
 // parseInputContained parses one input for a concurrent worker, recovering a panic into
@@ -835,17 +794,19 @@ func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context,
 				if aerr != nil {
 					o.parseErr = aerr
 					o.file = logical
+					cleanup()
 				} else {
 					doc, perr := d.parseInputContained(local, shared.AllowLargeFiles)
-					cleanup()
 					if perr != nil {
 						o.parseErr = perr
+						cleanup()
 					} else {
 						o.apps = make([]builtApplication, len(states))
 						for i, st := range states {
 							o.apps[i] = st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication)
 							o.records += o.apps[i].recordCount()
 						}
+						cleanup()
 					}
 				}
 				atomic.AddInt64(&inFlightRecords, int64(o.records))
@@ -1082,22 +1043,6 @@ func (st *recipeRunState) recordInputFailure(file, logical string, cause error) 
 		return
 	}
 	_ = recordFailedSequentialResult(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, dispatchLogger())
-}
-
-// dispatchParsedFile runs this recipe against an already-parsed document, writing
-// to the recipe's own output target. A recipe-level failure is recorded (and,
-// without continue-on-error, returned) but never affects the other recipes.
-func (st *recipeRunState) dispatchParsedFile(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node) error {
-	if st.aggWriter != nil {
-		return st.dispatchParsedFileAggregate(ctx, file, logical, ordinal, doc)
-	}
-	// SUM-068 slice 3a: split into a worker-safe build (extraction into a worker-local
-	// buffer, no durable target) and a single-owner commit (create the per-input output
-	// target, replay, write ledgers). Here both run on the ordered drain in immediate
-	// succession, so behavior is byte-identical to the pre-split path; slice 3b hoists the
-	// build onto a worker. See extract_multi_bundle.go.
-	app := st.buildPerInputApplication(ctx, file, logical, ordinal, doc)
-	return st.commitPerInputApplication(ctx, app)
 }
 
 // finalize writes this recipe's failures, dispositions, and provenance manifest
