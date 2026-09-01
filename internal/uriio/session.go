@@ -41,6 +41,14 @@ func (s *Session) SetStagingBudget(b *StagingBudget) {
 	}
 }
 
+// StagingSnapshot returns aggregate-only staging stats (never URIs).
+func (s *Session) StagingSnapshot() StagingStats {
+	if s == nil {
+		return StagingStats{}
+	}
+	return s.budget.Stats()
+}
+
 // NewSession builds a run session over a resolver. workDir is the resolved
 // Sumpter work directory; runID scopes the staging directory for this run.
 func NewSession(resolver *Resolver, workDir, runID string) *Session {
@@ -247,12 +255,20 @@ func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provide
 		var e error
 		var got int64
 		body, got, e = prov.GetObject(ctx, ref.Key)
-		if e == nil && maxBytes > 0 && got > maxBytes {
+		if e != nil {
+			return e
+		}
+		if maxBytes > 0 && got > maxBytes {
 			_ = body.Close()
 			body = nil
 			return fmt.Errorf("uriio: object %s is %d bytes, exceeding the %d-byte cap; not staged", ref.LogicalURI, got, maxBytes)
 		}
-		return e
+		if err := StagingGetSizeMismatch(size, got); err != nil {
+			_ = body.Close()
+			body = nil
+			return err
+		}
+		return nil
 	}); gerr != nil {
 		releaseAdmit()
 		if body != nil {
@@ -285,11 +301,14 @@ func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provide
 		Scheme:     SchemeS3,
 		cleanup: func() error {
 			rmErr := os.Remove(stagedPath)
-			releaseAdmit()
-			if rmErr != nil && budget != nil {
-				budget.NoteCleanupFailure()
+			if rmErr != nil {
+				if budget != nil {
+					budget.NoteCleanupFailure()
+				}
+				return rmErr
 			}
-			return rmErr
+			releaseAdmit()
+			return nil
 		},
 	}, nil
 }

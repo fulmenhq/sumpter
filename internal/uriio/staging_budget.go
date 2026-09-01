@@ -30,6 +30,7 @@ type StagingBudget struct {
 	cleanupFailures int64
 	retriesThrottle int64
 	retriesUnavail  int64
+	admitBlocked    bool
 }
 
 // StagingBudgetConfig is the operator-declared run-global staging cap.
@@ -92,6 +93,9 @@ func (b *StagingBudget) Admit(ctx context.Context, size int64) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if b.admitBlocked {
+			return fmt.Errorf("uriio: staging cleanup failed; refusing further admits")
+		}
 		filesOK := b.maxFiles <= 0 || b.usedFiles < b.maxFiles
 		bytesOK := b.maxBytes <= 0 || b.usedBytes+size <= b.maxBytes
 		if filesOK && bytesOK {
@@ -139,6 +143,8 @@ func (b *StagingBudget) NoteCleanupFailure() {
 	}
 	b.mu.Lock()
 	b.cleanupFailures++
+	b.admitBlocked = true
+	b.cond.Broadcast()
 	b.mu.Unlock()
 }
 
@@ -176,6 +182,15 @@ func (b *StagingBudget) Stats() StagingStats {
 
 // acquireRetryLimit is the small cap on classified throttle/unavailable GET retries.
 const acquireRetryLimit = 3
+
+// StagingGetSizeMismatch rejects a GET whose reported size exceeds the Head
+// size already admitted. Extra bytes would undercount the run-global budget.
+func StagingGetSizeMismatch(admitted, got int64) error {
+	if got > admitted {
+		return fmt.Errorf("uriio: object size changed during get (%d -> %d); not staged", admitted, got)
+	}
+	return nil
+}
 
 func acquireBackoff(attempt int) time.Duration {
 	// 50ms, 100ms, 200ms

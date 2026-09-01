@@ -67,6 +67,13 @@ func cloudPrefetchWindow(opts *ExtractOptions, inputWorkers int) int {
 	return inputWorkers
 }
 
+func formatStagingStats(st uriio.StagingStats) string {
+	return fmt.Sprintf(
+		"  cloud staging: peak_files=%d peak_bytes=%d acquired_count=%d acquired_bytes=%d retries_throttle=%d retries_unavailable=%d cleanup_failures=%d\n",
+		st.PeakFiles, st.PeakBytes, st.AcquiredCount, st.AcquiredBytes, st.RetriesThrottle, st.RetriesUnavail, st.CleanupFailures,
+	)
+}
+
 func attachStagingBudget(session *uriio.Session, opts *ExtractOptions) {
 	if session == nil || !boundedCloudInput(opts) {
 		return

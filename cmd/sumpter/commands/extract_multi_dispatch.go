@@ -46,6 +46,11 @@ type multiDispatcher struct {
 	// latency/blocking (to prove application-stage overlap and record backpressure) or a
 	// panic (to prove G3 containment). nil in production.
 	onBuildApplication func(ordinal int)
+	// onPrepareInput is a test-only seam around bounded-mode input prepare
+	// (acquire window). enter=true on acquire start, false on release.
+	onPrepareInput func(enter bool)
+	// acquireSem caps concurrent bounded prepares to --cloud-prefetch.
+	acquireSem chan struct{}
 	// maxInFlightRecords overrides the aggregate input-worker in-flight record ceiling
 	// (default inFlightRecordsPerSlot × window) for tests that need a small, deterministic
 	// bound. 0 means use the default.
@@ -135,6 +140,9 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 				return
 			}
 			_, _ = io.WriteString(d.warnOut, runstats.Format(statsCollector.Sample(statsInputs, statsInputBytes, statsBytesKnown)))
+			if boundedCloudInput(d.inputOpts) {
+				_, _ = io.WriteString(d.warnOut, formatStagingStats(d.inputSession.StagingSnapshot()))
+			}
 		}()
 	}
 
@@ -441,24 +449,45 @@ func (d *multiDispatcher) prepareInput(ctx context.Context, ref string, logicalB
 	cleanup = func() {}
 	logical = logicalIdentity(ref, logicalByLocal)
 	local = ref
+	releaseWindow := func() {}
+	if d.acquireSem != nil {
+		select {
+		case d.acquireSem <- struct{}{}:
+		case <-ctx.Done():
+			return "", ref, cleanup, ctx.Err()
+		}
+		releaseWindow = func() { <-d.acquireSem }
+		if d.onPrepareInput != nil {
+			d.onPrepareInput(true)
+			prev := releaseWindow
+			releaseWindow = func() {
+				d.onPrepareInput(false)
+				prev()
+			}
+		}
+		cleanup = releaseWindow
+	}
 	if d.inputSession == nil || !boundedCloudInput(d.inputOpts) {
 		return local, logical, cleanup, nil
 	}
 	classified, cerr := uriio.Classify(ref)
 	if cerr != nil {
-		return "", ref, cleanup, cerr
+		releaseWindow()
+		return "", ref, func() {}, cerr
 	}
 	if classified.Scheme != uriio.SchemeS3 {
 		return local, logical, cleanup, nil
 	}
 	src, aerr := d.inputSession.AcquireBounded(ctx, ref, resolvedInputHandle(d.inputOpts), d.inputOpts.CloudObjectMaxBytes)
 	if aerr != nil {
-		return "", classified.LogicalURI, cleanup, aerr
+		releaseWindow()
+		return "", classified.LogicalURI, func() {}, aerr
 	}
 	return src.LocalPath, src.LogicalURI, func() {
 		if cErr := src.Cleanup(); cErr != nil {
 			_, _ = fmt.Fprintf(d.warnOut, "warning: failed to release staged input: %v\n", cErr)
 		}
+		releaseWindow()
 	}, nil
 }
 
@@ -766,6 +795,13 @@ func (d *multiDispatcher) noteSettledInput() {
 // (G1).
 func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context, files []string, logicalByLocal map[string]string, states []*recipeRunState, shared *multiSharedOptions) error {
 	workers := shared.InputWorkers
+	if boundedCloudInput(d.inputOpts) {
+		n := cloudPrefetchWindow(d.inputOpts, workers)
+		if n < 1 {
+			n = 1
+		}
+		d.acquireSem = make(chan struct{}, n)
+	}
 	window := workers * 2
 	maxInFlightRecords := int64(window) * inFlightRecordsPerSlot
 	if d.maxInFlightRecords > 0 {

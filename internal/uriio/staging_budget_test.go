@@ -60,6 +60,35 @@ func TestStagingBudgetBackpressureAndRelease(t *testing.T) {
 	}
 }
 
+func TestStagingGetSizeMismatch(t *testing.T) {
+	if err := uriio.StagingGetSizeMismatch(100, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := uriio.StagingGetSizeMismatch(100, 80); err != nil {
+		t.Fatal(err)
+	}
+	err := uriio.StagingGetSizeMismatch(100, 101)
+	if err == nil || !strings.Contains(err.Error(), "size changed") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestStagingBudgetCleanupFailureBlocksAdmit(t *testing.T) {
+	b := uriio.NewStagingBudget(uriio.StagingBudgetConfig{MaxBytes: 1000, MaxFiles: 4, ObjectMax: 1000})
+	if err := b.Admit(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	}
+	b.NoteCleanupFailure()
+	err := b.Admit(context.Background(), 10)
+	if err == nil || !strings.Contains(err.Error(), "cleanup failed") {
+		t.Fatalf("err=%v", err)
+	}
+	st := b.Stats()
+	if st.CleanupFailures != 1 {
+		t.Fatalf("stats %+v", st)
+	}
+}
+
 func TestStagingBudgetCancelUnblocks(t *testing.T) {
 	b := uriio.NewStagingBudget(uriio.StagingBudgetConfig{MaxBytes: 10, MaxFiles: 1, ObjectMax: 10})
 	if err := b.Admit(context.Background(), 10); err != nil {
