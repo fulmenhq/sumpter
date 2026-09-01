@@ -88,6 +88,12 @@ type multiSharedOptions struct {
 	CredentialOverrides    []string
 	InputCredentialsHandle string
 
+	CloudInputMode       string
+	CloudPrefetch        int
+	CloudStagingMaxBytes int64
+	CloudStagingMaxFiles int
+	CloudObjectMaxBytes  int64
+
 	// Argv is the sanitized `recipes run extract-multi ...` invocation recorded
 	// in every recipe's provenance manifest, so the sidecar reports the command
 	// the user actually ran (not the single-recipe fallback). Shared by all plans.

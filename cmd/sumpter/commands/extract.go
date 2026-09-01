@@ -122,6 +122,18 @@ type ExtractOptions struct {
 	// of the input handle so a run can read from one account and write to another.
 	OutputCredentialsHandle string
 
+	// CloudInputMode is "eager" (default: stage every cloud object before extract)
+	// or "bounded" (just-in-time acquire with run-global staging budgets).
+	CloudInputMode string
+	// CloudPrefetch is the bounded-mode fetch window. 0 means max(1, --input-workers).
+	CloudPrefetch int
+	// CloudStagingMaxBytes / CloudStagingMaxFiles are run-global peak staging caps
+	// (bounded mode). CloudObjectMaxBytes is the per-object cap. Oversize fails
+	// before staging; there is no one-object exception.
+	CloudStagingMaxBytes int64
+	CloudStagingMaxFiles int
+	CloudObjectMaxBytes  int64
+
 	// Reference tables (in_reference / lookup_reference). Declarations come from the
 	// recipe (defaults.reference_tables); ReferenceTableRoot is the recipe workspace
 	// directory used as the C1 containment root for local sources; overrides replace a
@@ -3442,6 +3454,13 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 			_ = session.Close()
 		}
 		return nil, nil, nil, err
+	}
+
+	if boundedCloudInput(opts) {
+		attachStagingBudget(session, opts)
+		// Bounded mode discovers only. Acquire happens just-in-time in the
+		// extract pipeline so peak staging obeys the run-global budgets.
+		return refs, map[string]string{}, session, nil
 	}
 
 	files := make([]string, 0, len(refs))

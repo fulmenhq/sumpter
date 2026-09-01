@@ -587,6 +587,10 @@ Processing **many files in one invocation** is a supported, first-class workflow
 
 `--file-list` is designed to accept `s3://` references under the same credential-handle posture as cloud sources, so the same mechanism carries over for cloud inputs.
 
+**Bounded cloud input** (`extract-multi --cloud-input-mode bounded`) acquires `s3://` objects just-in-time instead of staging the whole list first. Peak staged **bytes** and **file count** are run-global (`--cloud-staging-max-bytes`, `--cloud-staging-max-files`) with a per-object cap (`--cloud-object-max-bytes`). An object larger than either the per-object cap or the total byte budget fails before staging. Fetch/parse may complete out of order; aggregate output still commits in URI-list order. Staged files are released after parse, before ordered commit. Local-only lists never open a cloud session. The default mode remains `eager`.
+
+A hermetic `FixtureDocument` recipe pair lives at `examples/config/extract/fulseed-fixture-document-v1-*.yaml` (case `examples/cases/13-fixture-document`).
+
 ### Recipe Parameters
 
 Recipes can declare literal parameters that are injected into every extracted record's `extract.data` block. Use them for operator-known identifiers or tags the source XML does not carry.

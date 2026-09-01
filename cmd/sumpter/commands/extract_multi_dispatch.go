@@ -60,6 +60,9 @@ type multiDispatcher struct {
 	processRun      processrun.Emitter
 	processRunTotal int
 	processRunDone  int
+	inputSession    *uriio.Session
+	inputOpts       *ExtractOptions
+
 	// processCard is the optional discovery-root card (nil when stream-only or off).
 	// On clean exit the card is swept; the durable event stream is retained.
 	processCard *processrun.Card
@@ -292,10 +295,15 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	if err := validateCredentialOptions(inputOpts); err != nil {
 		return err
 	}
+	if err := validateCloudInputOptions(inputOpts); err != nil {
+		return err
+	}
 	files, logicalByLocal, inputSession, err := resolveInputSources(context.Background(), inputOpts, shared.RunID)
 	if err != nil {
 		return err
 	}
+	d.inputSession = inputSession
+	d.inputOpts = inputOpts
 	if shared.Stats {
 		// Counters are taken from the resolved read paths (local or staged-cloud
 		// copies) using cheap stat calls only — no extra file reads, no cloud calls.
@@ -410,13 +418,48 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		o := parsedInputOutcome{idx: fileIdx, ordinal: fileIdx + 1, file: file, logical: logicalIdentity(file, logicalByLocal)}
-		o.doc, o.err = d.parseFile(file, shared.AllowLargeFiles)
+		local, logical, cleanup, aerr := d.prepareInput(ctx, file, logicalByLocal)
+		o := parsedInputOutcome{idx: fileIdx, ordinal: fileIdx + 1, file: local, logical: logical}
+		if aerr != nil {
+			o.err = aerr
+			o.file = logical
+		} else {
+			if boundedCloudInput(d.inputOpts) {
+				o.file = logical
+			}
+			o.doc, o.err = d.parseFile(local, shared.AllowLargeFiles)
+			cleanup()
+		}
 		if err := d.applyOutcome(ctx, o, states, shared); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (d *multiDispatcher) prepareInput(ctx context.Context, ref string, logicalByLocal map[string]string) (local, logical string, cleanup func(), err error) {
+	cleanup = func() {}
+	logical = logicalIdentity(ref, logicalByLocal)
+	local = ref
+	if d.inputSession == nil || !boundedCloudInput(d.inputOpts) {
+		return local, logical, cleanup, nil
+	}
+	classified, cerr := uriio.Classify(ref)
+	if cerr != nil {
+		return "", ref, cleanup, cerr
+	}
+	if classified.Scheme != uriio.SchemeS3 {
+		return local, logical, cleanup, nil
+	}
+	src, aerr := d.inputSession.AcquireBounded(ctx, ref, resolvedInputHandle(d.inputOpts), d.inputOpts.CloudObjectMaxBytes)
+	if aerr != nil {
+		return "", classified.LogicalURI, cleanup, aerr
+	}
+	return src.LocalPath, src.LogicalURI, func() {
+		if cErr := src.Cleanup(); cErr != nil {
+			_, _ = fmt.Fprintf(d.warnOut, "warning: failed to release staged input: %v\n", cErr)
+		}
+	}, nil
 }
 
 // applyOutcome applies one input's parse outcome to every recipe state on the SERIAL path
@@ -747,15 +790,26 @@ func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context,
 		go func() {
 			defer wg.Done()
 			for idx := range workChan {
-				o := builtInputOutcome{idx: idx, ordinal: idx + 1, file: files[idx], logical: logicalIdentity(files[idx], logicalByLocal)}
-				doc, perr := d.parseInputContained(files[idx], shared.AllowLargeFiles)
-				if perr != nil {
-					o.parseErr = perr
+				ref := files[idx]
+				local, logical, cleanup, aerr := d.prepareInput(ctx, ref, logicalByLocal)
+				o := builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
+				if boundedCloudInput(d.inputOpts) {
+					o.file = logical
+				}
+				if aerr != nil {
+					o.parseErr = aerr
+					o.file = logical
 				} else {
-					o.apps = make([]builtApplication, len(states))
-					for i, st := range states {
-						o.apps[i] = st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication)
-						o.records += o.apps[i].recordCount()
+					doc, perr := d.parseInputContained(local, shared.AllowLargeFiles)
+					cleanup()
+					if perr != nil {
+						o.parseErr = perr
+					} else {
+						o.apps = make([]builtApplication, len(states))
+						for i, st := range states {
+							o.apps[i] = st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication)
+							o.records += o.apps[i].recordCount()
+						}
 					}
 				}
 				atomic.AddInt64(&inFlightRecords, int64(o.records))
@@ -897,6 +951,11 @@ func sharedInputOptions(shared *multiSharedOptions) *ExtractOptions {
 		CredentialsPath:        shared.CredentialsPath,
 		CredentialOverrides:    shared.CredentialOverrides,
 		InputCredentialsHandle: shared.InputCredentialsHandle,
+		CloudInputMode:         shared.CloudInputMode,
+		CloudPrefetch:          shared.CloudPrefetch,
+		CloudStagingMaxBytes:   shared.CloudStagingMaxBytes,
+		CloudStagingMaxFiles:   shared.CloudStagingMaxFiles,
+		CloudObjectMaxBytes:    shared.CloudObjectMaxBytes,
 	}
 }
 

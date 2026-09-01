@@ -45,6 +45,11 @@ type recipeRunExtractMultiOptions struct {
 	CredentialsPath        string
 	CredentialOverrides    []string
 	InputCredentialsHandle string
+	CloudInputMode         string
+	CloudPrefetch          int
+	CloudStagingMaxBytes   int64
+	CloudStagingMaxFiles   int
+	CloudObjectMaxBytes    int64
 	Stats                  bool
 	ProcessRun             bool
 	ProcessRunRuntimeDir   string
@@ -134,6 +139,11 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				CredentialsPath:        opts.CredentialsPath,
 				CredentialOverrides:    opts.CredentialOverrides,
 				InputCredentialsHandle: opts.InputCredentialsHandle,
+				CloudInputMode:         opts.CloudInputMode,
+				CloudPrefetch:          opts.CloudPrefetch,
+				CloudStagingMaxBytes:   opts.CloudStagingMaxBytes,
+				CloudStagingMaxFiles:   opts.CloudStagingMaxFiles,
+				CloudObjectMaxBytes:    opts.CloudObjectMaxBytes,
 				Stats:                  opts.Stats,
 				ProcessRun:             opts.ProcessRun || strings.TrimSpace(opts.ProcessRunRuntimeDir) != "",
 				ProcessRunRuntimeDir:   opts.ProcessRunRuntimeDir,
@@ -170,6 +180,11 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input")
+	cmd.Flags().StringVar(&opts.CloudInputMode, "cloud-input-mode", cloudInputModeEager, "Cloud source acquire mode: eager (stage the whole set before extract) or bounded (just-in-time acquire with run-global staging budgets). Local-only runs never open a cloud session")
+	cmd.Flags().IntVar(&opts.CloudPrefetch, "cloud-prefetch", 0, "Bounded mode: peak in-flight cloud fetches. 0 means max(1, --input-workers)")
+	cmd.Flags().Int64Var(&opts.CloudStagingMaxBytes, "cloud-staging-max-bytes", 0, "Bounded mode: run-global peak staged source bytes (required when --cloud-input-mode=bounded)")
+	cmd.Flags().IntVar(&opts.CloudStagingMaxFiles, "cloud-staging-max-files", 0, "Bounded mode: run-global peak staged source files (required when --cloud-input-mode=bounded)")
+	cmd.Flags().Int64Var(&opts.CloudObjectMaxBytes, "cloud-object-max-bytes", 0, "Bounded mode: per-object size cap; oversize fails before staging (required when --cloud-input-mode=bounded)")
 	cmd.Flags().BoolVar(&opts.Stats, "stats", false, "Print an end-of-run diagnostic summary (wall, inputs/s, effective CPU vs --input-workers, GOMAXPROCS) to stderr to help tune --input-workers. Observed counters only; does not change records, output, or the provenance manifest")
 	cmd.Flags().BoolVar(&opts.ProcessRun, "process-run", false, "Opt-in process-run/v0 telemetry: publish an owner-only process card under the runtime dir and emit an append-only NDJSON event stream. Runtime dir resolves as --process-run-runtime-dir > SUMPTER_PROCESS_RUN_RUNTIME_DIR > $XDG_RUNTIME_DIR/sumpter > $TMPDIR/sumpter-process-run (never under SUMPTER_HOME/work). Card is swept on clean exit; the event stream is retained. Fail-open on ordinary setup failure; live run_id collision is fail-closed. Not recorded in provenance argv")
 	cmd.Flags().StringVar(&opts.ProcessRunRuntimeDir, "process-run-runtime-dir", "", "Override process-run runtime directory (implies --process-run). Must not be under SUMPTER_HOME/work. Not recorded in provenance argv")
@@ -222,6 +237,21 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 	}
 	// Input-worker concurrency is a performance knob, not a data-shape input — record it
 	// in the replayable argv only when it deviates from the default serial behavior.
+	if mode := normalizeCloudInputMode(opts.CloudInputMode); mode != cloudInputModeEager {
+		appendFlag("--cloud-input-mode", mode)
+	}
+	if opts.CloudPrefetch > 0 {
+		appendFlag("--cloud-prefetch", fmt.Sprintf("%d", opts.CloudPrefetch))
+	}
+	if opts.CloudStagingMaxBytes > 0 {
+		appendFlag("--cloud-staging-max-bytes", fmt.Sprintf("%d", opts.CloudStagingMaxBytes))
+	}
+	if opts.CloudStagingMaxFiles > 0 {
+		appendFlag("--cloud-staging-max-files", fmt.Sprintf("%d", opts.CloudStagingMaxFiles))
+	}
+	if opts.CloudObjectMaxBytes > 0 {
+		appendFlag("--cloud-object-max-bytes", fmt.Sprintf("%d", opts.CloudObjectMaxBytes))
+	}
 	if opts.InputWorkers > 1 {
 		appendFlag("--input-workers", fmt.Sprintf("%d", opts.InputWorkers))
 	}
