@@ -386,6 +386,21 @@ func TestBuildInputLedger(t *testing.T) {
 	if cloudInput.Path != "s3://bucket/key.xml" {
 		t.Fatalf("cloud input path = %q, want logical s3:// URI", cloudInput.Path)
 	}
+
+	hash, size, err := HashLocalInput(path)
+	if err != nil {
+		t.Fatalf("HashLocalInput: %v", err)
+	}
+	hashed, err := BuildInputLedgerHashed("s3://bucket/key.xml", hash, size, "prod-readonly")
+	if err != nil {
+		t.Fatalf("BuildInputLedgerHashed: %v", err)
+	}
+	if hashed.SHA256 != cloudInput.SHA256 || hashed.SizeBytes != cloudInput.SizeBytes {
+		t.Fatalf("hashed ledger %+v vs file ledger %+v", hashed, cloudInput)
+	}
+	if hashed.Path != "s3://bucket/key.xml" || hashed.CredentialsHandle != "prod-readonly" {
+		t.Fatalf("hashed identity %+v", hashed)
+	}
 }
 
 func testManifest(t *testing.T) Manifest {

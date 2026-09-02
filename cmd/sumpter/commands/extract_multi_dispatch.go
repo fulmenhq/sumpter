@@ -414,9 +414,6 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 		}
 		local, logical, cleanup, aerr := d.prepareInput(ctx, file, logicalByLocal)
 		o := builtInputOutcome{idx: fileIdx, ordinal: fileIdx + 1, file: local, logical: logical}
-		if boundedCloudInput(d.inputOpts) {
-			o.file = logical
-		}
 		if aerr != nil {
 			o.parseErr = aerr
 			o.file = logical
@@ -427,12 +424,23 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 				o.parseErr = perr
 				cleanup()
 			} else {
-				o.apps = make([]builtApplication, len(states))
-				for i, st := range states {
-					o.apps[i] = st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication)
-					o.records += o.apps[i].recordCount()
+				sum, sz, herr := provenance.HashLocalInput(local)
+				if herr != nil {
+					o.parseErr = herr
+					cleanup()
+				} else {
+					o.inputSHA256 = sum
+					o.inputSize = sz
+					if boundedCloudInput(d.inputOpts) {
+						o.file = logical
+					}
+					o.apps = make([]builtApplication, len(states))
+					for i, st := range states {
+						o.apps[i] = withInputDigest(st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication), sum, sz)
+						o.records += o.apps[i].recordCount()
+					}
+					cleanup()
 				}
-				cleanup()
 			}
 		}
 		if err := d.commitBuiltOutcome(ctx, o, states, shared); err != nil {
@@ -535,13 +543,15 @@ const (
 // (in states order). records is the total emitted-record count across all recipe bundles,
 // computed once at build time and reused at commit to decrement the in-flight bound exactly.
 type builtInputOutcome struct {
-	idx      int
-	ordinal  int
-	file     string
-	logical  string
-	parseErr error
-	apps     []builtApplication
-	records  int
+	idx         int
+	ordinal     int
+	file        string
+	logical     string
+	parseErr    error
+	apps        []builtApplication
+	records     int
+	inputSHA256 string
+	inputSize   int64
 }
 
 // commitBuiltOutcome applies one worker-built outcome to every recipe state on the ordered
@@ -788,9 +798,6 @@ func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context,
 				ref := files[idx]
 				local, logical, cleanup, aerr := d.prepareInput(ctx, ref, logicalByLocal)
 				o := builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
-				if boundedCloudInput(d.inputOpts) {
-					o.file = logical
-				}
 				if aerr != nil {
 					o.parseErr = aerr
 					o.file = logical
@@ -801,12 +808,23 @@ func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context,
 						o.parseErr = perr
 						cleanup()
 					} else {
-						o.apps = make([]builtApplication, len(states))
-						for i, st := range states {
-							o.apps[i] = st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication)
-							o.records += o.apps[i].recordCount()
+						sum, sz, herr := provenance.HashLocalInput(local)
+						if herr != nil {
+							o.parseErr = herr
+							cleanup()
+						} else {
+							o.inputSHA256 = sum
+							o.inputSize = sz
+							if boundedCloudInput(d.inputOpts) {
+								o.file = logical
+							}
+							o.apps = make([]builtApplication, len(states))
+							for i, st := range states {
+								o.apps[i] = withInputDigest(st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication), sum, sz)
+								o.records += o.apps[i].recordCount()
+							}
+							cleanup()
 						}
-						cleanup()
 					}
 				}
 				atomic.AddInt64(&inFlightRecords, int64(o.records))
