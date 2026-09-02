@@ -655,16 +655,20 @@ func TestMotoExtractMultiBoundedSevenMiBObject(t *testing.T) {
 	if err != nil || strings.Count(string(rec), "\n") < 1 {
 		t.Fatalf("7 MiB extract produced no records: %v", err)
 	}
+	assertStagingCleanedUp(t, home)
 
 	badKey := runKeyPrefix() + "canary/over.xml"
 	m.putObject(t, badKey, generatedPaddedXML(eight+1))
 	badList := filepath.Join(dir, "bad.txt")
 	mustWriteFile(t, badList, "s3://"+m.bucket+"/"+badKey+"\n")
+	failHome := t.TempDir()
+	t.Setenv("SUMPTER_HOME", failHome)
 	badShared := *okShared
 	badShared.FileList = badList
 	badShared.OutputPath = t.TempDir()
 	err = runExtractMulti(&badShared, []string{ws}, io.Discard, time.Now())
-	if err == nil || !strings.Contains(err.Error(), "per-object cap") {
-		t.Fatalf("above-cap want per-object cap error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "exceeding the") || !strings.Contains(err.Error(), "not staged") {
+		t.Fatalf("above-cap want loud oversize / not staged error, got %v", err)
 	}
+	assertStagingCleanedUp(t, failHome)
 }
