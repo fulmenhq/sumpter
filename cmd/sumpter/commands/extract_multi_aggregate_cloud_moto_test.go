@@ -19,6 +19,7 @@
 package commands
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -538,4 +539,125 @@ func TestMotoExtractMultiBoundedCloudURIListDistinctHandles(t *testing.T) {
 		}
 	}
 	assertStagingCleanedUp(t, home)
+}
+
+func generatedPaddedXML(size int) []byte {
+	const prefix = `<?xml version="1.0"?><root><TargetElement><Name>pad</Name><Pad>`
+	const suffix = `</Pad></TargetElement></root>`
+	n := size - len(prefix) - len(suffix)
+	if n < 1 {
+		n = 1
+	}
+	return append(append([]byte(prefix), bytes.Repeat([]byte("x"), n)...), suffix...)
+}
+
+func TestMotoExtractMultiEagerBoundedCloudURIListParity(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	initExtractManifestTestLogger(t)
+	dir := t.TempDir()
+	credPath := m.writeNamedCredentialsConfig(t, dir, "reader")
+	ws := writeMultiCloudRecipeWorkspace(t, "summary", "writer")
+	aKey := runKeyPrefix() + "parity/a.xml"
+	bKey := runKeyPrefix() + "parity/b.xml"
+	m.putObject(t, aKey, []byte(`<root><TargetElement><Name>A</Name></TargetElement></root>`))
+	m.putObject(t, bKey, []byte(`<root><TargetElement><Name>B</Name></TargetElement></root>`))
+	list := filepath.Join(dir, "uris.txt")
+	mustWriteFile(t, list, "s3://"+m.bucket+"/"+aKey+"\ns3://"+m.bucket+"/"+bKey+"\n")
+
+	run := func(mode string) (records string, inputs []provenance.Input) {
+		t.Helper()
+		home := t.TempDir()
+		t.Setenv("SUMPTER_HOME", home)
+		out := t.TempDir()
+		shared := &multiSharedOptions{
+			FileList:               list,
+			OutputPath:             out,
+			OutputMode:             outputModeAggregate,
+			RunID:                  testMultiRunID,
+			CredentialsPath:        credPath,
+			InputCredentialsHandle: "reader",
+			CloudInputMode:         mode,
+			CloudStagingMaxBytes:   1 << 20,
+			CloudStagingMaxFiles:   4,
+			CloudObjectMaxBytes:    1 << 20,
+		}
+		if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		rec, err := os.ReadFile(filepath.Join(out, "summary", "records.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		manRaw, err := os.ReadFile(filepath.Join(out, "summary", "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var man provenance.Manifest
+		if err := json.Unmarshal(manRaw, &man); err != nil {
+			t.Fatal(err)
+		}
+		return volatileGeneratedAtRE.ReplaceAllString(string(rec), `"generated_at":""`), man.Inputs
+	}
+
+	eagerRec, eagerIn := run(cloudInputModeEager)
+	boundedRec, boundedIn := run(cloudInputModeBounded)
+	if eagerRec != boundedRec {
+		t.Fatalf("eager/bounded cloud records differ")
+	}
+	if len(eagerIn) != len(boundedIn) {
+		t.Fatalf("input count %d vs %d", len(eagerIn), len(boundedIn))
+	}
+	for i := range eagerIn {
+		if eagerIn[i].SHA256 != boundedIn[i].SHA256 || eagerIn[i].Path != boundedIn[i].Path {
+			t.Fatalf("input %d %s vs %s", i, eagerIn[i].SHA256, boundedIn[i].SHA256)
+		}
+	}
+}
+
+func TestMotoExtractMultiBoundedSevenMiBObject(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	initExtractManifestTestLogger(t)
+	dir := t.TempDir()
+	credPath := m.writeNamedCredentialsConfig(t, dir, "reader")
+	ws := writeMultiCloudRecipeWorkspace(t, "summary", "writer")
+	const seven = 7 << 20
+	const eight = 8 << 20
+	okKey := runKeyPrefix() + "canary/seven.xml"
+	m.putObject(t, okKey, generatedPaddedXML(seven))
+	okList := filepath.Join(dir, "ok.txt")
+	mustWriteFile(t, okList, "s3://"+m.bucket+"/"+okKey+"\n")
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+	out := t.TempDir()
+	okShared := &multiSharedOptions{
+		FileList:               okList,
+		OutputPath:             out,
+		OutputMode:             outputModeAggregate,
+		RunID:                  testMultiRunID,
+		CredentialsPath:        credPath,
+		InputCredentialsHandle: "reader",
+		CloudInputMode:         cloudInputModeBounded,
+		CloudStagingMaxBytes:   64 << 20,
+		CloudStagingMaxFiles:   2,
+		CloudObjectMaxBytes:    eight,
+	}
+	if err := runExtractMulti(okShared, []string{ws}, io.Discard, time.Now()); err != nil {
+		t.Fatalf("7 MiB under 8 MiB cap: %v", err)
+	}
+	rec, err := os.ReadFile(filepath.Join(out, "summary", "records.jsonl"))
+	if err != nil || strings.Count(string(rec), "\n") < 1 {
+		t.Fatalf("7 MiB extract produced no records: %v", err)
+	}
+
+	badKey := runKeyPrefix() + "canary/over.xml"
+	m.putObject(t, badKey, generatedPaddedXML(eight+1))
+	badList := filepath.Join(dir, "bad.txt")
+	mustWriteFile(t, badList, "s3://"+m.bucket+"/"+badKey+"\n")
+	badShared := *okShared
+	badShared.FileList = badList
+	badShared.OutputPath = t.TempDir()
+	err = runExtractMulti(&badShared, []string{ws}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "per-object cap") {
+		t.Fatalf("above-cap want per-object cap error, got %v", err)
+	}
 }
