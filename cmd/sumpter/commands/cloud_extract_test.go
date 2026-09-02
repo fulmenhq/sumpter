@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fulmenhq/sumpter/internal/provenance"
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
@@ -51,6 +53,64 @@ func TestCloudPrefetchDefault(t *testing.T) {
 	opts.CloudPrefetch = 2
 	if got := cloudPrefetchWindow(opts, 4); got != 2 {
 		t.Fatalf("got %d", got)
+	}
+}
+
+func TestExtractMultiEagerBoundedLocalParity(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 4)
+	run := func(mode string) (records, manifest string) {
+		t.Helper()
+		out := t.TempDir()
+		shared := &multiSharedOptions{
+			FileList:             fileList,
+			OutputPath:           out,
+			OutputMode:           outputModeAggregate,
+			RunID:                testMultiRunID,
+			CloudInputMode:       mode,
+			CloudStagingMaxBytes: 1 << 20,
+			CloudStagingMaxFiles: 4,
+			CloudObjectMaxBytes:  1 << 20,
+		}
+		if err := runExtractMulti(shared, []string{ws}, os.Stderr, time.Now()); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		rec, err := os.ReadFile(filepath.Join(out, "summary", "records.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		man, err := os.ReadFile(filepath.Join(out, "summary", "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return volatileGeneratedAtRE.ReplaceAllString(string(rec), `"generated_at":""`), string(man)
+	}
+	eagerRec, eagerMan := run(cloudInputModeEager)
+	boundedRec, boundedMan := run(cloudInputModeBounded)
+	if eagerRec != boundedRec {
+		t.Fatalf("eager/bounded record bytes differ\neager=%s\nbounded=%s", eagerRec, boundedRec)
+	}
+	var eagerM, boundedM provenance.Manifest
+	if err := json.Unmarshal([]byte(eagerMan), &eagerM); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(boundedMan), &boundedM); err != nil {
+		t.Fatal(err)
+	}
+	if len(eagerM.Inputs) != len(boundedM.Inputs) {
+		t.Fatalf("input count eager=%d bounded=%d", len(eagerM.Inputs), len(boundedM.Inputs))
+	}
+	for i := range eagerM.Inputs {
+		ei, bi := eagerM.Inputs[i], boundedM.Inputs[i]
+		if ei.Path != bi.Path || ei.SHA256 != bi.SHA256 || ei.SizeBytes != bi.SizeBytes || ei.Disposition != bi.Disposition {
+			t.Fatalf("input %d identity differ: %+v vs %+v", i, ei, bi)
+		}
+		if (ei.RecordCount == nil) != (bi.RecordCount == nil) {
+			t.Fatalf("input %d record_count nilness", i)
+		}
+		if ei.RecordCount != nil && *ei.RecordCount != *bi.RecordCount {
+			t.Fatalf("input %d record_count %d vs %d", i, *ei.RecordCount, *bi.RecordCount)
+		}
 	}
 }
 

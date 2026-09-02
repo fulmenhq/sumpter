@@ -476,3 +476,66 @@ func TestMotoExtractMultiCloudApplicationConcurrentAndDigests(t *testing.T) {
 	}
 	assertStagingCleanedUp(t, home)
 }
+
+// TestMotoExtractMultiBoundedCloudURIListDistinctHandles proves bounded
+// cloud URI-list input to aggregate cloud output uses the shared CLI reader
+// handle and the recipe-owned writer handle independently.
+func TestMotoExtractMultiBoundedCloudURIListDistinctHandles(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	initExtractManifestTestLogger(t)
+	dir := t.TempDir()
+	credPath := m.writeNamedCredentialsConfig(t, dir, "reader", "writer")
+	ws := writeMultiCloudRecipeWorkspace(t, "summary", "writer")
+
+	aKey := runKeyPrefix() + "in/a.xml"
+	bKey := runKeyPrefix() + "in/b.xml"
+	m.putObject(t, aKey, []byte(`<root><TargetElement><Name>A</Name></TargetElement></root>`))
+	m.putObject(t, bKey, []byte(`<root><TargetElement><Name>B</Name></TargetElement></root>`))
+	list := filepath.Join(dir, "uris.txt")
+	mustWriteFile(t, list, "s3://"+m.bucket+"/"+aKey+"\ns3://"+m.bucket+"/"+bKey+"\n")
+
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+	prefix := runKeyPrefix() + "mc-handles/"
+	shared := &multiSharedOptions{
+		FileList:               list,
+		OutputPath:             "s3://" + m.bucket + "/" + prefix,
+		OutputMode:             outputModeAggregate,
+		RunID:                  testMultiRunID,
+		AggregateMaxBytes:      1 << 20,
+		CredentialsPath:        credPath,
+		InputCredentialsHandle: "reader",
+		CloudInputMode:         cloudInputModeBounded,
+		CloudStagingMaxFiles:   4,
+		CloudStagingMaxBytes:   1 << 20,
+		CloudObjectMaxBytes:    1 << 20,
+	}
+	if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	manData, ok := m.getObject(t, prefix+"summary/manifest.json")
+	if !ok {
+		t.Fatal("manifest not published")
+	}
+	var man provenance.Manifest
+	if err := json.Unmarshal(manData, &man); err != nil {
+		t.Fatal(err)
+	}
+	if len(man.Inputs) != 2 {
+		t.Fatalf("inputs %d", len(man.Inputs))
+	}
+	for _, in := range man.Inputs {
+		if in.CredentialsHandle != "reader" {
+			t.Errorf("input handle %q want reader", in.CredentialsHandle)
+		}
+	}
+	if len(man.AggregateOutputs) == 0 {
+		t.Fatal("no aggregate shards")
+	}
+	for _, shard := range man.AggregateOutputs {
+		if shard.CredentialsHandle != "writer" {
+			t.Errorf("shard handle %q want writer", shard.CredentialsHandle)
+		}
+	}
+	assertStagingCleanedUp(t, home)
+}
