@@ -608,8 +608,15 @@ func TestMotoExtractMultiEagerBoundedCloudURIListParity(t *testing.T) {
 		t.Fatalf("input count %d vs %d", len(eagerIn), len(boundedIn))
 	}
 	for i := range eagerIn {
-		if eagerIn[i].SHA256 != boundedIn[i].SHA256 || eagerIn[i].Path != boundedIn[i].Path {
-			t.Fatalf("input %d %s vs %s", i, eagerIn[i].SHA256, boundedIn[i].SHA256)
+		ei, bi := eagerIn[i], boundedIn[i]
+		if ei.Path != bi.Path || ei.CredentialsHandle != bi.CredentialsHandle || ei.SHA256 != bi.SHA256 || ei.SizeBytes != bi.SizeBytes || ei.RecordType != bi.RecordType || ei.Disposition != bi.Disposition || ei.DispositionReason != bi.DispositionReason || ei.DispositionDetail != bi.DispositionDetail {
+			t.Fatalf("input %d identity differ: %+v vs %+v", i, ei, bi)
+		}
+		if (ei.RecordCount == nil) != (bi.RecordCount == nil) {
+			t.Fatalf("input %d record_count nilness", i)
+		}
+		if ei.RecordCount != nil && *ei.RecordCount != *bi.RecordCount {
+			t.Fatalf("input %d record_count %d vs %d", i, *ei.RecordCount, *bi.RecordCount)
 		}
 	}
 }
