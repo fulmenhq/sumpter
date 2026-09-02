@@ -314,18 +314,37 @@ func WriteManifestVia(ctx context.Context, target *uriio.OutputTarget, manifest 
 // resolved name; the cloud test here decides whether it is persisted. Pass "" to
 // record no handle.
 func BuildInputLedger(localPath, logicalURI, credentialsHandle string, roots ...string) (Input, error) {
-	info, err := os.Stat(localPath)
+	hash, size, err := HashLocalInput(localPath)
 	if err != nil {
 		return Input{}, fmt.Errorf("stat input %s: %w", logicalURI, err)
 	}
+	return BuildInputLedgerHashed(logicalURI, hash, size, credentialsHandle, roots...)
+}
+
+// HashLocalInput returns the sha256:<hex> digest and size of a local (or staged)
+// input file. Callers that reap a staged cloud object before commit hash while
+// the bytes still exist, then pass the result to BuildInputLedgerHashed.
+func HashLocalInput(localPath string) (string, int64, error) {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return "", 0, err
+	}
 	hash, err := fileSHA256(localPath)
 	if err != nil {
-		return Input{}, err
+		return "", 0, err
+	}
+	return hash, info.Size(), nil
+}
+
+// BuildInputLedgerHashed records provenance identity from a precomputed digest.
+func BuildInputLedgerHashed(logicalURI, sha256 string, sizeBytes int64, credentialsHandle string, roots ...string) (Input, error) {
+	if strings.TrimSpace(sha256) == "" {
+		return Input{}, fmt.Errorf("input digest is required for %s", logicalURI)
 	}
 	input := Input{
 		Path:      SanitizePath(logicalURI, roots...),
-		SHA256:    hash,
-		SizeBytes: info.Size(),
+		SHA256:    sha256,
+		SizeBytes: sizeBytes,
 	}
 	if credentialsHandle != "" {
 		if ref, classifyErr := uriio.Classify(logicalURI); classifyErr == nil && ref.IsCloud() {

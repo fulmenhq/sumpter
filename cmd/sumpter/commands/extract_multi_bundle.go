@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/antchfx/xmlquery"
 
@@ -62,6 +63,11 @@ type aggregateApplication struct {
 	file    string
 	logical string
 	ordinal int
+	// inputSHA256 / inputSize are captured from the staged (or local) bytes
+	// before bounded mode reaps the file. Empty digest falls back to hashing
+	// app.result.File at commit.
+	inputSHA256 string
+	inputSize   int64
 
 	// records are the enriched envelopes produced by the extraction core, MARSHALED on the
 	// worker (each entry is one JSON object plus a trailing newline) and retained in a
@@ -192,9 +198,11 @@ func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, l
 // externalFieldsErr, then the extraction result, then floorErr, then success (write+commit),
 // mirroring the pre-split dispatchParsedFile order.
 type perInputApplication struct {
-	file    string
-	logical string
-	ordinal int
+	file        string
+	logical     string
+	ordinal     int
+	inputSHA256 string
+	inputSize   int64
 
 	records [][]byte
 	result  extract.ExtractResult
@@ -347,7 +355,7 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 		st.dispositions.add(result, st.sanitizeRoots)
 	}
 	if st.manifestEnabled {
-		input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots...)
+		input, err := ledgerForInput(app.inputSHA256, app.inputSize, result.File, result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots)
 		if err != nil {
 			return err
 		}
@@ -472,7 +480,7 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 		st.dispositions.add(app.result, st.sanitizeRoots)
 	}
 	if st.manifestEnabled {
-		input, err := provenance.BuildInputLedger(app.result.File, app.result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots...)
+		input, err := ledgerForInput(app.inputSHA256, app.inputSize, app.result.File, app.result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots)
 		if err != nil {
 			return terminalDispatch(fmt.Errorf("recipe %q: failed to build input ledger for %s: %w", st.plan.RecipeID, app.logical, err))
 		}
@@ -535,4 +543,26 @@ func (st *recipeRunState) buildApplicationContained(ctx context.Context, file, l
 		return st.buildAggregateApplicationContained(ctx, file, logical, ordinal, doc, hook)
 	}
 	return st.buildPerInputApplicationContained(ctx, file, logical, ordinal, doc, hook)
+}
+
+func withInputDigest(app builtApplication, sha string, size int64) builtApplication {
+	switch v := app.(type) {
+	case aggregateApplication:
+		v.inputSHA256 = sha
+		v.inputSize = size
+		return v
+	case perInputApplication:
+		v.inputSHA256 = sha
+		v.inputSize = size
+		return v
+	default:
+		return app
+	}
+}
+
+func ledgerForInput(sha string, size int64, file, logical, handle string, roots []string) (provenance.Input, error) {
+	if strings.TrimSpace(sha) != "" {
+		return provenance.BuildInputLedgerHashed(logical, sha, size, handle, roots...)
+	}
+	return provenance.BuildInputLedger(file, logical, handle, roots...)
 }

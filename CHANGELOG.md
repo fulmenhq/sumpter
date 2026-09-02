@@ -10,7 +10,8 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ### Added
 
-- **Bounded cloud extract** — `extract-multi --cloud-input-mode bounded` acquires `s3://` objects from a URI `--file-list` just-in-time under run-global staging byte/count caps and a per-object max. Eager staging remains the default. Hermetic `FixtureDocument` signature/extract examples are included.
+- **Bounded cloud extract** — `extract-multi --cloud-input-mode bounded` acquires `s3://` objects from a URI `--file-list` just-in-time under run-global staging byte/count caps and a per-object max. Eager staging remains the default. Hermetic `FixtureDocument` signature/extract examples are included. Bounded mode hashes each staged object before reap so the aggregate provenance ledger does not `stat` a released path.
+
 
 ## [0.3.3] - 2026-07-27
 
