@@ -1,0 +1,45 @@
+# Hermetic extract for FixtureDocument schemaVersion="1".
+# Producer fixtures use enabled="1"/"0"; also accept enabled="true".
+record_type: fixture_record
+match_selectors:
+  - xpath: "//Record[@enabled='1' or @enabled='true']"
+field_mappings:
+  - output_field: record_id
+    xpath: RecordId
+    type: string
+  - output_field: occurred_at
+    xpath: OccurredAt
+    type: string
+  - output_field: category
+    xpath: Category
+    type: string
+  - output_field: status
+    xpath: Status
+    type: string
+  - output_field: quantity
+    xpath: Quantity
+    type: integer
+  - output_field: unit_value
+    xpath: Amount
+    type: number
+  - output_field: description
+    xpath: Label
+    type: string
+output_schema:
+  type: object
+  properties:
+    record_id:
+      type: string
+    occurred_at:
+      type: string
+    category:
+      type: string
+    status:
+      type: string
+    quantity:
+      type: integer
+    unit_value:
+      type: number
+    description:
+      type: string
+  required: [record_id, occurred_at, category, status, quantity, unit_value, description]

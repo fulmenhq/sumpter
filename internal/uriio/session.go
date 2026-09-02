@@ -13,6 +13,7 @@ import (
 
 	gonimbusmatch "github.com/3leaps/gonimbus/pkg/match"
 	gonimbusprovider "github.com/3leaps/gonimbus/pkg/provider"
+	gonimbuss3 "github.com/3leaps/gonimbus/pkg/provider/s3"
 )
 
 // stagingDirName is the subdirectory of the work directory under which cloud
@@ -27,9 +28,25 @@ type Session struct {
 	pool    *ProviderPool
 	workDir string
 	runID   string
+	budget  *StagingBudget
 
 	mu       sync.Mutex
 	stageDir string // created on first cloud acquire
+}
+
+// SetStagingBudget attaches a run-global staging cap used by bounded acquire.
+func (s *Session) SetStagingBudget(b *StagingBudget) {
+	if s != nil {
+		s.budget = b
+	}
+}
+
+// StagingSnapshot returns aggregate-only staging stats (never URIs).
+func (s *Session) StagingSnapshot() StagingStats {
+	if s == nil {
+		return StagingStats{}
+	}
+	return s.budget.Stats()
 }
 
 // NewSession builds a run session over a resolver. workDir is the resolved
@@ -165,13 +182,18 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string, maxByte
 	if err != nil {
 		return nil, err
 	}
+	secrets := s.pool.redactionSecrets(handle)
+	if s.budget != nil {
+		return s.acquireS3Bounded(ctx, prov, ref, secrets, staged, maxBytes)
+	}
+
 	body, size, err := prov.GetObject(ctx, ref.Key)
 	if err != nil {
 		// Redact + classify the cloud read error: the raw SDK error can echo
 		// credential material, and a throttle/unavailable condition is labeled so
 		// the operator knows it is transient. %s (not %w) so the raw error cannot be
 		// re-exposed by downstream wrapping.
-		return nil, fmt.Errorf("uriio: get %s failed: %s", ref.LogicalURI, cloudOpError(err, s.pool.redactionSecrets(handle)))
+		return nil, fmt.Errorf("uriio: get %s failed: %s", ref.LogicalURI, cloudOpError(err, secrets))
 	}
 	defer func() { _ = body.Close() }()
 
@@ -202,6 +224,124 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string, maxByte
 		Scheme:     SchemeS3,
 		cleanup:    func() error { return os.Remove(stagedPath) },
 	}, nil
+}
+
+func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provider, ref Ref, secrets []string, staged string, maxBytes int64) (*AcquiredSource, error) {
+	var meta *gonimbusprovider.ObjectMeta
+	if herr := s.retryTransient(ctx, func() error {
+		var e error
+		meta, e = prov.Head(ctx, ref.Key)
+		return e
+	}); herr != nil {
+		return nil, fmt.Errorf("uriio: head %s failed: %s", ref.LogicalURI, cloudOpError(herr, secrets))
+	}
+	size := meta.Size
+	if maxBytes > 0 && size > maxBytes {
+		return nil, fmt.Errorf("uriio: object %s is %d bytes, exceeding the %d-byte cap; not staged", ref.LogicalURI, size, maxBytes)
+	}
+	if err := s.budget.Admit(ctx, size); err != nil {
+		return nil, err
+	}
+	admitted := true
+	releaseAdmit := func() {
+		if admitted {
+			s.budget.Release(size)
+			admitted = false
+		}
+	}
+
+	var body io.ReadCloser
+	if gerr := s.retryTransient(ctx, func() error {
+		var e error
+		var got int64
+		body, got, e = prov.GetObject(ctx, ref.Key)
+		if e != nil {
+			return e
+		}
+		if maxBytes > 0 && got > maxBytes {
+			_ = body.Close()
+			body = nil
+			return fmt.Errorf("uriio: object %s is %d bytes, exceeding the %d-byte cap; not staged", ref.LogicalURI, got, maxBytes)
+		}
+		if err := StagingGetSizeMismatch(size, got); err != nil {
+			_ = body.Close()
+			body = nil
+			return err
+		}
+		return nil
+	}); gerr != nil {
+		releaseAdmit()
+		if body != nil {
+			_ = body.Close()
+		}
+		return nil, fmt.Errorf("uriio: get %s failed: %s", ref.LogicalURI, cloudOpError(gerr, secrets))
+	}
+	defer func() { _ = body.Close() }()
+
+	// Bound the write to admitted+1 so a longer stream cannot silently inflate
+	// the run-global byte reservation; then compare the on-disk size.
+	reader := io.LimitReader(body, size+1)
+	if err := writeStagedFile(staged, reader); err != nil {
+		releaseAdmit()
+		return nil, err
+	}
+	if err := StagedBytesExceedAdmit(staged, size); err != nil {
+		_ = os.Remove(staged)
+		releaseAdmit()
+		return nil, err
+	}
+	stagedPath := staged
+	budget := s.budget
+	return &AcquiredSource{
+		LogicalURI: ref.LogicalURI,
+		LocalPath:  staged,
+		Scheme:     SchemeS3,
+		cleanup: func() error {
+			rmErr := os.Remove(stagedPath)
+			if rmErr != nil {
+				if budget != nil {
+					budget.NoteCleanupFailure()
+				}
+				return rmErr
+			}
+			releaseAdmit()
+			return nil
+		},
+	}, nil
+}
+
+// retryTransient retries classified throttle/unavailable errors with a small
+// cap. Credential, access-denied, and not-implemented errors fail immediately.
+func (s *Session) retryTransient(ctx context.Context, op func() error) error {
+	var last error
+	for attempt := 0; attempt <= acquireRetryLimit; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		last = op()
+		if last == nil {
+			return nil
+		}
+		throttled := gonimbusprovider.IsThrottled(last)
+		unavail := gonimbusprovider.IsProviderUnavailable(last)
+		if !throttled && !unavail {
+			return last
+		}
+		if attempt == acquireRetryLimit {
+			return last
+		}
+		if s.budget != nil {
+			s.budget.NoteRetry(throttled)
+		}
+		timer := time.NewTimer(acquireBackoff(attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return last
 }
 
 // outputStagingDirName is the subdirectory of the run staging directory under

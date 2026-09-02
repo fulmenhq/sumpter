@@ -1,0 +1,9 @@
+# Hermetic signature for FixtureDocument schemaVersion="1" (synthetic generic XML).
+signature_id: fulseed-fixture-document-v1
+name: FixtureDocument v1
+match_patterns:
+  - pattern_id: fixture-document-root
+    name: FixtureDocument root
+    selector: /FixtureDocument[@schemaVersion='1']
+    weight: 1
+confidence_threshold: 1

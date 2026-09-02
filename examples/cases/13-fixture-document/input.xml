@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FixtureDocument schemaVersion="1">
+  <Header>
+    <Profile>xml_records_v1/1</Profile>
+    <ContentBaseOrdinal>000000000000</ContentBaseOrdinal>
+    <RecordCount>3</RecordCount>
+  </Header>
+  <Record ordinal="0" enabled="0">
+    <RecordId>disabled-record</RecordId>
+    <OccurredAt>2031-05-21T04:52:26Z</OccurredAt>
+    <Category>cat-d</Category>
+    <Status>done</Status>
+    <Quantity>1</Quantity>
+    <Amount>1.00</Amount>
+    <Label>disabled</Label>
+  </Record>
+  <Record ordinal="1" enabled="1">
+    <RecordId>a571fba57d8ddcd1b293c9201f8a2222</RecordId>
+    <OccurredAt>2024-07-10T19:09:46Z</OccurredAt>
+    <Category>cat-d</Category>
+    <Status>held</Status>
+    <Quantity>10520105</Quantity>
+    <Amount>7655.85</Amount>
+    <Label>id=55bb42ef a&amp;b&lt;c&gt;</Label>
+  </Record>
+  <Record ordinal="2" enabled="1">
+    <RecordId>92191540a241f72377ca20f542ba3810</RecordId>
+    <OccurredAt>2024-11-23T21:25:45Z</OccurredAt>
+    <Category>cat-a</Category>
+    <Status>held</Status>
+    <Quantity>95456632</Quantity>
+    <Amount>5560.93</Amount>
+    <Label>id=88e03d7d a&amp;b&lt;c&gt;</Label>
+  </Record>
+</FixtureDocument>
