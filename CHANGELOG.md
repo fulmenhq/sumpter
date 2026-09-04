@@ -8,11 +8,24 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-09-04
+
+**Bounded cloud extract with distinct logical reader and writer handles.**
+
+See [`docs/releases/v0.3.4.md`](docs/releases/v0.3.4.md) for the full release narrative. Operator notes: [`docs/extract-workflow.md`](docs/extract-workflow.md).
+
 ### Added
 
-- **Bounded cloud extract** — `extract-multi --cloud-input-mode bounded` acquires `s3://` objects from a URI `--file-list` just-in-time under run-global staging byte/count caps and a per-object max. Eager staging remains the default. Hermetic `FixtureDocument` signature/extract examples are included. Bounded mode hashes each staged object before reap so the aggregate provenance ledger does not `stat` a released path.
+- **Bounded cloud extract** — `extract-multi --cloud-input-mode bounded` acquires `s3://` objects from a URI `--file-list` just-in-time under run-global staging byte/count caps and a per-object max. Eager staging remains the default. Hermetic `FixtureDocument` signature/extract examples are included. Bounded mode hashes each staged object before reap so the aggregate provenance ledger does not `stat` a released path. Objects above the per-object cap are refused before staging.
 - **extract-multi cloud examples** — public workflow docs show CLI reader handle vs recipe-owned writer handle, a positive `--aggregate-max-bytes` cap, and the 5 GiB single-PUT ceiling. `extract-multi` does not take `--output-credentials-handle`.
+- **VERSION bumped to `0.3.4`.**
 
+### Deferred
+
+- Nested item/polymorphic `internal: true` remains deferred.
+- Process-run control socket / run-steering surface remains a later release track (unchanged from v0.3.1 / v0.3.2 / v0.3.3).
+- Richer data-artifact validation, cross-artifact lineage, and full semantic L3 claims remain follow-on (unchanged).
+- Million-object scale characterization of bounded cloud extract is not part of this cut.
 
 ## [0.3.3] - 2026-07-27
 
