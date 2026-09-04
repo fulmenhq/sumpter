@@ -589,6 +589,37 @@ Processing **many files in one invocation** is a supported, first-class workflow
 
 **Bounded cloud input** (`extract-multi --cloud-input-mode bounded`) acquires `s3://` objects just-in-time instead of staging the whole list first. Peak staged **bytes** and **file count** are run-global (`--cloud-staging-max-bytes`, `--cloud-staging-max-files`) with a per-object cap (`--cloud-object-max-bytes`). An object larger than either the per-object cap or the total byte budget fails before staging. Fetch/parse may complete out of order; aggregate output still commits in URI-list order. Staged files are released after parse, before ordered commit. Local-only lists never open a cloud session. The default mode remains `eager`.
 
+The shared CLI selects the **reader** handle (`--input-credentials-handle`). Each recipe declares its own **writer** handle. `extract-multi` does **not** take `--output-credentials-handle`; a shared output override would collide with recipes that use different writers. Cloud aggregate still **requires a positive `--aggregate-max-bytes`** at or below the 5 GiB single-PUT limit.
+
+```bash
+# Cloud URI list → local aggregate
+sumpter recipes run extract-multi ./recipes/summary \
+  --file-list ./batch/uris.txt \
+  --output-path ./out \
+  --output-mode aggregate \
+  --credentials ./credentials.yaml \
+  --input-credentials-handle reader \
+  --cloud-input-mode bounded \
+  --cloud-staging-max-bytes 1073741824 \
+  --cloud-staging-max-files 64 \
+  --cloud-object-max-bytes 8388608
+```
+
+```bash
+# Cloud URI list → cloud aggregate (recipe YAML names defaults.output.credentials_handle)
+sumpter recipes run extract-multi ./recipes/summary \
+  --file-list ./batch/uris.txt \
+  --output-path s3://archive-bucket/extracted/ \
+  --output-mode aggregate \
+  --aggregate-max-bytes 134217728 \
+  --credentials ./credentials.yaml \
+  --input-credentials-handle reader \
+  --cloud-input-mode bounded \
+  --cloud-staging-max-bytes 1073741824 \
+  --cloud-staging-max-files 64 \
+  --cloud-object-max-bytes 8388608
+```
+
 A hermetic `FixtureDocument` recipe pair lives at `examples/config/extract/fulseed-fixture-document-v1-*.yaml` (case `examples/cases/13-fixture-document`).
 
 ### Recipe Parameters
@@ -1399,12 +1430,17 @@ handles:
   fails. **No secrets ever belong in recipe YAML.**
 - **CLI selection and override.** `--credential <handle>=<profile>` overrides (or
   defines) a handle's profile from the command line — a reference, never a raw
-  key, so secrets stay out of `argv`, `ps`, and shell history. `--input-credentials-handle <name>`
-  and `--output-credentials-handle <name>` select the handles used for the
+  key, so secrets stay out of `argv`, `ps`, and shell history. On
+  `recipes run extract`, `--input-credentials-handle <name>` and
+  `--output-credentials-handle <name>` select the handles used for the
   **input** and **output** sides independently, so a `cloud→cloud` run can read
   from one account and write to another. Each side resolves as: its CLI selector,
   otherwise the recipe's declared handle (below), otherwise the `default` handle.
-- **From a recipe.** `sumpter recipes run` accepts the same credential flags
+  On `recipes run extract-multi`, the shared CLI selects only the **reader**
+  (`--input-credentials-handle`); each recipe's `defaults.output.credentials_handle`
+  owns the writer. There is no shared `--output-credentials-handle` on
+  extract-multi.
+- **From a recipe.** `sumpter recipes run extract` accepts the credential flags
   (`--credentials`, `--credential`, `--input-credentials-handle`,
   `--output-credentials-handle`), and a recipe can name its handles inline:
 
@@ -1426,8 +1462,10 @@ handles:
   ```
 
   A recipe carries a handle **name** only — never key material; the
-  no-secrets-in-recipe-YAML rule holds. A `--input-credentials-handle` /
-  `--output-credentials-handle` CLI value overrides the recipe's declared handle.
+  no-secrets-in-recipe-YAML rule holds. On `run extract`, a
+  `--input-credentials-handle` / `--output-credentials-handle` CLI value
+  overrides the recipe's declared handle. On `extract-multi`, only
+  `--input-credentials-handle` is a shared CLI override.
 
 - **Default-chain vs hermetic posture.** A handle with no `endpoint` and no
   explicit keys uses the **ambient AWS default credential chain** — convenient,

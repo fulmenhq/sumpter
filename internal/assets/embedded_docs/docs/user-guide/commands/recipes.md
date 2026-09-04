@@ -118,8 +118,10 @@ the read/parse cost is amortized from ~N× to 1× across N recipes — the domin
 cost at high file counts (many small files). Each recipe writes to its own
 `<output-path>/<recipe-id>/` subdirectory (records, `manifest.json`, and
 `dispositions.json` / `failures.json` when applicable); output, formats,
-`defaults.parameters`, reference tables, and credential handles are per recipe
-(from each manifest). The input set, `--output-path` root, and run-level controls
+`defaults.parameters`, reference tables, and **writer** credential handles are
+per recipe (from each manifest). The shared CLI may select `--input-credentials-handle`
+for cloud sources; there is no `--output-credentials-handle` on extract-multi.
+The input set, `--output-path` root, and run-level controls
 (`--continue-on-error`, credentials, the shared run id resolved once from
 `--run-id` → `SUMPTER_RUN_ID` → generated) are shared.
 

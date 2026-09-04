@@ -19,6 +19,7 @@
 package commands
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -475,4 +476,199 @@ func TestMotoExtractMultiCloudApplicationConcurrentAndDigests(t *testing.T) {
 		}
 	}
 	assertStagingCleanedUp(t, home)
+}
+
+// TestMotoExtractMultiBoundedCloudURIListDistinctHandles proves bounded
+// cloud URI-list input to aggregate cloud output uses the shared CLI reader
+// handle and the recipe-owned writer handle independently.
+func TestMotoExtractMultiBoundedCloudURIListDistinctHandles(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	initExtractManifestTestLogger(t)
+	dir := t.TempDir()
+	credPath := m.writeNamedCredentialsConfig(t, dir, "reader", "writer")
+	ws := writeMultiCloudRecipeWorkspace(t, "summary", "writer")
+
+	aKey := runKeyPrefix() + "in/a.xml"
+	bKey := runKeyPrefix() + "in/b.xml"
+	m.putObject(t, aKey, []byte(`<root><TargetElement><Name>A</Name></TargetElement></root>`))
+	m.putObject(t, bKey, []byte(`<root><TargetElement><Name>B</Name></TargetElement></root>`))
+	list := filepath.Join(dir, "uris.txt")
+	mustWriteFile(t, list, "s3://"+m.bucket+"/"+aKey+"\ns3://"+m.bucket+"/"+bKey+"\n")
+
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+	prefix := runKeyPrefix() + "mc-handles/"
+	shared := &multiSharedOptions{
+		FileList:               list,
+		OutputPath:             "s3://" + m.bucket + "/" + prefix,
+		OutputMode:             outputModeAggregate,
+		RunID:                  testMultiRunID,
+		AggregateMaxBytes:      1 << 20,
+		CredentialsPath:        credPath,
+		InputCredentialsHandle: "reader",
+		CloudInputMode:         cloudInputModeBounded,
+		CloudStagingMaxFiles:   4,
+		CloudStagingMaxBytes:   1 << 20,
+		CloudObjectMaxBytes:    1 << 20,
+	}
+	if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	manData, ok := m.getObject(t, prefix+"summary/manifest.json")
+	if !ok {
+		t.Fatal("manifest not published")
+	}
+	var man provenance.Manifest
+	if err := json.Unmarshal(manData, &man); err != nil {
+		t.Fatal(err)
+	}
+	if len(man.Inputs) != 2 {
+		t.Fatalf("inputs %d", len(man.Inputs))
+	}
+	for _, in := range man.Inputs {
+		if in.CredentialsHandle != "reader" {
+			t.Errorf("input handle %q want reader", in.CredentialsHandle)
+		}
+	}
+	if len(man.AggregateOutputs) == 0 {
+		t.Fatal("no aggregate shards")
+	}
+	for _, shard := range man.AggregateOutputs {
+		if shard.CredentialsHandle != "writer" {
+			t.Errorf("shard handle %q want writer", shard.CredentialsHandle)
+		}
+	}
+	assertStagingCleanedUp(t, home)
+}
+
+func generatedPaddedXML(size int) []byte {
+	const prefix = `<?xml version="1.0"?><root><TargetElement><Name>pad</Name><Pad>`
+	const suffix = `</Pad></TargetElement></root>`
+	n := size - len(prefix) - len(suffix)
+	if n < 1 {
+		n = 1
+	}
+	return append(append([]byte(prefix), bytes.Repeat([]byte("x"), n)...), suffix...)
+}
+
+func TestMotoExtractMultiEagerBoundedCloudURIListParity(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	initExtractManifestTestLogger(t)
+	dir := t.TempDir()
+	credPath := m.writeNamedCredentialsConfig(t, dir, "reader")
+	ws := writeMultiCloudRecipeWorkspace(t, "summary", "writer")
+	aKey := runKeyPrefix() + "parity/a.xml"
+	bKey := runKeyPrefix() + "parity/b.xml"
+	m.putObject(t, aKey, []byte(`<root><TargetElement><Name>A</Name></TargetElement></root>`))
+	m.putObject(t, bKey, []byte(`<root><TargetElement><Name>B</Name></TargetElement></root>`))
+	list := filepath.Join(dir, "uris.txt")
+	mustWriteFile(t, list, "s3://"+m.bucket+"/"+aKey+"\ns3://"+m.bucket+"/"+bKey+"\n")
+
+	run := func(mode string) (records string, inputs []provenance.Input) {
+		t.Helper()
+		home := t.TempDir()
+		t.Setenv("SUMPTER_HOME", home)
+		out := t.TempDir()
+		shared := &multiSharedOptions{
+			FileList:               list,
+			OutputPath:             out,
+			OutputMode:             outputModeAggregate,
+			RunID:                  testMultiRunID,
+			CredentialsPath:        credPath,
+			InputCredentialsHandle: "reader",
+			CloudInputMode:         mode,
+			CloudStagingMaxBytes:   1 << 20,
+			CloudStagingMaxFiles:   4,
+			CloudObjectMaxBytes:    1 << 20,
+		}
+		if err := runExtractMulti(shared, []string{ws}, io.Discard, time.Now()); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		rec, err := os.ReadFile(filepath.Join(out, "summary", "records.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		manRaw, err := os.ReadFile(filepath.Join(out, "summary", "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var man provenance.Manifest
+		if err := json.Unmarshal(manRaw, &man); err != nil {
+			t.Fatal(err)
+		}
+		return volatileGeneratedAtRE.ReplaceAllString(string(rec), `"generated_at":""`), man.Inputs
+	}
+
+	eagerRec, eagerIn := run(cloudInputModeEager)
+	boundedRec, boundedIn := run(cloudInputModeBounded)
+	if eagerRec != boundedRec {
+		t.Fatalf("eager/bounded cloud records differ")
+	}
+	if len(eagerIn) != len(boundedIn) {
+		t.Fatalf("input count %d vs %d", len(eagerIn), len(boundedIn))
+	}
+	for i := range eagerIn {
+		ei, bi := eagerIn[i], boundedIn[i]
+		if ei.Path != bi.Path || ei.CredentialsHandle != bi.CredentialsHandle || ei.SHA256 != bi.SHA256 || ei.SizeBytes != bi.SizeBytes || ei.RecordType != bi.RecordType || ei.Disposition != bi.Disposition || ei.DispositionReason != bi.DispositionReason || ei.DispositionDetail != bi.DispositionDetail {
+			t.Fatalf("input %d identity differ: %+v vs %+v", i, ei, bi)
+		}
+		if (ei.RecordCount == nil) != (bi.RecordCount == nil) {
+			t.Fatalf("input %d record_count nilness", i)
+		}
+		if ei.RecordCount != nil && *ei.RecordCount != *bi.RecordCount {
+			t.Fatalf("input %d record_count %d vs %d", i, *ei.RecordCount, *bi.RecordCount)
+		}
+	}
+}
+
+func TestMotoExtractMultiBoundedSevenMiBObject(t *testing.T) {
+	m := motoEnvOrSkip(t)
+	initExtractManifestTestLogger(t)
+	dir := t.TempDir()
+	credPath := m.writeNamedCredentialsConfig(t, dir, "reader")
+	ws := writeMultiCloudRecipeWorkspace(t, "summary", "writer")
+	const seven = 7 << 20
+	const eight = 8 << 20
+	okKey := runKeyPrefix() + "canary/seven.xml"
+	m.putObject(t, okKey, generatedPaddedXML(seven))
+	okList := filepath.Join(dir, "ok.txt")
+	mustWriteFile(t, okList, "s3://"+m.bucket+"/"+okKey+"\n")
+	home := t.TempDir()
+	t.Setenv("SUMPTER_HOME", home)
+	out := t.TempDir()
+	okShared := &multiSharedOptions{
+		FileList:               okList,
+		OutputPath:             out,
+		OutputMode:             outputModeAggregate,
+		RunID:                  testMultiRunID,
+		CredentialsPath:        credPath,
+		InputCredentialsHandle: "reader",
+		CloudInputMode:         cloudInputModeBounded,
+		CloudStagingMaxBytes:   64 << 20,
+		CloudStagingMaxFiles:   2,
+		CloudObjectMaxBytes:    eight,
+	}
+	if err := runExtractMulti(okShared, []string{ws}, io.Discard, time.Now()); err != nil {
+		t.Fatalf("7 MiB under 8 MiB cap: %v", err)
+	}
+	rec, err := os.ReadFile(filepath.Join(out, "summary", "records.jsonl"))
+	if err != nil || strings.Count(string(rec), "\n") < 1 {
+		t.Fatalf("7 MiB extract produced no records: %v", err)
+	}
+	assertStagingCleanedUp(t, home)
+
+	badKey := runKeyPrefix() + "canary/over.xml"
+	m.putObject(t, badKey, generatedPaddedXML(eight+1))
+	badList := filepath.Join(dir, "bad.txt")
+	mustWriteFile(t, badList, "s3://"+m.bucket+"/"+badKey+"\n")
+	failHome := t.TempDir()
+	t.Setenv("SUMPTER_HOME", failHome)
+	badShared := *okShared
+	badShared.FileList = badList
+	badShared.OutputPath = t.TempDir()
+	err = runExtractMulti(&badShared, []string{ws}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "exceeding the") || !strings.Contains(err.Error(), "not staged") {
+		t.Fatalf("above-cap want loud oversize / not staged error, got %v", err)
+	}
+	assertStagingCleanedUp(t, failHome)
 }

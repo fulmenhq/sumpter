@@ -11,6 +11,32 @@ import (
 	"github.com/fulmenhq/sumpter/internal/uriio"
 )
 
+func TestStagingBudgetSevenMiBAdmittedUnderEightMiBCap(t *testing.T) {
+	const sevenMiB = 7 << 20
+	const eightMiB = 8 << 20
+	b := uriio.NewStagingBudget(uriio.StagingBudgetConfig{
+		MaxBytes:  64 << 20,
+		MaxFiles:  4,
+		ObjectMax: eightMiB,
+	})
+	if err := b.Admit(context.Background(), sevenMiB); err != nil {
+		t.Fatalf("7 MiB under 8 MiB cap: %v", err)
+	}
+	b.Release(sevenMiB)
+	refuse := uriio.NewStagingBudget(uriio.StagingBudgetConfig{
+		MaxBytes:  64 << 20,
+		MaxFiles:  4,
+		ObjectMax: eightMiB,
+	})
+	err := refuse.Admit(context.Background(), eightMiB+1)
+	if err == nil || !strings.Contains(err.Error(), "per-object cap") {
+		t.Fatalf("above-cap must fail before admit: err=%v", err)
+	}
+	if st := refuse.Stats(); st.PeakFiles != 0 || st.AcquiredCount != 0 {
+		t.Fatalf("above-cap must not reserve: %+v", st)
+	}
+}
+
 func TestStagingBudgetOversizeFailsBeforeAdmit(t *testing.T) {
 	b := uriio.NewStagingBudget(uriio.StagingBudgetConfig{MaxBytes: 1000, MaxFiles: 4, ObjectMax: 100})
 	err := b.Admit(context.Background(), 101)
