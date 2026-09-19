@@ -207,7 +207,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	}
 
 	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of file paths to process (short ad hoc sets; subject to the shell argv limit — use --file-list for large batches)")
-	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local paths or s3:// URIs), one per line; blank lines and # comments ignored. No directory walk, no argv limit — the batch input for large/precise sets. Mutually exclusive with --files and --input-path")
+	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local paths or s3:// URIs), one per line; blank lines and # comments ignored. No directory walk, no argv limit — the batch input for large/precise sets. A line may instead be a JSON object {\"uri\",\"size\",\"sha256\"} declaring the input's exact bytes (fail-closed). Mutually exclusive with --files and --input-path")
 	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory (or single file) to process; walks the tree and filters by --include-pattern/--exclude-pattern. The walk enumerates the whole tree before filtering and announces progress on large trees — for large or precisely-scoped sets prefer --file-list. Mutually exclusive with --files and --file-list")
 	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "*.xml", "File inclusion pattern (use quotes for globs: \"*.xml\")")
 	cmd.Flags().StringVar(&opts.ExcludePattern, "exclude-pattern", "", "File exclusion pattern (use quotes for globs: \"temp/*\")")
@@ -543,7 +543,7 @@ func runExtract(opts *ExtractOptions) error {
 	// carries local read paths; logicalByLocal maps each staged path back to its
 	// logical URI so provenance, manifests, and output naming record the logical
 	// source identity, never the staged working path.
-	files, logicalByLocal, session, err := resolveInputSources(context.Background(), opts, runtimeProvenance.RunID)
+	files, logicalByLocal, decls, session, err := resolveInputSources(context.Background(), opts, runtimeProvenance.RunID)
 	if err != nil {
 		return err
 	}
@@ -585,11 +585,11 @@ func runExtract(opts *ExtractOptions) error {
 		// output that should have failed. When floors are declared (or --continue-on-error
 		// is set) the writer buffers per input, so this holds for cloud too — a discarded
 		// input is never published. See runAggregateJSONStreamingExtraction.
-		return runAggregateJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
+		return runAggregateJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, decls, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 
 	if shouldUseSequentialJSONStreaming(opts, extCfg, outputFormats) {
-		return runSequentialJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
+		return runSequentialJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, decls, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 	warnSequentialMinOccurrencesBufferedFallback(logger, opts, extCfg, outputFormats)
 
@@ -609,8 +609,24 @@ func runExtract(opts *ExtractOptions) error {
 	var dispositionFailure error
 
 	// For now, serial processing
-	for _, file := range files {
+	identities := make([]*inputIdentity, len(files))
+	for i, file := range files {
 		logical := logicalIdentity(file, logicalByLocal)
+		// Integrity-bound file-list inputs verify declared content identity BEFORE
+		// the bytes are parsed. The verified bytes are a private snapshot that the
+		// parse below reads, so verification and parsing cannot be separated by a
+		// concurrent mutation; the snapshot is removed once this input is done.
+		// A mismatch runs the standard failed-input path (no records, attributed).
+		var snap *declaredInputSnapshot
+		if decl := declarationAt(decls, i+1); decl != nil {
+			s, verr := snapshotAndVerifyDeclaredInput(file, decl)
+			if verr != nil {
+				results <- recoverableFailureResult(file, logical, fmt.Errorf("input %d (%s): %w", i+1, logical, verr), extract.DispositionReasonParseError)
+				continue
+			}
+			snap = s
+			identities[i] = &inputIdentity{sha256: s.SHA256, size: s.Size}
+		}
 		// source_extraction derives record fields from the source identity (its
 		// filename/absolute/relative path), so it must see the logical URI — never
 		// the staged local path — for cloud inputs. It reads no file bytes, so the
@@ -618,6 +634,7 @@ func runExtract(opts *ExtractOptions) error {
 		// string as the read path.
 		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if err != nil {
+			snap.Remove() // nil-safe; the verified snapshot is no longer needed
 			if opts.ContinueOnError {
 				result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
 				results <- result
@@ -630,16 +647,29 @@ func runExtract(opts *ExtractOptions) error {
 		// ExtractResult.LogicalURI) record the logical URI; bytes are still read
 		// from the local staged path. For local sources rp is unchanged.
 		rp := runtimeProvenance
-		if file != logical {
+		if file != logical || snap != nil {
 			rp.SourceURI = logical
 		}
-		result := extract.ProcessFileWithApplicability(file, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp)
+		readPath := file
+		if snap != nil {
+			// Read the verified snapshot, not the mutable source path, so the bytes
+			// that were hashed are the bytes that get parsed.
+			readPath = snap.Path
+		}
+		result := extract.ProcessFileWithApplicability(readPath, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp)
+		if snap != nil {
+			result.File = file
+			snap.Remove()
+		}
 		results <- result
 	}
 	close(results)
 
-	// Collect and output results
+	// Collect and output results (send order keeps the ordinal index aligned)
+	ri := 0
 	for result := range results {
+		ident := identities[ri]
+		ri++
 		if result.Disposition == extract.DispositionFailed {
 			if result.Error != nil {
 				logger.Error("Failed to process file",
@@ -656,7 +686,7 @@ func runExtract(opts *ExtractOptions) error {
 				failureManifest.add(result.LogicalURI, result.DispositionReason, detail, sanitizeRoots)
 			}
 			if manifestEnabled {
-				input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+				input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 				if err != nil {
 					if opts.ContinueOnError {
 						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.LogicalURI), zap.Error(err))
@@ -689,7 +719,7 @@ func runExtract(opts *ExtractOptions) error {
 				result.DispositionDetail = result.Error.Error()
 				failureManifest.add(result.LogicalURI, reason, result.Error.Error(), sanitizeRoots)
 				if manifestEnabled {
-					input, ledgerErr := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+					input, ledgerErr := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 					if ledgerErr != nil {
 						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.LogicalURI), zap.Error(ledgerErr))
 					} else {
@@ -718,7 +748,7 @@ func runExtract(opts *ExtractOptions) error {
 						failureManifest.add(result.LogicalURI, reason, err.Error(), sanitizeRoots)
 					}
 					if manifestEnabled {
-						input, ledgerErr := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+						input, ledgerErr := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 						if ledgerErr != nil {
 							return ledgerErr
 						}
@@ -740,7 +770,7 @@ func runExtract(opts *ExtractOptions) error {
 		}
 
 		if manifestEnabled {
-			input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+			input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 			if err != nil {
 				return err
 			}
@@ -1109,7 +1139,7 @@ func isJSONOutputFailure(err error) bool {
 	return errors.Is(err, errJSONOutput)
 }
 
-func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
+func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, decls []*fileListDeclaration, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
 	logger := logging.GetLogger()
 	ctx := context.Background()
 	manifestEnabled := shouldWriteManifest(opts)
@@ -1125,8 +1155,34 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 	failureManifest := newExtractFailureManifest(len(files))
 	var dispositionFailure error
 
-	for _, file := range files {
+	for i, file := range files {
 		logical := logicalIdentity(file, logicalByLocal)
+		// Integrity-bound file-list inputs verify declared content identity BEFORE
+		// parse/output. The verified bytes are a private snapshot that the parse
+		// below reads, so verification and parsing cannot be separated by a
+		// concurrent mutation; the snapshot is removed once this input is done.
+		// A mismatch runs the standard failed-input path (no output file, no
+		// records, attributed).
+		var (
+			ident *inputIdentity
+			snap  *declaredInputSnapshot
+		)
+		if decl := declarationAt(decls, i+1); decl != nil {
+			s, verr := snapshotAndVerifyDeclaredInput(file, decl)
+			if verr != nil {
+				verifyErr := fmt.Errorf("input %d (%s): %w", i+1, logical, verr)
+				if !opts.ContinueOnError {
+					return verifyErr
+				}
+				result := recoverableFailureResult(file, logical, verifyErr, extract.DispositionReasonParseError)
+				if err := recordFailedSequentialResult(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, manifestEnabled, logger); err != nil {
+					return err
+				}
+				continue
+			}
+			snap = s
+			ident = &inputIdentity{sha256: s.SHA256, size: s.Size}
+		}
 		// source_extraction derives record fields from the source identity (its
 		// filename/absolute/relative path), so it must see the logical URI — never
 		// the staged local path — for cloud inputs. It reads no file bytes, so the
@@ -1134,6 +1190,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		// string as the read path.
 		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if err != nil {
+			snap.Remove() // nil-safe; the verified snapshot is no longer needed
 			if !opts.ContinueOnError {
 				return fmt.Errorf("failed to build external fields for file %s: %w", logical, err)
 			}
@@ -1149,15 +1206,25 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		// path passed to the extraction core below.
 		target, err := newJSONOutputTarget(opts, logical)
 		if err != nil {
+			snap.Remove() // nil-safe
 			return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, logical), err)
 		}
 		beginValueProfileInput(opts)
 		rp := runtimeProvenance
-		if file != logical {
+		if file != logical || snap != nil {
 			rp.SourceURI = logical
 		}
-		result := extract.ProcessFileWithApplicabilityToSink(ctx, file, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp, target)
+		readPath := file
+		if snap != nil {
+			// Read the verified snapshot, not the mutable source path.
+			readPath = snap.Path
+		}
+		result := extract.ProcessFileWithApplicabilityToSink(ctx, readPath, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp, target)
 		closeErr := target.Close(ctx)
+		if snap != nil {
+			result.File = file
+			snap.Remove()
+		}
 
 		if result.Error != nil || result.Disposition == extract.DispositionFailed {
 			originalDisposition := result.Disposition
@@ -1201,7 +1268,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 			dispositionSummary.add(result, sanitizeRoots)
 		}
 		if manifestEnabled {
-			input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+			input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 			if err != nil {
 				return err
 			}
@@ -2911,12 +2978,12 @@ func referencesIncludeCloud(opts *ExtractOptions) (bool, error) {
 		// A file-list can carry s3:// refs, so the session-need check must read it (the
 		// same refs discoverInputReferences will use). readFileListRefs validates each
 		// entry's scheme with line context.
-		refs, err := readFileListRefs(opts.FileList)
+		entries, err := readFileListRefs(opts.FileList)
 		if err != nil {
 			return false, err
 		}
-		for _, ref := range refs {
-			cloud, cerr := isCloud(ref)
+		for _, entry := range entries {
+			cloud, cerr := isCloud(entry.Ref)
 			if cerr != nil {
 				return false, cerr
 			}
@@ -3336,8 +3403,17 @@ func discoverInputReferences(ctx context.Context, session *uriio.Session, opts *
 	if opts.FileList != "" {
 		// Batch file-list input: the orchestrator supplies the exact set of
 		// references (local or s3://) — no directory walk, no argv ceiling. Refs are
-		// acquired through the same read boundary as --files entries.
-		return readFileListRefs(opts.FileList)
+		// acquired through the same read boundary as --files entries. Integrity-bound
+		// object lines carry a declaration; this preview path needs only the refs.
+		entries, eerr := readFileListRefs(opts.FileList)
+		if eerr != nil {
+			return nil, eerr
+		}
+		refs := make([]string, len(entries))
+		for i := range entries {
+			refs[i] = entries[i].Ref
+		}
+		return refs, nil
 	}
 	if opts.Files != "" {
 		refs := make([]string, 0)
@@ -3434,33 +3510,57 @@ func discoverInputReferencesForPreview(ctx context.Context, opts *ExtractOptions
 
 // resolveInputSources discovers and acquires the run's input files through the
 // uriio read boundary. It returns the local read paths (in discovery order), a
-// localPath->logicalURI map for the staged cloud sources, and the run session
-// (nil for an all-local run). The caller owns Close on the returned session.
-func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string) ([]string, map[string]string, *uriio.Session, error) {
+// localPath->logicalURI map for the staged cloud sources, the file-list
+// declarations by input ordinal (nil entries for URI-only lines; nil slice when
+// the run did not use a file list), and the run session (nil for an all-local
+// run). The caller owns Close on the returned session.
+func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string) ([]string, map[string]string, []*fileListDeclaration, *uriio.Session, error) {
 	cloud, err := referencesIncludeCloud(opts)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	var session *uriio.Session
 	if cloud {
 		session, err = newCloudSession(opts, runID)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
-	refs, err := discoverInputReferences(ctx, session, opts)
-	if err != nil {
-		if session != nil {
-			_ = session.Close()
+	var (
+		refs  []string
+		decls []*fileListDeclaration
+	)
+	if strings.TrimSpace(opts.FileList) != "" {
+		// File-list: read entries so declarations ride the input ordinal exactly as
+		// the references do (never a path-keyed map).
+		entries, eerr := readFileListRefs(opts.FileList)
+		if eerr != nil {
+			if session != nil {
+				_ = session.Close()
+			}
+			return nil, nil, nil, nil, eerr
 		}
-		return nil, nil, nil, err
+		refs = make([]string, len(entries))
+		decls = make([]*fileListDeclaration, len(entries))
+		for i := range entries {
+			refs[i] = entries[i].Ref
+			decls[i] = entries[i].Declaration
+		}
+	} else {
+		refs, err = discoverInputReferences(ctx, session, opts)
+		if err != nil {
+			if session != nil {
+				_ = session.Close()
+			}
+			return nil, nil, nil, nil, err
+		}
 	}
 
 	if boundedCloudInput(opts) {
 		attachStagingBudget(session, opts)
 		// Bounded mode discovers only. Acquire happens just-in-time in the
 		// extract pipeline so peak staging obeys the run-global budgets.
-		return refs, map[string]string{}, session, nil
+		return refs, map[string]string{}, decls, session, nil
 	}
 
 	files := make([]string, 0, len(refs))
@@ -3476,7 +3576,7 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 			if session != nil {
 				_ = session.Close()
 			}
-			return nil, nil, nil, fmt.Errorf("resolve input %s: %w", ref, err)
+			return nil, nil, nil, nil, fmt.Errorf("resolve input %s: %w", ref, err)
 		}
 		files = append(files, src.LocalPath)
 		// Only cloud sources carry a distinct logical identity. file:// stays a
@@ -3486,7 +3586,7 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 			logicalByLocal[src.LocalPath] = src.LogicalURI
 		}
 	}
-	return files, logicalByLocal, session, nil
+	return files, logicalByLocal, decls, session, nil
 }
 
 func discoverInputFiles(opts *ExtractOptions) ([]string, error) {

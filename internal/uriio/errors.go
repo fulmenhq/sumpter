@@ -17,6 +17,12 @@ var (
 	// wired in this build. It is returned for s3:// references until the cloud
 	// read/write boundaries land in a later v0.2.0 delivery.
 	ErrSchemeNotImplemented = errors.New("uriio: scheme not yet implemented")
+
+	// ErrDeclaredSizeMismatch indicates a declared-size gate failure: the source's
+	// size metadata did not equal the size declared in the input list, so no bytes
+	// were staged. Callers may match it with errors.Is to attribute the per-input
+	// verification failure.
+	ErrDeclaredSizeMismatch = errors.New("uriio: declared size mismatch")
 )
 
 // LocalPath classifies ref and returns its local filesystem path. file:// URIs

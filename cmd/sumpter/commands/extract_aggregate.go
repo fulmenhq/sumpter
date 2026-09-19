@@ -504,7 +504,7 @@ func (w *aggregateWriter) abort() {
 // runAggregateJSONStreamingExtraction streams every input's records to one NDJSON
 // writer (rolling shards) in deterministic resolved-input order, recording the
 // per-input inventory and per-shard integrity digests in the provenance manifest.
-func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) (err error) {
+func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, decls []*fileListDeclaration, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) (err error) {
 	logger := logging.GetLogger()
 	ctx := context.Background()
 	sanitizeRoots := manifestSanitizeRoots(opts)
@@ -545,8 +545,35 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		// failed input never reaches the shared shard.
 		writer.beginInput()
 
+		// Integrity-bound file-list inputs verify declared content identity BEFORE
+		// the bytes are parsed. The verified bytes are a private snapshot that the
+		// parse below reads, so verification and parsing cannot be separated by a
+		// concurrent mutation; the snapshot is removed once this input is done. A
+		// mismatch discards this input's buffered rows and runs the standard
+		// failed-input path.
+		var (
+			ident *inputIdentity
+			snap  *declaredInputSnapshot
+		)
+		if decl := declarationAt(decls, ordinal); decl != nil {
+			s, verr := snapshotAndVerifyDeclaredInput(file, decl)
+			if verr != nil {
+				writer.discardInput()
+				verifyErr := fmt.Errorf("input %d (%s): %w", ordinal, logical, verr)
+				if !opts.ContinueOnError {
+					return verifyErr
+				}
+				failResult := recoverableFailureResult(file, logical, verifyErr, extract.DispositionReasonParseError)
+				recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+				continue
+			}
+			snap = s
+			ident = &inputIdentity{sha256: s.SHA256, size: s.Size}
+		}
+
 		externalFields, ferr := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if ferr != nil {
+			snap.Remove() // nil-safe; the verified snapshot is no longer needed
 			if opts.ContinueOnError {
 				writer.discardInput()
 				failResult := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", ferr), extract.DispositionReasonValidationError)
@@ -557,11 +584,20 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		}
 
 		rp := runtimeProvenance
-		if file != logical {
+		if file != logical || snap != nil {
 			rp.SourceURI = logical
 		}
+		readPath := file
+		if snap != nil {
+			// Read the verified snapshot, not the mutable source path.
+			readPath = snap.Path
+		}
 		before := writer.totalRecords
-		result := extract.ProcessFileWithApplicabilityToSink(ctx, file, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp, writer)
+		result := extract.ProcessFileWithApplicabilityToSink(ctx, readPath, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp, writer)
+		if snap != nil {
+			result.File = file
+			snap.Remove()
+		}
 
 		if result.Error != nil || result.Disposition == extract.DispositionFailed {
 			// Drop the failed input's buffered rows so they never reach the shared shard.
@@ -614,7 +650,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		if result.Disposition != "" {
 			dispositionSummary.add(result, sanitizeRoots)
 		}
-		input, lerr := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+		input, lerr := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 		if lerr != nil {
 			return lerr
 		}

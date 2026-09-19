@@ -138,7 +138,7 @@ func (s *Session) Acquire(ctx context.Context, reference, handle string) (*Acqui
 	case SchemeLocal:
 		return &AcquiredSource{LogicalURI: ref.LogicalURI, LocalPath: ref.LocalPath, Scheme: SchemeLocal}, nil
 	case SchemeS3:
-		return s.acquireS3(ctx, ref, handle, 0)
+		return s.acquireS3(ctx, ref, handle, 0, -1)
 	default:
 		return nil, notImplemented("source acquisition", ref)
 	}
@@ -152,6 +152,18 @@ func (s *Session) Acquire(ctx context.Context, reference, handle string) (*Acqui
 // Local sources pass through unstaged; their cap is enforced by the reader that
 // consumes them.
 func (s *Session) AcquireBounded(ctx context.Context, reference, handle string, maxBytes int64) (*AcquiredSource, error) {
+	return s.AcquireBoundedDeclared(ctx, reference, handle, maxBytes, -1)
+}
+
+// AcquireBoundedDeclared is AcquireBounded with a declared-size equality gate:
+// when declaredSize >= 0, the source's size metadata (already fetched for the
+// bounded cap check) must equal the declaration BEFORE any bytes are staged. A
+// mismatch fails before the read with an error wrapping ErrDeclaredSizeMismatch,
+// so a truncated/deviant object never lands in staging under an integrity-bound
+// input list. declaredSize < 0 means no declaration (identical to AcquireBounded).
+// Local sources pass through unstaged; their declared-size gate is enforced by
+// the caller against the on-disk bytes.
+func (s *Session) AcquireBoundedDeclared(ctx context.Context, reference, handle string, maxBytes, declaredSize int64) (*AcquiredSource, error) {
 	ref, err := Classify(reference)
 	if err != nil {
 		return nil, err
@@ -160,13 +172,13 @@ func (s *Session) AcquireBounded(ctx context.Context, reference, handle string, 
 	case SchemeLocal:
 		return &AcquiredSource{LogicalURI: ref.LogicalURI, LocalPath: ref.LocalPath, Scheme: SchemeLocal}, nil
 	case SchemeS3:
-		return s.acquireS3(ctx, ref, handle, maxBytes)
+		return s.acquireS3(ctx, ref, handle, maxBytes, declaredSize)
 	default:
 		return nil, notImplemented("source acquisition", ref)
 	}
 }
 
-func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string, maxBytes int64) (*AcquiredSource, error) {
+func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string, maxBytes, declaredSize int64) (*AcquiredSource, error) {
 	if ref.IsPattern() || ref.IsPrefix() {
 		return nil, fmt.Errorf("uriio: acquire needs a single object, not a prefix/pattern (%s) — list it first", ref.LogicalURI)
 	}
@@ -184,7 +196,23 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string, maxByte
 	}
 	secrets := s.pool.redactionSecrets(handle)
 	if s.budget != nil {
-		return s.acquireS3Bounded(ctx, prov, ref, secrets, staged, maxBytes)
+		return s.acquireS3Bounded(ctx, prov, ref, secrets, staged, maxBytes, declaredSize)
+	}
+
+	// Declared-size gate without a staging budget (direct callers): fetch size
+	// metadata first so a mismatch fails before any bytes move.
+	if declaredSize >= 0 {
+		var meta *gonimbusprovider.ObjectMeta
+		if herr := s.retryTransient(ctx, func() error {
+			var e error
+			meta, e = prov.Head(ctx, ref.Key)
+			return e
+		}); herr != nil {
+			return nil, fmt.Errorf("uriio: head %s failed: %s", ref.LogicalURI, cloudOpError(herr, secrets))
+		}
+		if int64(meta.Size) != declaredSize {
+			return nil, fmt.Errorf("uriio: object %s size %d does not match declared size %d; not staged: %w", ref.LogicalURI, meta.Size, declaredSize, ErrDeclaredSizeMismatch)
+		}
 	}
 
 	body, size, err := prov.GetObject(ctx, ref.Key)
@@ -226,7 +254,7 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string, maxByte
 	}, nil
 }
 
-func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provider, ref Ref, secrets []string, staged string, maxBytes int64) (*AcquiredSource, error) {
+func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provider, ref Ref, secrets []string, staged string, maxBytes, declaredSize int64) (*AcquiredSource, error) {
 	var meta *gonimbusprovider.ObjectMeta
 	if herr := s.retryTransient(ctx, func() error {
 		var e error
@@ -236,6 +264,11 @@ func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provide
 		return nil, fmt.Errorf("uriio: head %s failed: %s", ref.LogicalURI, cloudOpError(herr, secrets))
 	}
 	size := meta.Size
+	// Declared-size gate: the HEAD size is already in hand, so a mismatch fails
+	// before the staging budget is admitted and before any bytes are fetched.
+	if declaredSize >= 0 && size != declaredSize {
+		return nil, fmt.Errorf("uriio: object %s size %d does not match declared size %d; not staged: %w", ref.LogicalURI, size, declaredSize, ErrDeclaredSizeMismatch)
+	}
 	if maxBytes > 0 && size > maxBytes {
 		return nil, fmt.Errorf("uriio: object %s is %d bytes, exceeding the %d-byte cap; not staged", ref.LogicalURI, size, maxBytes)
 	}
