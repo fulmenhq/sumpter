@@ -581,6 +581,17 @@ Processing **many files in one invocation** is a supported, first-class workflow
   sumpter recipes run extract ./workspace --file-list ./batch/inputs.list
   ```
 
+  A line may also be an **integrity-bound object** — a single JSON object that declares the input's exact bytes up front:
+
+  ```text
+  # URI-only line (unchanged)
+  s3://bucket/prefix/a.xml
+  # Integrity-bound line: uri + non-negative integer size + sha256:<64 lowercase hex>
+  {"uri":"s3://bucket/prefix/b.xml","size":1048576,"sha256":"sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}
+  ```
+
+  The `uri` follows the same classification and list-relative resolution as a URI-only line; a bare 64-hex digest normalizes to the `sha256:` form. URI-only and object lines may mix freely in one list, and listed order is preserved. Object lines fail closed: unknown fields (including provider version identity), duplicate keys, missing fields, fractional/negative/overflowing sizes, uppercase hex, and trailing content are loud per-line errors. Verification compares the declaration against the same bytes the manifest ledger records — a size or digest mismatch fails before any records from that input are emitted, releases any staged bytes, and is attributed per input under `--continue-on-error`. Verified inputs are copied into a private snapshot that the parser reads, so a concurrent mutation of the source path cannot produce rows from undeclared bytes; the snapshot is removed once the input is processed. Plan temporary-directory capacity for one extra copy per concurrently active declared input. Snapshot bytes are separate from, and are not charged against, the bounded-cloud staging byte/file quotas. URI-only lines carry no declaration and keep byte-identical behavior.
+
 - **`--files a.xml,b.xml`** — a short, ad hoc comma-separated set. Convenient for a handful of files, but a comma argument hits the shell's `ARGV_MAX` ceiling at thousands of entries — use `--file-list` for large batches.
 
 - **`--input-path <dir>`** — walk a directory tree and filter by `--include-pattern` / `--exclude-pattern`. Note the walk enumerates the **entire** tree before the include pattern filters files (a filename-only pattern like `*.xml` can match in any subtree and so cannot prune directories), which can be a multi-minute stall on a large mixed-grain corpus. Sumpter now announces the enumeration phase and warns when the walk is slow. To scope precisely on a large tree, prefer `--file-list`, a narrower `--input-path`, or `--exclude-pattern` to skip known-large subtrees (exclude patterns **do** prune directories).

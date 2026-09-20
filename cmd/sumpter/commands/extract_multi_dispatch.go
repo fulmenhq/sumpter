@@ -68,6 +68,10 @@ type multiDispatcher struct {
 	inputSession    *uriio.Session
 	inputOpts       *ExtractOptions
 
+	// declarations carries integrity-bound file-list declarations by input
+	// ordinal (nil entries for URI-only lines; nil slice when no file list).
+	declarations []*fileListDeclaration
+
 	// processCard is the optional discovery-root card (nil when stream-only or off).
 	// On clean exit the card is swept; the durable event stream is retained.
 	processCard *processrun.Card
@@ -306,12 +310,13 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	if err := validateCloudInputOptions(inputOpts); err != nil {
 		return err
 	}
-	files, logicalByLocal, inputSession, err := resolveInputSources(context.Background(), inputOpts, shared.RunID)
+	files, logicalByLocal, decls, inputSession, err := resolveInputSources(context.Background(), inputOpts, shared.RunID)
 	if err != nil {
 		return err
 	}
 	d.inputSession = inputSession
 	d.inputOpts = inputOpts
+	d.declarations = decls
 	if shared.Stats {
 		// Counters are taken from the resolved read paths (local or staged-cloud
 		// copies) using cheap stat calls only — no extra file reads, no cloud calls.
@@ -412,37 +417,7 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		local, logical, cleanup, aerr := d.prepareInput(ctx, file, logicalByLocal)
-		o := builtInputOutcome{idx: fileIdx, ordinal: fileIdx + 1, file: local, logical: logical}
-		if aerr != nil {
-			o.parseErr = aerr
-			o.file = logical
-			cleanup()
-		} else {
-			doc, perr := d.parseFile(local, shared.AllowLargeFiles)
-			if perr != nil {
-				o.parseErr = perr
-				cleanup()
-			} else {
-				sum, sz, herr := provenance.HashLocalInput(local)
-				if herr != nil {
-					o.parseErr = herr
-					cleanup()
-				} else {
-					o.inputSHA256 = sum
-					o.inputSize = sz
-					if boundedCloudInput(d.inputOpts) {
-						o.file = logical
-					}
-					o.apps = make([]builtApplication, len(states))
-					for i, st := range states {
-						o.apps[i] = withInputDigest(st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication), sum, sz)
-						o.records += o.apps[i].recordCount()
-					}
-					cleanup()
-				}
-			}
-		}
+		o := d.buildInputOutcome(ctx, fileIdx, file, logicalByLocal, states, shared.AllowLargeFiles, d.parseFile)
 		if err := d.commitBuiltOutcome(ctx, o, states, shared); err != nil {
 			return err
 		}
@@ -450,7 +425,85 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 	return nil
 }
 
-func (d *multiDispatcher) prepareInput(ctx context.Context, ref string, logicalByLocal map[string]string) (local, logical string, cleanup func(), err error) {
+// buildInputOutcome prepares, verifies (when declared), parses, and builds one
+// input's per-recipe bundles into a committer-ready outcome. Callers pass their
+// parse function so the serial path keeps its no-recovery contract while the
+// concurrent worker path keeps per-input panic containment.
+func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref string, logicalByLocal map[string]string, states []*recipeRunState, allowLargeFiles bool, parse func(string, bool) (*xmlquery.Node, error)) builtInputOutcome {
+	decl := declarationAt(d.declarations, idx+1)
+	local, logical, cleanup, aerr := d.prepareInput(ctx, ref, logicalByLocal, decl)
+	o := builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
+	if aerr != nil {
+		o.parseErr = aerr
+		if decl != nil {
+			o.parseErr = fmt.Errorf("input %d (%s): %w", o.ordinal, logical, aerr)
+		}
+		o.file = logical
+		cleanup()
+		return o
+	}
+
+	// Integrity-bound file-list inputs verify declared content identity BEFORE
+	// parse; the verify hash is reused for the ledger and the recipe applications
+	// (declared inputs are hashed exactly once). A mismatch yields no bundles, so
+	// the committer records the failure per recipe (continue-on-error) or fails
+	// the run fast; the failed input contributes no rows and follows the existing
+	// failed-input provenance contract.
+	var (
+		sum  string
+		sz   int64
+		snap *declaredInputSnapshot
+	)
+	if decl != nil {
+		s, verr := snapshotAndVerifyDeclaredInput(local, decl)
+		if verr != nil {
+			o.parseErr = fmt.Errorf("input %d (%s): %w", o.ordinal, logical, verr)
+			o.file = logical
+			cleanup()
+			return o
+		}
+		snap = s
+		defer snap.Remove()
+		sum, sz = snap.SHA256, snap.Size
+	}
+
+	parseTarget := local
+	if snap != nil {
+		// Parse the verified snapshot, not the mutable source path, so the bytes
+		// that were hashed are the bytes that get parsed.
+		parseTarget = snap.Path
+	}
+	doc, perr := parse(parseTarget, allowLargeFiles)
+	if perr != nil {
+		o.parseErr = perr
+		cleanup()
+		return o
+	}
+	if decl == nil {
+		// URI-only inputs keep the historical parse-then-hash order byte-for-byte.
+		hsum, hsz, herr := provenance.HashLocalInput(local)
+		if herr != nil {
+			o.parseErr = herr
+			cleanup()
+			return o
+		}
+		sum, sz = hsum, hsz
+	}
+	o.inputSHA256 = sum
+	o.inputSize = sz
+	if boundedCloudInput(d.inputOpts) {
+		o.file = logical
+	}
+	o.apps = make([]builtApplication, len(states))
+	for i, st := range states {
+		o.apps[i] = withInputDigest(st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication), sum, sz)
+		o.records += o.apps[i].recordCount()
+	}
+	cleanup()
+	return o
+}
+
+func (d *multiDispatcher) prepareInput(ctx context.Context, ref string, logicalByLocal map[string]string, decl *fileListDeclaration) (local, logical string, cleanup func(), err error) {
 	cleanup = func() {}
 	logical = logicalIdentity(ref, logicalByLocal)
 	local = ref
@@ -483,7 +536,17 @@ func (d *multiDispatcher) prepareInput(ctx context.Context, ref string, logicalB
 	if classified.Scheme != uriio.SchemeS3 {
 		return local, logical, cleanup, nil
 	}
-	src, aerr := d.inputSession.AcquireBounded(ctx, ref, resolvedInputHandle(d.inputOpts), d.inputOpts.CloudObjectMaxBytes)
+	var (
+		src  *uriio.AcquiredSource
+		aerr error
+	)
+	if decl != nil {
+		// Declared inputs gate the declared size against the object's size metadata
+		// before staging; a mismatch reaps nothing (no bytes were fetched).
+		src, aerr = d.inputSession.AcquireBoundedDeclared(ctx, ref, resolvedInputHandle(d.inputOpts), d.inputOpts.CloudObjectMaxBytes, decl.Size)
+	} else {
+		src, aerr = d.inputSession.AcquireBounded(ctx, ref, resolvedInputHandle(d.inputOpts), d.inputOpts.CloudObjectMaxBytes)
+	}
 	if aerr != nil {
 		releaseWindow()
 		return "", classified.LogicalURI, func() {}, aerr
@@ -795,38 +858,7 @@ func (d *multiDispatcher) processInputsConcurrentWorkers(parent context.Context,
 		go func() {
 			defer wg.Done()
 			for idx := range workChan {
-				ref := files[idx]
-				local, logical, cleanup, aerr := d.prepareInput(ctx, ref, logicalByLocal)
-				o := builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
-				if aerr != nil {
-					o.parseErr = aerr
-					o.file = logical
-					cleanup()
-				} else {
-					doc, perr := d.parseInputContained(local, shared.AllowLargeFiles)
-					if perr != nil {
-						o.parseErr = perr
-						cleanup()
-					} else {
-						sum, sz, herr := provenance.HashLocalInput(local)
-						if herr != nil {
-							o.parseErr = herr
-							cleanup()
-						} else {
-							o.inputSHA256 = sum
-							o.inputSize = sz
-							if boundedCloudInput(d.inputOpts) {
-								o.file = logical
-							}
-							o.apps = make([]builtApplication, len(states))
-							for i, st := range states {
-								o.apps[i] = withInputDigest(st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication), sum, sz)
-								o.records += o.apps[i].recordCount()
-							}
-							cleanup()
-						}
-					}
-				}
+				o := d.buildInputOutcome(ctx, idx, files[idx], logicalByLocal, states, shared.AllowLargeFiles, d.parseInputContained)
 				atomic.AddInt64(&inFlightRecords, int64(o.records))
 				select {
 				case resultChan <- o:

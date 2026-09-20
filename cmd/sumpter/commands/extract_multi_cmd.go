@@ -156,7 +156,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local or s3://), one per line; # comments ignored. No walk, no argv limit. Mutually exclusive with --files/--input-path")
+	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local or s3://), one per line; # comments ignored. No walk, no argv limit. A line may instead be a JSON object {\"uri\",\"size\",\"sha256\"} declaring the input's exact bytes (fail-closed). Mutually exclusive with --files/--input-path")
 	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of files to process (short ad hoc sets — use --file-list for large batches)")
 	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory of XML files to process; walks and filters by include/exclude patterns")
 	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "", "Include pattern for --input-path discovery")
