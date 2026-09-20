@@ -183,7 +183,8 @@ The public-data exemplars are deliberately drawn from **five different verticals
 - **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors
 - **Multi-recipe single-pass extraction**: apply many extract recipes to one input set in a single parse-once pass (`recipes run extract-multi`) — each input file is read and parsed once, then fanned to every recipe, with isolated per-recipe output trees. See [Run multiple recipes in one pass](docs/extract-workflow.md#run-multiple-recipes-in-one-pass-extract-multi).
-- **Aggregate output mode**: stream one NDJSON file per recipe across many inputs (`--output-mode aggregate`) instead of one file per input — deterministic ordering (aggregate ordinals follow `--file-list` order), rolling shards (`--aggregate-max-records` / `--aggregate-max-bytes`), and per-shard provenance digests, for both local and `s3://` destinations. See [Aggregate output mode](docs/extract-workflow.md#aggregate-output-mode---output-mode-aggregate).
+- **Aggregate output mode**: stream one NDJSON file per recipe across many inputs (`--output-mode aggregate`) instead of one file per input — deterministic ordering (aggregate ordinals follow `--file-list` order), rolling shards (`--aggregate-max-records` / `--aggregate-max-bytes`), and per-shard provenance digests, for both local and `s3://` destinations. Local aggregate commits are crash-durable by default; `--emit-input-identity` optionally binds each row to its input ordinal and parsed-byte SHA-256. See [Aggregate output mode](docs/extract-workflow.md#aggregate-output-mode---output-mode-aggregate).
+- **Integrity-bound batch inputs**: `--file-list` and recipe `defaults.input.files_from` accept URI-only lines or strict JSON object lines with `uri`, `size`, and `sha256`; declared bytes are verified against the private snapshot used for parsing and fail closed on mismatch. See [Input selection](docs/extract-workflow.md#input-selection-batch-lists-directories-large-trees).
 - **Parallel input processing at scale**: spread an `extract-multi` run across N workers with `--input-workers N` to process **thousands of input files and beyond** concurrently — each worker handles an input's parse plus its full per-recipe application, while a single ordered committer keeps output **byte-identical at every worker count**. Size it by measuring with `--stats` rather than by core count. See [Parallel input processing](docs/extract-workflow.md#parallel-input-processing-with---input-workers).
 - **Encoding resilience**: Normalize to UTF-8, handle BOMs and legacy encodings
 - **Structure discovery**: `inspect` surfaces element paths, attributes, and samples
@@ -230,7 +231,8 @@ Available today:
 - ✅ Streaming record-index writers during index build
 - ✅ Multi-recipe single-pass extraction (`extract-multi`) — parse each input once, fan to every recipe
 - ✅ Parallel input processing for `extract-multi` (`--input-workers`) — concurrent across many inputs, byte-identical at every worker count, tunable with `--stats`
-- ✅ Aggregate output mode (`--output-mode aggregate`) — one streamed NDJSON file per recipe, local or `s3://`, with rolling shards + per-shard digests
+- ✅ Aggregate output mode (`--output-mode aggregate`) — one streamed NDJSON file per recipe, local or `s3://`, with rolling shards + per-shard digests; local commits are crash-durable by default and row-to-input identity is opt-in
+- ✅ Integrity-bound `--file-list` / `defaults.input.files_from` JSON object lines (`uri`, `size`, `sha256`) with fail-closed parsed-byte verification
 - ✅ S3-compatible cloud (`s3://`) sources and outputs with named credential handles
 - ✅ External reference-table lookup (membership + key→value enrichment)
 - ✅ List-typed recipe parameters with set-classification predicates
