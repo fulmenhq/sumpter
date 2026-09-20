@@ -638,7 +638,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 					return verifyErr
 				}
 				failResult := recoverableFailureResult(file, logical, verifyErr, extract.DispositionReasonParseError)
-				recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, nil)
+				if recordErr := recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, nil); recordErr != nil {
+					return recordErr
+				}
 				continue
 			}
 			snap = s
@@ -653,7 +655,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			if opts.ContinueOnError {
 				writer.discardInput()
 				failResult := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", ferr), extract.DispositionReasonValidationError)
-				recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident)
+				if recordErr := recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident); recordErr != nil {
+					return recordErr
+				}
 				continue
 			}
 			return fmt.Errorf("failed to build external fields for file %s: %w", logical, ferr)
@@ -697,7 +701,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 				}
 				return fmt.Errorf("failed to process file %s", result.LogicalURI)
 			}
-			recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident)
+			if recordErr := recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident); recordErr != nil {
+				return recordErr
+			}
 			continue
 		}
 
@@ -719,7 +725,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 				result.Disposition = extract.DispositionFailed
 				result.DispositionReason = reason
 				result.DispositionDetail = floorErr.Error()
-				recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident)
+				if recordErr := recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident); recordErr != nil {
+					return recordErr
+				}
 				continue
 			}
 		}
@@ -823,7 +831,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 // the shared shard. It is added to the disposition summary, the failures manifest, and
 // the per-input inventory (record_count 0, disposition failed) so aggregate provenance
 // stays gap-free (R5) and the shard == Σ per-input invariant holds (R4).
-func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, ident *inputIdentity) {
+func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, ident *inputIdentity) error {
 	if result.Disposition == "" {
 		result.Disposition = extract.DispositionFailed
 	}
@@ -840,9 +848,12 @@ func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptio
 	failureManifest.add(result.LogicalURI, result.DispositionReason, result.DispositionDetail, sanitizeRoots)
 	input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 	if err != nil {
+		if opts != nil && opts.EmitInputIdentity {
+			return fmt.Errorf("record failed aggregate input identity for %s: %w", result.LogicalURI, sanitizePrivateInputError(err, result.LogicalURI, result.File))
+		}
 		logging.Warn("Skipping provenance input ledger for failed aggregate input",
 			zap.String("file", result.LogicalURI), zap.Error(err))
-		return
+		return nil
 	}
 	input.RecordType = extCfg.RecordType
 	zero := 0
@@ -852,6 +863,7 @@ func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptio
 		input.Disposition = string(extract.DispositionFailed)
 	}
 	*manifestInputs = append(*manifestInputs, input)
+	return nil
 }
 
 // writeIncompleteAggregateManifest records the shards a failed aggregate run had

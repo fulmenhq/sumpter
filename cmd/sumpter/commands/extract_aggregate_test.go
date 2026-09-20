@@ -719,6 +719,33 @@ func TestAggregateOutput_ContinueOnErrorDiscardsFailedInput(t *testing.T) {
 	assertInputAccounting(t, man, 3, 2, 0, 1)
 }
 
+func TestAggregateOutput_InputIdentityCaptureFailureLeavesNoSuccessMarker(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 1)
+	valid := filepath.Join(ws, "testdata", "in-a.xml")
+	missing := filepath.Join(ws, "testdata", "missing.xml")
+	list := filepath.Join(t.TempDir(), "inputs.list")
+	mustWriteFile(t, list, valid+"\n"+missing+"\n")
+
+	out := filepath.Join(t.TempDir(), "identity-capture-failure")
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{
+		FileList:          list,
+		OutputMode:        outputModeAggregate,
+		ContinueOnError:   true,
+		EmitInputIdentity: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "record failed aggregate input identity") {
+		t.Fatalf("identity capture failure = %v, want terminal ledger error", err)
+	}
+	if strings.Contains(err.Error(), "sumpter-identity-") {
+		t.Fatalf("private identity snapshot path leaked: %v", err)
+	}
+	for _, name := range []string{provenance.ManifestFileName, "records.jsonl", "failures.json"} {
+		if _, statErr := os.Stat(filepath.Join(out, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("terminal identity capture failure left %s: %v", name, statErr)
+		}
+	}
+}
+
 // assertInputAccounting checks the four input-accounting integers are present
 // (pointer fields, so explicit zeros count) and match the expected counts, and
 // that the reconciliation invariant holds.

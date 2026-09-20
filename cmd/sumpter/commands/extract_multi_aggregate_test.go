@@ -229,6 +229,35 @@ func TestExtractMultiAggregate_ContinueOnError(t *testing.T) {
 	}
 }
 
+func TestExtractMultiAggregate_InputIdentityCaptureFailureLeavesNoSuccessMarker(t *testing.T) {
+	fileList, inputs := writeMultiInputSet(t, 1)
+	missing := filepath.Join(filepath.Dir(inputs[0]), "missing.xml")
+	mustWriteFile(t, fileList, inputs[0]+"\n"+missing+"\n")
+
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	outRoot := filepath.Join(t.TempDir(), "out")
+	err := runExtractMulti(&multiSharedOptions{
+		FileList:          fileList,
+		OutputPath:        outRoot,
+		RunID:             testMultiRunID,
+		OutputMode:        outputModeAggregate,
+		ContinueOnError:   true,
+		EmitInputIdentity: true,
+	}, []string{ws}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "record failed aggregate input identity") {
+		t.Fatalf("identity capture failure = %v, want terminal ledger error", err)
+	}
+	if strings.Contains(err.Error(), "sumpter-identity-") {
+		t.Fatalf("private identity snapshot path leaked: %v", err)
+	}
+	recipeDir := filepath.Join(outRoot, "summary")
+	for _, name := range []string{provenance.ManifestFileName, "records.jsonl", "failures.json"} {
+		if _, statErr := os.Stat(filepath.Join(recipeDir, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("terminal identity capture failure left %s: %v", name, statErr)
+		}
+	}
+}
+
 // TestExtractMultiAggregate_TerminalOutputErrorAborts pins the Finding-1 fix: a terminal
 // output/sink error from inside the shard writer must abort the run even under
 // --continue-on-error (ADR-0009), never be swallowed as a recoverable input failure. The

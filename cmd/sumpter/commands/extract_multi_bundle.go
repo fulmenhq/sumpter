@@ -426,7 +426,9 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, app.logical, app.externalFieldsErr)
 		}
 		result := recoverableFailureResult(app.file, app.logical, fmt.Errorf("failed to build external fields: %w", app.externalFieldsErr), extract.DispositionReasonValidationError)
-		recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize})
+		if recordErr := recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
+			return terminalDispatch(recordErr)
+		}
 		return nil
 	}
 
@@ -449,7 +451,9 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 			st.dispositionErr = failureErrorForResult(app.result, st.sanitizeRoots)
 			return st.dispositionErr
 		}
-		recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize})
+		if recordErr := recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
+			return terminalDispatch(recordErr)
+		}
 		return nil
 	}
 
@@ -466,7 +470,9 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 		app.result.Disposition = extract.DispositionFailed
 		app.result.DispositionReason = reason
 		app.result.DispositionDetail = app.floorErr.Error()
-		recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize})
+		if recordErr := recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
+			return terminalDispatch(recordErr)
+		}
 		return nil
 	}
 

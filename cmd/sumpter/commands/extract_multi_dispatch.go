@@ -644,10 +644,14 @@ type builtInputOutcome struct {
 // ledgers, and manifests.
 func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
 	if o.parseErr != nil {
+		var recordErr error
 		for _, st := range states {
-			st.recordInputFailure(o.file, o.logical, o.inputSHA256, o.inputSize, o.parseErr)
+			recordErr = errors.Join(recordErr, st.recordInputFailure(o.file, o.logical, o.inputSHA256, o.inputSize, o.parseErr))
 		}
 		d.noteSettledInput()
+		if recordErr != nil {
+			return terminalDispatch(recordErr)
+		}
 		if isTerminalDispatchError(o.parseErr) {
 			return o.parseErr
 		}
@@ -1108,17 +1112,17 @@ func isTerminalDispatchError(err error) bool {
 // recordInputFailure records an input-level (read/parse) failure for this recipe. In
 // aggregate mode it routes through recordFailedAggregateInput so the failed input
 // carries record_count 0 (part of the aggregate input-set provenance contract, R4/R5).
-func (st *recipeRunState) recordInputFailure(file, logical, inputSHA256 string, inputSize int64, cause error) {
+func (st *recipeRunState) recordInputFailure(file, logical, inputSHA256 string, inputSize int64, cause error) error {
 	result := recoverableFailureResult(file, logical, fmt.Errorf("failed to read/parse input: %w", cause), extract.DispositionReasonParseError)
 	if st.aggWriter != nil {
 		var ident *inputIdentity
 		if inputSHA256 != "" {
 			ident = &inputIdentity{sha256: inputSHA256, size: inputSize}
 		}
-		recordFailedAggregateInput(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, ident)
-		return
+		return recordFailedAggregateInput(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, ident)
 	}
 	_ = recordFailedSequentialResult(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, dispatchLogger())
+	return nil
 }
 
 // finalize writes this recipe's failures, dispositions, and provenance manifest
