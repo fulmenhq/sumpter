@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,6 +181,106 @@ func TestValidateOutputSidecarBytesBeforePublish(t *testing.T) {
 	}
 	if err := validateOutputSidecarBytes(opts, []byte(`{"schema_version":"nope"}`), provenance.ManifestFileName, validateFn); err == nil {
 		t.Fatal("invalid sidecar bytes accepted")
+	}
+}
+
+func TestInputIdentitySchemasEnforcePairAndMarker(t *testing.T) {
+	validator, err := newEmbeddedSchemaValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := `{"_runtime":{"envelope_schema":"extract-record-envelope/v0","generated_at":"2026-07-09T00:00:00Z","source_file":"a.xml","record_type":"item"%s},"extract":{"data":{}}}`
+	digest := "sha256:" + strings.Repeat("a", 64)
+	cases := []struct {
+		name   string
+		fields string
+		valid  bool
+	}{
+		{"neither", "", true},
+		{"pair", `,"input_ordinal":1,"input_sha256":"` + digest + `"`, true},
+		{"missing digest", `,"input_ordinal":1`, false},
+		{"missing ordinal", `,"input_sha256":"` + digest + `"`, false},
+		{"zero ordinal", `,"input_ordinal":0,"input_sha256":"` + digest + `"`, false},
+		{"bad digest", `,"input_ordinal":1,"input_sha256":"SHA256:` + strings.Repeat("A", 64) + `"`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := validator.ValidateExtractRecordEnvelope([]byte(fmt.Sprintf(base, tc.fields)), "row.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.IsValid() != tc.valid {
+				t.Fatalf("valid=%v, want %v: %s", result.IsValid(), tc.valid, result.ErrorSummary())
+			}
+		})
+	}
+	fixturePath := filepath.Join("..", "..", "..", "tests", "fixtures", "extract-record-envelope", "with-input-identity.json")
+	fixture, err := os.ReadFile(fixturePath) // #nosec G304 - repository-owned schema fixture
+	if err != nil {
+		t.Fatalf("read identity fixture: %v", err)
+	}
+	fixtureResult, err := validator.ValidateExtractRecordEnvelope(fixture, fixturePath)
+	if err != nil || !fixtureResult.IsValid() {
+		t.Fatalf("identity fixture rejected: err=%v result=%v", err, fixtureResult)
+	}
+
+	validManifest := []byte(`{
+  "schema_version":"sumpter.provenance/v1",
+  "run_id":"0190a3f4-1c2d-7abc-9def-0123456789ab",
+  "sumpter_version":"0.3.5",
+  "started_at":"2026-07-09T00:00:00Z",
+  "completed_at":"2026-07-09T00:00:01Z",
+  "cli":{"command":"sumpter extract files","argv_sanitized":[]},
+  "inputs":[],"outputs":[],"counts_by_record_type":{},
+  "output_mode":"aggregate","aggregate_outputs":[],
+  "row_identity_emitted":true
+}`)
+	result, err := validator.ValidateProvenanceManifest(validManifest, "manifest.json")
+	if err != nil || !result.IsValid() {
+		t.Fatalf("true marker rejected: err=%v result=%v", err, result)
+	}
+	invalidManifest := bytes.Replace(validManifest, []byte(`"row_identity_emitted":true`), []byte(`"row_identity_emitted":false`), 1)
+	result, err = validator.ValidateProvenanceManifest(invalidManifest, "manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsValid() {
+		t.Fatal("false row_identity_emitted marker accepted")
+	}
+	perInputMarker := bytes.Replace(validManifest, []byte(`  "output_mode":"aggregate","aggregate_outputs":[],
+`), nil, 1)
+	result, err = validator.ValidateProvenanceManifest(perInputMarker, "manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsValid() {
+		t.Fatal("row_identity_emitted accepted without aggregate output contract")
+	}
+}
+
+func TestValidateLocalAggregateRowIdentityRejectsMarkerRowMismatch(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 1)
+	out := filepath.Join(t.TempDir(), "identity-mismatch")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: outputModeAggregate, EmitInputIdentity: true}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := readManifest(t, filepath.Join(out, provenance.ManifestFileName))
+	rowPath := filepath.Join(out, "records.jsonl")
+	data, err := os.ReadFile(rowPath) // #nosec G304 - test-owned aggregate output
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(data, []byte(manifest.Inputs[0].SHA256), []byte("sha256:"+strings.Repeat("b", 64)), 1)
+	if err := os.WriteFile(rowPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validator, err := newEmbeddedSchemaValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateLocalAggregateRowIdentity(&ExtractOptions{OutputPath: out, EmitInputIdentity: true}, manifest, validator)
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("marker/row mismatch error = %v", err)
 	}
 }
 

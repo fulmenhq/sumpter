@@ -37,6 +37,7 @@ func TestMotoAggregateOutputToCloud(t *testing.T) {
 	// forces a shard per record so the multi-shard cloud publish path is exercised.
 	opts.AggregateMaxBytes = 1 << 20
 	opts.AggregateMaxRecords = 1
+	opts.EmitInputIdentity = true
 
 	if err := runExtract(opts); err != nil {
 		t.Fatalf("aggregate->cloud run error = %v", err)
@@ -56,6 +57,9 @@ func TestMotoAggregateOutputToCloud(t *testing.T) {
 	if man.Incomplete {
 		t.Errorf("successful run wrote incomplete=true")
 	}
+	if !man.RowIdentityEmitted {
+		t.Fatal("cloud aggregate manifest omitted row_identity_emitted")
+	}
 
 	stageRoot := filepath.Join(home, "work", "cloud")
 	for _, shard := range man.AggregateOutputs {
@@ -72,6 +76,26 @@ func TestMotoAggregateOutputToCloud(t *testing.T) {
 		}
 		if strings.Contains(string(shardData), stageRoot) {
 			t.Errorf("published shard %s leaked the staging path %q", shard.Path, stageRoot)
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(shardData)), "\n") {
+			if line == "" {
+				continue
+			}
+			var row struct {
+				Runtime struct {
+					InputOrdinal int    `json:"input_ordinal"`
+					InputSHA256  string `json:"input_sha256"`
+				} `json:"_runtime"`
+			}
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
+				t.Fatalf("decode shard row: %v", err)
+			}
+			if row.Runtime.InputOrdinal < 1 || row.Runtime.InputOrdinal > len(man.Inputs) {
+				t.Fatalf("row input ordinal %d outside inputs[]", row.Runtime.InputOrdinal)
+			}
+			if row.Runtime.InputSHA256 != man.Inputs[row.Runtime.InputOrdinal-1].SHA256 {
+				t.Fatalf("row digest %q does not join to ledger %q", row.Runtime.InputSHA256, man.Inputs[row.Runtime.InputOrdinal-1].SHA256)
+			}
 		}
 	}
 	if strings.Contains(string(manifestData), stageRoot) {

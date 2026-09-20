@@ -64,8 +64,9 @@ type aggregateApplication struct {
 	logical string
 	ordinal int
 	// inputSHA256 / inputSize are captured from the staged (or local) bytes
-	// before bounded mode reaps the file. Empty digest falls back to hashing
-	// app.result.File at commit.
+	// before bounded mode reaps the file. With row identity enabled they come
+	// from the immutable snapshot the parser read; otherwise URI-only inputs
+	// retain the historical parse-then-hash path.
 	inputSHA256 string
 	inputSize   int64
 
@@ -149,8 +150,8 @@ func (s *collectingRecordSink) Close(context.Context) error { return nil }
 // only the recipe's read-only plan and a per-file config clone, so it is safe to run off
 // the ordered committer in a later slice. The returned bundle's verdict fields tell the
 // committer which path to take.
-func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node) aggregateApplication {
-	app := aggregateApplication{file: file, logical: logical, ordinal: ordinal}
+func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc *xmlquery.Node) aggregateApplication {
+	app := aggregateApplication{file: file, logical: logical, ordinal: ordinal, inputSHA256: inputSHA256, inputSize: inputSize}
 	opts := st.plan.opts
 
 	externalFields, err := buildExternalFieldsForFile(logical, opts, st.plan.fieldPlan, st.plan.warnLimiter)
@@ -163,6 +164,10 @@ func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, l
 	if file != logical {
 		rp.SourceURI = logical
 	}
+	if opts.EmitInputIdentity {
+		rp.InputOrdinal = ordinal
+		rp.InputSHA256 = inputSHA256
+	}
 	// Clone the extract config per recipe per file so compiled XPath state is never shared
 	// while M recipes read the one shared, read-only document.
 	cloned := extract.CloneRecordMatch(st.plan.extCfg)
@@ -172,6 +177,8 @@ func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, l
 	// over-budget input fails identically at every worker count (determinism preserved).
 	sink := &collectingRecordSink{maxRecords: st.bundleMaxRecords, maxBytes: st.bundleMaxBytes}
 	app.result = extract.ProcessParsedDocument(ctx, doc, file, st.plan.sigCfg, cloned, st.plan.appCfg, externalFields, rp, sink)
+	app.result.Error = sanitizePrivateInputError(app.result.Error, logical, file)
+	app.result.DispositionDetail = sanitizePrivateInputText(app.result.DispositionDetail, logical, file)
 	app.records = sink.records
 
 	// Enforce match_selectors[].min_occurrences floors for a clean, applicable input —
@@ -389,7 +396,7 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 // hook, when non-nil, is a test-only seam invoked inside the recovery region before the
 // application runs, so injected panics exercise containment and injected blocking exercises
 // concurrency/backpressure. It is always nil in production.
-func (st *recipeRunState) buildAggregateApplicationContained(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node, hook func(ordinal int)) (app aggregateApplication) {
+func (st *recipeRunState) buildAggregateApplicationContained(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc *xmlquery.Node, hook func(ordinal int)) (app aggregateApplication) {
 	defer func() {
 		if r := recover(); r != nil {
 			app = aggregateApplication{file: file, logical: logical, ordinal: ordinal}
@@ -399,7 +406,7 @@ func (st *recipeRunState) buildAggregateApplicationContained(ctx context.Context
 	if hook != nil {
 		hook(ordinal)
 	}
-	return st.buildAggregateApplication(ctx, file, logical, ordinal, doc)
+	return st.buildAggregateApplication(ctx, file, logical, ordinal, inputSHA256, inputSize, doc)
 }
 
 // commitAggregateApplication applies one built bundle to this recipe's durable aggregate
@@ -419,11 +426,17 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, app.logical, app.externalFieldsErr)
 		}
 		result := recoverableFailureResult(app.file, app.logical, fmt.Errorf("failed to build external fields: %w", app.externalFieldsErr), extract.DispositionReasonValidationError)
-		recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
+		if recordErr := recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
+			return terminalDispatch(recordErr)
+		}
 		return nil
 	}
 
-	st.aggWriter.setCurrentInput(app.ordinal)
+	if opts.EmitInputIdentity {
+		st.aggWriter.setCurrentInputIdentity(app.ordinal, app.inputSHA256)
+	} else {
+		st.aggWriter.setCurrentInput(app.ordinal)
+	}
 	before := st.aggWriter.totalRecords
 
 	if app.result.Error != nil || app.result.Disposition == extract.DispositionFailed {
@@ -438,7 +451,9 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 			st.dispositionErr = failureErrorForResult(app.result, st.sanitizeRoots)
 			return st.dispositionErr
 		}
-		recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
+		if recordErr := recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
+			return terminalDispatch(recordErr)
+		}
 		return nil
 	}
 
@@ -455,7 +470,9 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 		app.result.Disposition = extract.DispositionFailed
 		app.result.DispositionReason = reason
 		app.result.DispositionDetail = app.floorErr.Error()
-		recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
+		if recordErr := recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
+			return terminalDispatch(recordErr)
+		}
 		return nil
 	}
 
@@ -538,9 +555,9 @@ func (st *recipeRunState) buildPerInputApplicationContained(ctx context.Context,
 // buildApplicationContained builds one recipe's worker-safe bundle for the input, routing by
 // output mode. Both branches are panic-contained (G3) and return a builtApplication the
 // ordered committer applies in input order.
-func (st *recipeRunState) buildApplicationContained(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node, hook func(ordinal int)) builtApplication {
+func (st *recipeRunState) buildApplicationContained(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc *xmlquery.Node, hook func(ordinal int)) builtApplication {
 	if st.aggWriter != nil {
-		return st.buildAggregateApplicationContained(ctx, file, logical, ordinal, doc, hook)
+		return st.buildAggregateApplicationContained(ctx, file, logical, ordinal, inputSHA256, inputSize, doc, hook)
 	}
 	return st.buildPerInputApplicationContained(ctx, file, logical, ordinal, doc, hook)
 }

@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,11 +44,15 @@ func TestSnapshotAndVerifyDeclaredInput(t *testing.T) {
 			t.Fatalf("snapshot bytes differ from the source bytes")
 		}
 		snapshotPath := snap.Path
-		snap.Remove()
+		if err := snap.Remove(); err != nil {
+			t.Fatalf("remove snapshot: %v", err)
+		}
 		if _, statErr := os.Stat(snapshotPath); !os.IsNotExist(statErr) {
 			t.Errorf("snapshot still present after Remove: %v", statErr)
 		}
-		snap.Remove() // idempotent
+		if err := snap.Remove(); err != nil { // idempotent
+			t.Fatalf("remove snapshot again: %v", err)
+		}
 	})
 
 	t.Run("source mutation after snapshot cannot affect the verified bytes", func(t *testing.T) {
@@ -55,7 +60,11 @@ func TestSnapshotAndVerifyDeclaredInput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("snapshotAndVerifyDeclaredInput: %v", err)
 		}
-		defer snap.Remove()
+		t.Cleanup(func() {
+			if err := snap.Remove(); err != nil {
+				t.Errorf("remove snapshot: %v", err)
+			}
+		})
 
 		// Concurrent same-size mutation of the source between verify and parse:
 		// the parser reads the snapshot, so the mutation cannot reach the run.
@@ -105,6 +114,32 @@ func TestSnapshotAndVerifyDeclaredInput(t *testing.T) {
 		}
 	})
 
+	t.Run("digest mismatch reports snapshot cleanup failure without leaking path", func(t *testing.T) {
+		previousRemove := inputSnapshotRemove
+		var leftover string
+		t.Cleanup(func() {
+			inputSnapshotRemove = previousRemove
+			if leftover != "" {
+				_ = os.Remove(leftover)
+			}
+		})
+		inputSnapshotRemove = func(path string) error {
+			leftover = path
+			return errors.New("injected snapshot cleanup failure")
+		}
+		wrong := "sha256:" + strings.Repeat("c", 64)
+		_, err := snapshotAndVerifyDeclaredInput(path, &fileListDeclaration{URI: path, Size: size, SHA256: wrong})
+		if err == nil || !strings.Contains(err.Error(), "declared sha256") || !strings.Contains(err.Error(), "injected snapshot cleanup failure") {
+			t.Fatalf("combined mismatch/cleanup error = %v", err)
+		}
+		if leftover == "" {
+			t.Fatal("cleanup seam did not observe snapshot path")
+		}
+		if strings.Contains(err.Error(), leftover) || strings.Contains(err.Error(), "sumpter-declared-") {
+			t.Fatalf("private snapshot path leaked in error: %v", err)
+		}
+	})
+
 	t.Run("missing file fails", func(t *testing.T) {
 		_, err := snapshotAndVerifyDeclaredInput(filepath.Join(dir, "absent.xml"), &fileListDeclaration{URI: "absent.xml", Size: 1, SHA256: sum})
 		if err == nil || !strings.Contains(err.Error(), "stat declared input") {
@@ -118,4 +153,37 @@ func TestSnapshotAndVerifyDeclaredInput(t *testing.T) {
 			t.Fatalf("err = %v, want directory rejection", err)
 		}
 	})
+}
+
+func TestSnapshotAndIdentifyURIOnlyInputBindsParsedBytes(t *testing.T) {
+	dir := t.TempDir()
+	original := []byte("<root><item><Name>original</Name></item></root>")
+	path := filepath.Join(dir, "input.xml")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := snapshotAndIdentifyInput(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := snap.Remove(); err != nil {
+			t.Errorf("remove snapshot: %v", err)
+		}
+	})
+	wantSum := fmt.Sprintf("sha256:%x", sha256.Sum256(original))
+	if snap.SHA256 != wantSum || snap.Size != int64(len(original)) {
+		t.Fatalf("snapshot identity = (%s,%d), want (%s,%d)", snap.SHA256, snap.Size, wantSum, len(original))
+	}
+	mutated := bytes.Repeat([]byte("X"), len(original))
+	if err := os.WriteFile(path, mutated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsedBytes, err := os.ReadFile(snap.Path) // #nosec G304 - test-owned immutable snapshot
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(parsedBytes, original) {
+		t.Fatal("URI-only identity snapshot followed source mutation")
+	}
 }

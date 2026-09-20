@@ -114,6 +114,11 @@
       ],
       "description": "Record-file fan-out mode. Present and 'aggregate' when records were streamed to one NDJSON writer per invocation (rolled shards); omitted for the default per-input mode."
     },
+    "row_identity_emitted": {
+      "type": "boolean",
+      "const": true,
+      "description": "Present only when every emitted aggregate NDJSON row is required to carry both _runtime.input_ordinal and _runtime.input_sha256. Consumers join the ordinal to this manifest's inputs[] and then verify digest equality."
+    },
     "aggregate_outputs": {
       "type": "array",
       "description": "Per-shard summary in aggregate mode: path, format, record count, content digest, and the contributing input-ordinal span (1-based positions in inputs[]). Completeness is global: the sum of shard record_count equals the sum of inputs[].record_count equals the counts_by_record_type total. Per-shard ordinal spans are not a partition and may overlap by one input at a roll boundary, so they cannot be summed per shard.",
@@ -146,6 +151,21 @@
       "description": "Optional input-accounting count: inputs with disposition 'failed' (including min_occurrences-floor misses, which remain disposition 'failed' with disposition_reason 'min_occurrences_violation' — no separate count). Counted strictly from inputs[].disposition; present together with the other input-accounting integers on aggregate manifests."
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "row_identity_emitted"
+        ]
+      },
+      "then": {
+        "required": [
+          "output_mode",
+          "aggregate_outputs"
+        ]
+      }
+    }
+  ],
   "$defs": {
     "valueProfileField": {
       "oneOf": [

@@ -42,6 +42,8 @@ type recipeRunExtractMultiOptions struct {
 	OutputMode             string
 	AggregateMaxRecords    int
 	AggregateMaxBytes      int64
+	EmitInputIdentity      bool
+	NoDurableCommit        bool
 	CredentialsPath        string
 	CredentialOverrides    []string
 	InputCredentialsHandle string
@@ -135,6 +137,8 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				OutputMode:             opts.OutputMode,
 				AggregateMaxRecords:    opts.AggregateMaxRecords,
 				AggregateMaxBytes:      opts.AggregateMaxBytes,
+				EmitInputIdentity:      opts.EmitInputIdentity,
+				NoDurableCommit:        opts.NoDurableCommit,
 				AllowLargeFiles:        allowLargeFiles,
 				CredentialsPath:        opts.CredentialsPath,
 				CredentialOverrides:    opts.CredentialOverrides,
@@ -177,6 +181,8 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.OutputMode, "output-mode", outputModePerInput, "Record-file fan-out applied to every recipe: per-input (one file per input) or aggregate (each recipe streams to one NDJSON writer per invocation under its <recipe-id>/ dir, rolling to numbered shards). Aggregate is NDJSON only and requires a manifest")
 	cmd.Flags().IntVar(&opts.AggregateMaxRecords, "aggregate-max-records", 0, "Aggregate mode: roll each recipe's shards before exceeding this record count per shard (0 = uncapped)")
 	cmd.Flags().Int64Var(&opts.AggregateMaxBytes, "aggregate-max-bytes", 0, "Aggregate mode: roll each recipe's shards before exceeding this uncompressed byte count per shard (0 = uncapped)")
+	cmd.Flags().BoolVar(&opts.EmitInputIdentity, "emit-input-identity", false, "Aggregate NDJSON only: add the enforced _runtime.input_ordinal and input_sha256 pair to every emitted row")
+	cmd.Flags().BoolVar(&opts.NoDurableCommit, "no-durable-commit", false, "Local aggregate only: opt out of the default crash-durable shard/sidecar/manifest commit (weaker semantics; unsupported platforms still reject)")
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only)")
 	cmd.Flags().StringVar(&opts.InputCredentialsHandle, "input-credentials-handle", "", "Credential handle name for cloud (s3://) source input")
@@ -231,6 +237,12 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 	}
 	if opts.AggregateMaxBytes > 0 {
 		appendFlag("--aggregate-max-bytes", fmt.Sprintf("%d", opts.AggregateMaxBytes))
+	}
+	if opts.EmitInputIdentity {
+		args = append(args, "--emit-input-identity")
+	}
+	if opts.NoDurableCommit {
+		args = append(args, "--no-durable-commit")
 	}
 	if opts.MaxDepth > 0 {
 		appendFlag("--max-depth", fmt.Sprintf("%d", opts.MaxDepth))

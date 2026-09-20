@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"os"
@@ -38,9 +39,9 @@ func isAggregateMode(opts *ExtractOptions) bool {
 // validateAggregateOptions enforces the aggregate-mode plan-time contract before
 // any input is read. Per-input mode (default) is a no-op so existing callers are
 // untouched. Aggregate requires --output-path and a manifest (input-set provenance
-// is half the feature), accepts JSON/NDJSON only, is serial in v0 (rejects the
-// record-index parallel path), and — until the cloud slice lands — refuses a cloud
-// destination. Caps must be non-negative.
+// is half the feature), accepts JSON/NDJSON only, and rejects record-index parallel
+// extraction. Cloud output requires a proactive byte cap; local output requires the
+// supported durability platform/filesystem contract. Caps must be non-negative.
 func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) error {
 	if opts == nil {
 		return nil
@@ -48,6 +49,12 @@ func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) erro
 	mode := strings.TrimSpace(opts.OutputMode)
 	switch mode {
 	case "", outputModePerInput:
+		if opts.EmitInputIdentity {
+			return fmt.Errorf("--emit-input-identity requires --output-mode=aggregate with NDJSON output")
+		}
+		if opts.NoDurableCommit {
+			return fmt.Errorf("--no-durable-commit is valid only with local --output-mode=aggregate")
+		}
 		// Per-input caps are meaningless; flag them rather than ignore silently.
 		if opts.AggregateMaxRecords != 0 || opts.AggregateMaxBytes != 0 {
 			return fmt.Errorf("--aggregate-max-records/--aggregate-max-bytes require --output-mode aggregate")
@@ -85,11 +92,22 @@ func validateAggregateOptions(opts *ExtractOptions, outputFormats []string) erro
 	// could exceed it, never discovering an over-limit object only at publish after
 	// gigabytes were staged.
 	if referenceIsCloud(opts.OutputPath) {
+		if opts.NoDurableCommit {
+			return fmt.Errorf("--no-durable-commit is invalid for cloud aggregate output: the flag controls only the local filesystem commit contract")
+		}
 		if opts.AggregateMaxBytes <= 0 {
 			return fmt.Errorf("--output-mode aggregate to a cloud (s3://) destination requires --aggregate-max-bytes: each shard is one object subject to the %d-byte (5 GiB) single-PUT limit, so the stream must be capped to roll shards proactively", uriio.MaxSinglePutBytes)
 		}
 		if opts.AggregateMaxBytes > uriio.MaxSinglePutBytes {
 			return fmt.Errorf("--aggregate-max-bytes %d exceeds the cloud single-PUT limit of %d bytes (5 GiB); each aggregate shard is one object and must stay at or below it", opts.AggregateMaxBytes, uriio.MaxSinglePutBytes)
+		}
+	} else {
+		localOutput, err := uriio.LocalPath("validate local aggregate durability", opts.OutputPath)
+		if err != nil {
+			return err
+		}
+		if err := validateLocalDurableCommitSupport(localOutput); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -114,8 +132,9 @@ func resolvedAggregateInputOrder(opts *ExtractOptions, files []string) []string 
 // a record/byte cap would be exceeded it rolls to the next lexically ordered shard
 // BEFORE writing the record. Each shard streams to a local ".partial" staging file
 // (sha256 + byte/record counters maintained incrementally); on a successful run all
-// shards are committed (renamed) atomically, and on failure the staging files are
-// removed so a failed run never leaves successful-looking output.
+// shards are renamed under exclusive ownership and become readable as one committed
+// generation only when manifest.json is published last. On failure, owned staging and
+// final paths are removed so a failed run never leaves a successful reader marker.
 type aggregateWriter struct {
 	mu         sync.Mutex
 	opts       *ExtractOptions
@@ -127,8 +146,9 @@ type aggregateWriter struct {
 	sharded bool
 	// cloud routes each shard through the output session (openOutputTarget/Publish,
 	// R1) and publishes shards INCREMENTALLY (each shard is one object — they cannot
-	// be renamed all-at-once like local). Local stays all-or-nothing (.partial +
-	// rename at commit). Cloud is always sharded (R7 requires a byte cap).
+	// use local's manifest-last reader marker). Local stages shards and publishes
+	// their final names under exclusive ownership before publishing the manifest.
+	// Cloud is always sharded (R7 requires a byte cap).
 	cloud bool
 
 	// buffering engages the per-input transactional barrier (set when --continue-on-error
@@ -146,6 +166,7 @@ type aggregateWriter struct {
 	pending   [][]byte
 
 	currentInputOrdinal int
+	currentInputSHA256  string
 
 	// open shard state
 	open        bool
@@ -157,6 +178,7 @@ type aggregateWriter struct {
 	inputStart  int
 	inputEnd    int
 	curTgt      *uriio.OutputTarget // cloud only: the open shard's publish target
+	localCommit *localAggregateCommit
 
 	shards       []provenance.AggregateOutput
 	stagePaths   []string // local: ".partial" staging paths, in shard order
@@ -170,7 +192,7 @@ type aggregateWriter struct {
 // min_occurrences floors, so both work locally AND for cloud (a failed input is never
 // published, since publish happens only at the per-input flush on success).
 func newAggregateWriter(opts *ExtractOptions, buffering bool) *aggregateWriter {
-	return &aggregateWriter{
+	w := &aggregateWriter{
 		opts:       opts,
 		outputPath: opts.OutputPath,
 		maxRecords: opts.AggregateMaxRecords,
@@ -179,6 +201,11 @@ func newAggregateWriter(opts *ExtractOptions, buffering bool) *aggregateWriter {
 		cloud:      referenceIsCloud(opts.OutputPath),
 		buffering:  buffering,
 	}
+	if !w.cloud {
+		w.localCommit = newLocalAggregateCommit(opts)
+		opts.aggregateCommit = w.localCommit
+	}
+	return w
 }
 
 // aggregateBuffering reports whether the per-input spool barrier must engage: under
@@ -201,6 +228,14 @@ func (w *aggregateWriter) shardFileName(ordinal int) string {
 func (w *aggregateWriter) setCurrentInput(ordinal int) {
 	w.mu.Lock()
 	w.currentInputOrdinal = ordinal
+	w.currentInputSHA256 = ""
+	w.mu.Unlock()
+}
+
+func (w *aggregateWriter) setCurrentInputIdentity(ordinal int, sha256 string) {
+	w.mu.Lock()
+	w.currentInputOrdinal = ordinal
+	w.currentInputSHA256 = sha256
 	w.mu.Unlock()
 }
 
@@ -227,12 +262,9 @@ func (w *aggregateWriter) openShard() error {
 		w.curTgt = tgt
 	} else {
 		finalPath := outputRefJoin(w.outputPath, name)
-		stagePath := finalPath + ".partial"
-		if err := os.MkdirAll(w.outputPath, 0o750); err != nil {
-			return fmt.Errorf("create aggregate output directory: %w", err)
-		}
+		var stagePath string
 		var err error
-		f, err = os.OpenFile(stagePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 - tool-generated shard name under the validated output dir
+		f, stagePath, err = w.localCommit.openShard(finalPath)
 		if err != nil {
 			return fmt.Errorf("open aggregate shard %s: %w", name, err)
 		}
@@ -255,8 +287,12 @@ func (w *aggregateWriter) finalizeShard() error {
 	if !w.open {
 		return nil
 	}
-	if err := w.file.Close(); err != nil {
-		return fmt.Errorf("close aggregate shard: %w", err)
+	if w.cloud {
+		if err := w.file.Close(); err != nil {
+			return fmt.Errorf("close aggregate shard: %w", err)
+		}
+	} else if err := w.localCommit.finalizeShard(w.file); err != nil {
+		return err
 	}
 	shard := provenance.AggregateOutput{
 		Path:              w.shardFileName(w.shardOrd),
@@ -348,6 +384,20 @@ func (w *aggregateWriter) writeMarshaled(data []byte) error {
 // and counters are committed to a shard — both the direct (fail-fast) path and the
 // per-input flush (commitInput) route through it.
 func (w *aggregateWriter) writeRecordLocked(data []byte) error {
+	if w.opts != nil && w.opts.EmitInputIdentity {
+		var envelope struct {
+			Runtime struct {
+				InputOrdinal int    `json:"input_ordinal"`
+				InputSHA256  string `json:"input_sha256"`
+			} `json:"_runtime"`
+		}
+		if err := json.Unmarshal(data, &envelope); err != nil {
+			return fmt.Errorf("validate aggregate row input identity: decode envelope: %w", err)
+		}
+		if envelope.Runtime.InputOrdinal != w.currentInputOrdinal || envelope.Runtime.InputSHA256 != w.currentInputSHA256 || w.currentInputOrdinal < 1 || w.currentInputSHA256 == "" {
+			return fmt.Errorf("validate aggregate row input identity: got ordinal=%d sha256=%q, want ordinal=%d sha256=%q", envelope.Runtime.InputOrdinal, envelope.Runtime.InputSHA256, w.currentInputOrdinal, w.currentInputSHA256)
+		}
+	}
 	if w.cloud && w.maxBytes > 0 && int64(len(data)) > w.maxBytes {
 		return fmt.Errorf("aggregate cloud record is %d bytes, larger than --aggregate-max-bytes %d: a single record cannot fit in a shard within the cloud single-PUT limit, so it can never be published; raise --aggregate-max-bytes (up to %d) or split the source", len(data), w.maxBytes, uriio.MaxSinglePutBytes)
 	}
@@ -369,9 +419,23 @@ func (w *aggregateWriter) writeRecordLocked(data []byte) error {
 		}
 	}
 
-	n, err := w.file.Write(data)
+	var (
+		n   int
+		err error
+	)
+	if !w.cloud {
+		if hookErr := w.localCommit.beforeShardWrite(); hookErr != nil {
+			return hookErr
+		}
+		n, err = w.file.Write(data)
+	} else {
+		n, err = w.file.Write(data)
+	}
 	if err != nil {
 		return fmt.Errorf("write aggregate record: %w", err)
+	}
+	if n != len(data) {
+		return fmt.Errorf("write aggregate record: short write %d of %d bytes", n, len(data))
 	}
 	_, _ = w.hasher.Write(data[:n])
 	w.byteCount += int64(n)
@@ -440,9 +504,10 @@ func (w *aggregateWriter) Close(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// commit finalizes the open shard and atomically renames every staged shard to its
-// final path. On an empty run (no records) it still emits one empty records.jsonl
-// covering the resolved input set, so downstream always has a file.
+// commit finalizes the open shard and renames every staged shard under exclusive
+// destination ownership. The later manifest publication is the atomic reader marker
+// for the complete generation. On an empty run (no records) it still emits one empty
+// records.jsonl covering the resolved input set, so downstream always has a file.
 func (w *aggregateWriter) commit(totalInputs int) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -457,13 +522,11 @@ func (w *aggregateWriter) commit(totalInputs int) error {
 	if err := w.finalizeShard(); err != nil {
 		return err
 	}
-	// Cloud shards were each published in finalizeShard (incremental, R1); only local
-	// defers to an all-or-nothing rename here so a failed local run leaves nothing.
+	// Cloud shards were each published in finalizeShard (incremental, R1); local
+	// defers renames until here and removes every owned final path on a later failure.
 	if !w.cloud {
-		for i, stage := range w.stagePaths {
-			if err := os.Rename(stage, w.finalPaths[i]); err != nil {
-				return fmt.Errorf("commit aggregate shard %s: %w", w.finalPaths[i], err)
-			}
+		if err := w.localCommit.commitShards(w.stagePaths, w.finalPaths); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -482,11 +545,20 @@ func (w *aggregateWriter) committedShards() []provenance.AggregateOutput {
 // output. Already-PUBLISHED cloud shards cannot be un-published — they are recorded by
 // an incomplete (R8) manifest instead; only the open shard's un-published staging is
 // dropped.
-func (w *aggregateWriter) abort() {
+func (w *aggregateWriter) abort() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	var closeErr error
 	if w.open && w.file != nil {
-		_ = w.file.Close()
+		if w.cloud {
+			closeErr = w.file.Close()
+		} else {
+			if err := w.localCommit.ops.before("cleanup-close"); err != nil {
+				closeErr = fmt.Errorf("close aggregate shard during cleanup: %w", err)
+			} else if err := w.localCommit.ops.closeFile(w.file); err != nil {
+				closeErr = fmt.Errorf("close aggregate shard during cleanup: %w", err)
+			}
+		}
 		w.open = false
 	}
 	if w.cloud {
@@ -494,11 +566,9 @@ func (w *aggregateWriter) abort() {
 			_ = os.Remove(w.curTgt.LocalPath)
 			w.curTgt = nil
 		}
-		return
+		return closeErr
 	}
-	for _, stage := range w.stagePaths {
-		_ = os.Remove(stage)
-	}
+	return errors.Join(closeErr, w.localCommit.abort())
 }
 
 // runAggregateJSONStreamingExtraction streams every input's records to one NDJSON
@@ -533,7 +603,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		if c := writer.committedShards(); writer.cloud && len(c) > 0 {
 			writeIncompleteAggregateManifest(opts, runtimeProvenance, startedAt, manifestInputs, c, countsByRecordType, sanitizeRoots)
 		}
-		writer.abort()
+		if abortErr := writer.abort(); abortErr != nil {
+			err = errors.Join(err, abortErr)
+		}
 	}()
 
 	for i, file := range ordered {
@@ -555,16 +627,20 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			ident *inputIdentity
 			snap  *declaredInputSnapshot
 		)
-		if decl := declarationAt(decls, ordinal); decl != nil {
-			s, verr := snapshotAndVerifyDeclaredInput(file, decl)
+		decl := declarationAt(decls, ordinal)
+		if decl != nil || opts.EmitInputIdentity {
+			s, verr := snapshotAndIdentifyInput(file, decl)
 			if verr != nil {
 				writer.discardInput()
+				verr = sanitizePrivateInputError(verr, logical, file)
 				verifyErr := fmt.Errorf("input %d (%s): %w", ordinal, logical, verr)
 				if !opts.ContinueOnError {
 					return verifyErr
 				}
 				failResult := recoverableFailureResult(file, logical, verifyErr, extract.DispositionReasonParseError)
-				recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+				if recordErr := recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, nil); recordErr != nil {
+					return recordErr
+				}
 				continue
 			}
 			snap = s
@@ -573,11 +649,15 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 
 		externalFields, ferr := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if ferr != nil {
-			snap.Remove() // nil-safe; the verified snapshot is no longer needed
+			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
+				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", logical, ferr), cleanupErr)
+			}
 			if opts.ContinueOnError {
 				writer.discardInput()
 				failResult := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", ferr), extract.DispositionReasonValidationError)
-				recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+				if recordErr := recordFailedAggregateInput(failResult, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident); recordErr != nil {
+					return recordErr
+				}
 				continue
 			}
 			return fmt.Errorf("failed to build external fields for file %s: %w", logical, ferr)
@@ -592,11 +672,20 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			// Read the verified snapshot, not the mutable source path.
 			readPath = snap.Path
 		}
+		if opts.EmitInputIdentity {
+			rp.InputOrdinal = ordinal
+			rp.InputSHA256 = ident.sha256
+			writer.setCurrentInputIdentity(ordinal, ident.sha256)
+		}
 		before := writer.totalRecords
 		result := extract.ProcessFileWithApplicabilityToSink(ctx, readPath, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp, writer)
 		if snap != nil {
+			result.Error = sanitizePrivateInputError(result.Error, logical, readPath, file)
+			result.DispositionDetail = sanitizePrivateInputText(result.DispositionDetail, logical, readPath, file)
 			result.File = file
-			snap.Remove()
+			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
+				return errors.Join(result.Error, cleanupErr)
+			}
 		}
 
 		if result.Error != nil || result.Disposition == extract.DispositionFailed {
@@ -612,7 +701,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 				}
 				return fmt.Errorf("failed to process file %s", result.LogicalURI)
 			}
-			recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+			if recordErr := recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident); recordErr != nil {
+				return recordErr
+			}
 			continue
 		}
 
@@ -634,7 +725,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 				result.Disposition = extract.DispositionFailed
 				result.DispositionReason = reason
 				result.DispositionDetail = floorErr.Error()
-				recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots)
+				if recordErr := recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident); recordErr != nil {
+					return recordErr
+				}
 				continue
 			}
 		}
@@ -698,11 +791,15 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), manifestInputs, manifestOutputs, countsByRecordType, sanitizeRoots)
 	manifest.OutputMode = outputModeAggregate
 	manifest.AggregateOutputs = writer.shards
+	manifest.RowIdentityEmitted = opts.EmitInputIdentity
 	// Emit the input-accounting integers from the gap-free inputs[] inventory this
 	// completed aggregate run holds (R5). An unaccounted disposition would be a
 	// producer bug, so fail rather than emit unsubstantiated counts.
 	if err := manifest.SetInputAccounting(); err != nil {
 		return fmt.Errorf("compute input accounting for aggregate manifest: %w", err)
+	}
+	if err := validateAggregateBeforeManifest(opts, manifest); err != nil {
+		return err
 	}
 	manifestPath := outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
@@ -734,7 +831,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 // the shared shard. It is added to the disposition summary, the failures manifest, and
 // the per-input inventory (record_count 0, disposition failed) so aggregate provenance
 // stays gap-free (R5) and the shard == Σ per-input invariant holds (R4).
-func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string) {
+func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, ident *inputIdentity) error {
 	if result.Disposition == "" {
 		result.Disposition = extract.DispositionFailed
 	}
@@ -749,11 +846,14 @@ func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptio
 	}
 	dispositionSummary.add(result, sanitizeRoots)
 	failureManifest.add(result.LogicalURI, result.DispositionReason, result.DispositionDetail, sanitizeRoots)
-	input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+	input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 	if err != nil {
+		if opts != nil && opts.EmitInputIdentity {
+			return fmt.Errorf("record failed aggregate input identity for %s: %w", result.LogicalURI, sanitizePrivateInputError(err, result.LogicalURI, result.File))
+		}
 		logging.Warn("Skipping provenance input ledger for failed aggregate input",
 			zap.String("file", result.LogicalURI), zap.Error(err))
-		return
+		return nil
 	}
 	input.RecordType = extCfg.RecordType
 	zero := 0
@@ -763,6 +863,7 @@ func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptio
 		input.Disposition = string(extract.DispositionFailed)
 	}
 	*manifestInputs = append(*manifestInputs, input)
+	return nil
 }
 
 // writeIncompleteAggregateManifest records the shards a failed aggregate run had
@@ -780,6 +881,7 @@ func writeIncompleteAggregateManifest(opts *ExtractOptions, runtimeProvenance pr
 	manifest := buildProvenanceManifest(opts, runtimeProvenance, startedAt, time.Now().UTC(), inputs, outputs, counts, sanitizeRoots)
 	manifest.OutputMode = outputModeAggregate
 	manifest.AggregateOutputs = committed
+	manifest.RowIdentityEmitted = opts.EmitInputIdentity
 	manifest.Incomplete = true
 	manifestPath := outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	if werr := writeProvenanceManifest(opts, manifestPath, manifest); werr != nil {
