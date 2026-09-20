@@ -80,6 +80,10 @@ type Manifest struct {
 	// (concrete values only under safe_to_profile + public|internal + cap).
 	// Omitted when profiling is disabled so manifests stay byte-identical.
 	ValueProfile json.RawMessage `json:"value_profile,omitempty"`
+	// RowIdentityEmitted marks aggregate NDJSON manifests whose every emitted row
+	// carries the enforced _runtime.input_ordinal/input_sha256 pair. It is omitted
+	// when the opt-in is disabled so existing manifests remain byte-compatible.
+	RowIdentityEmitted bool `json:"row_identity_emitted,omitempty"`
 }
 
 // Input disposition wire values, mirroring internal/extract's Disposition enum.
@@ -285,12 +289,10 @@ func WriteManifestVia(ctx context.Context, target *uriio.OutputTarget, manifest 
 	if target == nil {
 		return fmt.Errorf("manifest output target is required")
 	}
-	manifest.SchemaVersion = ManifestSchemaVersion
-	data, err := json.MarshalIndent(manifest, "", "  ")
+	data, err := MarshalManifest(manifest)
 	if err != nil {
-		return fmt.Errorf("marshal provenance manifest: %w", err)
+		return err
 	}
-	data = append(data, '\n')
 	if err := os.MkdirAll(filepath.Dir(target.LocalPath), 0o750); err != nil {
 		return fmt.Errorf("create provenance manifest directory: %w", err)
 	}
@@ -298,6 +300,18 @@ func WriteManifestVia(ctx context.Context, target *uriio.OutputTarget, manifest 
 		return fmt.Errorf("write provenance manifest %s: %w", target.LogicalURI, err)
 	}
 	return target.Publish(ctx)
+}
+
+// MarshalManifest returns the deterministic bytes used by every manifest
+// publisher. Local aggregate durability uses these bytes with its own
+// temp/sync/rename commit sequence rather than the generic output target.
+func MarshalManifest(manifest Manifest) ([]byte, error) {
+	manifest.SchemaVersion = ManifestSchemaVersion
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal provenance manifest: %w", err)
+	}
+	return append(data, '\n'), nil
 }
 
 // BuildInputLedger hashes and stats a processed input. localPath is the file the

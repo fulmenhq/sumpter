@@ -235,7 +235,9 @@ emitted envelope as per-input output. Key properties:
 
 - **Streamed, bounded memory.** Records flow to the open writer as they are extracted;
   there is no per-input staging and no buffer-all-then-flush, so memory stays bounded as
-  the input count grows.
+  the input count grows. The opt-in `--emit-input-identity` uses one owner-only temporary
+  input snapshot per concurrently active input to bind the digest before emission; this is
+  bounded disk staging, not record buffering.
 - **Deterministic order within an invocation.** Records appear in resolved
   **input-list order × intra-input `record_num`**. For `--file-list` / `--files`, the
   given order is authoritative; for `--input-path` discovery, inputs are sorted before
@@ -253,6 +255,47 @@ emitted envelope as per-input output. Key properties:
   `record_count` == the run's total — not a per-shard sum: a single multi-record input
   whose records straddle a shard cap appears in **both** adjacent shards' ordinal spans, so
   the spans locate coverage rather than partition the inputs.
+
+**Durable local commit (default).** Local aggregate output is committed as one
+per-recipe durability unit. Sumpter syncs each shard before its final-name rename,
+syncs the output directory, writes and syncs any emitted `failures.json` and
+`dispositions.json`, then writes `manifest.json` through a unique owner-only
+same-directory temporary file. The manifest is renamed last and the directory is
+synced again; consumers may therefore treat a successfully committed manifest as
+the reader marker for that recipe. Newly created output ancestry is also persisted
+by syncing each parent entry through an existing ancestor.
+
+This contract is established on Darwin/APFS and Linux: Go's Darwin `File.Sync`
+attempts `F_FULLFSYNC` and falls back to `fsync` on `ENOTSUP`; Linux uses `fsync`.
+Any write, flush, sync, close, rename, directory-open, or directory-sync failure is
+terminal, including under `--continue-on-error`. Sumpter rejects destinations with
+an existing aggregate commit, interrupted staging artifact, or active ownership
+marker rather than mixing generations or deleting prior-run material. Reconcile an
+interrupted directory or choose a fresh output location before retrying.
+
+`--no-durable-commit` is an explicit escape hatch for exceptional ephemeral local
+aggregate runs. It preserves exclusive destination ownership, atomic publication
+of each final name, and manifest-last reader marking, but skips crash-durability
+syncs. It is invalid for cloud
+output, per-input output, and platforms without verified directory-sync semantics;
+the accepted opt-out remains visible in sanitized provenance. Optional portable
+artifact descriptors and bridges are published after the per-recipe commit and are
+outside this durability boundary, so their failure may still make the invocation
+exit nonzero after a recipe manifest has committed.
+
+**Opt-in row-to-input identity.** `--emit-input-identity` adds the pair
+`_runtime.input_ordinal` and `_runtime.input_sha256` to every aggregate NDJSON row
+and adds `row_identity_emitted: true` to the manifest. The ordinal is the 1-based
+position in that recipe's `inputs[]` inventory, including gaps for failed,
+not-applicable, filtered, and zero-row inputs. The digest is computed over an owned
+snapshot of the exact bytes parsed and equals that ledger entry's `sha256`. Join on
+ordinal first, then require digest equality: hash alone is not a unique key because
+distinct inputs can contain identical bytes. Partial pair emission fails closed.
+The switch is aggregate-NDJSON-only and works for serial and worker execution,
+including cloud aggregate output (without extending the local durability claim).
+When disabled, existing row bytes and the manifest marker remain unchanged. Older
+strict provenance validators do not know `row_identity_emitted`; update their schema
+bundle before enabling this option.
 
 **Scope (v0).** Aggregate is opt-in, **NDJSON/JSON only** (Parquet/mixed formats are
 rejected), and requires `--output-path` and a manifest. The aggregate **writer** is a
@@ -590,7 +633,7 @@ Processing **many files in one invocation** is a supported, first-class workflow
   {"uri":"s3://bucket/prefix/b.xml","size":1048576,"sha256":"sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}
   ```
 
-  The `uri` follows the same classification and list-relative resolution as a URI-only line; a bare 64-hex digest normalizes to the `sha256:` form. URI-only and object lines may mix freely in one list, and listed order is preserved. Object lines fail closed: unknown fields (including provider version identity), duplicate keys, missing fields, fractional/negative/overflowing sizes, uppercase hex, and trailing content are loud per-line errors. Verification compares the declaration against the same bytes the manifest ledger records — a size or digest mismatch fails before any records from that input are emitted, releases any staged bytes, and is attributed per input under `--continue-on-error`. Verified inputs are copied into a private snapshot that the parser reads, so a concurrent mutation of the source path cannot produce rows from undeclared bytes; the snapshot is removed once the input is processed. Plan temporary-directory capacity for one extra copy per concurrently active declared input. Snapshot bytes are separate from, and are not charged against, the bounded-cloud staging byte/file quotas. URI-only lines carry no declaration and keep byte-identical behavior.
+  The `uri` follows the same classification and list-relative resolution as a URI-only line; a bare 64-hex digest normalizes to the `sha256:` form. URI-only and object lines may mix freely in one list, and listed order is preserved. Object lines fail closed: unknown fields (including provider version identity), duplicate keys, missing fields, fractional/negative/overflowing sizes, uppercase hex, and trailing content are loud per-line errors. Verification compares the declaration against the same bytes the manifest ledger records — a size or digest mismatch fails before any records from that input are emitted, releases any staged bytes, and is attributed per input under `--continue-on-error`. Verified inputs are copied into a private snapshot that the parser reads, so a concurrent mutation of the source path cannot produce rows from undeclared bytes; the snapshot is removed once the input is processed. Plan temporary-directory capacity for one extra copy per concurrently active declared input. Snapshot bytes are separate from, and are not charged against, the bounded-cloud staging byte/file quotas. URI-only lines carry no declaration and keep byte-identical behavior unless aggregate `--emit-input-identity` is enabled; that opt-in also snapshots URI-only inputs so their emitted digest is bound to the exact bytes parsed, and therefore needs the same temporary capacity.
 
 - **`--files a.xml,b.xml`** — a short, ad hoc comma-separated set. Convenient for a handful of files, but a comma argument hits the shell's `ARGV_MAX` ceiling at thousands of entries — use `--file-list` for large batches.
 

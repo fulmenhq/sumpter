@@ -1,11 +1,17 @@
 package commands
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,6 +32,23 @@ func TestAggregateWriter_CloudRejectsOversizedRecord(t *testing.T) {
 	}
 	if w.open || w.shardOrd != 0 {
 		t.Errorf("oversized cloud record opened a shard (open=%v shardOrd=%d); must reject before any staging", w.open, w.shardOrd)
+	}
+}
+
+func TestAggregateWriter_InputIdentityFailsClosedOnPartialOrWrongPair(t *testing.T) {
+	w := newAggregateWriter(&ExtractOptions{OutputPath: filepath.Join(t.TempDir(), "out"), OutputMode: outputModeAggregate, EmitInputIdentity: true}, false)
+	w.setCurrentInputIdentity(2, "sha256:"+strings.Repeat("a", 64))
+	for _, row := range [][]byte{
+		[]byte(`{"_runtime":{"input_ordinal":2},"extract":{"data":{}}}` + "\n"),
+		[]byte(`{"_runtime":{"input_ordinal":1,"input_sha256":"sha256:` + strings.Repeat("a", 64) + `"},"extract":{"data":{}}}` + "\n"),
+		[]byte(`{"_runtime":{"input_ordinal":2,"input_sha256":"sha256:` + strings.Repeat("b", 64) + `"},"extract":{"data":{}}}` + "\n"),
+	} {
+		if err := w.writeMarshaled(row); err == nil || !strings.Contains(err.Error(), "validate aggregate row input identity") {
+			t.Fatalf("row %s did not fail closed: %v", row, err)
+		}
+	}
+	if w.open || len(w.stagePaths) != 0 {
+		t.Fatalf("identity mismatch mutated output state: open=%v stages=%v", w.open, w.stagePaths)
 	}
 }
 
@@ -189,6 +212,177 @@ func TestAggregateOutput_SingleFileHappyPath(t *testing.T) {
 	assertInputAccounting(t, m, 3, 3, 0, 0)
 }
 
+func TestAggregateOutput_InputIdentityJoinsRowsToLedger(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 2)
+	for _, dir := range []string{"left", "right"} {
+		if err := os.MkdirAll(filepath.Join(ws, "testdata", dir), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		// Duplicate bytes prove digest alone is not the input key; ordinal remains
+		// the unambiguous join even when both paths end in the same basename.
+		mustWriteFile(t, filepath.Join(ws, "testdata", dir, "same.xml"), `<root><item><name>same</name></item></root>`)
+	}
+	leftURI := (&url.URL{Scheme: "file", Path: filepath.Join(ws, "testdata", "left", "same.xml")}).String()
+	rightURI := (&url.URL{Scheme: "file", Path: filepath.Join(ws, "testdata", "right", "same.xml")}).String()
+	list := filepath.Join(t.TempDir(), "same-basename.list")
+	mustWriteFile(t, list, leftURI+"\n"+rightURI+"\n")
+
+	out := filepath.Join(t.TempDir(), "identity")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{FileList: list, OutputMode: outputModeAggregate, EmitInputIdentity: true}); err != nil {
+		t.Fatalf("aggregate identity run: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(out, "manifest.json"))
+	if !manifest.RowIdentityEmitted {
+		t.Fatal("manifest omitted row_identity_emitted")
+	}
+	if !slices.Contains(manifest.CLI.ArgvSanitized, "--emit-input-identity") {
+		t.Fatalf("identity enforcement missing from sanitized provenance: %v", manifest.CLI.ArgvSanitized)
+	}
+	if len(manifest.Inputs) != 2 || manifest.Inputs[0].SHA256 != manifest.Inputs[1].SHA256 {
+		t.Fatalf("fixture should have two duplicate-content ledger inputs: %+v", manifest.Inputs)
+	}
+	if manifest.Inputs[0].Path == manifest.Inputs[1].Path || filepath.Base(manifest.Inputs[0].Path) != "same.xml" || filepath.Base(manifest.Inputs[1].Path) != "same.xml" {
+		t.Fatalf("same-basename URI identities were not kept distinct: got %q, %q", manifest.Inputs[0].Path, manifest.Inputs[1].Path)
+	}
+	lines := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))
+	if len(lines) != 2 {
+		t.Fatalf("rows = %d, want 2", len(lines))
+	}
+	for i, line := range lines {
+		var row struct {
+			Runtime struct {
+				InputOrdinal int    `json:"input_ordinal"`
+				InputSHA256  string `json:"input_sha256"`
+			} `json:"_runtime"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatal(err)
+		}
+		if row.Runtime.InputOrdinal != i+1 || row.Runtime.InputSHA256 != manifest.Inputs[i].SHA256 {
+			t.Errorf("row %d identity = (%d,%q), ledger = (%d,%q)", i, row.Runtime.InputOrdinal, row.Runtime.InputSHA256, i+1, manifest.Inputs[i].SHA256)
+		}
+	}
+	for _, shard := range manifest.AggregateOutputs {
+		got, _, err := provenance.HashLocalInput(filepath.Join(out, shard.Path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != shard.SHA256 {
+			t.Errorf("shard %s digest = %s, ledger = %s", shard.Path, got, shard.SHA256)
+		}
+	}
+}
+
+func TestAggregateOutput_InputIdentityDisabledIsByteSurfaceCompatible(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 1)
+	out := filepath.Join(t.TempDir(), "identity-off")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: outputModeAggregate, NoDurableCommit: true}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := readManifest(t, filepath.Join(out, "manifest.json"))
+	if manifest.RowIdentityEmitted {
+		t.Fatal("identity-disabled manifest set row_identity_emitted")
+	}
+	if !slices.Contains(manifest.CLI.ArgvSanitized, "--no-durable-commit") {
+		t.Fatalf("accepted durability opt-out missing from sanitized provenance: %v", manifest.CLI.ArgvSanitized)
+	}
+	row := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))[0]
+	if strings.Contains(row, "input_ordinal") || strings.Contains(row, "input_sha256") {
+		t.Fatalf("identity-disabled row gained input identity: %s", row)
+	}
+}
+
+func TestAggregateOutput_InputIdentityPreservesFilteredInputGap(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 3)
+	mustWriteFile(t, filepath.Join(ws, "testdata", "in-a.xml"), `<root><item><name>valc</name></item></root>`)
+	mustWriteFile(t, filepath.Join(ws, "testdata", "in-b.xml"), `<root><item><name>vala</name></item></root>`)
+	mustWriteFile(t, filepath.Join(ws, "testdata", "in-c.xml"), `<root><item><name>vald</name></item></root>`)
+	extractPath := filepath.Join(ws, "extract", "extract.yaml")
+	data, err := os.ReadFile(extractPath) // #nosec G304 - test fixture
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(data, []byte("output_schema:\n"), []byte("filters:\n  name: \"> valb\"\noutput_schema:\n"), 1)
+	if err := os.WriteFile(extractPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "filtered-gap")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: outputModeAggregate, EmitInputIdentity: true}); err != nil {
+		t.Fatal(err)
+	}
+	rows := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 after filtering middle input", len(rows))
+	}
+	for i, wantOrdinal := range []int{1, 3} {
+		if !strings.Contains(rows[i], fmt.Sprintf(`"input_ordinal":%d`, wantOrdinal)) {
+			t.Errorf("row %d lost filtered-input ordinal gap %d: %s", i, wantOrdinal, rows[i])
+		}
+	}
+}
+
+func TestAggregateOutput_InputIdentityParsesSnapshotAfterSourceMutation(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 1)
+	source := filepath.Join(ws, "testdata", "in-a.xml")
+	original, err := os.ReadFile(source) // #nosec G304 - test fixture
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousHook := inputSnapshotReadyHook
+	t.Cleanup(func() { inputSnapshotReadyHook = previousHook })
+	inputSnapshotReadyHook = func(sourcePath, _ string) {
+		if sourcePath != source {
+			return
+		}
+		mutated := bytes.Replace(original, []byte("vala"), []byte("valz"), 1)
+		if err := os.WriteFile(sourcePath, mutated, 0o600); err != nil {
+			panic(err)
+		}
+	}
+	out := filepath.Join(t.TempDir(), "mutation-bound")
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: outputModeAggregate, EmitInputIdentity: true}); err != nil {
+		t.Fatal(err)
+	}
+	row := readNDJSONLines(t, filepath.Join(out, "records.jsonl"))[0]
+	if !strings.Contains(row, `"name":"vala"`) || strings.Contains(row, `"name":"valz"`) {
+		t.Fatalf("row followed mutable source instead of snapshot: %s", row)
+	}
+	wantDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(original))
+	manifest := readManifest(t, filepath.Join(out, provenance.ManifestFileName))
+	if manifest.Inputs[0].SHA256 != wantDigest || !strings.Contains(row, `"input_sha256":"`+wantDigest+`"`) {
+		t.Fatalf("row/ledger digest did not bind original parsed snapshot: row=%s ledger=%s want=%s", row, manifest.Inputs[0].SHA256, wantDigest)
+	}
+}
+
+func TestAggregateOutput_InputIdentitySnapshotCleanupFailureIsTerminal(t *testing.T) {
+	ws := writeAggregateWorkspace(t, 1)
+	previousRemove := inputSnapshotRemove
+	var snapshotPath string
+	t.Cleanup(func() {
+		inputSnapshotRemove = previousRemove
+		if snapshotPath != "" {
+			_ = os.Remove(snapshotPath)
+		}
+	})
+	inputSnapshotRemove = func(path string) error {
+		snapshotPath = path
+		return errors.New("injected identity snapshot cleanup failure")
+	}
+	out := filepath.Join(t.TempDir(), "cleanup-failure")
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: outputModeAggregate, EmitInputIdentity: true, ContinueOnError: true})
+	if err == nil || !strings.Contains(err.Error(), "injected identity snapshot cleanup failure") {
+		t.Fatalf("cleanup failure error = %v", err)
+	}
+	if strings.Contains(err.Error(), "sumpter-identity-") {
+		t.Fatalf("cleanup failure leaked private snapshot path: %v", err)
+	}
+	for _, name := range []string{"records.jsonl", provenance.ManifestFileName} {
+		if _, statErr := os.Stat(filepath.Join(out, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("cleanup failure left committed %s: %v", name, statErr)
+		}
+	}
+}
+
 func TestAggregateOutput_DefaultPerInputUnchanged(t *testing.T) {
 	ws := writeAggregateWorkspace(t, 2)
 	out := filepath.Join(t.TempDir(), "perinput")
@@ -333,6 +527,8 @@ func TestAggregateOutput_PlanTimeRejections(t *testing.T) {
 		{"no-manifest", &recipeRunExtractOptions{OutputMode: "aggregate", NoManifest: true}, "cannot be combined with --no-manifest"},
 		{"invalid-mode", &recipeRunExtractOptions{OutputMode: "bogus"}, "invalid --output-mode"},
 		{"caps-without-aggregate", &recipeRunExtractOptions{AggregateMaxRecords: 5}, "require --output-mode aggregate"},
+		{"identity-without-aggregate", &recipeRunExtractOptions{EmitInputIdentity: true}, "--emit-input-identity requires --output-mode=aggregate"},
+		{"durability-optout-without-aggregate", &recipeRunExtractOptions{NoDurableCommit: true}, "--no-durable-commit is valid only"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -377,7 +573,7 @@ output_schema:
 func TestAggregateOutput_FloorMissContinueOnError(t *testing.T) {
 	ws := writeFlooredAggregateWorkspace(t)
 	out := filepath.Join(t.TempDir(), "floor-coe")
-	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true})
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true, EmitInputIdentity: true})
 	if err == nil || !strings.Contains(err.Error(), "partial extraction failure") {
 		t.Fatalf("want partial-failure error, got %v", err)
 	}
@@ -388,6 +584,19 @@ func TestAggregateOutput_FloorMissContinueOnError(t *testing.T) {
 	for i, want := range []string{"vala", "valc"} {
 		if !strings.Contains(lines[i], `"name":"`+want+`"`) {
 			t.Errorf("line %d = %s, want name %q", i, lines[i], want)
+		}
+	}
+	for i, wantOrdinal := range []int{1, 3} {
+		var row struct {
+			Runtime struct {
+				InputOrdinal int `json:"input_ordinal"`
+			} `json:"_runtime"`
+		}
+		if err := json.Unmarshal([]byte(lines[i]), &row); err != nil {
+			t.Fatal(err)
+		}
+		if row.Runtime.InputOrdinal != wantOrdinal {
+			t.Errorf("row %d input_ordinal = %d, want gap-preserving %d", i, row.Runtime.InputOrdinal, wantOrdinal)
 		}
 	}
 	failData, ferr := os.ReadFile(filepath.Join(out, "failures.json")) // #nosec G304 - test temp path
@@ -402,6 +611,19 @@ func TestAggregateOutput_FloorMissContinueOnError(t *testing.T) {
 	// disposition_reason min_occurrences_violation) — no separate floored count.
 	m := readManifest(t, filepath.Join(out, "manifest.json"))
 	assertInputAccounting(t, m, 3, 2, 0, 1)
+	for i, wantOrdinal := range []int{1, 3} {
+		var row struct {
+			Runtime struct {
+				InputSHA256 string `json:"input_sha256"`
+			} `json:"_runtime"`
+		}
+		if err := json.Unmarshal([]byte(lines[i]), &row); err != nil {
+			t.Fatal(err)
+		}
+		if row.Runtime.InputSHA256 != m.Inputs[wantOrdinal-1].SHA256 {
+			t.Errorf("partial row %d digest %q does not join to inputs[%d] %q", i, row.Runtime.InputSHA256, wantOrdinal-1, m.Inputs[wantOrdinal-1].SHA256)
+		}
+	}
 }
 
 // TestAggregateOutput_FloorMissFailFast pins floor enforcement in fail-fast mode: a
@@ -430,7 +652,7 @@ func TestAggregateOutput_ContinueOnErrorDiscardsFailedInput(t *testing.T) {
 	mustWriteFile(t, filepath.Join(ws, "testdata", "in-b.xml"), `<root><item><name>valb`)
 
 	out := filepath.Join(t.TempDir(), "coe")
-	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true})
+	err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", ContinueOnError: true, EmitInputIdentity: true})
 	if err == nil || !strings.Contains(err.Error(), "partial extraction failure") {
 		t.Fatalf("want partial-failure error, got %v", err)
 	}
@@ -458,6 +680,9 @@ func TestAggregateOutput_ContinueOnErrorDiscardsFailedInput(t *testing.T) {
 	if !strings.Contains(string(failData), "in-b.xml") {
 		t.Errorf("failures.json does not record the failed input in-b.xml: %s", failData)
 	}
+	if strings.Contains(string(failData), "sumpter-identity-") || strings.Contains(err.Error(), "sumpter-identity-") {
+		t.Fatalf("private identity snapshot path leaked: err=%v failures=%s", err, failData)
+	}
 
 	// The manifest records the failed input with a failed disposition, and shard
 	// record counts sum to the successful rows only (R4).
@@ -468,6 +693,9 @@ func TestAggregateOutput_ContinueOnErrorDiscardsFailedInput(t *testing.T) {
 	}
 	if err := json.Unmarshal(manData, &man); err != nil {
 		t.Fatalf("decode manifest: %v", err)
+	}
+	if strings.Contains(string(manData), "sumpter-identity-") {
+		t.Fatalf("private identity snapshot path leaked into manifest: %s", manData)
 	}
 	shardTotal := 0
 	for _, s := range man.AggregateOutputs {
@@ -592,6 +820,11 @@ func TestAggregateOutput_CloudPlanTimeCap(t *testing.T) {
 	if err := validateAggregateOptions(cloudOpts(uriio.MaxSinglePutBytes), []string{"json"}); err != nil {
 		t.Fatalf("cloud aggregate at the limit should pass plan-time validation, got %v", err)
 	}
+	cloudOptOut := cloudOpts(uriio.MaxSinglePutBytes)
+	cloudOptOut.NoDurableCommit = true
+	if err := validateAggregateOptions(cloudOptOut, []string{"json"}); err == nil || !strings.Contains(err.Error(), "invalid for cloud aggregate") {
+		t.Fatalf("cloud --no-durable-commit must be rejected, got %v", err)
+	}
 	// Local aggregate has no mandatory cap (uncapped local is allowed).
 	if err := validateAggregateOptions(&ExtractOptions{OutputMode: "aggregate", OutputPath: t.TempDir()}, []string{"json"}); err != nil {
 		t.Fatalf("uncapped local aggregate should pass, got %v", err)
@@ -605,7 +838,7 @@ func TestAggregateOutput_ZeroRecord(t *testing.T) {
 		mustWriteFile(t, filepath.Join(ws, "testdata", name), `<root></root>`)
 	}
 	out := filepath.Join(t.TempDir(), "zero")
-	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate"}); err != nil {
+	if err := runAggregateRecipe(t, ws, out, &recipeRunExtractOptions{OutputMode: "aggregate", EmitInputIdentity: true}); err != nil {
 		t.Fatalf("zero-record run: %v", err)
 	}
 	// One empty records.jsonl covering the input set.
@@ -617,6 +850,9 @@ func TestAggregateOutput_ZeroRecord(t *testing.T) {
 		t.Errorf("zero-record aggregate should be empty, got: %q", data)
 	}
 	m := readManifest(t, filepath.Join(out, "manifest.json"))
+	if !m.RowIdentityEmitted {
+		t.Fatal("zero-row identity run omitted row_identity_emitted")
+	}
 	if len(m.AggregateOutputs) != 1 || m.AggregateOutputs[0].RecordCount != 0 {
 		t.Errorf("want one zero-record shard, got %+v", m.AggregateOutputs)
 	}

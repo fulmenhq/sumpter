@@ -290,6 +290,7 @@ func TestMotoFileListDeclaredMatchBounded(t *testing.T) {
 		OutputPath:             outRoot,
 		RunID:                  testMultiRunID,
 		OutputMode:             "aggregate",
+		EmitInputIdentity:      true,
 		CloudInputMode:         "bounded",
 		CloudStagingMaxBytes:   10 << 20,
 		CloudStagingMaxFiles:   10,
@@ -315,6 +316,13 @@ func TestMotoFileListDeclaredMatchBounded(t *testing.T) {
 	for _, in := range mf.Inputs {
 		if got, ok := declared[filepath.Base(in.Path)]; !ok || in.SHA256 != got {
 			t.Errorf("ledger input %q digest = %q, want declared %q", in.Path, in.SHA256, got)
+		}
+	}
+	rows := readNDJSONLines(t, filepath.Join(outRoot, "summary", "records.jsonl"))
+	for i, row := range rows {
+		wantOrdinal := i + 1
+		if !strings.Contains(row, fmt.Sprintf(`"input_ordinal":%d`, wantOrdinal)) || !strings.Contains(row, `"input_sha256":"`+mf.Inputs[i].SHA256+`"`) {
+			t.Errorf("row %d does not join to cloud-input ledger entry %d: %s", i, wantOrdinal, row)
 		}
 	}
 	// Bounded reaping: no staged files survive the run.

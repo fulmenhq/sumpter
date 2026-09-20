@@ -78,8 +78,44 @@
         },
         "recipe_content_hash": {
           "type": "string"
+        },
+        "input_ordinal": {
+          "description": "1-based position of this input in the aggregate manifest inputs[] inventory.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "input_sha256": {
+          "description": "SHA-256 identity of the exact input bytes parsed for this row; equals inputs[input_ordinal-1].sha256.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "input_ordinal"
+            ]
+          },
+          "then": {
+            "required": [
+              "input_sha256"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "input_sha256"
+            ]
+          },
+          "then": {
+            "required": [
+              "input_ordinal"
+            ]
+          }
+        }
+      ]
     },
     "_validation": {
       "type": "object",

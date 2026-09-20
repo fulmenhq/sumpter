@@ -66,6 +66,8 @@ type ExtractOptions struct {
 	// cap <= the single-PUT limit, enforced at plan time.
 	AggregateMaxRecords      int
 	AggregateMaxBytes        int64
+	EmitInputIdentity        bool
+	NoDurableCommit          bool
 	UniformSchema            bool
 	ParquetCompression       string
 	ParquetWithholdColumns   []string
@@ -150,6 +152,13 @@ type ExtractOptions struct {
 	// once at run start and consumed by every output writer.
 	outputSession *uriio.Session
 	outputHandle  string
+	// aggregateCommit owns the local aggregate destination transaction. It is
+	// runtime-only and set by the aggregate writer; sidecar/manifest writers use
+	// it to stay inside the same durability boundary.
+	aggregateCommit *localAggregateCommit
+	// durableCommitOps is a test-only failure-injection seam. Production leaves
+	// it nil and uses the platform implementation.
+	durableCommitOps *durableCommitOps
 }
 
 func NewExtractCommand() *cobra.Command {
@@ -224,6 +233,8 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.OutputMode, "output-mode", outputModePerInput, "Record-file fan-out: per-input (one file per input) or aggregate (stream all inputs to one NDJSON writer per invocation, rolling to numbered shards). Aggregate requires --output-path + a manifest and is JSON/NDJSON only")
 	cmd.Flags().IntVar(&opts.AggregateMaxRecords, "aggregate-max-records", 0, "Aggregate mode: roll to the next shard before exceeding this record count per shard (0 = uncapped)")
 	cmd.Flags().Int64Var(&opts.AggregateMaxBytes, "aggregate-max-bytes", 0, "Aggregate mode: roll to the next shard before exceeding this uncompressed byte count per shard (0 = uncapped)")
+	cmd.Flags().BoolVar(&opts.EmitInputIdentity, "emit-input-identity", false, "Aggregate NDJSON only: add the enforced _runtime.input_ordinal and input_sha256 pair to every emitted row")
+	cmd.Flags().BoolVar(&opts.NoDurableCommit, "no-durable-commit", false, "Local aggregate only: opt out of the default crash-durable shard/sidecar/manifest commit (weaker semantics; unsupported platforms still reject)")
 	cmd.Flags().StringVar(&opts.SignatureConfig, "signature-config-path", "", "Path to signature configuration YAML file")
 	cmd.Flags().StringVar(&opts.ExtractConfig, "extract-config-path", "", "Path to extract configuration YAML file")
 	cmd.Flags().StringVar(&opts.ClientID, "client-id", "", "Client ID to blend into extracted records")
@@ -634,7 +645,9 @@ func runExtract(opts *ExtractOptions) error {
 		// string as the read path.
 		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if err != nil {
-			snap.Remove() // nil-safe; the verified snapshot is no longer needed
+			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
+				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", logical, err), cleanupErr)
+			}
 			if opts.ContinueOnError {
 				result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
 				results <- result
@@ -658,8 +671,12 @@ func runExtract(opts *ExtractOptions) error {
 		}
 		result := extract.ProcessFileWithApplicability(readPath, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp)
 		if snap != nil {
+			result.Error = sanitizePrivateInputError(result.Error, logical, readPath, file)
+			result.DispositionDetail = sanitizePrivateInputText(result.DispositionDetail, logical, readPath, file)
 			result.File = file
-			snap.Remove()
+			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
+				return errors.Join(result.Error, cleanupErr)
+			}
 		}
 		results <- result
 	}
@@ -924,6 +941,9 @@ func writeExtractFailureManifest(opts *ExtractOptions, path string, manifest *ex
 	} else if err := validateOutputSidecarBytes(opts, data, "failures.json", validateFn); err != nil {
 		return err
 	}
+	if opts != nil && opts.aggregateCommit != nil {
+		return opts.aggregateCommit.writeSidecar(path, data)
+	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("create extraction failure manifest directory: %w", err)
 	}
@@ -1063,6 +1083,9 @@ func writeDispositionSummary(opts *ExtractOptions, path string, summary *disposi
 	} else if err := validateOutputSidecarBytes(opts, data, "dispositions.json", validateFn); err != nil {
 		return err
 	}
+	if opts != nil && opts.aggregateCommit != nil {
+		return opts.aggregateCommit.writeSidecar(path, data)
+	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("create dispositions directory: %w", err)
 	}
@@ -1190,7 +1213,9 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		// string as the read path.
 		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if err != nil {
-			snap.Remove() // nil-safe; the verified snapshot is no longer needed
+			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
+				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", logical, err), cleanupErr)
+			}
 			if !opts.ContinueOnError {
 				return fmt.Errorf("failed to build external fields for file %s: %w", logical, err)
 			}
@@ -1206,8 +1231,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		// path passed to the extraction core below.
 		target, err := newJSONOutputTarget(opts, logical)
 		if err != nil {
-			snap.Remove() // nil-safe
-			return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, logical), err)
+			return errors.Join(fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, logical), err), removeInputSnapshot(snap, logical))
 		}
 		beginValueProfileInput(opts)
 		rp := runtimeProvenance
@@ -1222,8 +1246,13 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		result := extract.ProcessFileWithApplicabilityToSink(ctx, readPath, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp, target)
 		closeErr := target.Close(ctx)
 		if snap != nil {
+			result.Error = sanitizePrivateInputError(result.Error, logical, readPath, file)
+			result.DispositionDetail = sanitizePrivateInputText(result.DispositionDetail, logical, readPath, file)
 			result.File = file
-			snap.Remove()
+			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
+				target.Abort()
+				return errors.Join(result.Error, closeErr, cleanupErr)
+			}
 		}
 
 		if result.Error != nil || result.Disposition == extract.DispositionFailed {
@@ -2388,6 +2417,12 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	if opts.AggregateMaxBytes > 0 {
 		appendFlag("--aggregate-max-bytes", fmt.Sprintf("%d", opts.AggregateMaxBytes))
 	}
+	if opts.EmitInputIdentity {
+		args = append(args, "--emit-input-identity")
+	}
+	if opts.NoDurableCommit {
+		args = append(args, "--no-durable-commit")
+	}
 	appendFlag("--signature-config-path", opts.SignatureConfig)
 	appendFlag("--extract-config-path", opts.ExtractConfig)
 	appendFlag("--record-index", opts.RecordIndex)
@@ -3119,6 +3154,18 @@ func openOutputTarget(ctx context.Context, opts *ExtractOptions, reference strin
 // present without its manifest means the run failed; do not treat it as
 // success") — a published object can no longer be un-published.
 func writeProvenanceManifest(opts *ExtractOptions, path string, manifest provenance.Manifest) error {
+	if opts != nil && opts.aggregateCommit != nil {
+		data, err := provenance.MarshalManifest(manifest)
+		if err != nil {
+			return err
+		}
+		if validateFn, verr := provenanceSidecarValidator(); verr != nil {
+			return verr
+		} else if err := validateOutputSidecarBytes(opts, data, provenance.ManifestFileName, validateFn); err != nil {
+			return err
+		}
+		return opts.aggregateCommit.writeManifest(path, data)
+	}
 	tgt, err := openOutputTarget(context.Background(), opts, path)
 	if err != nil {
 		return err

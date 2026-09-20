@@ -2,6 +2,8 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -336,8 +338,8 @@ func TestExtractMultiAggregate_NotApplicableCountedPerRecipe(t *testing.T) {
 		name, body string
 	}{
 		{"inA.xml", `<root><TargetElement><Name>valA</Name></TargetElement></root>`}, // predicate true -> applied
-		{"inB.xml", `<root><TargetElement><Name>valB</Name></TargetElement></root>`}, // predicate true -> applied
-		{"inC.xml", `<root><Other><Name>valC</Name></Other></root>`},                 // /root matches, predicate false -> not_applicable
+		{"inB.xml", `<root><Other><Name>valB</Name></Other></root>`},                 // /root matches, predicate false -> not_applicable
+		{"inC.xml", `<root><TargetElement><Name>valC</Name></TargetElement></root>`}, // predicate true -> applied
 	}
 	var paths []string
 	for _, in := range inputs {
@@ -353,7 +355,7 @@ func TestExtractMultiAggregate_NotApplicableCountedPerRecipe(t *testing.T) {
 	}
 
 	outRoot := filepath.Join(t.TempDir(), "out")
-	if err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate"}, []string{ws}, io.Discard, time.Now()); err != nil {
+	if err := runExtractMulti(&multiSharedOptions{FileList: fileList, OutputPath: outRoot, RunID: testMultiRunID, OutputMode: "aggregate", EmitInputIdentity: true}, []string{ws}, io.Discard, time.Now()); err != nil {
 		t.Fatalf("aggregate extract-multi: %v", err)
 	}
 
@@ -364,6 +366,58 @@ func TestExtractMultiAggregate_NotApplicableCountedPerRecipe(t *testing.T) {
 	// 3 total, 2 applied, 1 not_applicable, 0 failed — not_applicable is counted,
 	// never silently folded into applied or failed.
 	assertInputAccounting(t, m, 3, 2, 1, 0)
+	rows := readNDJSONLines(t, filepath.Join(outRoot, "summary", "records.jsonl"))
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	for i, wantOrdinal := range []int{1, 3} {
+		if !strings.Contains(rows[i], fmt.Sprintf(`"input_ordinal":%d`, wantOrdinal)) {
+			t.Errorf("row %d does not preserve not-applicable ordinal gap %d: %s", i, wantOrdinal, rows[i])
+		}
+	}
+}
+
+func TestExtractMultiAggregate_LaterRecipeDurabilityFailurePreservesEarlierCommit(t *testing.T) {
+	first := writeMultiRecipeWorkspace(t, "first")
+	second := writeMultiRecipeWorkspace(t, "second")
+	fileList, _ := writeMultiInputSet(t, 1)
+	outRoot := filepath.Join(t.TempDir(), "out")
+	failed := false
+	shared := &multiSharedOptions{
+		FileList:   fileList,
+		OutputPath: outRoot,
+		OutputMode: outputModeAggregate,
+		RunID:      testMultiRunID,
+		durableCommitOpsForRecipe: func(recipeID string) *durableCommitOps {
+			if recipeID != "second" {
+				return nil
+			}
+			ops := osDurableCommitOps()
+			ops.step = func(step string) error {
+				if step == "manifest-sync" && !failed {
+					failed = true
+					return errors.New("injected later-recipe manifest sync failure")
+				}
+				return nil
+			}
+			return &ops
+		},
+	}
+	err := runExtractMulti(shared, []string{first, second}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "injected later-recipe manifest sync failure") {
+		t.Fatalf("later-recipe failure = %v", err)
+	}
+	for _, name := range []string{"records.jsonl", provenance.ManifestFileName} {
+		if _, statErr := os.Stat(filepath.Join(outRoot, "first", name)); statErr != nil {
+			t.Fatalf("earlier committed recipe lost %s: %v", name, statErr)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(outRoot, "second", provenance.ManifestFileName)); !os.IsNotExist(statErr) {
+		t.Fatalf("failed later recipe left reader marker: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(outRoot, "second")); !os.IsNotExist(statErr) {
+		t.Fatalf("failed later recipe left owned output directory: %v", statErr)
+	}
 }
 
 func readFileOrFail(t *testing.T, path string) string {

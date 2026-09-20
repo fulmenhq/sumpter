@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -55,16 +56,15 @@ func (st *recipeRunState) writeIncompleteAggregateManifestOnFailure(startedAt ti
 	writeIncompleteAggregateManifest(st.plan.opts, st.plan.runtimeProvenance, startedAt, st.manifestInputs, committed, st.counts, st.sanitizeRoots)
 }
 
-// finalizeAggregate commits this recipe's aggregate shards (atomic rename) and writes
-// its provenance manifest with the aggregate output_mode + per-shard summaries, under
-// the recipe's own <output-root>/<recipe-id>/ directory.
+// finalizeAggregate renames this recipe's durable aggregate shards under exclusive
+// ownership, then publishes its provenance manifest as the atomic reader marker with
+// aggregate output_mode + per-shard summaries under <output-root>/<recipe-id>/.
 func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 	opts := st.plan.opts
 	logger := dispatchLogger()
 
 	if err := st.aggWriter.commit(st.inputCount); err != nil {
-		st.aggWriter.abort()
-		return err
+		return errors.Join(err, st.aggWriter.abort())
 	}
 
 	// Under --continue-on-error, record which inputs failed so the partial run is
@@ -89,10 +89,14 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 		manifest := buildProvenanceManifest(opts, st.plan.runtimeProvenance, startedAt, time.Now().UTC(), st.manifestInputs, manifestOutputs, st.counts, st.sanitizeRoots)
 		manifest.OutputMode = outputModeAggregate
 		manifest.AggregateOutputs = st.aggWriter.shards
+		manifest.RowIdentityEmitted = opts.EmitInputIdentity
 		// Per-recipe input accounting from this recipe's own gap-free inputs[]
 		// inventory; counts stay isolated per recipe, like the rest of the manifest.
 		if err := manifest.SetInputAccounting(); err != nil {
 			return fmt.Errorf("recipe %q: compute input accounting for aggregate manifest: %w", st.plan.RecipeID, err)
+		}
+		if err := validateAggregateBeforeManifest(opts, manifest); err != nil {
+			return fmt.Errorf("recipe %q: %w", st.plan.RecipeID, err)
 		}
 		manifestPath := outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {

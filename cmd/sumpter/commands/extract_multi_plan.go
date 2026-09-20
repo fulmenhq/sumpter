@@ -80,6 +80,8 @@ type multiSharedOptions struct {
 	OutputMode          string
 	AggregateMaxRecords int
 	AggregateMaxBytes   int64
+	EmitInputIdentity   bool
+	NoDurableCommit     bool
 
 	// Shared cloud credentials (handle references only — never secrets). The
 	// input handle is shared because the input set is shared; each recipe's
@@ -140,6 +142,10 @@ type multiSharedOptions struct {
 	// Context is the run cancellation boundary (typically cmd.Context()). Nil means
 	// context.Background(). Cancellation classifies the process-run terminal as canceled.
 	Context context.Context
+
+	// durableCommitOpsForRecipe is a test-only failure-injection seam for
+	// per-recipe local aggregate finalization. Production leaves it nil.
+	durableCommitOpsForRecipe func(recipeID string) *durableCommitOps
 }
 
 func validateExtractMultiInternalParameters(shared *multiSharedOptions) error {
@@ -464,6 +470,8 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 	opts.OutputMode = shared.OutputMode
 	opts.AggregateMaxRecords = shared.AggregateMaxRecords
 	opts.AggregateMaxBytes = shared.AggregateMaxBytes
+	opts.EmitInputIdentity = shared.EmitInputIdentity
+	opts.NoDurableCommit = shared.NoDurableCommit
 	if err := validateArtifactDescriptorOptions(opts); err != nil {
 		return nil, err
 	}

@@ -8,6 +8,11 @@ type RuntimeOptions struct {
 	SumpterVersion    string
 	RecipeVersion     string
 	RecipeContentHash string
+	// InputOrdinal and InputSHA256 are the opt-in aggregate-row identity pair.
+	// Callers set both from the resolved input inventory before parsing; neither
+	// is emitted unless both are present.
+	InputOrdinal int
+	InputSHA256  string
 
 	// SourceURI is the logical identity of the source being processed: a bare
 	// path, a file:// URI, or an s3:// URI. The caller sets it per-file so the
@@ -33,7 +38,7 @@ func (o RuntimeOptions) SourceIdentity(localPath string) string {
 
 // RuntimeFields returns the non-empty runtime provenance fields.
 func (o RuntimeOptions) RuntimeFields() map[string]interface{} {
-	fields := make(map[string]interface{}, 4)
+	fields := make(map[string]interface{}, 6)
 	if o.RunID != "" {
 		fields["run_id"] = o.RunID
 	}
@@ -45,6 +50,10 @@ func (o RuntimeOptions) RuntimeFields() map[string]interface{} {
 	}
 	if o.RecipeContentHash != "" {
 		fields["recipe_content_hash"] = o.RecipeContentHash
+	}
+	if o.InputOrdinal > 0 && o.InputSHA256 != "" {
+		fields["input_ordinal"] = o.InputOrdinal
+		fields["input_sha256"] = o.InputSHA256
 	}
 	return fields
 }

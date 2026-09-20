@@ -280,14 +280,22 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	if err := validateAggregateMulti(shared, plans); err != nil {
 		return err
 	}
+	if shared.durableCommitOpsForRecipe != nil {
+		for _, plan := range plans {
+			plan.opts.durableCommitOps = shared.durableCommitOpsForRecipe(plan.RecipeID)
+		}
+	}
 
-	// Now (after the preflight) set up each recipe's output: create its
-	// validated directory and, for cloud destinations, its write-boundary
-	// session. Deferred from the loader so nothing is created before validation.
+	// Now (after the preflight) set up each recipe's output. Local aggregate
+	// directories are deliberately left to localAggregateCommit: it must create,
+	// track, and persist every new ancestry entry inside the durability protocol.
+	// Per-input local output keeps the historical eager directory creation; cloud
+	// destinations use their write-boundary session. All setup remains deferred
+	// from the loader so nothing is created before validation.
 	for _, plan := range plans {
-		// Only create a local directory for a local destination; a cloud (s3://)
-		// output dir is published through the output session/target, not MkdirAll.
-		if !referenceIsCloud(plan.OutputDir) {
+		// Only create a per-input local directory here. Aggregate ownership creates
+		// its own directory; cloud output is published through the session/target.
+		if shared.OutputMode != outputModeAggregate && !referenceIsCloud(plan.OutputDir) {
 			if err := os.MkdirAll(plan.OutputDir, 0o750); err != nil {
 				return fmt.Errorf("recipe %q: failed to create output directory: %w", plan.RecipeID, err)
 			}
@@ -369,7 +377,9 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 			if err != nil && !st.finalized {
 				st.writeIncompleteAggregateManifestOnFailure(startedAt)
 			}
-			st.aggWriter.abort()
+			if abortErr := st.aggWriter.abort(); abortErr != nil {
+				err = errors.Join(err, abortErr)
+			}
 		}
 	}()
 
@@ -429,10 +439,10 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 // input's per-recipe bundles into a committer-ready outcome. Callers pass their
 // parse function so the serial path keeps its no-recovery contract while the
 // concurrent worker path keeps per-input panic containment.
-func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref string, logicalByLocal map[string]string, states []*recipeRunState, allowLargeFiles bool, parse func(string, bool) (*xmlquery.Node, error)) builtInputOutcome {
+func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref string, logicalByLocal map[string]string, states []*recipeRunState, allowLargeFiles bool, parse func(string, bool) (*xmlquery.Node, error)) (o builtInputOutcome) {
 	decl := declarationAt(d.declarations, idx+1)
 	local, logical, cleanup, aerr := d.prepareInput(ctx, ref, logicalByLocal, decl)
-	o := builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
+	o = builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
 	if aerr != nil {
 		o.parseErr = aerr
 		if decl != nil {
@@ -454,17 +464,24 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 		sz   int64
 		snap *declaredInputSnapshot
 	)
-	if decl != nil {
-		s, verr := snapshotAndVerifyDeclaredInput(local, decl)
+	if decl != nil || d.inputOpts.EmitInputIdentity {
+		s, verr := snapshotAndIdentifyInput(local, decl)
 		if verr != nil {
+			verr = sanitizePrivateInputError(verr, logical, local)
 			o.parseErr = fmt.Errorf("input %d (%s): %w", o.ordinal, logical, verr)
 			o.file = logical
 			cleanup()
 			return o
 		}
 		snap = s
-		defer snap.Remove()
+		defer func() {
+			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
+				o.parseErr = errors.Join(o.parseErr, terminalDispatch(cleanupErr))
+				o.apps = nil
+			}
+		}()
 		sum, sz = snap.SHA256, snap.Size
+		o.inputSHA256, o.inputSize = sum, sz
 	}
 
 	parseTarget := local
@@ -475,11 +492,12 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 	}
 	doc, perr := parse(parseTarget, allowLargeFiles)
 	if perr != nil {
+		perr = sanitizePrivateInputError(perr, logical, parseTarget, local)
 		o.parseErr = perr
 		cleanup()
 		return o
 	}
-	if decl == nil {
+	if snap == nil {
 		// URI-only inputs keep the historical parse-then-hash order byte-for-byte.
 		hsum, hsz, herr := provenance.HashLocalInput(local)
 		if herr != nil {
@@ -496,7 +514,7 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 	}
 	o.apps = make([]builtApplication, len(states))
 	for i, st := range states {
-		o.apps[i] = withInputDigest(st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, doc, d.onBuildApplication), sum, sz)
+		o.apps[i] = withInputDigest(st.buildApplicationContained(ctx, o.file, o.logical, o.ordinal, sum, sz, doc, d.onBuildApplication), sum, sz)
 		o.records += o.apps[i].recordCount()
 	}
 	cleanup()
@@ -627,9 +645,12 @@ type builtInputOutcome struct {
 func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
 	if o.parseErr != nil {
 		for _, st := range states {
-			st.recordInputFailure(o.file, o.logical, o.parseErr)
+			st.recordInputFailure(o.file, o.logical, o.inputSHA256, o.inputSize, o.parseErr)
 		}
 		d.noteSettledInput()
+		if isTerminalDispatchError(o.parseErr) {
+			return o.parseErr
+		}
 		if !shared.ContinueOnError {
 			return fmt.Errorf("failed to process file %s: %w", o.logical, o.parseErr)
 		}
@@ -1003,6 +1024,7 @@ func sharedInputOptions(shared *multiSharedOptions) *ExtractOptions {
 		CloudStagingMaxBytes:   shared.CloudStagingMaxBytes,
 		CloudStagingMaxFiles:   shared.CloudStagingMaxFiles,
 		CloudObjectMaxBytes:    shared.CloudObjectMaxBytes,
+		EmitInputIdentity:      shared.EmitInputIdentity,
 	}
 }
 
@@ -1086,10 +1108,14 @@ func isTerminalDispatchError(err error) bool {
 // recordInputFailure records an input-level (read/parse) failure for this recipe. In
 // aggregate mode it routes through recordFailedAggregateInput so the failed input
 // carries record_count 0 (part of the aggregate input-set provenance contract, R4/R5).
-func (st *recipeRunState) recordInputFailure(file, logical string, cause error) {
+func (st *recipeRunState) recordInputFailure(file, logical, inputSHA256 string, inputSize int64, cause error) {
 	result := recoverableFailureResult(file, logical, fmt.Errorf("failed to read/parse input: %w", cause), extract.DispositionReasonParseError)
 	if st.aggWriter != nil {
-		recordFailedAggregateInput(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots)
+		var ident *inputIdentity
+		if inputSHA256 != "" {
+			ident = &inputIdentity{sha256: inputSHA256, size: inputSize}
+		}
+		recordFailedAggregateInput(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, ident)
 		return
 	}
 	_ = recordFailedSequentialResult(result, st.plan.opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, dispatchLogger())

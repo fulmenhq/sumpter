@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -144,11 +145,12 @@ func TestExtractMulti_InputWorkersDeterministic(t *testing.T) {
 	runAt := func(workers int) string {
 		outRoot := filepath.Join(t.TempDir(), "out")
 		shared := &multiSharedOptions{
-			FileList:     fileList,
-			OutputPath:   outRoot,
-			OutputMode:   outputModeAggregate,
-			RunID:        testMultiRunID,
-			InputWorkers: workers,
+			FileList:          fileList,
+			OutputPath:        outRoot,
+			OutputMode:        outputModeAggregate,
+			EmitInputIdentity: true,
+			RunID:             testMultiRunID,
+			InputWorkers:      workers,
 		}
 		d := newMultiDispatcher(shared, io.Discard)
 		realParse := d.parseFile
@@ -180,6 +182,9 @@ func TestExtractMulti_InputWorkersDeterministic(t *testing.T) {
 	if strings.TrimSpace(want) == "" {
 		t.Fatal("serial run produced no records")
 	}
+	if !strings.Contains(want, `"input_ordinal":1`) || !strings.Contains(want, `"input_sha256":"sha256:`) {
+		t.Fatalf("serial identity-enabled baseline omitted row identity: %s", want)
+	}
 	// The serial baseline must already be in input order valA..valH.
 	for i := 0; i < n; i++ {
 		if !strings.Contains(want, "val"+string(rune('A'+i))) {
@@ -194,6 +199,52 @@ func TestExtractMulti_InputWorkersDeterministic(t *testing.T) {
 		if got := runAt(workers); got != want {
 			t.Errorf("--input-workers %d: aggregate records.jsonl differs from serial:\n serial: %s\n got:    %s", workers, want, got)
 		}
+	}
+}
+
+func TestExtractMulti_InputWorkersIdentitySnapshotCleanupFailureIsTerminal(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "summary")
+	fileList, _ := writeMultiInputSet(t, 2)
+	out := filepath.Join(t.TempDir(), "out")
+	previousRemove := inputSnapshotRemove
+	var (
+		mu       sync.Mutex
+		failed   bool
+		leftover []string
+	)
+	t.Cleanup(func() {
+		inputSnapshotRemove = previousRemove
+		for _, path := range leftover {
+			_ = os.Remove(path)
+		}
+	})
+	inputSnapshotRemove = func(path string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if !failed {
+			failed = true
+			leftover = append(leftover, path)
+			return errors.New("injected worker identity snapshot cleanup failure")
+		}
+		return os.Remove(path)
+	}
+	err := runExtractMulti(&multiSharedOptions{
+		FileList:          fileList,
+		OutputPath:        out,
+		OutputMode:        outputModeAggregate,
+		EmitInputIdentity: true,
+		ContinueOnError:   true,
+		RunID:             testMultiRunID,
+		InputWorkers:      2,
+	}, []string{ws}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "injected worker identity snapshot cleanup failure") {
+		t.Fatalf("worker cleanup error = %v", err)
+	}
+	if strings.Contains(err.Error(), "sumpter-identity-") {
+		t.Fatalf("worker cleanup error leaked private snapshot path: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(out, "summary", "manifest.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("worker cleanup failure left commit marker: %v", statErr)
 	}
 }
 

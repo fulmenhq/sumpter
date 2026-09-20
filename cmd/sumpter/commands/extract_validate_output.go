@@ -2,7 +2,11 @@ package commands
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,6 +145,124 @@ func runValidateExtractOutputLocal(opts *ExtractOptions, manifest provenance.Man
 		allRows := normalizeValidateOutput(opts.ValidateOutput) == validateOutputStrict
 		if err := validateLocalRecordEnvelopes(opts, manifest, validator, allRows); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateAggregateBeforeManifest runs every validation that can identify a bad
+// local aggregate recipe before manifest.json becomes the reader commit marker.
+// Optional descriptors remain outside the durability guarantee by contract.
+func validateAggregateBeforeManifest(opts *ExtractOptions, manifest provenance.Manifest) error {
+	if opts == nil || referenceIsCloud(opts.OutputPath) {
+		// Cloud row identity is enforced synchronously by aggregateWriter before
+		// each staged row is published; generic cloud validation remains write-time.
+		return nil
+	}
+	if !opts.EmitInputIdentity && !validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
+		return nil
+	}
+	validator, err := newEmbeddedSchemaValidator()
+	if err != nil {
+		return err
+	}
+	if opts.EmitInputIdentity {
+		data, err := provenance.MarshalManifest(manifest)
+		if err != nil {
+			return err
+		}
+		result, err := validator.ValidateProvenanceManifest(data, provenance.ManifestFileName)
+		if err != nil {
+			return fmt.Errorf("validate aggregate provenance before commit: %w", err)
+		}
+		if !result.IsValid() {
+			return fmt.Errorf("validate aggregate provenance before commit: %s", result.ErrorSummary())
+		}
+		if err := validateLocalAggregateRowIdentity(opts, manifest, validator); err != nil {
+			return err
+		}
+	}
+	if validateOutputIncludes(opts.ValidateOutput, validateOutputSidecars) {
+		if err := validateOptionalLocalSidecar(opts, "failures.json", validator.ValidateFailureManifest); err != nil {
+			return err
+		}
+		if err := validateOptionalLocalSidecar(opts, "dispositions.json", validator.ValidateDispositionSummary); err != nil {
+			return err
+		}
+	}
+	if validateOutputIncludes(opts.ValidateOutput, validateOutputEnvelopeSample) && !opts.EmitInputIdentity {
+		allRows := normalizeValidateOutput(opts.ValidateOutput) == validateOutputStrict
+		return validateLocalRecordEnvelopes(opts, manifest, validator, allRows)
+	}
+	return nil
+}
+
+func validateLocalAggregateRowIdentity(opts *ExtractOptions, manifest provenance.Manifest, validator *validation.SchemaValidator) error {
+	if !manifest.RowIdentityEmitted {
+		return fmt.Errorf("row identity enforcement is enabled but manifest marker is absent")
+	}
+	for _, output := range manifest.Outputs {
+		format := strings.ToLower(strings.TrimSpace(output.Format))
+		if format != "json" && format != "ndjson" && format != "jsonl" {
+			continue
+		}
+		path := strings.TrimSpace(output.Path)
+		if path == "" {
+			continue
+		}
+		localPath := path
+		if !filepath.IsAbs(localPath) {
+			localPath = outputRefJoin(opts.OutputPath, localPath)
+		}
+		f, err := os.Open(localPath) // #nosec G304 - owned aggregate output awaiting manifest commit
+		if err != nil {
+			return fmt.Errorf("validate row identity: open %s: %w", path, err)
+		}
+		reader := bufio.NewReader(f)
+		lineNo := 0
+		for {
+			line, readErr := reader.ReadBytes('\n')
+			nonEmpty := len(bytes.TrimSpace(line)) > 0
+			if nonEmpty {
+				lineNo++
+			}
+			if nonEmpty {
+				if err := validateEnvelopeLine(validator, line, path, lineNo); err != nil {
+					_ = f.Close()
+					return err
+				}
+				var envelope struct {
+					Runtime struct {
+						InputOrdinal int    `json:"input_ordinal"`
+						InputSHA256  string `json:"input_sha256"`
+					} `json:"_runtime"`
+				}
+				if err := json.Unmarshal(line, &envelope); err != nil {
+					_ = f.Close()
+					return fmt.Errorf("validate row identity: decode %s line %d: %w", path, lineNo, err)
+				}
+				ordinal := envelope.Runtime.InputOrdinal
+				if ordinal < 1 || ordinal > len(manifest.Inputs) {
+					_ = f.Close()
+					return fmt.Errorf("validate row identity: %s line %d input_ordinal %d is outside inputs[]", path, lineNo, ordinal)
+				}
+				want := manifest.Inputs[ordinal-1].SHA256
+				if envelope.Runtime.InputSHA256 != want {
+					_ = f.Close()
+					return fmt.Errorf("validate row identity: %s line %d digest %q does not match inputs[%d].sha256 %q", path, lineNo, envelope.Runtime.InputSHA256, ordinal-1, want)
+				}
+			}
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					break
+				}
+				_ = f.Close()
+				return fmt.Errorf("validate row identity: read %s: %w", path, readErr)
+			}
+		}
+		closeErr := f.Close()
+		if closeErr != nil {
+			return fmt.Errorf("validate row identity: close %s: %w", path, closeErr)
 		}
 	}
 	return nil

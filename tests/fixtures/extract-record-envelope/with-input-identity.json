@@ -1,0 +1,1 @@
+{"_runtime":{"envelope_schema":"extract-record-envelope/v0","generated_at":"2026-09-19T00:00:00Z","source_file":"data/input.xml","record_type":"sample_record","input_ordinal":3,"input_sha256":"sha256:6986a09f789fef21302eb8f7df4a8cd562c32363e637b16eef107a81cabc65af"},"extract":{"data":{"id":"R-0003"}}}

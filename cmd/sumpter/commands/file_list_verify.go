@@ -1,10 +1,14 @@
 package commands
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
@@ -29,13 +33,84 @@ type declaredInputSnapshot struct {
 	Size   int64
 }
 
-// Remove deletes the snapshot. It is idempotent and safe on a nil receiver.
-func (s *declaredInputSnapshot) Remove() {
-	if s == nil || s.Path == "" {
-		return
+// inputSnapshotReadyHook is a test-only seam invoked after the immutable copy
+// and digest are complete but before callers parse the snapshot. Production
+// leaves it nil; tests use it to prove source-path mutation cannot alter the
+// row bytes bound to the emitted digest.
+var inputSnapshotReadyHook func(sourcePath, snapshotPath string)
+
+// inputSnapshotRemove is a test-only filesystem seam for snapshot cleanup.
+// Production uses os.Remove.
+var inputSnapshotRemove = os.Remove
+
+type privateInputError struct {
+	err          error
+	display      string
+	privatePaths []string
+}
+
+func (e *privateInputError) Error() string {
+	return sanitizePrivateInputText(e.err.Error(), e.display, e.privatePaths...)
+}
+
+func (e *privateInputError) Unwrap() error { return e.err }
+
+func sanitizePrivateInputError(err error, display string, privatePaths ...string) error {
+	if err == nil {
+		return nil
 	}
-	_ = os.Remove(s.Path)
+	return &privateInputError{err: err, display: display, privatePaths: privatePaths}
+}
+
+func sanitizePrivateInputText(text, display string, privatePaths ...string) string {
+	for _, path := range privatePaths {
+		if path == "" || path == display {
+			continue
+		}
+		text = strings.ReplaceAll(text, path, display)
+	}
+	return text
+}
+
+func removeInputSnapshot(snap *declaredInputSnapshot, logical string) error {
+	if snap == nil {
+		return nil
+	}
+	privatePath := snap.Path
+	if err := snap.Remove(); err != nil {
+		return sanitizePrivateInputError(fmt.Errorf("remove input snapshot: %w", err), logical, privatePath)
+	}
+	return nil
+}
+
+func removeInputSnapshotPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := inputSnapshotRemove(path); err != nil && !os.IsNotExist(err) {
+		return sanitizePrivateInputError(fmt.Errorf("remove input snapshot: %w", err), "private input snapshot", path)
+	}
+	return nil
+}
+
+func inputSnapshotOperationError(operation string, err error, privatePaths ...string) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, sanitizePrivateInputError(err, "private input", privatePaths...))
+}
+
+// Remove deletes the snapshot. It is idempotent and safe on a nil receiver;
+// callers that create identity snapshots must treat cleanup failure as terminal.
+func (s *declaredInputSnapshot) Remove() error {
+	if s == nil || s.Path == "" {
+		return nil
+	}
+	if err := inputSnapshotRemove(s.Path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	s.Path = ""
+	return nil
 }
 
 // declarationAt returns the declaration for an input ordinal (1-based), or nil
@@ -51,8 +126,8 @@ func declarationAt(decls []*fileListDeclaration, ordinal int) *fileListDeclarati
 
 // snapshotAndVerifyDeclaredInput copies the declared input's stored bytes into a
 // private owner-only snapshot and verifies the declaration against that copy:
-// a stat-size pre-check (fast fail before copying), then one HashLocalInput over
-// the snapshot — the same digest the manifest ledger records. On success the
+// a stat-size pre-check (fast fail before copying), then one SHA-256 pass while
+// writing the snapshot — the same digest the manifest ledger records. On success the
 // returned snapshot is the byte image that was verified; callers parse the
 // snapshot path and Remove it afterwards, so verification and parsing cannot be
 // separated by a concurrent same-size mutation of the source.
@@ -67,57 +142,83 @@ func snapshotAndVerifyDeclaredInput(src string, decl *fileListDeclaration) (*dec
 	if decl == nil {
 		return nil, fmt.Errorf("declared input has no declaration")
 	}
+	return snapshotAndIdentifyInput(src, decl)
+}
+
+// snapshotAndIdentifyInput creates one immutable byte image, hashes it while it
+// is copied, and returns the identity the parser and ledger must share. A
+// declaration, when present, is verified against that same image. The optional
+// row-identity path calls this with nil so URI-only inputs are also bound before
+// row emission instead of being hashed after a mutable-path parse.
+func snapshotAndIdentifyInput(src string, decl *fileListDeclaration) (*declaredInputSnapshot, error) {
 	info, err := os.Stat(src)
 	if err != nil {
-		return nil, fmt.Errorf("stat declared input: %w", err)
+		if decl != nil {
+			return nil, fmt.Errorf("stat declared input: %w", sanitizePrivateInputError(err, "input", src))
+		}
+		return nil, fmt.Errorf("stat input: %w", sanitizePrivateInputError(err, "input", src))
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("declared input is a directory")
+		return nil, fmt.Errorf("input is a directory")
 	}
-	if info.Size() != decl.Size {
+	if decl != nil && info.Size() != decl.Size {
 		return nil, fmt.Errorf("declared size %d does not match actual size %d", decl.Size, info.Size())
 	}
 
-	srcFile, err := os.Open(src) // #nosec G304 - declared input path from the operator-provided file list
+	srcFile, err := os.Open(src) // #nosec G304 - operator-provided input path
 	if err != nil {
-		return nil, fmt.Errorf("open declared input: %w", err)
+		return nil, fmt.Errorf("open input: %w", sanitizePrivateInputError(err, "input", src))
 	}
-	defer func() { _ = srcFile.Close() }()
 
-	snapFile, err := os.CreateTemp("", "sumpter-declared-*"+filepath.Ext(src))
+	prefix := "sumpter-identity-*"
+	if decl != nil {
+		prefix = "sumpter-declared-*"
+	}
+	snapFile, err := os.CreateTemp("", prefix+filepath.Ext(src))
 	if err != nil {
-		return nil, fmt.Errorf("create declared-input snapshot: %w", err)
+		return nil, errors.Join(
+			fmt.Errorf("create input snapshot: %w", err),
+			inputSnapshotOperationError("close input", srcFile.Close(), src),
+		)
 	}
 	snapPath := snapFile.Name()
-	written, copyErr := io.Copy(snapFile, srcFile)
-	closeErr := snapFile.Close()
+	hasher := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(snapFile, hasher), srcFile)
+	snapshotCloseErr := snapFile.Close()
+	sourceCloseErr := srcFile.Close()
 	if copyErr != nil {
-		_ = os.Remove(snapPath)
-		return nil, fmt.Errorf("snapshot declared input: %w", copyErr)
+		return nil, errors.Join(
+			inputSnapshotOperationError("snapshot input", copyErr, src, snapPath),
+			inputSnapshotOperationError("close input snapshot", snapshotCloseErr, snapPath),
+			inputSnapshotOperationError("close input", sourceCloseErr, src),
+			removeInputSnapshotPath(snapPath),
+		)
 	}
-	if closeErr != nil {
-		_ = os.Remove(snapPath)
-		return nil, fmt.Errorf("snapshot declared input: %w", closeErr)
+	if snapshotCloseErr != nil || sourceCloseErr != nil {
+		return nil, errors.Join(
+			inputSnapshotOperationError("close input snapshot", snapshotCloseErr, snapPath),
+			inputSnapshotOperationError("close input", sourceCloseErr, src),
+			removeInputSnapshotPath(snapPath),
+		)
 	}
-	if written != decl.Size {
-		_ = os.Remove(snapPath)
-		return nil, fmt.Errorf("declared size %d does not match snapshot size %d", decl.Size, written)
+	if decl != nil && written != decl.Size {
+		return nil, errors.Join(
+			fmt.Errorf("declared size %d does not match snapshot size %d", decl.Size, written),
+			removeInputSnapshotPath(snapPath),
+		)
 	}
 
-	sum, size, herr := provenance.HashLocalInput(snapPath)
-	if herr != nil {
-		_ = os.Remove(snapPath)
-		return nil, fmt.Errorf("hash declared input: %w", herr)
+	sum := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	if decl != nil && sum != decl.SHA256 {
+		return nil, errors.Join(
+			fmt.Errorf("declared sha256 %s does not match actual %s", decl.SHA256, sum),
+			removeInputSnapshotPath(snapPath),
+		)
 	}
-	if size != decl.Size {
-		_ = os.Remove(snapPath)
-		return nil, fmt.Errorf("declared size %d does not match actual size %d", decl.Size, size)
+	if inputSnapshotReadyHook != nil {
+		inputSnapshotReadyHook(src, snapPath)
 	}
-	if sum != decl.SHA256 {
-		_ = os.Remove(snapPath)
-		return nil, fmt.Errorf("declared sha256 %s does not match actual %s", decl.SHA256, sum)
-	}
-	return &declaredInputSnapshot{Path: snapPath, SHA256: sum, Size: size}, nil
+	return &declaredInputSnapshot{Path: snapPath, SHA256: sum, Size: written}, nil
 }
 
 // ledgerInputFor builds the provenance input ledger for a processed input,
