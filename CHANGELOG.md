@@ -8,6 +8,28 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-09-20
+
+**Integrity-bound batch inputs, durable local aggregate commits, and opt-in row-to-input identity.**
+
+See [`docs/releases/v0.3.5.md`](docs/releases/v0.3.5.md) for the full release narrative. Operator notes: [`docs/extract-workflow.md`](docs/extract-workflow.md).
+
+### Added
+
+- **Integrity-bound file-list entries** — `--file-list` and recipe `defaults.input.files_from` accept strict `{uri,size,sha256}` JSON object lines alongside URI-only lines. Declared inputs are verified against owner-only snapshots of the exact bytes parsed; size or digest mismatch fails before records from that input are emitted. Existing URI-only behavior remains available (#169).
+- **Durable local aggregate commit** — local aggregate output is crash-durable by default: shards and mandatory sidecars are synchronized before manifest-last publication, and the manifest is the reader marker for a confirmed per-recipe commit. `--no-durable-commit` is an explicit local-aggregate-only opt-out with weaker semantics (#170).
+- **Opt-in aggregate row identity** — `--emit-input-identity` emits the enforced `_runtime.input_ordinal` and `_runtime.input_sha256` pair, bound to the exact parsed-byte snapshot and the manifest input ledger. Incomplete identity accounting fails closed without a successful marker (#170).
+
+### Changed
+
+- **Build runner and runtime modules** — CI/release jobs use `goneat-tools-runner-glibc:v0.5.6`; `golang.org/x/net`, `x/sys`, and `x/text` move together to v0.59.0, v0.48.0, and v0.42.0, and `github.com/klauspost/compress` is pinned at v1.18.7 (#168).
+- **Aggregate recovery guidance** — fail-fast guarantees are scoped to a recipe's uncommitted work, and final-sync failure after manifest rename is documented as unconfirmed rather than inferred success.
+- **VERSION bumped to `0.3.5`.**
+
+### Known dependency graph findings
+
+- `goneat dependencies --vuln` continues to report high-severity advisories in transitive gRPC and go-git paths reached through gonimbus test/tooling edges, not packages linked into `cmd/sumpter`. This is a documented residual rather than a release hold; v0.3.5 does not claim graph-wide zero-high findings.
+
 ## [0.3.4] - 2026-09-04
 
 **Bounded cloud extract with distinct logical reader and writer handles.**
