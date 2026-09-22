@@ -40,6 +40,11 @@
     "cli": {
       "$ref": "#/$defs/cli"
     },
+    "input_path_form": {
+      "type": "string",
+      "const": "root_relative",
+      "description": "Present only when --provenance-root or SUMPTER_PROVENANCE_ROOT selects root-relative input paths. Every local inputs[].path is the slash-separated lexical path relative to the selected root; cloud URI entries remain unchanged. The root itself is never stored."
+    },
     "recipe": {
       "$ref": "#/$defs/recipe"
     },
@@ -611,7 +616,8 @@
       "properties": {
         "path": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Input path identity. In inputs[] order, ordinals are 1-based: --file-list entries use listed order after blank/comment lines, --files uses caller order, and --input-path discovery paths are sorted before ordinals are assigned. With input_path_form=root_relative, local paths are lexical paths relative to the selected root and cloud URIs remain unchanged."
         },
         "credentials_handle": {
           "type": "string",

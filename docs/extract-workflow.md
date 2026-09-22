@@ -655,6 +655,47 @@ Processing **many files in one invocation** is a supported, first-class workflow
 
 The shared CLI selects the **reader** handle (`--input-credentials-handle`). Each recipe declares its own **writer** handle. `extract-multi` does **not** take `--output-credentials-handle`; a shared output override would collide with recipes that use different writers. Cloud aggregate still **requires a positive `--aggregate-max-bytes`** at or below the 5 GiB single-PUT limit.
 
+### Opt-in root-relative input provenance
+
+The local input path form can be made deterministic with
+`--provenance-root <path>` or `SUMPTER_PROVENANCE_ROOT`. The option is available
+on all manifest-producing extract surfaces:
+
+- `sumpter extract files`
+- `sumpter recipes run extract`
+- `sumpter recipes run extract-multi`
+
+The flag wins over the environment variable. An explicitly empty flag or
+environment value is a plan error; when neither is set, the existing
+`SanitizePath` behavior is unchanged. The selected root must be an existing
+directory. Sumpter resolves its absolute, cleaned lexical form once and checks
+each resolved local input both lexically and after symlink evaluation. A local
+input must be strictly inside the root; the root directory itself and a link
+whose target leaves the root are rejected. The complete input set is checked
+once before any output directory, output session, telemetry, manifest, or record
+writer is opened. `--continue-on-error`, `--dry-run`, and `--no-manifest` do not
+bypass this plan check.
+
+When root mode is selected, local `inputs[].path` values are slash-separated
+paths relative to the lexical root. `file://` entries use their local path form;
+cloud URIs are skipped by containment and remain unchanged. Manifests add
+`input_path_form: "root_relative"`, including mixed and cloud-only input sets.
+The root is never written to the manifest, sanitized argv, logs, or errors, and
+it is not added to the ordinary sanitizer roots used by other path surfaces.
+
+Input ordinals are assigned in the resolved order and are not changed by this
+option:
+
+| Source | Ordinal |
+| --- | --- |
+| `--file-list` | 1-based listed order after blank and `#` lines; not sorted |
+| `--files` | Caller order; not sorted |
+| `--input-path` | Discovery paths sorted before ordinals are assigned |
+
+`_runtime.input_ordinal` uses the same 1-based index when
+`--emit-input-identity` is enabled for aggregate NDJSON. The identity option is
+independent of provenance-root selection.
+
 ```bash
 # Cloud URI list → local aggregate
 sumpter recipes run extract-multi ./recipes/summary \

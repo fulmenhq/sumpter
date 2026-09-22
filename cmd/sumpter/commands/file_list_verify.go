@@ -227,8 +227,20 @@ func snapshotAndIdentifyInput(src string, decl *fileListDeclaration) (*declaredI
 // inputs keep the historical BuildInputLedger behavior (hash now). The recorded
 // path is always the logical URI/path — never a staging path.
 func ledgerInputFor(opts *ExtractOptions, result extract.ExtractResult, ident *inputIdentity, roots ...string) (provenance.Input, error) {
+	var (
+		input provenance.Input
+		err   error
+	)
 	if ident != nil {
-		return provenance.BuildInputLedgerHashed(result.LogicalURI, ident.sha256, ident.size, resolvedInputHandle(opts), roots...)
+		input, err = provenance.BuildInputLedgerHashed(result.LogicalURI, ident.sha256, ident.size, resolvedInputHandle(opts), roots...)
+	} else {
+		input, err = provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), roots...)
 	}
-	return provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), roots...)
+	if err != nil {
+		return provenance.Input{}, err
+	}
+	if err := applyProvenanceRootInputPath(opts, &input, result.File, result.LogicalURI); err != nil {
+		return provenance.Input{}, err
+	}
+	return input, nil
 }

@@ -306,6 +306,9 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 			if cmd.Flags().Changed("format") && cmd.Flags().Changed("formats") {
 				return fmt.Errorf("--format and --formats are mutually exclusive")
 			}
+			if err := resolveRecipeProvenanceRootFlag(cmd, opts); err != nil {
+				return err
+			}
 			workspace := args[0]
 			return executeExtractRecipe(cmd, workspace, opts)
 		},
@@ -336,6 +339,7 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Blend site identifier into extracted records")
 	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable, overrides manifest defaults.parameters). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
+	cmd.Flags().StringVar(&opts.ProvenanceRoot, "provenance-root", "", "Require local inputs to be strictly contained by this root and record root-relative paths (overrides SUMPTER_PROVENANCE_ROOT)")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for the record-stream output")
 	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
@@ -378,6 +382,10 @@ type recipeRunExtractOptions struct {
 	Parameters              []string
 	ReferenceTableOverrides []string
 	RunID                   string
+	ProvenanceRoot          string
+	ProvenanceRootSet       bool
+	ProvenanceRootFromFlag  bool
+	provenanceRoot          *provenance.Root
 	NoManifest              bool
 	ArtifactDescriptor      bool
 	ArtifactContractBase    string
@@ -393,7 +401,11 @@ type recipeRunExtractOptions struct {
 	OutputCredentialsHandle string
 }
 
-func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunExtractOptions) error {
+func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunExtractOptions) (err error) {
+	rootOpts := provenanceRootOptionsForRecipe(opts)
+	defer func() {
+		err = provenanceRootRedactError(rootOpts, err)
+	}()
 	absWorkspace, err := filepath.Abs(workspace)
 	if err != nil {
 		return fmt.Errorf("failed to resolve workspace: %w", err)
@@ -481,17 +493,21 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 
 	extractOpts := &ExtractOptions{
-		SignatureConfig:      signaturePath,
-		ExtractConfig:        extractPath,
-		ApplicabilityConfig:  applicabilityCfg,
-		ContinueOnError:      opts.ContinueOnError,
-		AllowLargeFiles:      allowLargeFiles,
-		RunID:                opts.RunID,
-		NoManifest:           opts.NoManifest,
-		ArtifactDescriptor:   opts.ArtifactDescriptor,
-		ArtifactContractBase: opts.ArtifactContractBase,
-		ValidateOutput:       opts.ValidateOutput,
-		CommandName:          "sumpter recipes run extract",
+		SignatureConfig:        signaturePath,
+		ExtractConfig:          extractPath,
+		ApplicabilityConfig:    applicabilityCfg,
+		ContinueOnError:        opts.ContinueOnError,
+		AllowLargeFiles:        allowLargeFiles,
+		RunID:                  opts.RunID,
+		ProvenanceRoot:         opts.ProvenanceRoot,
+		ProvenanceRootSet:      opts.ProvenanceRootSet,
+		ProvenanceRootFromFlag: opts.ProvenanceRootFromFlag,
+		provenanceRoot:         opts.provenanceRoot,
+		NoManifest:             opts.NoManifest,
+		ArtifactDescriptor:     opts.ArtifactDescriptor,
+		ArtifactContractBase:   opts.ArtifactContractBase,
+		ValidateOutput:         opts.ValidateOutput,
+		CommandName:            "sumpter recipes run extract",
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,
@@ -762,6 +778,9 @@ func buildRecipeExtractArgv(workspace string, opts *recipeRunExtractOptions, ext
 		args = append(args, "--no-durable-commit")
 	}
 	appendFlag("--run-id", opts.RunID)
+	if extractOpts.ProvenanceRootSet && extractOpts.ProvenanceRootFromFlag {
+		args = append(args, "--provenance-root=<set>")
+	}
 	for _, parameter := range opts.Parameters {
 		appendFlag("--parameter", parameter)
 	}

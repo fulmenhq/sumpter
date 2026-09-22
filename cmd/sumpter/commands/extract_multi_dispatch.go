@@ -122,6 +122,17 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	if shared == nil {
 		return fmt.Errorf("extract-multi: shared options are required")
 	}
+	rootOpts := sharedInputOptions(shared)
+	if err := ensureProvenanceRoot(rootOpts); err != nil {
+		return err
+	}
+	shared.ProvenanceRoot = rootOpts.ProvenanceRoot
+	shared.ProvenanceRootSet = rootOpts.ProvenanceRootSet
+	shared.ProvenanceRootFromFlag = rootOpts.ProvenanceRootFromFlag
+	shared.provenanceRoot = rootOpts.provenanceRoot
+	defer func() {
+		err = provenanceRootRedactError(rootOpts, err)
+	}()
 	if len(workspaces) == 0 {
 		return fmt.Errorf("extract-multi requires at least one recipe workspace")
 	}
@@ -137,18 +148,6 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		statsBytesKnown bool
 		statsReady      bool
 	)
-	if shared.Stats {
-		statsCollector = runstats.Start(shared.InputWorkers)
-		defer func() {
-			if !statsReady {
-				return
-			}
-			_, _ = io.WriteString(d.warnOut, runstats.Format(statsCollector.Sample(statsInputs, statsInputBytes, statsBytesKnown)))
-			if boundedCloudInput(d.inputOpts) {
-				_, _ = io.WriteString(d.warnOut, formatStagingStats(d.inputSession.StagingSnapshot()))
-			}
-		}()
-	}
 
 	// Opt-in process-run/v0 event stream (+ optional process card). Deferred so
 	// terminal emission runs after processInputs/finalize set err. Ordinary
@@ -286,26 +285,6 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 		}
 	}
 
-	// Now (after the preflight) set up each recipe's output. Local aggregate
-	// directories are deliberately left to localAggregateCommit: it must create,
-	// track, and persist every new ancestry entry inside the durability protocol.
-	// Per-input local output keeps the historical eager directory creation; cloud
-	// destinations use their write-boundary session. All setup remains deferred
-	// from the loader so nothing is created before validation.
-	for _, plan := range plans {
-		// Only create a per-input local directory here. Aggregate ownership creates
-		// its own directory; cloud output is published through the session/target.
-		if shared.OutputMode != outputModeAggregate && !referenceIsCloud(plan.OutputDir) {
-			if err := os.MkdirAll(plan.OutputDir, 0o750); err != nil {
-				return fmt.Errorf("recipe %q: failed to create output directory: %w", plan.RecipeID, err)
-			}
-		}
-		if err := setupOutputSession(plan.opts, shared.RunID); err != nil {
-			return fmt.Errorf("recipe %q: %w", plan.RecipeID, err)
-		}
-		defer closeOutputSession(plan.opts)
-	}
-
 	// Resolve the shared input set ONCE (the whole point: one discovery + one
 	// read/parse per file, shared across recipes).
 	inputOpts := sharedInputOptions(shared)
@@ -325,13 +304,6 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	d.inputSession = inputSession
 	d.inputOpts = inputOpts
 	d.declarations = decls
-	if shared.Stats {
-		// Counters are taken from the resolved read paths (local or staged-cloud
-		// copies) using cheap stat calls only — no extra file reads, no cloud calls.
-		statsInputs = len(files)
-		statsInputBytes, statsBytesKnown = sumLocalFileSizes(files)
-		statsReady = true
-	}
 	if inputSession != nil {
 		defer func() {
 			if cerr := inputSession.Close(); cerr != nil {
@@ -342,10 +314,53 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 
 	// Aggregate determinism: assign input ordinals in a stable order. For --file-list
 	// / --files the resolved order is authoritative; --input-path discovery order is
-	// not guaranteed stable, so sort before assigning ordinals (and the shared parse
-	// order follows, identical for every recipe).
+	// not guaranteed stable, so sort before the shared containment preflight as well as
+	// before processing. This makes the preflight's ordinal match manifest order.
 	if shared.OutputMode == outputModeAggregate && strings.TrimSpace(shared.InputPath) != "" {
 		sort.Strings(files)
+	}
+	if err := preflightProvenanceRootInputs(inputOpts, files, logicalByLocal); err != nil {
+		return err
+	}
+
+	// The shared containment preflight above is the last plan-only boundary. Start
+	// observational stats only after it passes so an invalid provenance-root plan
+	// produces no stats output or collector setup.
+	if shared.Stats {
+		statsCollector = runstats.Start(shared.InputWorkers)
+		defer func() {
+			if !statsReady {
+				return
+			}
+			_, _ = io.WriteString(d.warnOut, runstats.Format(statsCollector.Sample(statsInputs, statsInputBytes, statsBytesKnown)))
+			if boundedCloudInput(d.inputOpts) {
+				_, _ = io.WriteString(d.warnOut, formatStagingStats(d.inputSession.StagingSnapshot()))
+			}
+		}()
+		// Counters are taken from the resolved read paths (local or staged-cloud
+		// copies) using cheap stat calls only — no extra file reads, no cloud calls.
+		statsInputs = len(files)
+		statsInputBytes, statsBytesKnown = sumLocalFileSizes(files)
+		statsReady = true
+	}
+
+	// Now that the complete shared input set has passed the containment preflight,
+	// set up each recipe's output. Local aggregate directories are deliberately left
+	// to localAggregateCommit: it must create, track, and persist every new ancestry
+	// entry inside the durability protocol. Per-input local output keeps the historical
+	// eager directory creation; cloud destinations use their write-boundary session.
+	for _, plan := range plans {
+		// Only create a per-input local directory here. Aggregate ownership creates
+		// its own directory; cloud output is published through the session/target.
+		if shared.OutputMode != outputModeAggregate && !referenceIsCloud(plan.OutputDir) {
+			if err := os.MkdirAll(plan.OutputDir, 0o750); err != nil {
+				return fmt.Errorf("recipe %q: failed to create output directory: %w", plan.RecipeID, err)
+			}
+		}
+		if err := setupOutputSession(plan.opts, shared.RunID); err != nil {
+			return fmt.Errorf("recipe %q: %w", plan.RecipeID, err)
+		}
+		defer closeOutputSession(plan.opts)
 	}
 
 	// Start process-run emission only after the input set is resolved (total known).
@@ -444,9 +459,9 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 	local, logical, cleanup, aerr := d.prepareInput(ctx, ref, logicalByLocal, decl)
 	o = builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
 	if aerr != nil {
-		o.parseErr = aerr
+		o.parseErr = provenanceRootInputError(d.inputOpts, aerr, local, logical)
 		if decl != nil {
-			o.parseErr = fmt.Errorf("input %d (%s): %w", o.ordinal, logical, aerr)
+			o.parseErr = fmt.Errorf("input %d (%s): %w", o.ordinal, provenanceRootInputLabel(d.inputOpts, local, logical), o.parseErr)
 		}
 		o.file = logical
 		cleanup()
@@ -468,7 +483,8 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 		s, verr := snapshotAndIdentifyInput(local, decl)
 		if verr != nil {
 			verr = sanitizePrivateInputError(verr, logical, local)
-			o.parseErr = fmt.Errorf("input %d (%s): %w", o.ordinal, logical, verr)
+			verr = provenanceRootInputError(d.inputOpts, verr, local, logical)
+			o.parseErr = fmt.Errorf("input %d (%s): %w", o.ordinal, provenanceRootInputLabel(d.inputOpts, local, logical), verr)
 			o.file = logical
 			cleanup()
 			return o
@@ -493,7 +509,7 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 	doc, perr := parse(parseTarget, allowLargeFiles)
 	if perr != nil {
 		perr = sanitizePrivateInputError(perr, logical, parseTarget, local)
-		o.parseErr = perr
+		o.parseErr = provenanceRootInputError(d.inputOpts, perr, local, logical, parseTarget)
 		cleanup()
 		return o
 	}
@@ -501,7 +517,7 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 		// URI-only inputs keep the historical parse-then-hash order byte-for-byte.
 		hsum, hsz, herr := provenance.HashLocalInput(local)
 		if herr != nil {
-			o.parseErr = herr
+			o.parseErr = provenanceRootInputError(d.inputOpts, herr, local, logical)
 			cleanup()
 			return o
 		}
@@ -644,6 +660,7 @@ type builtInputOutcome struct {
 // ledgers, and manifests.
 func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
 	if o.parseErr != nil {
+		o.parseErr = provenanceRootRedactError(d.inputOpts, o.parseErr)
 		var recordErr error
 		for _, st := range states {
 			recordErr = errors.Join(recordErr, st.recordInputFailure(o.file, o.logical, o.inputSHA256, o.inputSize, o.parseErr))
@@ -656,7 +673,7 @@ func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOu
 			return o.parseErr
 		}
 		if !shared.ContinueOnError {
-			return fmt.Errorf("failed to process file %s: %w", o.logical, o.parseErr)
+			return fmt.Errorf("failed to process file %s: %w", provenanceRootInputLabel(d.inputOpts, o.file, o.logical), o.parseErr)
 		}
 		return nil
 	}
@@ -1020,6 +1037,10 @@ func sharedInputOptions(shared *multiSharedOptions) *ExtractOptions {
 		MaxDepth:               shared.MaxDepth,
 		FollowSymlinks:         shared.FollowSymlinks,
 		AllowLargeFiles:        shared.AllowLargeFiles,
+		ProvenanceRoot:         shared.ProvenanceRoot,
+		ProvenanceRootSet:      shared.ProvenanceRootSet,
+		ProvenanceRootFromFlag: shared.ProvenanceRootFromFlag,
+		provenanceRoot:         shared.provenanceRoot,
 		CredentialsPath:        shared.CredentialsPath,
 		CredentialOverrides:    shared.CredentialOverrides,
 		InputCredentialsHandle: shared.InputCredentialsHandle,

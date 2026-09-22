@@ -611,6 +611,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	for i, file := range ordered {
 		ordinal := i + 1
 		logical := logicalIdentity(file, logicalByLocal)
+		displayPath := provenanceRootInputLabel(opts, file, logical)
 		writer.setCurrentInput(ordinal)
 		// Start this input's per-input buffer (no-op unless --continue-on-error). Its
 		// records stay buffered until the input commits (flush) or fails (discard), so a
@@ -633,7 +634,8 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			if verr != nil {
 				writer.discardInput()
 				verr = sanitizePrivateInputError(verr, logical, file)
-				verifyErr := fmt.Errorf("input %d (%s): %w", ordinal, logical, verr)
+				verr = provenanceRootRedactError(opts, verr)
+				verifyErr := fmt.Errorf("input %d (%s): %w", ordinal, displayPath, verr)
 				if !opts.ContinueOnError {
 					return verifyErr
 				}
@@ -650,7 +652,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		externalFields, ferr := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if ferr != nil {
 			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
-				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", logical, ferr), cleanupErr)
+				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", displayPath, ferr), provenanceRootRedactError(opts, cleanupErr))
 			}
 			if opts.ContinueOnError {
 				writer.discardInput()
@@ -660,7 +662,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 				}
 				continue
 			}
-			return fmt.Errorf("failed to build external fields for file %s: %w", logical, ferr)
+			return fmt.Errorf("failed to build external fields for file %s: %w", displayPath, ferr)
 		}
 
 		rp := runtimeProvenance
@@ -684,9 +686,11 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			result.DispositionDetail = sanitizePrivateInputText(result.DispositionDetail, logical, readPath, file)
 			result.File = file
 			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
-				return errors.Join(result.Error, cleanupErr)
+				return errors.Join(result.Error, provenanceRootInputError(opts, cleanupErr, file, logical, snap.Path))
 			}
 		}
+		result.Error = provenanceRootInputError(opts, result.Error, file, logical, readPath)
+		result.DispositionDetail = provenanceRootInputText(opts, result.DispositionDetail, file, logical, readPath)
 
 		if result.Error != nil || result.Disposition == extract.DispositionFailed {
 			// Drop the failed input's buffered rows so they never reach the shared shard.
@@ -696,10 +700,10 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			writer.discardInput()
 			if !opts.ContinueOnError {
 				if result.Error != nil {
-					logger.Error("Failed to process file", zap.String("file", result.LogicalURI), zap.Error(result.Error))
-					return fmt.Errorf("failed to process file %s: %w", result.LogicalURI, result.Error)
+					logger.Error("Failed to process file", zap.String("file", displayPath), zap.Error(provenanceRootRedactError(opts, result.Error)))
+					return fmt.Errorf("failed to process file %s: %w", displayPath, result.Error)
 				}
-				return fmt.Errorf("failed to process file %s", result.LogicalURI)
+				return fmt.Errorf("failed to process file %s", displayPath)
 			}
 			if recordErr := recordFailedAggregateInput(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, ident); recordErr != nil {
 				return recordErr
@@ -713,7 +717,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		// or (fail-fast) abort the run. The streamed shard never receives a floor-failing
 		// input's rows.
 		if result.Disposition != extract.DispositionNotApplicable {
-			if floorErr := enforceMinOccurrences(opts, extCfg, sigCfg, result.LogicalURI, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); floorErr != nil {
+			if floorErr := enforceMinOccurrences(opts, extCfg, sigCfg, displayPath, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); floorErr != nil {
 				writer.discardInput()
 				if !opts.ContinueOnError {
 					return floorErr
@@ -760,7 +764,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		manifestInputs = append(manifestInputs, input)
 		countsByRecordType[extCfg.RecordType] += recordCount
 		if opts.Progress {
-			logger.Info("Extracted records (aggregate)", zap.String("file", result.LogicalURI), zap.Int("record_count", recordCount))
+			logger.Info("Extracted records (aggregate)", zap.String("file", displayPath), zap.Int("record_count", recordCount))
 		}
 	}
 
@@ -805,7 +809,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 		return err
 	}
-	logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+	logger.Info("Provenance manifest written", zap.String("file", provenanceRootDiagnosticText(opts, manifestPath)))
 
 	// Once the normal manifest is durable, the incomplete:true guard must stay off:
 	// later sidecar failures (including the optional descriptor) should fail the run
@@ -832,6 +836,8 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 // the per-input inventory (record_count 0, disposition failed) so aggregate provenance
 // stays gap-free (R5) and the shard == Σ per-input invariant holds (R4).
 func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, ident *inputIdentity) error {
+	result.Error = provenanceRootRedactError(opts, result.Error)
+	result.DispositionDetail = provenanceRootDiagnosticText(opts, result.DispositionDetail)
 	if result.Disposition == "" {
 		result.Disposition = extract.DispositionFailed
 	}
@@ -849,10 +855,10 @@ func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptio
 	input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 	if err != nil {
 		if opts != nil && opts.EmitInputIdentity {
-			return fmt.Errorf("record failed aggregate input identity for %s: %w", result.LogicalURI, sanitizePrivateInputError(err, result.LogicalURI, result.File))
+			return fmt.Errorf("record failed aggregate input identity for %s: %w", provenanceRootInputLabel(opts, result.File, result.LogicalURI), provenanceRootRedactError(opts, sanitizePrivateInputError(err, result.LogicalURI, result.File)))
 		}
 		logging.Warn("Skipping provenance input ledger for failed aggregate input",
-			zap.String("file", result.LogicalURI), zap.Error(err))
+			zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)), zap.Error(provenanceRootRedactError(opts, err)))
 		return nil
 	}
 	input.RecordType = extCfg.RecordType
@@ -886,6 +892,6 @@ func writeIncompleteAggregateManifest(opts *ExtractOptions, runtimeProvenance pr
 	manifestPath := outputRefJoin(opts.OutputPath, provenance.ManifestFileName)
 	if werr := writeProvenanceManifest(opts, manifestPath, manifest); werr != nil {
 		logging.Error("Failed to write incomplete aggregate manifest; committed cloud shards may be orphaned",
-			zap.String("path", manifestPath), zap.Error(werr))
+			zap.String("path", provenanceRootDiagnosticText(opts, manifestPath)), zap.Error(provenanceRootRedactError(opts, werr)))
 	}
 }

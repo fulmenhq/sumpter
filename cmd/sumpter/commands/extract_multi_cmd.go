@@ -56,6 +56,10 @@ type recipeRunExtractMultiOptions struct {
 	ProcessRun             bool
 	ProcessRunRuntimeDir   string
 	ProcessRunEventsPath   string
+	ProvenanceRoot         string
+	ProvenanceRootSet      bool
+	ProvenanceRootFromFlag bool
+	provenanceRoot         *provenance.Root
 }
 
 func newRecipeRunExtractMultiCommand() *cobra.Command {
@@ -91,6 +95,9 @@ Input and output may be S3-compatible cloud URIs (s3://) using credential
 handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := resolveExtractMultiProvenanceRootFlag(cmd, opts); err != nil {
+				return err
+			}
 			allowLargeFiles, err := cmd.InheritedFlags().GetBool("allow-large-files")
 			if err != nil {
 				return fmt.Errorf("failed to get allow-large-files flag: %w", err)
@@ -128,6 +135,10 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				InputWorkers:           opts.InputWorkers,
 				Progress:               opts.Progress,
 				RunID:                  runID,
+				ProvenanceRoot:         opts.ProvenanceRoot,
+				ProvenanceRootSet:      opts.ProvenanceRootSet,
+				ProvenanceRootFromFlag: opts.ProvenanceRootFromFlag,
+				provenanceRoot:         opts.provenanceRoot,
 				NoManifest:             opts.NoManifest,
 				ArtifactDescriptor:     opts.ArtifactDescriptor,
 				ArtifactContractBase:   opts.ArtifactContractBase,
@@ -172,6 +183,7 @@ handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().IntVar(&opts.InputWorkers, "input-workers", 1, "Process the shared input set across N workers within this one invocation: each worker parses AND runs that input's full per-recipe application (signature/applicability/extraction/min-occurrences), feeding a single ordered committer (default 1 = serial, byte-identical). Parallelizes the per-input work that dominates high-count tiny-file runs as well as the parse long pole of parse-bound runs; output, record order, and the per-invocation manifest are unchanged at every N. Use --stats to size N. Distinct from any --workers surface")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID); shared by every recipe")
+	cmd.Flags().StringVar(&opts.ProvenanceRoot, "provenance-root", "", "Require local inputs to be strictly contained by this root and record root-relative paths (overrides SUMPTER_PROVENANCE_ROOT)")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for each recipe's record-stream output")
 	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
@@ -220,6 +232,9 @@ func buildExtractMultiArgv(workspaces []string, opts *recipeRunExtractMultiOptio
 	appendFlag("--exclude-pattern", opts.ExcludePattern)
 	appendFlag("--output-path", opts.OutputPath)
 	appendFlag("--run-id", opts.RunID)
+	if opts.ProvenanceRootSet && opts.ProvenanceRootFromFlag {
+		args = append(args, "--provenance-root=<set>")
+	}
 	// Shared run-level parameters are part of the portable, replayable invocation
 	// (unlike the operator/environment-specific credential flags above). The common
 	// provenance sanitizer redacts secret-shaped --parameter values by inner key.

@@ -133,6 +133,15 @@ var SumpterEnvironmentVariables = map[string]EnvVarDefinition{
 		Example:     "/run/user/1000/sumpter",
 		Category:    "telemetry",
 	},
+	"SUMPTER_PROVENANCE_ROOT": {
+		Name:        "SUMPTER_PROVENANCE_ROOT",
+		Description: "Explicit root for strict root-relative local input provenance (flag wins when set)",
+		Type:        EnvVarTypePath,
+		Default:     "",
+		Required:    false,
+		Example:     "/data/input-root",
+		Category:    "paths",
+	},
 }
 
 // GetSumpterEnvVars returns all SUMPTER environment variables

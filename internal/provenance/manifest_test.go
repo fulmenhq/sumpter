@@ -37,6 +37,24 @@ func TestManifestSchemaValidatesDirectAndRecipeBacked(t *testing.T) {
 	assertValidManifest(t, recipe)
 }
 
+func TestManifestSchemaAllowsRootRelativeInputPathForm(t *testing.T) {
+	manifest := testManifest(t)
+	manifest.InputPathForm = InputPathFormRootRelative
+	manifest.Inputs = []Input{
+		{
+			Path:      "inputs/source.xml",
+			SHA256:    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			SizeBytes: 42,
+		},
+		{
+			Path:      "s3://bucket/source.xml",
+			SHA256:    "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+			SizeBytes: 7,
+		},
+	}
+	assertValidManifest(t, manifest)
+}
+
 func TestManifestSchemaRejectsExtraFields(t *testing.T) {
 	manifest := testManifest(t)
 	data, err := json.Marshal(manifest)
@@ -230,6 +248,24 @@ func TestSanitizePathAndArgv(t *testing.T) {
 	}
 	if !strings.Contains(joined, "inputs/source.xml") {
 		t.Fatalf("SanitizeArgv did not preserve relative path: %q", joined)
+	}
+}
+
+func TestSanitizeArgvProvenanceRootRedactsJoinedAndSplitForms(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "private-root")
+	for name, args := range map[string][]string{
+		"joined": {"extract", "--provenance-root=" + root},
+		"split":  {"extract", "--provenance-root", root},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := SanitizeArgv(args)
+			if len(got) != 2 || got[1] != "--provenance-root=<set>" {
+				t.Fatalf("SanitizeArgv(%v) = %#v, want one redacted root token", args, got)
+			}
+			if strings.Contains(strings.Join(got, " "), root) {
+				t.Fatalf("SanitizeArgv leaked provenance root: %#v", got)
+			}
+		})
 	}
 }
 

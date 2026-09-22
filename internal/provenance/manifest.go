@@ -21,16 +21,22 @@ const (
 	ManifestSchemaVersion = "sumpter.provenance/v1"
 	// ManifestFileName is the sidecar file written beside extract outputs.
 	ManifestFileName = "manifest.json"
+	// InputPathFormRootRelative identifies manifests whose local input paths are
+	// recorded relative to the explicitly selected provenance root.
+	InputPathFormRootRelative = "root_relative"
 )
 
 // Manifest is the canonical provenance sidecar for an extract run.
 type Manifest struct {
-	SchemaVersion      string            `json:"schema_version"`
-	RunID              string            `json:"run_id"`
-	SumpterVersion     string            `json:"sumpter_version"`
-	StartedAt          time.Time         `json:"started_at"`
-	CompletedAt        time.Time         `json:"completed_at"`
-	CLI                CLI               `json:"cli"`
+	SchemaVersion  string    `json:"schema_version"`
+	RunID          string    `json:"run_id"`
+	SumpterVersion string    `json:"sumpter_version"`
+	StartedAt      time.Time `json:"started_at"`
+	CompletedAt    time.Time `json:"completed_at"`
+	CLI            CLI       `json:"cli"`
+	// InputPathForm records the selected local-input path mode. It is omitted
+	// unless provenance-root is active; cloud paths retain their URI spelling.
+	InputPathForm      string            `json:"input_path_form,omitempty"`
 	Recipe             *Recipe           `json:"recipe,omitempty"`
 	Inputs             []Input           `json:"inputs"`
 	Outputs            []Output          `json:"outputs"`
@@ -443,6 +449,10 @@ func sanitizeArgv(args []string, internalParameters map[string]struct{}, roots .
 		}
 
 		key, value, hasValue := strings.Cut(arg, "=")
+		if hasValue && isProvenanceRootFlag(key) {
+			out = append(out, key+"=<set>")
+			continue
+		}
 		if hasValue && isSecretKey(key) {
 			out = append(out, key+"=<redacted>")
 			continue
@@ -464,6 +474,11 @@ func sanitizeArgv(args []string, internalParameters map[string]struct{}, roots .
 		}
 
 		out = append(out, arg)
+		if isProvenanceRootFlag(arg) && i+1 < len(args) {
+			i++
+			out[len(out)-1] = arg + "=<set>"
+			continue
+		}
 		// Split form: --parameter-internal <k=v>. Redact by flag, not by the
 		// recipe's internal key set, so every per-recipe manifest suppresses a
 		// run-level internal value even for bystander recipes.
@@ -485,6 +500,10 @@ func sanitizeArgv(args []string, internalParameters map[string]struct{}, roots .
 		}
 	}
 	return out
+}
+
+func isProvenanceRootFlag(key string) bool {
+	return strings.ToLower(strings.TrimLeft(strings.TrimSpace(key), "-")) == "provenance-root"
 }
 
 // isParameterFlag reports whether a flag token is the --parameter injection flag,
