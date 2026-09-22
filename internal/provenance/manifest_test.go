@@ -269,6 +269,37 @@ func TestSanitizeArgvProvenanceRootRedactsJoinedAndSplitForms(t *testing.T) {
 	}
 }
 
+func TestSanitizeArgvForRootRedactsLocalInputsAndPreservesCloudURI(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "private-root")
+	localDir := filepath.Join(root, "sensitive-corpus-fragment")
+	localFile := filepath.Join(localDir, "unique-input-fragment.xml")
+	fileList := filepath.Join(root, "private-input-list.txt")
+	args := []string{
+		"extract", "files",
+		"--files=" + localFile + ",s3://example-bucket/public/object.xml",
+		"--input-path", localDir,
+		"--file-list", fileList,
+		"--provenance-root", root,
+	}
+
+	got := SanitizeArgvForRootWithInternalParameters(args, nil, root)
+	joined := strings.Join(got, " ")
+	for _, fragment := range []string{root, localDir, localFile, fileList, filepath.Base(localDir), filepath.Base(localFile), filepath.Base(fileList)} {
+		if strings.Contains(joined, fragment) {
+			t.Fatalf("root-mode argv leaked local input fragment %q: %q", fragment, joined)
+		}
+	}
+	if !strings.Contains(joined, "s3://example-bucket/public/object.xml") {
+		t.Fatalf("root-mode argv lost cloud logical URI: %q", joined)
+	}
+	if !strings.Contains(joined, "--files=<input>,s3://example-bucket/public/object.xml") {
+		t.Fatalf("root-mode argv did not redact mixed --files value: got=%#v joined=%q", got, joined)
+	}
+	if !strings.Contains(joined, "--input-path <input>") || !strings.Contains(joined, "--file-list <input-list>") {
+		t.Fatalf("root-mode argv did not redact local input flags: %q", joined)
+	}
+}
+
 // TestSanitizeArgvParameter pins the --parameter inner-key redaction: a
 // --parameter value is itself a key=value pair, so the INNER key decides
 // redaction (not the literal "parameter" flag). Secret-shaped inner keys must

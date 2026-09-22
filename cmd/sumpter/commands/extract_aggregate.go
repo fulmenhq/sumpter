@@ -633,8 +633,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			s, verr := snapshotAndIdentifyInput(file, decl)
 			if verr != nil {
 				writer.discardInput()
-				verr = sanitizePrivateInputError(verr, logical, file)
-				verr = provenanceRootRedactError(opts, verr)
+				verr = provenanceRootInputError(opts, verr, file, logical)
 				verifyErr := fmt.Errorf("input %d (%s): %w", ordinal, displayPath, verr)
 				if !opts.ContinueOnError {
 					return verifyErr
@@ -651,6 +650,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 
 		externalFields, ferr := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if ferr != nil {
+			ferr = provenanceRootInputError(opts, ferr, file, logical)
 			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
 				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", displayPath, ferr), provenanceRootRedactError(opts, cleanupErr))
 			}
@@ -669,6 +669,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		if file != logical || snap != nil {
 			rp.SourceURI = logical
 		}
+		rp = withProvenanceRootRuntimeLabel(opts, rp, ordinal, file, logical)
 		readPath := file
 		if snap != nil {
 			// Read the verified snapshot, not the mutable source path.
@@ -700,7 +701,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			writer.discardInput()
 			if !opts.ContinueOnError {
 				if result.Error != nil {
-					logger.Error("Failed to process file", zap.String("file", displayPath), zap.Error(provenanceRootRedactError(opts, result.Error)))
+					logger.Error("Failed to process file", zap.String("file", displayPath), zap.Error(provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)))
 					return fmt.Errorf("failed to process file %s: %w", displayPath, result.Error)
 				}
 				return fmt.Errorf("failed to process file %s", displayPath)
@@ -749,7 +750,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		}
 		input, lerr := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 		if lerr != nil {
-			return lerr
+			return provenanceRootInputError(opts, lerr, result.File, result.LogicalURI)
 		}
 		input.RecordType = extCfg.RecordType
 		rc := recordCount
@@ -836,8 +837,8 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 // the per-input inventory (record_count 0, disposition failed) so aggregate provenance
 // stays gap-free (R5) and the shard == Σ per-input invariant holds (R4).
 func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, ident *inputIdentity) error {
-	result.Error = provenanceRootRedactError(opts, result.Error)
-	result.DispositionDetail = provenanceRootDiagnosticText(opts, result.DispositionDetail)
+	result.Error = provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)
+	result.DispositionDetail = provenanceRootInputText(opts, result.DispositionDetail, result.File, result.LogicalURI)
 	if result.Disposition == "" {
 		result.Disposition = extract.DispositionFailed
 	}
@@ -854,11 +855,12 @@ func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptio
 	failureManifest.add(result.LogicalURI, result.DispositionReason, result.DispositionDetail, sanitizeRoots)
 	input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 	if err != nil {
+		err = provenanceRootInputError(opts, err, result.File, result.LogicalURI)
 		if opts != nil && opts.EmitInputIdentity {
-			return fmt.Errorf("record failed aggregate input identity for %s: %w", provenanceRootInputLabel(opts, result.File, result.LogicalURI), provenanceRootRedactError(opts, sanitizePrivateInputError(err, result.LogicalURI, result.File)))
+			return fmt.Errorf("record failed aggregate input identity for %s: %w", provenanceRootInputLabel(opts, result.File, result.LogicalURI), err)
 		}
 		logging.Warn("Skipping provenance input ledger for failed aggregate input",
-			zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)), zap.Error(provenanceRootRedactError(opts, err)))
+			zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)), zap.Error(err))
 		return nil
 	}
 	input.RecordType = extCfg.RecordType

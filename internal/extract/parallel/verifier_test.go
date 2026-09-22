@@ -1,6 +1,7 @@
 package parallel
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -74,4 +75,26 @@ func TestSafetyVerifier_UncompressedSource(t *testing.T) {
 	// Should not fail compression check (though file may not exist for SHA verification)
 	_ = verifier.VerifyIntegrity()
 	// We expect this might fail on SHA, but it shouldn't fail on compression check
+}
+
+func TestSafetyVerifier_DiagnosticLabelRedactsSourcePath(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "sensitive-corpus-fragment", "unique-input-fragment.xml")
+	idx := &index.RecordIndex{
+		Version: "record-index-szst/v0.1.0",
+		Source: index.SourceInfo{
+			Path:       sourcePath,
+			Compressed: false,
+			OffsetKind: index.OffsetKindSourceBytes,
+		},
+		Selector: index.SelectorInfo{XPath: "//record"},
+	}
+
+	verifier := NewSafetyVerifierFromHeader(idx, sourcePath, "records.recordindex.header.json", "input 1")
+	err := verifier.VerifyIntegrity()
+	if err == nil {
+		t.Fatal("VerifyIntegrity() returned nil for inaccessible source")
+	}
+	if strings.Contains(err.Error(), sourcePath) || !strings.Contains(err.Error(), "input 1") {
+		t.Fatalf("VerifyIntegrity() error = %q, want opaque diagnostic label without source path", err)
+	}
 }

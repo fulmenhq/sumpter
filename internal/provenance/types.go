@@ -1,5 +1,7 @@
 package provenance
 
+import "strings"
+
 // RuntimeOptions carries the per-record provenance fields that are safe to
 // place in _runtime. Recipe-specific code resolves values before passing them
 // here so this package remains recipe-domain-agnostic.
@@ -24,6 +26,13 @@ type RuntimeOptions struct {
 	// It is deliberately omitted from RuntimeFields(): it overrides the
 	// source_file value rather than adding a new _runtime field.
 	SourceURI string
+
+	// DiagnosticLabel is an optional caller-selected label for local-input
+	// diagnostics. It is deliberately not emitted into records or manifests.
+	// Root-mode callers set it to an input ordinal so extraction logs and
+	// low-level errors do not expose the local read path before command-level
+	// redaction can run. Empty preserves the historical local-path behavior.
+	DiagnosticLabel string
 }
 
 // SourceIdentity returns the logical source identity, falling back to the
@@ -34,6 +43,29 @@ func (o RuntimeOptions) SourceIdentity(localPath string) string {
 		return o.SourceURI
 	}
 	return localPath
+}
+
+// DiagnosticIdentity returns the safe diagnostic label for a local source,
+// falling back to the historical local path when no label was selected.
+func (o RuntimeOptions) DiagnosticIdentity(localPath string) string {
+	if o.DiagnosticLabel != "" {
+		return o.DiagnosticLabel
+	}
+	return localPath
+}
+
+// DiagnosticError replaces the local read path in an error before the error is
+// logged or returned by a low-level extractor. The original error remains
+// available through Unwrap when a root-mode diagnostic label is active.
+func (o RuntimeOptions) DiagnosticError(err error, localPath string) error {
+	if err == nil || o.DiagnosticLabel == "" || localPath == "" {
+		return err
+	}
+	message := strings.ReplaceAll(err.Error(), localPath, o.DiagnosticLabel)
+	if message == err.Error() {
+		return err
+	}
+	return diagnosticError{message: message, cause: err}
 }
 
 // RuntimeFields returns the non-empty runtime provenance fields.
@@ -57,3 +89,12 @@ func (o RuntimeOptions) RuntimeFields() map[string]interface{} {
 	}
 	return fields
 }
+
+type diagnosticError struct {
+	message string
+	cause   error
+}
+
+func (e diagnosticError) Error() string { return e.message }
+
+func (e diagnosticError) Unwrap() error { return e.cause }

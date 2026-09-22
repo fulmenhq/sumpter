@@ -2,11 +2,14 @@ package commands
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
@@ -158,9 +161,6 @@ func TestRunExtractProvenanceRootProjectsFileURIAndMarksManifest(t *testing.T) {
 		ProvenanceRoot:         rootPath,
 		ProvenanceRootSet:      true,
 		ProvenanceRootFromFlag: true,
-		Argv: []string{
-			"extract", "files", "--provenance-root=" + rootPath,
-		},
 	}
 	if err := runExtract(opts); err != nil {
 		t.Fatalf("runExtract: %v", err)
@@ -174,7 +174,7 @@ func TestRunExtractProvenanceRootProjectsFileURIAndMarksManifest(t *testing.T) {
 		t.Fatalf("inputs = %#v, want one root-relative source.xml input", manifest.Inputs)
 	}
 	argv := strings.Join(manifest.CLI.ArgvSanitized, " ")
-	if strings.Contains(argv, rootPath) || strings.Count(argv, "--provenance-root=<set>") != 1 {
+	if strings.Contains(argv, rootPath) || strings.Contains(argv, filepath.Base(inputPath)) || strings.Count(argv, "--provenance-root=<set>") != 1 {
 		t.Fatalf("sanitized argv = %q, want one redacted provenance-root token", argv)
 	}
 	manifestBytes, err := json.Marshal(manifest)
@@ -240,5 +240,145 @@ func TestRunExtractProvenanceRootFailsBeforeOutputSideEffects(t *testing.T) {
 				t.Fatalf("output directory exists after failed preflight: %q (err=%v)", outputDir, statErr)
 			}
 		})
+	}
+}
+
+func TestProvenanceRootDirectDiagnosticsAreOpaque(t *testing.T) {
+	dir := createExtractManifestFixture(t)
+	rootPath := filepath.Join(dir, "provenance-root")
+	inputDir := filepath.Join(rootPath, "sensitive-corpus-fragment")
+	if err := os.MkdirAll(inputDir, 0o750); err != nil {
+		t.Fatalf("mkdir input directory: %v", err)
+	}
+	inputPath := filepath.Join(inputDir, "unique-input-fragment.xml")
+	mustWriteFile(t, inputPath, `<root><item><name>broken</name>`)
+
+	opts := &ExtractOptions{
+		Files:             inputPath,
+		Format:            "json",
+		OutputPath:        filepath.Join(t.TempDir(), "outputs"),
+		OutputPattern:     "records.jsonl",
+		SignatureConfig:   filepath.Join(dir, "signature.yaml"),
+		ExtractConfig:     filepath.Join(dir, "extract.yaml"),
+		ProvenanceRoot:    rootPath,
+		ProvenanceRootSet: true,
+	}
+
+	var runErr error
+	logs := captureLoggingStderr(t, func() {
+		runErr = runExtract(opts)
+	})
+	if runErr == nil {
+		t.Fatal("runExtract(malformed root-mode input) returned nil")
+	}
+	assertNoProvenanceInputFragments(t, "direct error", runErr.Error(), rootPath, inputPath, filepath.Base(inputDir), filepath.Base(inputPath))
+	assertNoProvenanceInputFragments(t, "direct logs", logs, rootPath, inputPath, filepath.Base(inputDir), filepath.Base(inputPath))
+	if !strings.Contains(logs, "input 1") && !strings.Contains(runErr.Error(), "<input>") {
+		t.Fatalf("root-mode diagnostics did not use an opaque input label: logs=%q error=%q", logs, runErr)
+	}
+}
+
+func TestProvenanceRootExtractMultiDiagnosticsAreOpaque(t *testing.T) {
+	workspace := writeExtractionErrorRecipe(t, "opaque-diagnostics")
+	rootPath := t.TempDir()
+	inputDir := filepath.Join(rootPath, "sensitive-multi-corpus-fragment")
+	if err := os.MkdirAll(inputDir, 0o750); err != nil {
+		t.Fatalf("mkdir input directory: %v", err)
+	}
+	inputPath := filepath.Join(inputDir, "unique-multi-input-fragment.xml")
+	mustWriteFile(t, inputPath, `<root><TargetElement><Name>value</Name></TargetElement></root>`)
+	fileList := filepath.Join(t.TempDir(), "inputs.txt")
+	mustWriteFile(t, fileList, inputPath+"\n")
+
+	shared := &multiSharedOptions{
+		FileList:               fileList,
+		OutputPath:             filepath.Join(t.TempDir(), "outputs"),
+		ProvenanceRoot:         rootPath,
+		ProvenanceRootSet:      true,
+		ProvenanceRootFromFlag: true,
+	}
+	var runErr error
+	logs := captureLoggingStderr(t, func() {
+		runErr = runExtractMulti(shared, []string{workspace}, io.Discard, time.Now())
+	})
+	if runErr == nil {
+		t.Fatal("runExtractMulti(extraction-error root-mode input) returned nil")
+	}
+	assertNoProvenanceInputFragments(t, "extract-multi error", runErr.Error(), rootPath, inputPath, filepath.Base(inputDir), filepath.Base(inputPath))
+	assertNoProvenanceInputFragments(t, "extract-multi logs", logs, rootPath, inputPath, filepath.Base(inputDir), filepath.Base(inputPath))
+}
+
+func TestProvenanceRootRecipeDiagnosticsAreOpaque(t *testing.T) {
+	workspace := writeMultiRecipeWorkspace(t, "opaque-recipe-diagnostics")
+	inputDir := filepath.Join(workspace, "testdata")
+	if err := os.MkdirAll(inputDir, 0o750); err != nil {
+		t.Fatalf("mkdir recipe input directory: %v", err)
+	}
+	inputPath := filepath.Join(inputDir, "recipe-sensitive-input-fragment.xml")
+	mustWriteFile(t, inputPath, `<root><TargetElement><Name>broken</Name>`)
+
+	opts := &recipeRunExtractOptions{
+		ManifestPath:           "recipe.yaml",
+		ProvenanceRoot:         inputDir,
+		ProvenanceRootSet:      true,
+		ProvenanceRootFromFlag: true,
+	}
+	var runErr error
+	logs := captureLoggingStderr(t, func() {
+		runErr = executeExtractRecipe(recipeRunExtractTestCommand(), workspace, opts)
+	})
+	if runErr == nil {
+		t.Fatal("executeExtractRecipe(malformed root-mode input) returned nil")
+	}
+	assertNoProvenanceInputFragments(t, "recipe error", runErr.Error(), inputDir, inputPath, filepath.Base(inputDir), filepath.Base(inputPath))
+	assertNoProvenanceInputFragments(t, "recipe logs", logs, inputDir, inputPath, filepath.Base(inputDir), filepath.Base(inputPath))
+}
+
+func captureLoggingStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStderr := os.Stderr
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stderr pipe: %v", err)
+	}
+	os.Stderr = writer
+	config := logging.DefaultConfig()
+	config.Level = logging.DebugLevel
+	config.UseColor = false
+	config.Component = "sumpter-provenance-root-test"
+	config.LogRotation.Enabled = false
+	if err := logging.Initialize(config); err != nil {
+		_ = writer.Close()
+		os.Stderr = oldStderr
+		_ = reader.Close()
+		t.Fatalf("Initialize logging: %v", err)
+	}
+
+	fn()
+	_ = logging.Sync()
+	_ = writer.Close()
+	os.Stderr = oldStderr
+	data, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	reset := logging.DefaultConfig()
+	reset.Level = logging.ErrorLevel
+	reset.UseColor = false
+	reset.Component = "sumpter-provenance-root-test"
+	reset.LogRotation.Enabled = false
+	if err := logging.Initialize(reset); err != nil {
+		t.Fatalf("reset logging: %v", err)
+	}
+	if readErr != nil {
+		t.Fatalf("read captured stderr: %v", readErr)
+	}
+	return string(data)
+}
+
+func assertNoProvenanceInputFragments(t *testing.T, label, text string, forbidden ...string) {
+	t.Helper()
+	for _, fragment := range forbidden {
+		if fragment != "" && strings.Contains(text, fragment) {
+			t.Errorf("%s leaked private input fragment %q: %s", label, fragment, text)
+		}
 	}
 }

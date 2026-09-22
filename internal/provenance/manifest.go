@@ -429,6 +429,19 @@ func SanitizeArgv(args []string, roots ...string) []string {
 // declared derive-only by the recipe. The parameter key remains visible in
 // provenance; only the value is suppressed.
 func SanitizeArgvWithInternalParameters(args []string, internalParameters []string, roots ...string) []string {
+	return sanitizeArgv(args, parameterSet(internalParameters), roots...)
+}
+
+// SanitizeArgvForRootWithInternalParameters applies the ordinary argv
+// sanitizer after replacing local input references with opaque placeholders.
+// Root-relative input paths are appropriate for the manifest inventory, but
+// they are still identifying path fragments when copied into diagnostics or
+// argv provenance. Cloud URIs remain logical identities and are preserved.
+func SanitizeArgvForRootWithInternalParameters(args []string, internalParameters []string, roots ...string) []string {
+	return sanitizeArgv(redactRootInputArgv(args), parameterSet(internalParameters), roots...)
+}
+
+func parameterSet(internalParameters []string) map[string]struct{} {
 	internalSet := make(map[string]struct{}, len(internalParameters))
 	for _, key := range internalParameters {
 		key = strings.TrimSpace(key)
@@ -437,7 +450,67 @@ func SanitizeArgvWithInternalParameters(args []string, internalParameters []stri
 		}
 		internalSet[key] = struct{}{}
 	}
-	return sanitizeArgv(args, internalSet, roots...)
+	return internalSet
+}
+
+func redactRootInputArgv(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if arg == "" {
+			continue
+		}
+		key, value, hasValue := strings.Cut(arg, "=")
+		if hasValue && isRootInputFlag(key) {
+			out = append(out, key+"="+redactRootInputValue(key, value))
+			continue
+		}
+		out = append(out, arg)
+		if isRootInputFlag(arg) && i+1 < len(args) {
+			i++
+			out = append(out, redactRootInputValue(arg, strings.TrimSpace(args[i])))
+		}
+	}
+	return out
+}
+
+func isRootInputFlag(key string) bool {
+	key = strings.TrimSpace(key)
+	if !strings.HasPrefix(key, "-") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimLeft(strings.TrimSpace(key), "-")) {
+	case "files", "file-list", "input-path":
+		return true
+	default:
+		return false
+	}
+}
+
+func redactRootInputValue(flag, value string) string {
+	if strings.EqualFold(strings.TrimLeft(strings.TrimSpace(flag), "-"), "files") {
+		parts := strings.Split(value, ",")
+		for i, part := range parts {
+			parts[i] = redactRootInputReference(strings.TrimSpace(part))
+		}
+		return strings.Join(parts, ",")
+	}
+	if strings.EqualFold(strings.TrimLeft(strings.TrimSpace(flag), "-"), "input-path") {
+		return redactRootInputReference(value)
+	}
+	// A file-list path is local metadata whose entries are resolved later; do
+	// not expose its host path or basename in root-mode argv provenance.
+	return "<input-list>"
+}
+
+func redactRootInputReference(value string) string {
+	if value == "" {
+		return value
+	}
+	if ref, err := uriio.Classify(value); err == nil && ref.IsCloud() {
+		return value
+	}
+	return "<input>"
 }
 
 func sanitizeArgv(args []string, internalParameters map[string]struct{}, roots ...string) []string {

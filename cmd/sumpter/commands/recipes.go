@@ -404,7 +404,7 @@ type recipeRunExtractOptions struct {
 func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunExtractOptions) (err error) {
 	rootOpts := provenanceRootOptionsForRecipe(opts)
 	defer func() {
-		err = provenanceRootRedactError(rootOpts, err)
+		err = provenanceRootSanitizeError(rootOpts, err)
 	}()
 	absWorkspace, err := filepath.Abs(workspace)
 	if err != nil {

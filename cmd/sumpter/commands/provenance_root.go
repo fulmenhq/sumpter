@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -224,8 +225,10 @@ func applyProvenanceRootInputPath(opts *ExtractOptions, input *provenance.Input,
 }
 
 // provenanceRootInputLabel is for diagnostics only. Extraction and source
-// extraction continue to receive the logical identity, while logs and errors
-// use a root-relative local label so the selected host path cannot leak.
+// extraction continue to receive the logical identity, while root-mode local
+// logs and errors use an opaque label so neither the selected host path nor a
+// root-relative input fragment can leak. Cloud logical identities remain
+// visible because they are the intentional cloud diagnostic identity.
 func provenanceRootInputLabel(opts *ExtractOptions, localPath, logical string) string {
 	if logical == "" {
 		logical = localPath
@@ -233,14 +236,33 @@ func provenanceRootInputLabel(opts *ExtractOptions, localPath, logical string) s
 	if !provenanceRootActive(opts) {
 		return logical
 	}
-	candidate, local := provenanceRootLocalPath(localPath, logical)
+	_, local := provenanceRootLocalPath(localPath, logical)
 	if !local {
 		return logical
 	}
-	if relative, err := opts.provenanceRoot.Relative(candidate); err == nil {
-		return relative
-	}
 	return "<input>"
+}
+
+// provenanceRootRuntimeLabel returns the per-input diagnostic label used by
+// low-level extractors. It is intentionally empty outside root mode so the
+// historical unset-mode logging and error behavior remains unchanged.
+func provenanceRootRuntimeLabel(opts *ExtractOptions, ordinal int, localPath, logical string) string {
+	if !provenanceRootActive(opts) || ordinal < 1 {
+		return ""
+	}
+	if _, local := provenanceRootLocalPath(localPath, logical); !local {
+		// Cloud logical identities are intentional diagnostics. Use the logical
+		// URI instead of exposing the staged local read path to lower layers.
+		return logical
+	}
+	return fmt.Sprintf("input %d", ordinal)
+}
+
+func withProvenanceRootRuntimeLabel(opts *ExtractOptions, runtime provenance.RuntimeOptions, ordinal int, localPath, logical string) provenance.RuntimeOptions {
+	if label := provenanceRootRuntimeLabel(opts, ordinal, localPath, logical); label != "" {
+		runtime.DiagnosticLabel = label
+	}
+	return runtime
 }
 
 func provenanceRootDiagnosticText(opts *ExtractOptions, text string) string {
@@ -248,6 +270,50 @@ func provenanceRootDiagnosticText(opts *ExtractOptions, text string) string {
 		return text
 	}
 	return opts.provenanceRoot.RedactText(text)
+}
+
+func provenanceRootConfiguredInputPaths(opts *ExtractOptions) []string {
+	if opts == nil {
+		return nil
+	}
+	values := make([]string, 0, 4)
+	add := func(value string) {
+		if strings.TrimSpace(value) == "" {
+			return
+		}
+		if ref, err := uriio.Classify(value); err == nil && ref.IsCloud() {
+			return
+		}
+		if value != "." && value != ".." {
+			values = append(values, value)
+		}
+		if local, ok := provenanceRootLocalPath(value, value); ok {
+			if absolute, err := filepath.Abs(local); err == nil && absolute != local {
+				values = append(values, filepath.Clean(absolute))
+			}
+		}
+	}
+	for _, value := range strings.Split(opts.Files, ",") {
+		add(strings.TrimSpace(value))
+	}
+	add(opts.FileList)
+	add(opts.InputPath)
+	add(opts.RecordIndex)
+	add(opts.SourceExtractionInput.Path)
+	return values
+}
+
+// provenanceRootSanitizeError removes configured input references in addition
+// to both retained root spellings. It covers failures that happen before a
+// complete resolved input inventory exists, when the per-input wrapper cannot
+// yet supply the actual local path.
+func provenanceRootSanitizeError(opts *ExtractOptions, err error, privatePaths ...string) error {
+	if err == nil || !provenanceRootActive(opts) {
+		return err
+	}
+	paths := append(provenanceRootConfiguredInputPaths(opts), privatePaths...)
+	message := sanitizePrivateInputText(provenanceRootDiagnosticText(opts, err.Error()), "<input>", paths...)
+	return provenanceRootRedactedError{message: message, cause: err}
 }
 
 type provenanceRootRedactedError struct {
@@ -260,35 +326,52 @@ func (e provenanceRootRedactedError) Error() string { return e.message }
 func (e provenanceRootRedactedError) Unwrap() error { return e.cause }
 
 func provenanceRootRedactError(opts *ExtractOptions, err error) error {
-	if err == nil || !provenanceRootActive(opts) {
-		return err
-	}
-	return provenanceRootRedactedError{
-		message: provenanceRootDiagnosticText(opts, err.Error()),
-		cause:   err,
-	}
+	return provenanceRootSanitizeError(opts, err)
 }
 
 // provenanceRootInputError keeps local input paths out of root-mode diagnostics.
 // The regular private-input sanitizer is intentionally unchanged in unset mode;
-// root mode replaces the input with its lexical root-relative label first, then
-// removes either retained root spelling from operating-system diagnostics.
+// root mode replaces local inputs with an opaque placeholder first, then removes
+// either retained root spelling from operating-system diagnostics.
 func provenanceRootInputError(opts *ExtractOptions, err error, localPath, logical string, privatePaths ...string) error {
 	if err == nil || !provenanceRootActive(opts) {
 		return err
 	}
 	display := provenanceRootInputLabel(opts, localPath, logical)
-	paths := append([]string{localPath, logical}, privatePaths...)
-	return provenanceRootRedactError(opts, sanitizePrivateInputError(err, display, paths...))
+	paths := provenanceRootInputPrivatePaths(localPath, logical, privatePaths...)
+	return provenanceRootSanitizeError(opts, sanitizePrivateInputError(err, display, paths...))
 }
 
 func provenanceRootInputText(opts *ExtractOptions, text, localPath, logical string, privatePaths ...string) string {
 	if !provenanceRootActive(opts) {
 		return text
 	}
+	if _, local := provenanceRootLocalPath(localPath, logical); !local {
+		return provenanceRootDiagnosticText(opts, text)
+	}
 	display := provenanceRootInputLabel(opts, localPath, logical)
-	paths := append([]string{localPath, logical}, privatePaths...)
+	paths := provenanceRootInputPrivatePaths(localPath, logical, privatePaths...)
 	return provenanceRootDiagnosticText(opts, sanitizePrivateInputText(text, display, paths...))
+}
+
+func provenanceRootInputPrivatePaths(localPath, logical string, privatePaths ...string) []string {
+	paths := make([]string, 0, 2+len(privatePaths))
+	if localPath != "" {
+		paths = append(paths, localPath)
+	}
+	if ref, classifyErr := uriio.Classify(logical); logical != "" && (classifyErr != nil || !ref.IsCloud()) {
+		paths = append(paths, logical)
+	}
+	for _, privatePath := range privatePaths {
+		if privatePath == "" {
+			continue
+		}
+		if ref, classifyErr := uriio.Classify(privatePath); classifyErr == nil && ref.IsCloud() {
+			continue
+		}
+		paths = append(paths, privatePath)
+	}
+	return paths
 }
 
 func provenanceRootOptionsForRecipe(opts *recipeRunExtractOptions) *ExtractOptions {
@@ -296,6 +379,9 @@ func provenanceRootOptionsForRecipe(opts *recipeRunExtractOptions) *ExtractOptio
 		return nil
 	}
 	return &ExtractOptions{
+		Files:                  opts.Files,
+		FileList:               opts.FileList,
+		InputPath:              opts.InputPath,
 		ProvenanceRoot:         opts.ProvenanceRoot,
 		ProvenanceRootSet:      opts.ProvenanceRootSet,
 		ProvenanceRootFromFlag: opts.ProvenanceRootFromFlag,

@@ -131,7 +131,7 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	shared.ProvenanceRootFromFlag = rootOpts.ProvenanceRootFromFlag
 	shared.provenanceRoot = rootOpts.provenanceRoot
 	defer func() {
-		err = provenanceRootRedactError(rootOpts, err)
+		err = provenanceRootSanitizeError(rootOpts, err)
 	}()
 	if len(workspaces) == 0 {
 		return fmt.Errorf("extract-multi requires at least one recipe workspace")
@@ -587,7 +587,11 @@ func (d *multiDispatcher) prepareInput(ctx context.Context, ref string, logicalB
 	}
 	return src.LocalPath, src.LogicalURI, func() {
 		if cErr := src.Cleanup(); cErr != nil {
-			_, _ = fmt.Fprintf(d.warnOut, "warning: failed to release staged input: %v\n", cErr)
+			if provenanceRootActive(d.inputOpts) {
+				_, _ = fmt.Fprintln(d.warnOut, "warning: failed to release staged input")
+			} else {
+				_, _ = fmt.Fprintf(d.warnOut, "warning: failed to release staged input: %v\n", cErr)
+			}
 		}
 		releaseWindow()
 	}, nil
@@ -660,7 +664,7 @@ type builtInputOutcome struct {
 // ledgers, and manifests.
 func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
 	if o.parseErr != nil {
-		o.parseErr = provenanceRootRedactError(d.inputOpts, o.parseErr)
+		o.parseErr = provenanceRootInputError(d.inputOpts, o.parseErr, o.file, o.logical)
 		var recordErr error
 		for _, st := range states {
 			recordErr = errors.Join(recordErr, st.recordInputFailure(o.file, o.logical, o.inputSHA256, o.inputSize, o.parseErr))
