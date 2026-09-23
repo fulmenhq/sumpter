@@ -8,6 +8,12 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-09-23
+
+### Added
+
+- **Provenance-root input paths** — opt-in `--provenance-root` requires strict containment for local inputs and records their root-relative form with `input_path_form: "root_relative"`. When unset, existing path sanitization behavior is unchanged. See [Opt-in root-relative input provenance](docs/extract-workflow.md#opt-in-root-relative-input-provenance).
+
 ## [0.3.5] - 2026-09-20
 
 **Integrity-bound batch inputs, durable local aggregate commits, and opt-in row-to-input identity.**
