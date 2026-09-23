@@ -63,12 +63,14 @@ func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 	// Read the specific byte range
 	xmlData, err := se.readByteRange(item.StartOffset, item.EndOffset)
 	if err != nil {
+		err = se.provenance.DiagnosticError(err, se.filePath)
 		result.Error = fmt.Errorf("failed to read byte range for record %d: %w", item.RecordNum, err)
 		return result
 	}
 	if len(se.namespaces) > 0 {
 		xmlData, err = injectNamespaceContext(xmlData, se.namespaces[item.NamespaceContextRef])
 		if err != nil {
+			err = se.provenance.DiagnosticError(err, se.filePath)
 			result.Error = fmt.Errorf("failed to apply namespace context for record %d: %w", item.RecordNum, err)
 			return result
 		}
@@ -77,6 +79,7 @@ func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 	// Parse XML into mini-DOM
 	doc, err := xmlquery.Parse(bytes.NewReader(xmlData))
 	if err != nil {
+		err = se.provenance.DiagnosticError(err, se.filePath)
 		result.Error = fmt.Errorf("failed to parse XML for record %d: %w", item.RecordNum, err)
 		return result
 	}
@@ -84,11 +87,13 @@ func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 	// Extract fields using existing logic
 	recordData, err := se.extractFields(doc)
 	if err != nil {
+		err = se.provenance.DiagnosticError(err, se.filePath)
 		result.Error = fmt.Errorf("failed to extract fields for record %d: %w", item.RecordNum, err)
 		return result
 	}
 
 	if err := extract.EnrichRecordWithRecordNum(recordData, se.filePath, se.sigCfg, se.extCfg, se.provenance, item.RecordNum); err != nil {
+		err = se.provenance.DiagnosticError(err, se.filePath)
 		result.Error = fmt.Errorf("failed to enrich record %d: %w", item.RecordNum, err)
 		return result
 	}

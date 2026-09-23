@@ -156,7 +156,7 @@ func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, l
 
 	externalFields, err := buildExternalFieldsForFile(logical, opts, st.plan.fieldPlan, st.plan.warnLimiter)
 	if err != nil {
-		app.externalFieldsErr = err
+		app.externalFieldsErr = provenanceRootInputError(opts, err, file, logical)
 		return app
 	}
 
@@ -164,6 +164,7 @@ func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, l
 	if file != logical {
 		rp.SourceURI = logical
 	}
+	rp = withProvenanceRootRuntimeLabel(opts, rp, ordinal, file, logical)
 	if opts.EmitInputIdentity {
 		rp.InputOrdinal = ordinal
 		rp.InputSHA256 = inputSHA256
@@ -177,8 +178,13 @@ func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, l
 	// over-budget input fails identically at every worker count (determinism preserved).
 	sink := &collectingRecordSink{maxRecords: st.bundleMaxRecords, maxBytes: st.bundleMaxBytes}
 	app.result = extract.ProcessParsedDocument(ctx, doc, file, st.plan.sigCfg, cloned, st.plan.appCfg, externalFields, rp, sink)
-	app.result.Error = sanitizePrivateInputError(app.result.Error, logical, file)
-	app.result.DispositionDetail = sanitizePrivateInputText(app.result.DispositionDetail, logical, file)
+	if provenanceRootActive(opts) {
+		app.result.Error = provenanceRootInputError(opts, app.result.Error, file, logical)
+		app.result.DispositionDetail = provenanceRootInputText(opts, app.result.DispositionDetail, file, logical)
+	} else {
+		app.result.Error = sanitizePrivateInputError(app.result.Error, logical, file)
+		app.result.DispositionDetail = sanitizePrivateInputText(app.result.DispositionDetail, logical, file)
+	}
 	app.records = sink.records
 
 	// Enforce match_selectors[].min_occurrences floors for a clean, applicable input —
@@ -190,7 +196,7 @@ func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, l
 	if app.result.Error == nil &&
 		app.result.Disposition != extract.DispositionFailed &&
 		app.result.Disposition != extract.DispositionNotApplicable {
-		if floorErr := enforceMinOccurrences(opts, cloned, st.plan.sigCfg, app.result.LogicalURI, app.result.PerSelectorCounts, app.result.PerSelectorCountsComplete, app.result.SignatureMatchStatus, app.result.SignatureConfidence); floorErr != nil {
+		if floorErr := enforceMinOccurrences(opts, cloned, st.plan.sigCfg, provenanceRootInputLabel(opts, file, logical), app.result.PerSelectorCounts, app.result.PerSelectorCountsComplete, app.result.SignatureMatchStatus, app.result.SignatureConfidence); floorErr != nil {
 			app.floorErr = floorErr
 		}
 	}
@@ -232,7 +238,7 @@ func (st *recipeRunState) buildPerInputApplication(ctx context.Context, file, lo
 
 	externalFields, err := buildExternalFieldsForFile(logical, opts, st.plan.fieldPlan, st.plan.warnLimiter)
 	if err != nil {
-		app.externalFieldsErr = err
+		app.externalFieldsErr = provenanceRootInputError(opts, err, file, logical)
 		return app
 	}
 
@@ -240,16 +246,24 @@ func (st *recipeRunState) buildPerInputApplication(ctx context.Context, file, lo
 	if file != logical {
 		rp.SourceURI = logical
 	}
+	rp = withProvenanceRootRuntimeLabel(opts, rp, ordinal, file, logical)
 	cloned := extract.CloneRecordMatch(st.plan.extCfg)
 	sink := &collectingRecordSink{maxRecords: st.bundleMaxRecords, maxBytes: st.bundleMaxBytes}
 	app.result = extract.ProcessParsedDocument(ctx, doc, file, st.plan.sigCfg, cloned, st.plan.appCfg, externalFields, rp, sink)
+	if provenanceRootActive(opts) {
+		app.result.Error = provenanceRootInputError(opts, app.result.Error, file, logical)
+		app.result.DispositionDetail = provenanceRootInputText(opts, app.result.DispositionDetail, file, logical)
+	} else {
+		app.result.Error = sanitizePrivateInputError(app.result.Error, logical, file)
+		app.result.DispositionDetail = sanitizePrivateInputText(app.result.DispositionDetail, logical, file)
+	}
 	app.records = sink.records
 	app.summary = sink.summary
 
 	if app.result.Error == nil &&
 		app.result.Disposition != extract.DispositionFailed &&
 		app.result.Disposition != extract.DispositionNotApplicable {
-		if floorErr := enforceMinOccurrences(opts, cloned, st.plan.sigCfg, app.result.LogicalURI, app.result.PerSelectorCounts, app.result.PerSelectorCountsComplete, app.result.SignatureMatchStatus, app.result.SignatureConfidence); floorErr != nil {
+		if floorErr := enforceMinOccurrences(opts, cloned, st.plan.sigCfg, provenanceRootInputLabel(opts, file, logical), app.result.PerSelectorCounts, app.result.PerSelectorCountsComplete, app.result.SignatureMatchStatus, app.result.SignatureConfidence); floorErr != nil {
 			app.floorErr = floorErr
 		}
 	}
@@ -265,10 +279,11 @@ func (st *recipeRunState) buildPerInputApplication(ctx context.Context, file, lo
 func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app perInputApplication) error {
 	opts := st.plan.opts
 	logger := dispatchLogger()
+	displayPath := provenanceRootInputLabel(opts, app.file, app.logical)
 
 	if app.externalFieldsErr != nil {
 		if !opts.ContinueOnError {
-			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, app.logical, app.externalFieldsErr)
+			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, displayPath, provenanceRootRedactError(opts, app.externalFieldsErr))
 		}
 		result := recoverableFailureResult(app.file, app.logical, fmt.Errorf("failed to build external fields: %w", app.externalFieldsErr), extract.DispositionReasonValidationError)
 		return recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, logger)
@@ -276,7 +291,7 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 
 	target, err := newJSONOutputTarget(opts, app.logical)
 	if err != nil {
-		return fmt.Errorf("recipe %q: failed to open output for %s: %w", st.plan.RecipeID, app.logical, err)
+		return fmt.Errorf("recipe %q: failed to open output for %s: %w", st.plan.RecipeID, provenanceRootDiagnosticText(opts, displayPath), provenanceRootRedactError(opts, err))
 	}
 	beginValueProfileInput(opts)
 
@@ -301,15 +316,18 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 		}
 	}
 	closeErr := target.Close(ctx)
+	result.Error = provenanceRootInputError(opts, result.Error, app.file, app.logical)
+	result.DispositionDetail = provenanceRootInputText(opts, result.DispositionDetail, app.file, app.logical)
+	closeErr = provenanceRootRedactError(opts, closeErr)
 
 	// The pre-split path surfaced a sink-write failure as result.Error during extraction;
 	// here extraction wrote to a worker-local buffer, so the durable write (and any failure)
 	// happens now. Fold it in so the existing failure handling applies unchanged.
 	if writeErr != nil && result.Error == nil {
-		result.Error = writeErr
+		result.Error = provenanceRootRedactError(opts, writeErr)
 		result.Disposition = extract.DispositionFailed
 		result.DispositionReason = extract.DispositionReasonInternalError
-		result.DispositionDetail = writeErr.Error()
+		result.DispositionDetail = provenanceRootDiagnosticText(opts, writeErr.Error())
 	}
 
 	if result.Error != nil || result.Disposition == extract.DispositionFailed {
@@ -322,9 +340,9 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 		}
 		if !opts.ContinueOnError {
 			if result.Error != nil {
-				return fmt.Errorf("recipe %q: failed to process %s: %w", st.plan.RecipeID, app.logical, result.Error)
+				return fmt.Errorf("recipe %q: failed to process %s: %w", st.plan.RecipeID, displayPath, provenanceRootInputError(opts, result.Error, app.file, app.logical))
 			}
-			st.dispositionErr = failureErrorForResult(result, st.sanitizeRoots)
+			st.dispositionErr = failureErrorForResult(opts, result, st.sanitizeRoots)
 			return st.dispositionErr
 		}
 		_ = recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, logger)
@@ -332,14 +350,14 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 	}
 	if closeErr != nil {
 		target.Abort()
-		return fmt.Errorf("recipe %q: failed to close output for %s: %w", st.plan.RecipeID, app.logical, closeErr)
+		return fmt.Errorf("recipe %q: failed to close output for %s: %w", st.plan.RecipeID, displayPath, closeErr)
 	}
 
 	if result.Disposition != extract.DispositionNotApplicable && app.floorErr != nil {
 		target.Abort()
 		if !opts.ContinueOnError {
-			st.dispositionErr = app.floorErr
-			return app.floorErr
+			st.dispositionErr = provenanceRootRedactError(opts, app.floorErr)
+			return st.dispositionErr
 		}
 		reason := failureReasonForError(app.floorErr)
 		if reason == "" {
@@ -347,7 +365,7 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 		}
 		result.Disposition = extract.DispositionFailed
 		result.DispositionReason = reason
-		result.DispositionDetail = app.floorErr.Error()
+		result.DispositionDetail = provenanceRootDiagnosticText(opts, app.floorErr.Error())
 		_ = recordFailedSequentialResult(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, st.manifestEnabled, logger)
 		return nil
 	}
@@ -362,7 +380,7 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 		st.dispositions.add(result, st.sanitizeRoots)
 	}
 	if st.manifestEnabled {
-		input, err := ledgerForInput(app.inputSHA256, app.inputSize, result.File, result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots)
+		input, err := ledgerForInput(opts, app.inputSHA256, app.inputSize, result.File, result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots)
 		if err != nil {
 			return err
 		}
@@ -416,6 +434,7 @@ func (st *recipeRunState) buildAggregateApplicationContained(ctx context.Context
 // branch-for-branch: external-fields failure, extraction failure, floor miss, or success.
 func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app aggregateApplication) error {
 	opts := st.plan.opts
+	displayPath := provenanceRootInputLabel(opts, app.file, app.logical)
 
 	// Start this input's per-input buffer (no-op unless buffering is engaged).
 	st.aggWriter.beginInput()
@@ -423,7 +442,7 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 	if app.externalFieldsErr != nil {
 		st.aggWriter.discardInput()
 		if !opts.ContinueOnError {
-			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, app.logical, app.externalFieldsErr)
+			return fmt.Errorf("recipe %q: failed to build external fields for %s: %w", st.plan.RecipeID, displayPath, provenanceRootRedactError(opts, app.externalFieldsErr))
 		}
 		result := recoverableFailureResult(app.file, app.logical, fmt.Errorf("failed to build external fields: %w", app.externalFieldsErr), extract.DispositionReasonValidationError)
 		if recordErr := recordFailedAggregateInput(result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
@@ -446,9 +465,9 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 		st.aggWriter.discardInput()
 		if !opts.ContinueOnError {
 			if app.result.Error != nil {
-				return fmt.Errorf("recipe %q: failed to process %s: %w", st.plan.RecipeID, app.logical, app.result.Error)
+				return fmt.Errorf("recipe %q: failed to process %s: %w", st.plan.RecipeID, displayPath, provenanceRootInputError(opts, app.result.Error, app.result.File, app.result.LogicalURI))
 			}
-			st.dispositionErr = failureErrorForResult(app.result, st.sanitizeRoots)
+			st.dispositionErr = failureErrorForResult(opts, app.result, st.sanitizeRoots)
 			return st.dispositionErr
 		}
 		if recordErr := recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
@@ -460,8 +479,8 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 	if app.floorErr != nil {
 		st.aggWriter.discardInput()
 		if !opts.ContinueOnError {
-			st.dispositionErr = app.floorErr
-			return app.floorErr
+			st.dispositionErr = provenanceRootRedactError(opts, app.floorErr)
+			return st.dispositionErr
 		}
 		reason := failureReasonForError(app.floorErr)
 		if reason == "" {
@@ -469,7 +488,7 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 		}
 		app.result.Disposition = extract.DispositionFailed
 		app.result.DispositionReason = reason
-		app.result.DispositionDetail = app.floorErr.Error()
+		app.result.DispositionDetail = provenanceRootDiagnosticText(opts, app.floorErr.Error())
 		if recordErr := recordFailedAggregateInput(app.result, opts, st.plan.extCfg, &st.manifestInputs, st.dispositions, st.failures, st.sanitizeRoots, &inputIdentity{sha256: app.inputSHA256, size: app.inputSize}); recordErr != nil {
 			return terminalDispatch(recordErr)
 		}
@@ -484,11 +503,11 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 	// whole run even under --continue-on-error, never recorded as a recoverable failure.
 	for _, rec := range app.records {
 		if err := st.aggWriter.writeMarshaled(rec); err != nil {
-			return terminalDispatch(fmt.Errorf("recipe %q: failed to commit aggregate output for %s: %w", st.plan.RecipeID, app.logical, err))
+			return terminalDispatch(fmt.Errorf("recipe %q: failed to commit aggregate output for %s: %w", st.plan.RecipeID, displayPath, provenanceRootRedactError(opts, err)))
 		}
 	}
 	if cerr := st.aggWriter.commitInput(); cerr != nil {
-		return terminalDispatch(fmt.Errorf("recipe %q: failed to commit aggregate output for %s: %w", st.plan.RecipeID, app.logical, cerr))
+		return terminalDispatch(fmt.Errorf("recipe %q: failed to commit aggregate output for %s: %w", st.plan.RecipeID, displayPath, provenanceRootRedactError(opts, cerr)))
 	}
 	recordCount := st.aggWriter.totalRecords - before
 	st.failures.addApplied()
@@ -497,9 +516,9 @@ func (st *recipeRunState) commitAggregateApplication(ctx context.Context, app ag
 		st.dispositions.add(app.result, st.sanitizeRoots)
 	}
 	if st.manifestEnabled {
-		input, err := ledgerForInput(app.inputSHA256, app.inputSize, app.result.File, app.result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots)
+		input, err := ledgerForInput(opts, app.inputSHA256, app.inputSize, app.result.File, app.result.LogicalURI, resolvedInputHandle(opts), st.sanitizeRoots)
 		if err != nil {
-			return terminalDispatch(fmt.Errorf("recipe %q: failed to build input ledger for %s: %w", st.plan.RecipeID, app.logical, err))
+			return terminalDispatch(fmt.Errorf("recipe %q: failed to build input ledger for %s: %w", st.plan.RecipeID, displayPath, provenanceRootInputError(opts, err, app.result.File, app.result.LogicalURI)))
 		}
 		input.RecordType = st.plan.extCfg.RecordType
 		rc := recordCount
@@ -577,9 +596,21 @@ func withInputDigest(app builtApplication, sha string, size int64) builtApplicat
 	}
 }
 
-func ledgerForInput(sha string, size int64, file, logical, handle string, roots []string) (provenance.Input, error) {
+func ledgerForInput(opts *ExtractOptions, sha string, size int64, file, logical, handle string, roots []string) (provenance.Input, error) {
+	var (
+		input provenance.Input
+		err   error
+	)
 	if strings.TrimSpace(sha) != "" {
-		return provenance.BuildInputLedgerHashed(logical, sha, size, handle, roots...)
+		input, err = provenance.BuildInputLedgerHashed(logical, sha, size, handle, roots...)
+	} else {
+		input, err = provenance.BuildInputLedger(file, logical, handle, roots...)
 	}
-	return provenance.BuildInputLedger(file, logical, handle, roots...)
+	if err != nil {
+		return provenance.Input{}, err
+	}
+	if err := applyProvenanceRootInputPath(opts, &input, file, logical); err != nil {
+		return provenance.Input{}, err
+	}
+	return input, nil
 }

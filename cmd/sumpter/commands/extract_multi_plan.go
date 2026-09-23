@@ -52,12 +52,16 @@ type multiSharedOptions struct {
 	// each recipe's provenance ties back to a single invocation. loadRecipePlan
 	// rejects an empty RunID rather than letting each recipe independently
 	// generate a divergent UUIDv7.
-	RunID                string
-	NoManifest           bool
-	ArtifactDescriptor   bool
-	ArtifactContractBase string
-	ValidateOutput       string
-	AllowLargeFiles      bool
+	RunID                  string
+	ProvenanceRoot         string
+	ProvenanceRootSet      bool
+	ProvenanceRootFromFlag bool
+	provenanceRoot         *provenance.Root
+	NoManifest             bool
+	ArtifactDescriptor     bool
+	ArtifactContractBase   string
+	ValidateOutput         string
+	AllowLargeFiles        bool
 
 	// Parameters is the shared run-level --parameter override layer applied to
 	// EVERY recipe in the pass. It is layered over each recipe's
@@ -347,21 +351,25 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 
 	defaults := manifest.Defaults
 	opts := &ExtractOptions{
-		SignatureConfig:      signaturePath,
-		ExtractConfig:        extractPath,
-		ApplicabilityConfig:  applicabilityCfg,
-		ContinueOnError:      shared.ContinueOnError,
-		AllowLargeFiles:      shared.AllowLargeFiles,
-		RunID:                shared.RunID,
-		NoManifest:           shared.NoManifest,
-		ArtifactDescriptor:   shared.ArtifactDescriptor,
-		ArtifactContractBase: shared.ArtifactContractBase,
-		ValidateOutput:       shared.ValidateOutput,
-		Workers:              shared.Workers,
-		Progress:             shared.Progress,
-		DryRun:               shared.DryRun,
-		CommandName:          "sumpter recipes run extract-multi",
-		Argv:                 shared.Argv,
+		SignatureConfig:        signaturePath,
+		ExtractConfig:          extractPath,
+		ApplicabilityConfig:    applicabilityCfg,
+		ContinueOnError:        shared.ContinueOnError,
+		AllowLargeFiles:        shared.AllowLargeFiles,
+		RunID:                  shared.RunID,
+		ProvenanceRoot:         shared.ProvenanceRoot,
+		ProvenanceRootSet:      shared.ProvenanceRootSet,
+		ProvenanceRootFromFlag: shared.ProvenanceRootFromFlag,
+		provenanceRoot:         shared.provenanceRoot,
+		NoManifest:             shared.NoManifest,
+		ArtifactDescriptor:     shared.ArtifactDescriptor,
+		ArtifactContractBase:   shared.ArtifactContractBase,
+		ValidateOutput:         shared.ValidateOutput,
+		Workers:                shared.Workers,
+		Progress:               shared.Progress,
+		DryRun:                 shared.DryRun,
+		CommandName:            "sumpter recipes run extract-multi",
+		Argv:                   shared.Argv,
 		RuntimeProvenance: provenance.RuntimeOptions{
 			RecipeVersion:     manifest.ContentVersion,
 			RecipeContentHash: recipeContentHash,

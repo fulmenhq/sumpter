@@ -33,7 +33,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const runIDEnvVar = "SUMPTER_RUN_ID"
+const (
+	runIDEnvVar          = "SUMPTER_RUN_ID"
+	provenanceRootEnvVar = "SUMPTER_PROVENANCE_ROOT"
+)
 
 var errJSONOutput = errors.New("json output failure")
 
@@ -85,9 +88,16 @@ type ExtractOptions struct {
 	SourceExtractionInput    recipesmanifest.InputDefaults
 	SourceExtractionRecipeID string
 	RunID                    string
-	NoManifest               bool
-	ArtifactDescriptor       bool
-	ArtifactContractBase     string
+	// ProvenanceRoot is an opt-in local-input root. The raw value is retained
+	// only for command assembly; provenanceRoot is the resolved lexical/evaluated
+	// pair used by the shared preflight and ledger path projection.
+	ProvenanceRoot         string
+	ProvenanceRootSet      bool
+	ProvenanceRootFromFlag bool
+	provenanceRoot         *provenance.Root
+	NoManifest             bool
+	ArtifactDescriptor     bool
+	ArtifactContractBase   string
 	// ValueProfile is the opt-in guarded value-domain diagnostic config.
 	// When active, extract observes extract.data fields and attaches a
 	// guarded profile to the provenance manifest.
@@ -209,6 +219,9 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				opts.Format = ""
 			}
 			opts.AllowLargeFiles = allowLargeFiles
+			if err := resolveProvenanceRootFlag(cmd, opts); err != nil {
+				return err
+			}
 			opts.CommandName = "sumpter extract files"
 			opts.Argv = buildExtractArgv(opts)
 			return runExtract(opts)
@@ -241,6 +254,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.SiteID, "site-id", "", "Site ID to blend into extracted records")
 	cmd.Flags().StringArrayVar(&opts.Parameters, "parameter", nil, "Inject a key=value pair into every record (repeatable). Value is a literal string unless it is a JSON array of strings, e.g. --parameter prefixes='[\"NM_\",\"NR_\"]', which becomes a list parameter")
 	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "UUIDv7 run identifier for deterministic replay (overrides SUMPTER_RUN_ID)")
+	cmd.Flags().StringVar(&opts.ProvenanceRoot, "provenance-root", "", "Require local inputs to be strictly contained by this root and record root-relative paths (overrides SUMPTER_PROVENANCE_ROOT)")
 	cmd.Flags().BoolVar(&opts.NoManifest, "no-manifest", false, "Disable provenance sidecar manifest output")
 	cmd.Flags().BoolVar(&opts.ArtifactDescriptor, "artifact-descriptor", false, "Write a portable data artifact descriptor sidecar for the record-stream output")
 	cmd.Flags().StringVar(&opts.ArtifactContractBase, "contract-base", "", "Local data-artifact/v0 contract base used to validate --artifact-descriptor output")
@@ -402,7 +416,10 @@ func validateCredentialOptions(opts *ExtractOptions) error {
 	return nil
 }
 
-func runExtract(opts *ExtractOptions) error {
+func runExtract(opts *ExtractOptions) (err error) {
+	defer func() {
+		err = provenanceRootSanitizeError(opts, err)
+	}()
 	logger := logging.GetLogger()
 	logger.Debug("Starting extract command")
 	startedAt := time.Now().UTC()
@@ -423,6 +440,9 @@ func runExtract(opts *ExtractOptions) error {
 	}
 	if inputModes > 1 {
 		return fmt.Errorf("specify only one of --files, --file-list, or --input-path")
+	}
+	if err := ensureProvenanceRoot(opts); err != nil {
+		return err
 	}
 	outputFormats, err := effectiveOutputFormats(opts)
 	if err != nil {
@@ -452,14 +472,14 @@ func runExtract(opts *ExtractOptions) error {
 	logger.Debug("Options validated")
 
 	// Load configurations
-	logger.Debug("Loading signature config", zap.String("path", opts.SignatureConfig))
+	logger.Debug("Loading signature config", zap.String("path", provenanceRootDiagnosticText(opts, opts.SignatureConfig)))
 	sigCfg, err := extract.LoadSignatureConfig(opts.SignatureConfig)
 	if err != nil {
 		return fmt.Errorf("failed to load signature config: %w", err)
 	}
 	logger.Debug("Signature config loaded", zap.String("signature_id", sigCfg.SignatureID))
 
-	logger.Debug("Loading extract config", zap.String("path", opts.ExtractConfig))
+	logger.Debug("Loading extract config", zap.String("path", provenanceRootDiagnosticText(opts, opts.ExtractConfig)))
 	extCfg, err := extract.LoadExtractConfig(opts.ExtractConfig)
 	if err != nil {
 		return fmt.Errorf("failed to load extract config: %w", err)
@@ -486,16 +506,6 @@ func runExtract(opts *ExtractOptions) error {
 	if err != nil {
 		return err
 	}
-
-	// Set up the cloud write boundary: when output is an s3:// destination this
-	// creates the run's output session (publishing under the resolved output
-	// handle) and validates the handle up front so an unknown handle fails before
-	// any extraction work. Both extraction routes (sequential + record-index) read
-	// the session off opts. Local output leaves the session nil (zero-drift).
-	if err := setupOutputSession(opts, runtimeProvenance.RunID); err != nil {
-		return err
-	}
-	defer closeOutputSession(opts)
 
 	fieldPlan, err := buildExternalFieldPlan(opts, extCfg.FieldMappings)
 	if err != nil {
@@ -529,7 +539,11 @@ func runExtract(opts *ExtractOptions) error {
 
 	// Route to parallel extraction if --record-index is provided
 	if opts.RecordIndex != "" {
-		logger.Info("Parallel extraction mode enabled", zap.String("record_index", opts.RecordIndex))
+		indexDiagnostic := opts.RecordIndex
+		if provenanceRootActive(opts) {
+			indexDiagnostic = "<record-index>"
+		}
+		logger.Info("Parallel extraction mode enabled", zap.String("record_index", indexDiagnostic))
 		return runParallelExtraction(opts, sigCfg, extCfg, fieldPlan, warnLimiter, runtimeProvenance)
 	}
 
@@ -558,6 +572,22 @@ func runExtract(opts *ExtractOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := preflightProvenanceRootInputs(opts, aggregatePreflightOrder(opts, files), logicalByLocal); err != nil {
+		if session != nil {
+			_ = session.Close()
+		}
+		return err
+	}
+	// Set up the cloud write boundary only after the complete input set has
+	// passed provenance-root preflight. This keeps all output/session setup out
+	// of failed root-containment plans.
+	if err := setupOutputSession(opts, runtimeProvenance.RunID); err != nil {
+		if session != nil {
+			_ = session.Close()
+		}
+		return err
+	}
+	defer closeOutputSession(opts)
 	if session != nil {
 		// The session owns every staged file; Close removes the run's staging
 		// directory on all exit paths (success, handled failure, early error).
@@ -623,6 +653,7 @@ func runExtract(opts *ExtractOptions) error {
 	identities := make([]*inputIdentity, len(files))
 	for i, file := range files {
 		logical := logicalIdentity(file, logicalByLocal)
+		displayPath := provenanceRootInputLabel(opts, file, logical)
 		// Integrity-bound file-list inputs verify declared content identity BEFORE
 		// the bytes are parsed. The verified bytes are a private snapshot that the
 		// parse below reads, so verification and parsing cannot be separated by a
@@ -632,7 +663,8 @@ func runExtract(opts *ExtractOptions) error {
 		if decl := declarationAt(decls, i+1); decl != nil {
 			s, verr := snapshotAndVerifyDeclaredInput(file, decl)
 			if verr != nil {
-				results <- recoverableFailureResult(file, logical, fmt.Errorf("input %d (%s): %w", i+1, logical, verr), extract.DispositionReasonParseError)
+				verr = provenanceRootInputError(opts, verr, file, logical)
+				results <- recoverableFailureResult(file, logical, fmt.Errorf("input %d (%s): %w", i+1, displayPath, verr), extract.DispositionReasonParseError)
 				continue
 			}
 			snap = s
@@ -645,15 +677,16 @@ func runExtract(opts *ExtractOptions) error {
 		// string as the read path.
 		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if err != nil {
+			err = provenanceRootInputError(opts, err, file, logical)
 			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
-				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", logical, err), cleanupErr)
+				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", displayPath, err), provenanceRootRedactError(opts, cleanupErr))
 			}
 			if opts.ContinueOnError {
 				result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
 				results <- result
 				continue
 			}
-			return fmt.Errorf("failed to build external fields for file %s: %w", logical, err)
+			return fmt.Errorf("failed to build external fields for file %s: %w", displayPath, err)
 		}
 		// rp carries the per-file logical source identity into the extraction core
 		// so in-core surfaces (_runtime.source_file, file-boundary summaries,
@@ -663,6 +696,7 @@ func runExtract(opts *ExtractOptions) error {
 		if file != logical || snap != nil {
 			rp.SourceURI = logical
 		}
+		rp = withProvenanceRootRuntimeLabel(opts, rp, i+1, file, logical)
 		readPath := file
 		if snap != nil {
 			// Read the verified snapshot, not the mutable source path, so the bytes
@@ -675,9 +709,11 @@ func runExtract(opts *ExtractOptions) error {
 			result.DispositionDetail = sanitizePrivateInputText(result.DispositionDetail, logical, readPath, file)
 			result.File = file
 			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
-				return errors.Join(result.Error, cleanupErr)
+				return errors.Join(result.Error, provenanceRootInputError(opts, cleanupErr, file, logical, snap.Path))
 			}
 		}
+		result.Error = provenanceRootInputError(opts, result.Error, file, logical, readPath)
+		result.DispositionDetail = provenanceRootInputText(opts, result.DispositionDetail, file, logical, readPath)
 		results <- result
 	}
 	close(results)
@@ -687,26 +723,28 @@ func runExtract(opts *ExtractOptions) error {
 	for result := range results {
 		ident := identities[ri]
 		ri++
+		displayPath := provenanceRootInputLabel(opts, result.File, result.LogicalURI)
 		if result.Disposition == extract.DispositionFailed {
 			if result.Error != nil {
 				logger.Error("Failed to process file",
-					zap.String("file", result.LogicalURI),
-					zap.Error(result.Error))
+					zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)),
+					zap.Error(provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)))
 			}
 			dispositionSummary.add(result, sanitizeRoots)
-			failureErr := failureErrorForResult(result, sanitizeRoots)
+			failureErr := failureErrorForResult(opts, result, sanitizeRoots)
 			if opts.ContinueOnError {
 				detail := result.DispositionDetail
 				if detail == "" && result.Error != nil {
 					detail = result.Error.Error()
 				}
-				failureManifest.add(result.LogicalURI, result.DispositionReason, detail, sanitizeRoots)
+				failureManifest.add(result.LogicalURI, result.DispositionReason, provenanceRootDiagnosticText(opts, detail), sanitizeRoots)
 			}
 			if manifestEnabled {
 				input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 				if err != nil {
+					err = provenanceRootInputError(opts, err, result.File, result.LogicalURI)
 					if opts.ContinueOnError {
-						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.LogicalURI), zap.Error(err))
+						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)), zap.Error(err))
 					} else {
 						return err
 					}
@@ -724,8 +762,8 @@ func runExtract(opts *ExtractOptions) error {
 
 		if result.Error != nil {
 			logger.Error("Failed to process file",
-				zap.String("file", result.LogicalURI),
-				zap.Error(result.Error))
+				zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)),
+				zap.Error(provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)))
 			if opts.ContinueOnError {
 				reason := failureReasonForError(result.Error)
 				if reason == "" {
@@ -734,11 +772,12 @@ func runExtract(opts *ExtractOptions) error {
 				result.Disposition = extract.DispositionFailed
 				result.DispositionReason = reason
 				result.DispositionDetail = result.Error.Error()
-				failureManifest.add(result.LogicalURI, reason, result.Error.Error(), sanitizeRoots)
+				failureManifest.add(result.LogicalURI, reason, provenanceRootDiagnosticText(opts, result.Error.Error()), sanitizeRoots)
 				if manifestEnabled {
 					input, ledgerErr := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 					if ledgerErr != nil {
-						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.LogicalURI), zap.Error(ledgerErr))
+						ledgerErr = provenanceRootInputError(opts, ledgerErr, result.File, result.LogicalURI)
+						logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)), zap.Error(ledgerErr))
 					} else {
 						input.RecordType = extCfg.RecordType
 						applyInputDisposition(&input, result, sanitizeRoots)
@@ -747,11 +786,11 @@ func runExtract(opts *ExtractOptions) error {
 				}
 				continue
 			}
-			return fmt.Errorf("failed to process file %s: %w", result.LogicalURI, result.Error)
+			return fmt.Errorf("failed to process file %s: %w", displayPath, provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI))
 		}
 
 		if result.Disposition != extract.DispositionNotApplicable {
-			if err := enforceMinOccurrences(opts, extCfg, sigCfg, result.LogicalURI, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); err != nil {
+			if err := enforceMinOccurrences(opts, extCfg, sigCfg, displayPath, result.PerSelectorCounts, result.PerSelectorCountsComplete, result.SignatureMatchStatus, result.SignatureConfidence); err != nil {
 				if result.Disposition == extract.DispositionApplied || opts.ContinueOnError {
 					reason := failureReasonForError(err)
 					if reason == "" {
@@ -762,12 +801,12 @@ func runExtract(opts *ExtractOptions) error {
 					result.DispositionDetail = err.Error()
 					dispositionSummary.add(result, sanitizeRoots)
 					if opts.ContinueOnError {
-						failureManifest.add(result.LogicalURI, reason, err.Error(), sanitizeRoots)
+						failureManifest.add(result.LogicalURI, reason, provenanceRootDiagnosticText(opts, err.Error()), sanitizeRoots)
 					}
 					if manifestEnabled {
 						input, ledgerErr := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 						if ledgerErr != nil {
-							return ledgerErr
+							return provenanceRootInputError(opts, ledgerErr, result.File, result.LogicalURI)
 						}
 						input.RecordType = extCfg.RecordType
 						applyInputDisposition(&input, result, sanitizeRoots)
@@ -778,7 +817,7 @@ func runExtract(opts *ExtractOptions) error {
 					}
 					continue
 				}
-				return err
+				return provenanceRootRedactError(opts, err)
 			}
 		}
 
@@ -789,7 +828,7 @@ func runExtract(opts *ExtractOptions) error {
 		if manifestEnabled {
 			input, err := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 			if err != nil {
-				return err
+				return provenanceRootInputError(opts, err, result.File, result.LogicalURI)
 			}
 			input.RecordType = extCfg.RecordType
 			applyInputDisposition(&input, result, sanitizeRoots)
@@ -799,11 +838,11 @@ func runExtract(opts *ExtractOptions) error {
 		if len(result.Records) == 0 {
 			if opts.Progress {
 				logger.Info("No matching records found; emitting empty output",
-					zap.String("file", result.LogicalURI))
+					zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)))
 			}
 		} else if opts.Progress {
 			logger.Info("Extracted records",
-				zap.String("file", result.LogicalURI),
+				zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)),
 				zap.Int("record_count", len(result.Records)))
 		}
 
@@ -824,9 +863,9 @@ func runExtract(opts *ExtractOptions) error {
 				outputFile := outputFileForFormat(opts, format, result.LogicalURI)
 				if err := writeRecordsForFormat(outputFile, format, result.Records, extCfg, sigCfg, opts, runtimeProvenance, result.LogicalURI, manifestPath); err != nil {
 					logger.Error("Failed to write output file",
-						zap.String("file", outputFile),
-						zap.Error(err))
-					return fmt.Errorf("failed to write output %s: %w", outputFile, err)
+						zap.String("file", provenanceRootDiagnosticText(opts, outputFile)),
+						zap.Error(provenanceRootRedactError(opts, err)))
+					return fmt.Errorf("failed to write output %s: %w", provenanceRootDiagnosticText(opts, outputFile), provenanceRootRedactError(opts, err))
 				}
 				if manifestEnabled {
 					manifestOutputs = append(manifestOutputs, provenanceOutput(outputFile, format, len(result.Records), opts, sanitizeRoots...))
@@ -863,7 +902,7 @@ func runExtract(opts *ExtractOptions) error {
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
 			return err
 		}
-		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+		logger.Info("Provenance manifest written", zap.String("file", provenanceRootDiagnosticText(opts, manifestPath)))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
 	}
@@ -979,18 +1018,26 @@ func logicalIdentity(localPath string, logicalByLocal map[string]string) string 
 	return localPath
 }
 
-func failureErrorForResult(result extract.ExtractResult, roots []string) error {
+func failureErrorForResult(opts *ExtractOptions, result extract.ExtractResult, roots []string) error {
 	file := provenance.SanitizePath(result.LogicalURI, roots...)
+	if provenanceRootActive(opts) {
+		file = provenanceRootInputLabel(opts, result.File, result.LogicalURI)
+	}
 	if result.Error != nil {
-		return fmt.Errorf("failed to process file %s: %w", file, result.Error)
+		err := provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)
+		return provenanceRootRedactError(opts, fmt.Errorf("failed to process file %s: %w", file, err))
 	}
 	if strings.TrimSpace(result.DispositionDetail) != "" {
-		if result.DispositionReason != "" {
-			return fmt.Errorf("failed to process file %s: %s: %s", file, result.DispositionReason, sanitizeDispositionText(result.DispositionDetail, roots))
+		detail := sanitizeDispositionText(result.DispositionDetail, roots)
+		if provenanceRootActive(opts) {
+			detail = provenanceRootInputText(opts, detail, result.File, result.LogicalURI)
 		}
-		return fmt.Errorf("failed to process file %s: %s", file, sanitizeDispositionText(result.DispositionDetail, roots))
+		if result.DispositionReason != "" {
+			return provenanceRootRedactError(opts, fmt.Errorf("failed to process file %s: %s: %s", file, result.DispositionReason, detail))
+		}
+		return provenanceRootRedactError(opts, fmt.Errorf("failed to process file %s: %s", file, detail))
 	}
-	return fmt.Errorf("failed to process file %s: %s", file, result.DispositionReason)
+	return provenanceRootRedactError(opts, fmt.Errorf("failed to process file %s: %s", file, result.DispositionReason))
 }
 
 type dispositionSummaryFile struct {
@@ -1180,6 +1227,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 
 	for i, file := range files {
 		logical := logicalIdentity(file, logicalByLocal)
+		displayPath := provenanceRootInputLabel(opts, file, logical)
 		// Integrity-bound file-list inputs verify declared content identity BEFORE
 		// parse/output. The verified bytes are a private snapshot that the parse
 		// below reads, so verification and parsing cannot be separated by a
@@ -1193,7 +1241,8 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if decl := declarationAt(decls, i+1); decl != nil {
 			s, verr := snapshotAndVerifyDeclaredInput(file, decl)
 			if verr != nil {
-				verifyErr := fmt.Errorf("input %d (%s): %w", i+1, logical, verr)
+				verr = provenanceRootInputError(opts, verr, file, logical)
+				verifyErr := fmt.Errorf("input %d (%s): %w", i+1, displayPath, verr)
 				if !opts.ContinueOnError {
 					return verifyErr
 				}
@@ -1213,11 +1262,12 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		// string as the read path.
 		externalFields, err := buildExternalFieldsForFile(logical, opts, fieldPlan, warnLimiter)
 		if err != nil {
+			err = provenanceRootInputError(opts, err, file, logical)
 			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
-				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", logical, err), cleanupErr)
+				return errors.Join(fmt.Errorf("failed to build external fields for file %s: %w", displayPath, err), provenanceRootRedactError(opts, cleanupErr))
 			}
 			if !opts.ContinueOnError {
-				return fmt.Errorf("failed to build external fields for file %s: %w", logical, err)
+				return fmt.Errorf("failed to build external fields for file %s: %w", displayPath, err)
 			}
 			result := recoverableFailureResult(file, logical, fmt.Errorf("failed to build external fields: %w", err), extract.DispositionReasonValidationError)
 			if err := recordFailedSequentialResult(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, manifestEnabled, logger); err != nil {
@@ -1231,13 +1281,14 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		// path passed to the extraction core below.
 		target, err := newJSONOutputTarget(opts, logical)
 		if err != nil {
-			return errors.Join(fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, logical), err), removeInputSnapshot(snap, logical))
+			return errors.Join(fmt.Errorf("failed to write output %s: %w", provenanceRootDiagnosticText(opts, outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, logical)), provenanceRootRedactError(opts, err)), provenanceRootRedactError(opts, removeInputSnapshot(snap, logical)))
 		}
 		beginValueProfileInput(opts)
 		rp := runtimeProvenance
 		if file != logical || snap != nil {
 			rp.SourceURI = logical
 		}
+		rp = withProvenanceRootRuntimeLabel(opts, rp, i+1, file, logical)
 		readPath := file
 		if snap != nil {
 			// Read the verified snapshot, not the mutable source path.
@@ -1245,15 +1296,18 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		}
 		result := extract.ProcessFileWithApplicabilityToSink(ctx, readPath, sigCfg, extCfg, opts.ApplicabilityConfig, externalFields, opts.AllowLargeFiles, rp, target)
 		closeErr := target.Close(ctx)
+		closeErr = provenanceRootRedactError(opts, closeErr)
 		if snap != nil {
 			result.Error = sanitizePrivateInputError(result.Error, logical, readPath, file)
 			result.DispositionDetail = sanitizePrivateInputText(result.DispositionDetail, logical, readPath, file)
 			result.File = file
 			if cleanupErr := removeInputSnapshot(snap, logical); cleanupErr != nil {
 				target.Abort()
-				return errors.Join(result.Error, closeErr, cleanupErr)
+				return errors.Join(result.Error, closeErr, provenanceRootInputError(opts, cleanupErr, file, logical, snap.Path))
 			}
 		}
+		result.Error = provenanceRootInputError(opts, result.Error, file, logical, readPath)
+		result.DispositionDetail = provenanceRootInputText(opts, result.DispositionDetail, file, logical, readPath)
 
 		if result.Error != nil || result.Disposition == extract.DispositionFailed {
 			originalDisposition := result.Disposition
@@ -1265,15 +1319,15 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 				result.DispositionDetail = closeErr.Error()
 			}
 			if isJSONOutputFailure(result.Error) {
-				return fmt.Errorf("failed to write output %s: %w", target.logicalName(), result.Error)
+				return fmt.Errorf("failed to write output %s: %w", provenanceRootDiagnosticText(opts, target.logicalName()), result.Error)
 			}
 			if result.Error != nil {
 				logger.Error("Failed to process file",
-					zap.String("file", result.LogicalURI),
-					zap.Error(result.Error))
+					zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)),
+					zap.Error(provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)))
 			}
 			if !opts.ContinueOnError && originalDisposition != extract.DispositionFailed && result.Error != nil {
-				return fmt.Errorf("failed to process file %s: %w", result.LogicalURI, result.Error)
+				return fmt.Errorf("failed to process file %s: %w", displayPath, result.Error)
 			}
 			failureErr := recordFailedSequentialResult(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, manifestEnabled, logger)
 			if !opts.ContinueOnError && dispositionFailure == nil {
@@ -1284,7 +1338,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		}
 		if closeErr != nil {
 			target.Abort()
-			return fmt.Errorf("failed to close output %s: %w", target.logicalName(), closeErr)
+			return fmt.Errorf("failed to close output %s: %w", provenanceRootDiagnosticText(opts, target.logicalName()), closeErr)
 		}
 		if err := target.Commit(); err != nil {
 			discardValueProfileInput(opts)
@@ -1310,11 +1364,11 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if recordCount == 0 {
 			if opts.Progress {
 				logger.Info("No matching records found; emitting empty output",
-					zap.String("file", result.LogicalURI))
+					zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)))
 			}
 		} else if opts.Progress {
 			logger.Info("Extracted records",
-				zap.String("file", result.LogicalURI),
+				zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)),
 				zap.Int("record_count", recordCount))
 		}
 		countsByRecordType[extCfg.RecordType] += recordCount
@@ -1348,7 +1402,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
 			return err
 		}
-		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+		logger.Info("Provenance manifest written", zap.String("file", provenanceRootDiagnosticText(opts, manifestPath)))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
 	}
@@ -1363,6 +1417,8 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 }
 
 func recordFailedSequentialResult(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, manifestEnabled bool, logger *zap.Logger) error {
+	result.Error = provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)
+	result.DispositionDetail = provenanceRootInputText(opts, result.DispositionDetail, result.File, result.LogicalURI)
 	if result.Disposition == "" {
 		result.Disposition = extract.DispositionFailed
 	}
@@ -1377,15 +1433,16 @@ func recordFailedSequentialResult(result extract.ExtractResult, opts *ExtractOpt
 	}
 
 	dispositionSummary.add(result, sanitizeRoots)
-	failureErr := failureErrorForResult(result, sanitizeRoots)
+	failureErr := failureErrorForResult(opts, result, sanitizeRoots)
 	if opts.ContinueOnError {
 		failureManifest.add(result.LogicalURI, result.DispositionReason, result.DispositionDetail, sanitizeRoots)
 	}
 	if manifestEnabled {
-		input, err := provenance.BuildInputLedger(result.File, result.LogicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+		input, err := ledgerInputFor(opts, result, nil, sanitizeRoots...)
 		if err != nil {
+			err = provenanceRootInputError(opts, err, result.File, result.LogicalURI)
 			if opts.ContinueOnError {
-				logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", result.LogicalURI), zap.Error(err))
+				logger.Warn("Skipping provenance input ledger for failed file", zap.String("file", provenanceRootInputLabel(opts, result.File, result.LogicalURI)), zap.Error(err))
 			} else {
 				return err
 			}
@@ -1620,11 +1677,18 @@ func buildExtractRuntimeProvenance(opts *ExtractOptions) (provenance.RuntimeOpti
 	return runtimeProvenance, nil
 }
 
-func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions) error {
+func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions) (err error) {
+	defer func() {
+		err = provenanceRootSanitizeError(opts, err, opts.RecordIndex)
+	}()
 	logger := logging.GetLogger()
 	startedAt := time.Now().UTC()
+	indexDiagnostic := opts.RecordIndex
+	if provenanceRootActive(opts) {
+		indexDiagnostic = "<record-index>"
+	}
 	logger.Info("Starting parallel extraction",
-		zap.String("index", opts.RecordIndex),
+		zap.String("index", indexDiagnostic),
 		zap.Int("workers", opts.Workers))
 
 	// Open index store to get header (avoids loading full records array)
@@ -1646,23 +1710,35 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	// provenance, output naming, and source_extraction — never the staging path.
 	localReadPath, logicalURI, cleanupSource, err := acquireRecordIndexSource(context.Background(), opts, runtimeProvenance.RunID, header)
 	if err != nil {
-		return err
+		return provenanceRootInputError(opts, err, header.Source.Path, header.Source.Path)
 	}
 	defer func() {
 		if cerr := cleanupSource(); cerr != nil {
-			logger.Warn("Failed to clean up cloud staging directory", zap.Error(cerr))
+			logger.Warn("Failed to clean up cloud staging directory", zap.Error(provenanceRootInputError(opts, cerr, localReadPath, logicalURI)))
 		}
 	}()
+	logicalByLocal := map[string]string{}
+	if logicalURI != localReadPath {
+		logicalByLocal[localReadPath] = logicalURI
+	}
+	if err := preflightProvenanceRootInputs(opts, []string{localReadPath}, logicalByLocal); err != nil {
+		return err
+	}
+	if err := setupOutputSession(opts, runtimeProvenance.RunID); err != nil {
+		return err
+	}
+	defer closeOutputSession(opts)
 	if logicalURI != localReadPath {
 		// Cloud source: published artifacts and source_extraction use the logical
 		// s3:// identity. SourceIdentity() returns SourceURI when set, so enrichment
 		// and provenance record the URI while byte reads use the staged path.
 		runtimeProvenance.SourceURI = logicalURI
 	}
+	runtimeProvenance = withProvenanceRootRuntimeLabel(opts, runtimeProvenance, 1, localReadPath, logicalURI)
 
 	externalFields, err := buildExternalFieldsForFile(logicalURI, opts, fieldPlan, warnLimiter)
 	if err != nil {
-		return fmt.Errorf("failed to build external fields for file %s: %w", logicalURI, err)
+		return provenanceRootInputError(opts, fmt.Errorf("failed to build external fields for file %s: %w", provenanceRootInputLabel(opts, localReadPath, logicalURI), err), localReadPath, logicalURI)
 	}
 
 	// Create parallel extraction options
@@ -1696,8 +1772,8 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 			if err != nil {
 				return err
 			}
-			if err := enforceMinOccurrences(opts, extCfg, sigCfg, logicalURI, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
-				return err
+			if err := enforceMinOccurrences(opts, extCfg, sigCfg, provenanceRootInputLabel(opts, localReadPath, logicalURI), perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
+				return provenanceRootRedactError(opts, err)
 			}
 		}
 		return runParallelJSONStreamingExtraction(opts, extCfg, parallelOpts, localReadPath, logicalURI, runtimeProvenance, startedAt)
@@ -1709,14 +1785,14 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 	// Extract records
 	records, err := extractor.Extract()
 	if err != nil {
-		return fmt.Errorf("parallel extraction failed: %w", err)
+		return provenanceRootInputError(opts, fmt.Errorf("parallel extraction failed: %w", err), localReadPath, logicalURI)
 	}
 	perSelectorCounts, err := perSelectorCountsForIndexedExtraction(header.Selector.XPath, extCfg, header.Summary.TotalRecords)
 	if err != nil {
 		return err
 	}
-	if err := enforceMinOccurrences(opts, extCfg, sigCfg, logicalURI, perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
-		return err
+	if err := enforceMinOccurrences(opts, extCfg, sigCfg, provenanceRootInputLabel(opts, localReadPath, logicalURI), perSelectorCounts, true, extract.SignatureMatchUnknown, 0); err != nil {
+		return provenanceRootRedactError(opts, err)
 	}
 
 	logger.Info("Parallel extraction complete", zap.Int("record_count", len(records)))
@@ -1747,9 +1823,9 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 			// The input ledger hashes the local bytes (localReadPath — a staged
 			// working copy for cloud sources) but records the logical identity
 			// (logicalURI), so the staging path never reaches the manifest.
-			input, err := provenance.BuildInputLedger(localReadPath, logicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+			input, err := ledgerInputFor(opts, extract.ExtractResult{File: localReadPath, LogicalURI: logicalURI}, nil, sanitizeRoots...)
 			if err != nil {
-				return err
+				return provenanceRootInputError(opts, err, localReadPath, logicalURI)
 			}
 			input.RecordType = extCfg.RecordType
 			manifestInputs = append(manifestInputs, input)
@@ -1758,11 +1834,11 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 			outputFile := outputFileForFormat(opts, format, "parallel")
 			if err := writeRecordsForFormat(outputFile, format, records, extCfg, sigCfg, opts, runtimeProvenance, logicalURI, manifestPath); err != nil {
 				logger.Error("Failed to write output file",
-					zap.String("file", outputFile),
-					zap.Error(err))
-				return fmt.Errorf("failed to write output: %w", err)
+					zap.String("file", provenanceRootDiagnosticText(opts, outputFile)),
+					zap.Error(provenanceRootRedactError(opts, err)))
+				return fmt.Errorf("failed to write output: %w", provenanceRootRedactError(opts, err))
 			}
-			logger.Info("Output written", zap.String("file", outputFile), zap.Int("records", len(records)))
+			logger.Info("Output written", zap.String("file", provenanceRootDiagnosticText(opts, outputFile)), zap.Int("records", len(records)))
 			if manifestEnabled {
 				manifestOutputs = append(manifestOutputs, provenanceOutput(outputFile, format, len(records), opts, sanitizeRoots...))
 			}
@@ -1782,7 +1858,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
 			return err
 		}
-		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+		logger.Info("Provenance manifest written", zap.String("file", provenanceRootDiagnosticText(opts, manifestPath)))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
 	}
@@ -1802,7 +1878,7 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 
 	target, err := newJSONOutputTarget(opts, "parallel")
 	if err != nil {
-		return fmt.Errorf("failed to write output %s: %w", outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, "parallel"), err)
+		return fmt.Errorf("failed to write output %s: %w", provenanceRootDiagnosticText(opts, outputFileForFormat(opts, recipesmanifest.OutputFormatJSON, "parallel")), provenanceRootRedactError(opts, err))
 	}
 	// Stage through OnRecord; promote only after durable Commit (mirrors sequential streaming).
 	beginValueProfileInput(opts)
@@ -1816,13 +1892,13 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 			extractErr = fmt.Errorf("%w; failed to close output: %v", extractErr, closeErr)
 		}
 		if isJSONOutputFailure(extractErr) {
-			return fmt.Errorf("failed to write output %s: %w", target.logicalName(), extractErr)
+			return fmt.Errorf("failed to write output %s: %w", provenanceRootDiagnosticText(opts, target.logicalName()), provenanceRootRedactError(opts, extractErr))
 		}
-		return fmt.Errorf("parallel extraction failed: %w", extractErr)
+		return provenanceRootInputError(opts, fmt.Errorf("parallel extraction failed: %w", provenanceRootRedactError(opts, extractErr)), localReadPath, logicalURI)
 	}
 	if closeErr != nil {
 		target.Abort()
-		return fmt.Errorf("failed to close output %s: %w", target.logicalName(), closeErr)
+		return fmt.Errorf("failed to close output %s: %w", provenanceRootDiagnosticText(opts, target.logicalName()), provenanceRootRedactError(opts, closeErr))
 	}
 	if err := target.Commit(); err != nil {
 		discardValueProfileInput(opts)
@@ -1837,9 +1913,9 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 	if manifestEnabled {
 		// Hash the local bytes (staged working copy for cloud sources) but record
 		// the logical identity, so the staging path never reaches the manifest.
-		input, err := provenance.BuildInputLedger(localReadPath, logicalURI, resolvedInputHandle(opts), sanitizeRoots...)
+		input, err := ledgerInputFor(opts, extract.ExtractResult{File: localReadPath, LogicalURI: logicalURI}, nil, sanitizeRoots...)
 		if err != nil {
-			return err
+			return provenanceRootInputError(opts, err, localReadPath, logicalURI)
 		}
 		input.RecordType = extCfg.RecordType
 		manifestInputs := []provenance.Input{input}
@@ -1857,7 +1933,7 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
 			return err
 		}
-		logger.Info("Provenance manifest written", zap.String("file", manifestPath))
+		logger.Info("Provenance manifest written", zap.String("file", provenanceRootDiagnosticText(opts, manifestPath)))
 	} else if opts.OutputPath == "" && !opts.NoManifest {
 		logger.Warn("Skipping provenance manifest because --output-path is not set")
 	}
@@ -2192,7 +2268,7 @@ func writeRecordsForFormat(outputFile, format string, records []map[string]inter
 	case recipesmanifest.OutputFormatParquet:
 		if opts == nil || opts.Recipe == nil {
 			logging.Warn("Parquet output without recipe.yaml; recipe provenance metadata will be omitted",
-				zap.String("file", outputFile))
+				zap.String("file", provenanceRootDiagnosticText(opts, outputFile)))
 		}
 		// The parquet writer needs a local seekable file. Resolve the destination
 		// through the output seam: local writes go to the final path (no-op
@@ -2240,6 +2316,9 @@ func parquetFileMetadata(sigCfg *extract.FileSignature, opts *ExtractOptions, ru
 }
 
 func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.RuntimeOptions, startedAt, completedAt time.Time, inputs []provenance.Input, outputs []provenance.Output, counts map[string]int, roots []string) provenance.Manifest {
+	if opts == nil {
+		opts = &ExtractOptions{}
+	}
 	commandName := opts.CommandName
 	if commandName == "" {
 		commandName = "sumpter extract files"
@@ -2249,17 +2328,25 @@ func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.
 		argv = buildExtractArgv(opts)
 	}
 	manifest := provenance.Manifest{
-		SchemaVersion:      provenance.ManifestSchemaVersion,
-		RunID:              runtimeProvenance.RunID,
-		SumpterVersion:     runtimeProvenance.SumpterVersion,
-		StartedAt:          startedAt,
-		CompletedAt:        completedAt,
-		CLI:                provenance.CLI{Command: commandName, ArgvSanitized: provenance.SanitizeArgvWithInternalParameters(argv, opts.ParametersInternal, roots...)},
+		SchemaVersion:  provenance.ManifestSchemaVersion,
+		RunID:          runtimeProvenance.RunID,
+		SumpterVersion: runtimeProvenance.SumpterVersion,
+		StartedAt:      startedAt,
+		CompletedAt:    completedAt,
+		CLI: provenance.CLI{Command: commandName, ArgvSanitized: func() []string {
+			if opts.ProvenanceRootSet {
+				return provenance.SanitizeArgvForRootWithInternalParameters(argv, opts.ParametersInternal, roots...)
+			}
+			return provenance.SanitizeArgvWithInternalParameters(argv, opts.ParametersInternal, roots...)
+		}()},
 		Recipe:             opts.Recipe,
 		Inputs:             inputs,
 		Outputs:            outputs,
 		CountsByRecordType: counts,
 		ReferenceTables:    opts.referenceTableProv,
+	}
+	if opts.ProvenanceRootSet {
+		manifest.InputPathForm = provenance.InputPathFormRootRelative
 	}
 	if raw := snapshotValueProfile(opts); len(raw) > 0 {
 		manifest.ValueProfile = raw
@@ -2427,6 +2514,9 @@ func buildExtractArgv(opts *ExtractOptions) []string {
 	appendFlag("--extract-config-path", opts.ExtractConfig)
 	appendFlag("--record-index", opts.RecordIndex)
 	appendFlag("--run-id", opts.RunID)
+	if opts.ProvenanceRootSet && opts.ProvenanceRootFromFlag {
+		args = append(args, "--provenance-root=<set>")
+	}
 	for _, parameter := range opts.Parameters {
 		appendFlag("--parameter", parameter)
 	}
@@ -2711,7 +2801,7 @@ func validateSourceExtractionDeclarations(opts *ExtractOptions, mappings []extra
 func buildExternalFieldsForFile(filePath string, opts *ExtractOptions, plan *externalFieldPlan, limiter *sourceExtractionWarnLimiter) (map[string]interface{}, error) {
 	sourceFields, err := extractSourceFieldsForFile(filePath, opts, limiter)
 	if err != nil {
-		return nil, err
+		return nil, provenanceRootInputError(opts, err, filePath, filePath)
 	}
 	return plan.build(sourceFields), nil
 }
@@ -2733,7 +2823,7 @@ func extractSourceFieldsForFile(filePath string, opts *ExtractOptions, limiter *
 		}
 		matches := pattern.CompiledPattern.FindStringSubmatch(target)
 		if matches == nil {
-			limiter.warn(filePath, pattern, index, opts.SourceExtractionRecipeID)
+			limiter.warn(provenanceRootInputLabel(opts, filePath, filePath), pattern, index, opts.SourceExtractionRecipeID)
 			continue
 		}
 		for groupIndex, name := range pattern.CompiledPattern.SubexpNames() {
@@ -3112,9 +3202,9 @@ func setupOutputSession(opts *ExtractOptions, runID string) error {
 	opts.outputHandle = handle
 
 	logging.Info("Publishing extraction output to cloud destination",
-		zap.String("destination", ref.LogicalURI),
+		zap.String("destination", provenanceRootDiagnosticText(opts, ref.LogicalURI)),
 		zap.String("handle", handle),
-		zap.String("resolved", confirmation))
+		zap.String("resolved", provenanceRootDiagnosticText(opts, confirmation)))
 	return nil
 }
 
@@ -3454,6 +3544,9 @@ func discoverInputReferences(ctx context.Context, session *uriio.Session, opts *
 		// object lines carry a declaration; this preview path needs only the refs.
 		entries, eerr := readFileListRefs(opts.FileList)
 		if eerr != nil {
+			if provenanceRootActive(opts) {
+				return nil, fmt.Errorf("failed to read input file list")
+			}
 			return nil, eerr
 		}
 		refs := make([]string, len(entries))
@@ -3479,6 +3572,9 @@ func discoverInputReferences(ctx context.Context, session *uriio.Session, opts *
 	if !ref.IsCloud() {
 		files, derr := discoverInputFiles(opts)
 		if derr != nil {
+			if provenanceRootActive(opts) {
+				return nil, fmt.Errorf("failed to find files")
+			}
 			return nil, fmt.Errorf("failed to find files: %w", derr)
 		}
 		return files, nil
@@ -3519,6 +3615,12 @@ func runDryRunPreview(ctx context.Context, opts *ExtractOptions, runID string) e
 		}()
 	}
 	if err != nil {
+		return err
+	}
+	if isAggregateMode(opts) && strings.TrimSpace(opts.InputPath) != "" {
+		sort.Strings(refs)
+	}
+	if err := preflightProvenanceRootReferences(opts, refs); err != nil {
 		return err
 	}
 	for _, ref := range refs {
@@ -3623,7 +3725,11 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 			if session != nil {
 				_ = session.Close()
 			}
-			return nil, nil, nil, nil, fmt.Errorf("resolve input %s: %w", ref, err)
+			resolveErr := fmt.Errorf("resolve input %s: %w", ref, err)
+			if classified, cerr := uriio.Classify(ref); cerr == nil && classified.IsCloud() {
+				return nil, nil, nil, nil, provenanceRootSanitizeError(opts, resolveErr)
+			}
+			return nil, nil, nil, nil, provenanceRootSanitizeError(opts, resolveErr, ref)
 		}
 		files = append(files, src.LocalPath)
 		// Only cloud sources carry a distinct logical identity. file:// stays a
@@ -3637,8 +3743,12 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 }
 
 func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
+	rootMode := provenanceRootActive(opts)
 	absInput, err := filepath.Abs(opts.InputPath)
 	if err != nil {
+		if rootMode {
+			return nil, fmt.Errorf("failed to resolve input path")
+		}
 		return nil, fmt.Errorf("failed to resolve input path %s: %w", opts.InputPath, err)
 	}
 
@@ -3668,15 +3778,28 @@ func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
 	// Surface the enumeration as a legible phase: announce it, report the matched
 	// count + elapsed time, and warn loudly when the walk is slow.
 	logger := logging.GetLogger()
-	logger.Info("Enumerating input files",
-		zap.String("root", absInput),
-		zap.String("include", opts.IncludePattern),
-		zap.String("exclude", opts.ExcludePattern),
-		zap.Int("max_depth", opts.MaxDepth))
+	if rootMode {
+		// The selected provenance root is host-local sensitive material. Discovery
+		// happens before the shared containment preflight, so do not put the raw
+		// discovery root in logs while root-relative mode is active.
+		logger.Info("Enumerating input files",
+			zap.String("include", opts.IncludePattern),
+			zap.String("exclude", opts.ExcludePattern),
+			zap.Int("max_depth", opts.MaxDepth))
+	} else {
+		logger.Info("Enumerating input files",
+			zap.String("root", absInput),
+			zap.String("include", opts.IncludePattern),
+			zap.String("exclude", opts.ExcludePattern),
+			zap.Int("max_depth", opts.MaxDepth))
+	}
 
 	start := time.Now()
 	results, err := facade.Find(query)
 	if err != nil {
+		if rootMode {
+			return nil, fmt.Errorf("failed to discover input files")
+		}
 		return nil, fmt.Errorf("failed to discover files from %s: %w", absInput, err)
 	}
 	elapsed := time.Since(start)
@@ -3686,16 +3809,29 @@ func discoverInputFiles(opts *ExtractOptions) ([]string, error) {
 		files = append(files, filepath.Clean(filepath.FromSlash(result.SourcePath)))
 	}
 
-	logger.Info("Input discovery complete",
-		zap.String("root", absInput),
-		zap.Int("matched", len(files)),
-		zap.Duration("elapsed", elapsed))
-	if elapsed >= slowInputDiscoveryThreshold {
-		logger.Warn("Input enumeration was slow: sumpter walked the whole tree under --input-path before --include-pattern filtered it (filename-only patterns cannot prune directories). For large or precisely-scoped sets, prefer --file-list (an explicit list, no walk), a narrower --input-path, or --exclude-pattern to skip known-large subtrees",
-			zap.String("root", absInput),
-			zap.Duration("elapsed", elapsed),
+	if rootMode {
+		logger.Info("Input discovery complete",
 			zap.Int("matched", len(files)),
-			zap.String("include", opts.IncludePattern))
+			zap.Duration("elapsed", elapsed))
+	} else {
+		logger.Info("Input discovery complete",
+			zap.String("root", absInput),
+			zap.Int("matched", len(files)),
+			zap.Duration("elapsed", elapsed))
+	}
+	if elapsed >= slowInputDiscoveryThreshold {
+		if rootMode {
+			logger.Warn("Input enumeration was slow: sumpter walked the whole tree under --input-path before --include-pattern filtered it (filename-only patterns cannot prune directories). For large or precisely-scoped sets, prefer --file-list (an explicit list, no walk), a narrower --input-path, or --exclude-pattern to skip known-large subtrees",
+				zap.Duration("elapsed", elapsed),
+				zap.Int("matched", len(files)),
+				zap.String("include", opts.IncludePattern))
+		} else {
+			logger.Warn("Input enumeration was slow: sumpter walked the whole tree under --input-path before --include-pattern filtered it (filename-only patterns cannot prune directories). For large or precisely-scoped sets, prefer --file-list (an explicit list, no walk), a narrower --input-path, or --exclude-pattern to skip known-large subtrees",
+				zap.String("root", absInput),
+				zap.Duration("elapsed", elapsed),
+				zap.Int("matched", len(files)),
+				zap.String("include", opts.IncludePattern))
+		}
 	}
 
 	return files, nil

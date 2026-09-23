@@ -655,6 +655,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	diagnosticPath := runtimeProvenance.DiagnosticIdentity(filePath)
 
 	result := ExtractResult{File: filePath, LogicalURI: runtimeProvenance.SourceIdentity(filePath), SignatureMatchStatus: SignatureMatchUnknown}
 	if sink == nil {
@@ -663,7 +664,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	}
 
 	logger.Info("Starting streaming extraction",
-		zap.String("file", filePath),
+		zap.String("file", diagnosticPath),
 		zap.String("mode", "streaming"))
 
 	if extCfg == nil {
@@ -693,8 +694,12 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 			result.PerSelectorCountsComplete = len(extCfg.MatchSelectors) == 1
 		}
 
+		sourceFile := runtimeProvenance.SourceIdentity(filePath)
+		if runtimeProvenance.DiagnosticLabel != "" {
+			sourceFile = runtimeProvenance.DiagnosticIdentity(filePath)
+		}
 		summary := FileEmissionSummary{
-			SourceFile:        runtimeProvenance.SourceIdentity(filePath),
+			SourceFile:        sourceFile,
 			RecordType:        extCfg.RecordType,
 			RecordCount:       emittedRecords,
 			Disposition:       boundaryDisposition,
@@ -702,6 +707,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 			DispositionDetail: boundaryDetail,
 		}
 		if err := sink.OnFileBoundary(ctx, summary); err != nil {
+			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to emit file boundary", zap.Error(err))
 			if result.Error == nil {
 				result.Error = fmt.Errorf("failed to emit file boundary: %w", err)
@@ -719,6 +725,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	recordSelector := extCfg.MatchSelectors[0].XPath
 	parsedSelector, err := streaming.ParseRecordSelector(recordSelector)
 	if err != nil {
+		err = runtimeProvenance.DiagnosticError(err, filePath)
 		result.Error = err
 		markBoundaryFailure(DispositionReasonInternalError)
 		return finish()
@@ -729,7 +736,8 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 
 	streamingCfg := cloneExtractConfigForStreaming(extCfg)
 	if err := prepareExtractConfig(streamingCfg); err != nil {
-		logger.Error("Failed to prepare streaming extract config", zap.String("file", filePath), zap.Error(err))
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to prepare streaming extract config", zap.String("file", diagnosticPath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to prepare streaming extract config: %w", err)
 		markBoundaryFailure(DispositionReasonInternalError)
 		return finish()
@@ -738,13 +746,15 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	// Open file stream
 	stream, err := openFileStream(filePath)
 	if err != nil {
-		logger.Error("Failed to open file stream", zap.String("file", filePath), zap.Error(err))
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to open file stream", zap.String("file", diagnosticPath), zap.Error(err))
 		result.Error = fmt.Errorf("failed to open file stream: %w", err)
 		markBoundaryFailure(DispositionReasonInternalError)
 		return finish()
 	}
 	defer func() {
 		if closeErr := stream.Close(); closeErr != nil {
+			closeErr = runtimeProvenance.DiagnosticError(closeErr, filePath)
 			logger.Warn("Failed to close file stream", zap.Error(closeErr))
 		}
 	}()
@@ -767,6 +777,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 			break
 		}
 		if err != nil {
+			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to scan record", zap.Error(err))
 			result.Error = fmt.Errorf("failed to scan record: %w", err)
 			markBoundaryFailure(DispositionReasonParseError)
@@ -777,12 +788,13 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		if recordBuffer.RecordNum%100 == 0 {
 			logger.Info("Progress",
 				zap.Int("records_scanned", recordBuffer.RecordNum),
-				zap.String("file", filePath))
+				zap.String("file", diagnosticPath))
 		}
 
 		// Parse this record as a mini-DOM
 		recordDoc, err := xmlquery.Parse(strings.NewReader(recordBuffer.XML))
 		if err != nil {
+			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to parse record XML",
 				zap.Int("record_num", recordBuffer.RecordNum),
 				zap.Error(err))
@@ -795,6 +807,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		// selector targets the record root.
 		records, err := extractRecords(recordDoc, streamingCfg, externalFields)
 		if err != nil {
+			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to extract from record",
 				zap.Int("record_num", recordBuffer.RecordNum),
 				zap.Error(err))
@@ -808,6 +821,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 			recordNums[i] = recordBuffer.RecordNum
 		}
 		if err := enrichRecordsWithRecordNums(records, recordNums, filePath, sigCfg, streamingCfg, runtimeProvenance); err != nil {
+			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to enrich records",
 				zap.Int("record_num", recordBuffer.RecordNum),
 				zap.Error(err))
@@ -817,6 +831,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		}
 		for _, record := range records {
 			if err := sink.OnRecord(ctx, NewEmittedRecord(record)); err != nil {
+				err = runtimeProvenance.DiagnosticError(err, filePath)
 				logger.Error("Failed to emit record",
 					zap.Int("record_num", recordBuffer.RecordNum),
 					zap.Error(err))
@@ -829,7 +844,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	}
 
 	logger.Info("Streaming extraction complete",
-		zap.String("file", filePath),
+		zap.String("file", diagnosticPath),
 		zap.Int("total_records_scanned", scanner.RecordCount()),
 		zap.Int("total_records_extracted", emittedRecords),
 		zap.String("record_element", parsedSelector.ElementName))
@@ -868,7 +883,8 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	logger.Debug("Starting file processing", zap.String("file", filePath))
+	diagnosticPath := runtimeProvenance.DiagnosticIdentity(filePath)
+	logger.Debug("Starting file processing", zap.String("file", diagnosticPath))
 
 	t := newBoundaryTracker(ctx, filePath, extCfg, appCfg, runtimeProvenance, sink)
 
@@ -886,7 +902,7 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 			return t.result
 		}
 		logger.Info("Using streaming mode for large file",
-			zap.String("file", filePath),
+			zap.String("file", diagnosticPath),
 			zap.Int64("estimated_size_mb", estimatedSize/(1024*1024)),
 			zap.Bool("compressed", streamCompressed),
 			zap.Bool("allow_large_files", allowLargeFiles),
@@ -898,10 +914,11 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	}
 
 	// Read file content (with transparent .gz decompression if needed)
-	logger.Debug("Reading file content", zap.String("file", filePath))
+	logger.Debug("Reading file content", zap.String("file", diagnosticPath))
 	content, err := readFileContent(filePath, allowLargeFiles) // #nosec G304 - filePath comes from user-provided file list or directory scan
 	if err != nil {
-		logger.Error("Failed to read file", zap.String("file", filePath), zap.Error(err))
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to read file", zap.String("file", diagnosticPath), zap.Error(err))
 		t.result.Error = fmt.Errorf("failed to read file: %w", err)
 		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
 		t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
@@ -910,23 +927,24 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	}
 	isCompressed := strings.HasSuffix(strings.ToLower(filepath.Ext(filePath)), ".gz")
 	if isCompressed {
-		logger.Debug("File decompressed successfully", zap.String("file", filePath), zap.Int("decompressed_size", len(content)))
+		logger.Debug("File decompressed successfully", zap.String("file", diagnosticPath), zap.Int("decompressed_size", len(content)))
 	} else {
-		logger.Debug("File read successfully", zap.String("file", filePath), zap.Int("size", len(content)))
+		logger.Debug("File read successfully", zap.String("file", diagnosticPath), zap.Int("size", len(content)))
 	}
 
 	// Parse XML document
-	logger.Debug("Parsing XML document", zap.String("file", filePath))
+	logger.Debug("Parsing XML document", zap.String("file", diagnosticPath))
 	doc, err := xmlquery.Parse(strings.NewReader(string(content)))
 	if err != nil {
-		logger.Error("Failed to parse XML", zap.String("file", filePath), zap.Error(err))
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to parse XML", zap.String("file", diagnosticPath), zap.Error(err))
 		t.result.Error = fmt.Errorf("failed to parse XML: %w", err)
 		t.markFailed(DispositionReasonParseError, t.result.Error.Error())
 		t.markBoundaryFailure(DispositionReasonParseError, t.result.Error.Error())
 		t.emitBoundary()
 		return t.result
 	}
-	logger.Debug("XML parsed successfully", zap.String("file", filePath))
+	logger.Debug("XML parsed successfully", zap.String("file", diagnosticPath))
 
 	return ProcessParsedDocument(ctx, doc, filePath, sigCfg, extCfg, appCfg, externalFields, runtimeProvenance, sink)
 }
@@ -949,12 +967,14 @@ func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath str
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	diagnosticPath := runtimeProvenance.DiagnosticIdentity(filePath)
 	t := newBoundaryTracker(ctx, filePath, extCfg, appCfg, runtimeProvenance, sink)
 
 	if appCfg != nil {
 		applies, err := evaluateApplicability(doc, appCfg)
 		if err != nil {
-			logger.Error("Failed to evaluate applicability", zap.String("file", filePath), zap.Error(err))
+			err = runtimeProvenance.DiagnosticError(err, filePath)
+			logger.Error("Failed to evaluate applicability", zap.String("file", diagnosticPath), zap.Error(err))
 			t.result.Error = fmt.Errorf("failed to evaluate applicability: %w", err)
 			t.markFailed(DispositionReasonValidationError, t.result.Error.Error())
 			t.markBoundaryFailure(DispositionReasonValidationError, t.result.Error.Error())
@@ -962,7 +982,7 @@ func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath str
 			return t.result
 		}
 		if !applies {
-			logger.Debug("File is not applicable to recipe", zap.String("file", filePath))
+			logger.Debug("File is not applicable to recipe", zap.String("file", diagnosticPath))
 			t.result.Disposition = DispositionNotApplicable
 			t.result.DispositionReason = DispositionReasonApplicabilityPredicateFalse
 			t.result.DispositionDetail = "applicability predicate evaluated false"
@@ -974,22 +994,23 @@ func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath str
 	}
 
 	// Check if file matches signature
-	logger.Debug("Checking signature match", zap.String("file", filePath), zap.String("signature", sigCfg.SignatureID))
+	logger.Debug("Checking signature match", zap.String("file", diagnosticPath), zap.String("signature", sigCfg.SignatureID))
 	matches, confidence, err := matchesSignature(doc, sigCfg)
 	t.result.SignatureConfidence = confidence
 	if err != nil {
-		logger.Error("Failed to check signature", zap.String("file", filePath), zap.Error(err))
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to check signature", zap.String("file", diagnosticPath), zap.Error(err))
 		t.result.Error = fmt.Errorf("failed to check signature: %w", err)
 		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
 		t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
 		t.emitBoundary()
 		return t.result
 	}
-	logger.Debug("Signature check complete", zap.String("file", filePath), zap.Bool("matches", matches), zap.Float64("confidence", confidence))
+	logger.Debug("Signature check complete", zap.String("file", diagnosticPath), zap.Bool("matches", matches), zap.Float64("confidence", confidence))
 
 	if !matches {
 		// File doesn't match signature, return empty result unless applicability made the mismatch a failed disposition.
-		logger.Debug("File does not match signature", zap.String("file", filePath))
+		logger.Debug("File does not match signature", zap.String("file", diagnosticPath))
 		t.result.SignatureMatchStatus = SignatureMatchMismatched
 		t.result.PerSelectorCounts = zeroSelectorCounts(extCfg)
 		t.result.PerSelectorCountsComplete = true
@@ -1005,7 +1026,8 @@ func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath str
 	t.result.SignatureMatchStatus = SignatureMatchMatched
 
 	if err := prepareExtractConfig(extCfg); err != nil {
-		logger.Error("Failed to prepare extract config", zap.String("file", filePath), zap.Error(err))
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to prepare extract config", zap.String("file", diagnosticPath), zap.Error(err))
 		t.result.Error = fmt.Errorf("failed to prepare extract config: %w", err)
 		t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
 		t.emitBoundary()
@@ -1013,11 +1035,12 @@ func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath str
 	}
 
 	// Extract records
-	logger.Debug("Starting record extraction", zap.String("file", filePath), zap.String("record_type", extCfg.RecordType))
+	logger.Debug("Starting record extraction", zap.String("file", diagnosticPath), zap.String("record_type", extCfg.RecordType))
 	if sink != nil {
 		perSelectorCounts, count, err := extractRecordsWithCountsAndRecordNumsToSink(ctx, doc, extCfg, externalFields, filePath, sigCfg, runtimeProvenance, sink)
 		if err != nil {
-			logger.Error("Failed to extract records to sink", zap.String("file", filePath), zap.Error(err))
+			err = runtimeProvenance.DiagnosticError(err, filePath)
+			logger.Error("Failed to extract records to sink", zap.String("file", diagnosticPath), zap.Error(err))
 			t.result.Error = fmt.Errorf("failed to extract records: %w", err)
 			t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
 			t.markBoundaryFailure(DispositionReasonInternalError, t.result.Error.Error())
@@ -1031,22 +1054,24 @@ func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath str
 		t.result.PerSelectorCounts = perSelectorCounts
 		t.result.PerSelectorCountsComplete = true
 		t.emitBoundary()
-		logger.Debug("Record sink extraction complete", zap.String("file", filePath), zap.Int("record_count", t.emittedRecords))
+		logger.Debug("Record sink extraction complete", zap.String("file", diagnosticPath), zap.Int("record_count", t.emittedRecords))
 		return t.result
 	}
 
 	extractedRecords, perSelectorCounts, err := extractRecordsWithCountsAndRecordNums(doc, extCfg, externalFields)
 	if err != nil {
-		logger.Error("Failed to extract records", zap.String("file", filePath), zap.Error(err))
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to extract records", zap.String("file", diagnosticPath), zap.Error(err))
 		t.result.Error = fmt.Errorf("failed to extract records: %w", err)
 		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
 		return t.result
 	}
 	records, recordNums := splitExtractedRecords(extractedRecords)
-	logger.Debug("Record extraction complete", zap.String("file", filePath), zap.Int("record_count", len(records)))
+	logger.Debug("Record extraction complete", zap.String("file", diagnosticPath), zap.Int("record_count", len(records)))
 
 	if err := enrichRecordsWithRecordNums(records, recordNums, filePath, sigCfg, extCfg, runtimeProvenance); err != nil {
-		logger.Error("Failed to apply metadata", zap.String("file", filePath), zap.Error(err))
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to apply metadata", zap.String("file", diagnosticPath), zap.Error(err))
 		t.result.Error = err
 		t.markFailed(DispositionReasonInternalError, t.result.Error.Error())
 		return t.result
@@ -1124,8 +1149,12 @@ func (t *boundaryTracker) emitBoundary() {
 		t.boundaryReason = t.result.DispositionReason
 		t.boundaryDetail = t.result.DispositionDetail
 	}
+	sourceFile := t.rp.SourceIdentity(t.filePath)
+	if t.rp.DiagnosticLabel != "" {
+		sourceFile = t.rp.DiagnosticIdentity(t.filePath)
+	}
 	summary := FileEmissionSummary{
-		SourceFile:        t.rp.SourceIdentity(t.filePath),
+		SourceFile:        sourceFile,
 		RecordType:        t.extCfg.RecordType,
 		RecordCount:       t.emittedRecords,
 		Disposition:       t.boundaryDisposition,

@@ -30,9 +30,13 @@ func NewParallelExtractor(opts ExtractionOptions) *ParallelExtractor {
 //
 // Uses streaming record access to avoid loading full []RecordMetadata into memory.
 func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
+	indexDiagnostic := pe.opts.IndexPath
+	if pe.opts.RuntimeProvenance.DiagnosticLabel != "" {
+		indexDiagnostic = "<record-index>"
+	}
 	pe.logger.Info("Starting parallel extraction",
-		zap.String("index", pe.opts.IndexPath),
-		zap.String("source", pe.opts.SourcePath),
+		zap.String("index", indexDiagnostic),
+		zap.String("source", pe.opts.RuntimeProvenance.DiagnosticIdentity(pe.opts.SourcePath)),
 		zap.Int("workers", pe.opts.Workers))
 
 	// Use provided IndexStore or open a new one
@@ -88,7 +92,7 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 
 	// Safety verification (if enabled)
 	if pe.opts.VerifyIndex {
-		verifier := NewSafetyVerifierFromHeader(header, pe.opts.SourcePath, pe.opts.IndexPath)
+		verifier := NewSafetyVerifierFromHeader(header, pe.opts.SourcePath, pe.opts.IndexPath, pe.opts.RuntimeProvenance.DiagnosticIdentity(pe.opts.SourcePath))
 		if err := verifier.VerifyIntegrity(); err != nil {
 			return nil, fmt.Errorf("safety verification failed: %w", err)
 		}
@@ -199,9 +203,13 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	indexDiagnostic := pe.opts.IndexPath
+	if pe.opts.RuntimeProvenance.DiagnosticLabel != "" {
+		indexDiagnostic = "<record-index>"
+	}
 	pe.logger.Info("Starting parallel extraction to sink",
-		zap.String("index", pe.opts.IndexPath),
-		zap.String("source", pe.opts.SourcePath),
+		zap.String("index", indexDiagnostic),
+		zap.String("source", pe.opts.RuntimeProvenance.DiagnosticIdentity(pe.opts.SourcePath)),
 		zap.Int("workers", pe.opts.Workers))
 
 	var indexStore store.IndexStore
@@ -228,8 +236,12 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 		return extract.FileEmissionSummary{}, fmt.Errorf("failed to read index header: %w", err)
 	}
 
+	summarySource := header.Source.Path
+	if pe.opts.RuntimeProvenance.DiagnosticLabel != "" {
+		summarySource = pe.opts.RuntimeProvenance.DiagnosticLabel
+	}
 	summary := extract.FileEmissionSummary{
-		SourceFile:  header.Source.Path,
+		SourceFile:  summarySource,
 		RecordCount: 0,
 		Disposition: extract.DispositionApplied,
 	}
@@ -254,7 +266,7 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 	}
 
 	if pe.opts.VerifyIndex {
-		verifier := NewSafetyVerifierFromHeader(header, pe.opts.SourcePath, pe.opts.IndexPath)
+		verifier := NewSafetyVerifierFromHeader(header, pe.opts.SourcePath, pe.opts.IndexPath, pe.opts.RuntimeProvenance.DiagnosticIdentity(pe.opts.SourcePath))
 		if err := verifier.VerifyIntegrity(); err != nil {
 			return summary, fmt.Errorf("safety verification failed: %w", err)
 		}
