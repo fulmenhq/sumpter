@@ -66,6 +66,32 @@ jobs:
             echo "::error::$MSG"
             exit 1
           fi
+      - name: Require signed annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_REF="refs/tags/${GITHUB_REF_NAME}"
+          # Fetch the tag object itself so the check sees exactly what was
+          # pushed.
+          git fetch --no-tags --force origin "+${TAG_REF}:${TAG_REF}"
+          TAG_TYPE=$(git cat-file -t "${TAG_REF}")
+          if [ "${TAG_TYPE}" != "tag" ]; then
+            echo "::error::${GITHUB_REF_NAME} is not an annotated tag (type: ${TAG_TYPE})"
+            exit 1
+          fi
+          TAG_COMMIT=$(git rev-parse "${TAG_REF}^{commit}")
+          if [ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]; then
+            echo "::error::${GITHUB_REF_NAME} points at ${TAG_COMMIT}, not ${GITHUB_SHA}"
+            exit 1
+          fi
+          TAG_BODY=$(git cat-file -p "${TAG_REF}")
+          if ! grep -qx -- '-----BEGIN PGP SIGNATURE-----' <<<"${TAG_BODY}"; then
+            echo "::error::${GITHUB_REF_NAME} carries no PGP signature block"
+            exit 1
+          fi
+          # Presence check only: CI holds no key. Signature validity is
+          # enforced by release-tag verification and the GitHub Verified badge.
+          echo "${GITHUB_REF_NAME}: annotated tag with a PGP signature block"
       - name: Verify toolchain
         shell: bash
         run: |

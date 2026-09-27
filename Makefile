@@ -850,11 +850,21 @@ version-set: ## Set explicit version (usage: make version-set VERSION_NEW=1.2.3)
 # Signing keys (set on operator machine, NOT in CI):
 #   SUMPTER_MINISIGN_KEY   - path to minisign secret key (required for signing)
 #   SUMPTER_MINISIGN_PUB   - path to minisign public key (optional; auto-derived)
-#   SUMPTER_PGP_KEY_ID     - gpg key id/email for PGP signing (optional)
-#   SUMPTER_GPG_HOMEDIR    - isolated gpg homedir (required if PGP_KEY_ID set)
+#   SUMPTER_PGP_KEY_ID     - release signing key: 40-hex fingerprint or 16-hex
+#                            long key id, optional trailing "!" to force that
+#                            exact (sub)key (optional for manifest signing;
+#                            required for release-tag)
+#   SUMPTER_GPG_HOMEDIR    - isolated gpg homedir (required if PGP_KEY_ID set;
+#                            required for release-tag)
+#   SUMPTER_TAGGER_NAME    - tagger name on the signed release tag (release-tag)
+#   SUMPTER_TAGGER_EMAIL   - tagger email; must be a uid email on the signing
+#                            key and a verified email on the GitHub account that
+#                            holds the public key (release-tag)
 #
 # Tag-driven workflow:
-#   1. agent runs: version bump, PR, merge, tag + push tag
+#   1. agent runs: version bump, PR, merge; operator runs
+#      `make release-tag` then `make release-tag-push` (signed, annotated tag
+#      with the declared tagger identity; see scripts/release-tag.sh)
 #   2. CI workflow (.github/workflows/release.yml) builds + publishes binaries
 #   3. operator (@3leapsdave) runs signing ceremony (release publishes as DRAFT
 #      from CI; the ceremony promotes it to published as the final step. Set
@@ -916,6 +926,18 @@ release-guard-tag-version: ## Guard: ensure RELEASE_TAG is set (via SUMPTER_RELE
 		exit 1; \
 	fi
 	@echo "$(GREEN)✅ RELEASE_TAG matches VERSION ($(RELEASE_TAG))$(NC)"
+
+.PHONY: release-tag
+release-tag: release-guard-tag-version ## Create a GPG-signed annotated release tag on HEAD and verify it (does not push)
+	@SUMPTER_RELEASE_TAG="$(RELEASE_TAG)" ./scripts/release-tag.sh create
+
+.PHONY: release-tag-verify
+release-tag-verify: release-guard-tag-version ## Verify the local release tag: signature, signing key, tagger identity, target
+	@SUMPTER_RELEASE_TAG="$(RELEASE_TAG)" ./scripts/release-tag.sh verify
+
+.PHONY: release-tag-push
+release-tag-push: release-guard-tag-version ## Verify, then push only the release tag ref to origin (never forced)
+	@SUMPTER_RELEASE_TAG="$(RELEASE_TAG)" ./scripts/release-tag.sh push
 
 .PHONY: release-build
 release-build: embed-assets release-clean ## Build release artifacts (multi-platform) into dist/release
