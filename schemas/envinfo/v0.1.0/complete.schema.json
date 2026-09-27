@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/complete.schema.json",
+  "$id": "contract://sumpter.envinfo/v0.1.0/complete.schema.json",
   "title": "Sumpter Complete Environment Information",
   "description": "Schema for complete environment information from sumpter envinfo (main command)",
   "type": "object",

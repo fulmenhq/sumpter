@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpter.dev/schemas/extract/v0.1.0/dispositions.schema.json",
+  "$id": "contract://sumpter.extract/v0.1.0/dispositions.schema.json",
   "title": "Sumpter Extract Disposition Summary",
   "description": "Machine-readable per-input applicability disposition summary emitted by extract runs that declare recipe applicability gates.",
   "type": "object",

@@ -1,0 +1,7 @@
+{
+  "capability": "contract: sumpter.index/v0",
+  "entry_schema": "record-index.schema.json",
+  "kinds": {
+    "entry": "output"
+  }
+}

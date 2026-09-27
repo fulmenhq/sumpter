@@ -1,4 +1,5 @@
 $schema: https://json-schema.org/draft/2020-12/schema
+$id: contract://sumpter.extract/v0.1.0/file-signature-schema.yaml
 title: File Signature Schema
 description: User configuration for defining file signatures to match input XML files against known patterns or types. Enables dynamic file type detection without hardcoding.
 type: object

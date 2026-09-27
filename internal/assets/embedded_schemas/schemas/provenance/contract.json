@@ -1,0 +1,7 @@
+{
+  "capability": "contract: sumpter.provenance/v1",
+  "entry_schema": "v1.json",
+  "kinds": {
+    "entry": "output"
+  }
+}

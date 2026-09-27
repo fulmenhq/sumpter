@@ -1,0 +1,7 @@
+{
+  "capability": "contract: sumpter.retrieve/v0",
+  "entry_schema": "retrieve-config.schema.yaml",
+  "kinds": {
+    "entry": "input"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "system": {
+    "os": "linux",
+    "architecture": "amd64",
+    "goVersion": "go1.26.6",
+    "numCPU": 8,
+    "hostname": "fixture-host",
+    "workingDir": "/work/fixture",
+    "timestamp": "2026-01-01T00:00:00Z"
+  },
+  "network": {
+    "interfaces": [
+      {
+        "name": "eth0",
+        "address": "192.0.2.10/24",
+        "status": "up"
+      }
+    ],
+    "externalIP": "198.51.100.7"
+  },
+  "variables": {
+    "HOME": "/home/fixture",
+    "SUMPTER_HOME": "/home/fixture/.sumpter",
+    "PWD": "***redacted***"
+  },
+  "stats": {
+    "totalVars": 3,
+    "filteredVars": 3,
+    "keyVarsCount": 2
+  },
+  "xml": {
+    "streamingSupported": true,
+    "encodings": ["UTF-8", "UTF-16"],
+    "maxMemoryTarget": "<512MB RSS",
+    "supportedOutputs": ["JSON", "NDJSON", "Parquet"]
+  },
+  "application": {
+    "home": "/home/fixture/.sumpter",
+    "workDir": "/home/fixture/.sumpter/work",
+    "cache": "/home/fixture/.sumpter/cache",
+    "logs": "/home/fixture/.sumpter/logs",
+    "configs": "/home/fixture/.sumpter/configs",
+    "temp": "/tmp/sumpter"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "capability": "contract: sumpter.config/v0",
+  "entry_schema": "sumpter-config.schema.json",
+  "object_schemas": {
+    "logger-config": "logger-config.schema.json",
+    "pii-config": "pii-config.schema.json"
+  },
+  "kinds": {
+    "entry": "input",
+    "logger-config": "input",
+    "pii-config": "input"
+  }
+}

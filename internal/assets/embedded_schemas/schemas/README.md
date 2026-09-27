@@ -1,38 +1,45 @@
 Schemas
 
-Versioned JSON Schemas for Sumpter configurations and outputs.
+Versioned JSON Schemas for Sumpter configuration, recipes, and outputs. Every
+schema carries a `contract://` resource id; see
+[Schema identity](../docs/standards/schema-identity.md) for the id rules,
+manifests, catalog, and offline resolution.
 
 ---
 
 ## Layout
 
-- `inspect-report/`
-  - `v0.1.0/inspect-report.schema.yaml` — SSOT for inspect JSON output
-- `index/`
-  - `v0.1.2/record-index.schema.json` — SSOT for record index JSON output
-  - `v0.1.1/record-index.schema.json` — legacy source-byte record index schema
-- `extract-config/` (future)
-  - `v1.0.0/extract-config.schema.json`
-- `env/` (future)
-  - `v0.1.0/sumpter-home.schema.json`
+Each family keeps one directory per version. Every version directory has a
+`contract.json` manifest that owns its schema files.
+
+| Family | Versions | Entry schema | Kind |
+| --- | --- | --- | --- |
+| `config/` | `v0.1.0` | `sumpter-config.schema.json` (+ logger, PII) | input |
+| `dialects/` | `v0.1.0` | `dialect-registry.schema.yaml` | input |
+| `envinfo/` | `v0.1.0` | `complete.schema.json` (+ network, paths, system, vars, xml) | output |
+| `extract/` | `v0.1.0` | `extract-record-envelope.schema.json` (+ dispositions, failures: output; file signature, record match: input) | mixed |
+| `index/` | `v0.1.0`, `v0.1.1`, `v0.1.2` | `record-index.schema.json` | output |
+| `inspect/` | `v0.1.0`, `v0.1.1` | `inspect-report.schema.yaml` | output |
+| `provenance/` | `v1` (`v1.json`) | `v1.json` | output |
+| `recipes/` | `v0.1.0` | `recipe.schema.yaml` (+ applicability) | input |
+| `retrieve/` | `v0.1.0` | `retrieve-config.schema.yaml` | input |
+
+`index.json` at this root is the generated catalog of every resource.
 
 ---
 
 ## Versioning
 
-- Semantic versioning per family (`inspect-report/v0.1.0`, `extract-config/v1.0.0`, etc.).
-- Breaking changes bump the major version in the directory.
-- `$id` uses canonical public URLs under `https://sumpterhq.github.io/schemas/...`.
+- Semantic versioning per family; a breaking change bumps the major version.
+- Earlier versions stay in the tree so their ids keep resolving.
+- New versions are made by copying a version directory; relative `$ref`s move
+  with it.
 
 ---
 
-## Validation
+## Maintenance
 
-- Outputs: validate inspect JSON in CI; optional runtime `--validate-output`.
-- Inputs (future): validate configs/env on load with helpful error messages.
-
----
-
-## Publishing
-
-- Schemas are kept in-repo under `schemas/` and can be published to GitHub Pages for resolvable `$id` URLs.
+- `make schema-contract-check` checks ids, manifests, references, and that
+  `index.json` is current (part of `make check-all`).
+- `make schema-catalog` regenerates `index.json` after a schema changes.
+- `make embed-assets` refreshes the embedded copy shipped in the binary.

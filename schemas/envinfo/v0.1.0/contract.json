@@ -1,0 +1,19 @@
+{
+  "capability": "contract: sumpter.envinfo/v0",
+  "entry_schema": "complete.schema.json",
+  "object_schemas": {
+    "network": "network.schema.json",
+    "paths": "paths.schema.json",
+    "system": "system.schema.json",
+    "vars": "vars.schema.json",
+    "xml": "xml.schema.json"
+  },
+  "kinds": {
+    "entry": "output",
+    "network": "output",
+    "paths": "output",
+    "system": "output",
+    "vars": "output",
+    "xml": "output"
+  }
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpterhq.github.io/schemas/config/v0.1.0/logger-config.schema.json",
+  "$id": "contract://sumpter.config/v0.1.0/logger-config.schema.json",
   "title": "Sumpter Logger Configuration (v0.1.0)",
   "description": "Standalone logger configuration schema for Sumpter",
   "type": "object",

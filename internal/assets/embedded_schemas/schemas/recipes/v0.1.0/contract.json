@@ -1,0 +1,15 @@
+{
+  "capability": "contract: sumpter.recipes/v0",
+  "entry_schema": "recipe.schema.yaml",
+  "object_schemas": {
+    "applicability": "applicability.schema.yaml"
+  },
+  "kinds": {
+    "entry": "input",
+    "applicability": "input"
+  },
+  "companions": [
+    "../../extract/v0.1.0/file-signature-schema.yaml",
+    "../../extract/v0.1.0/extract-record-match-schema.yaml"
+  ]
+}
