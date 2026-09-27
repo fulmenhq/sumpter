@@ -116,13 +116,15 @@ For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<versi
 ### Tagging
 
 - [ ] Confirm the release tag is created from the exact tree that just passed `make pr-final`; if an emergency hotfix must bypass this, document the bypass reason in the release notes
-- [ ] Create annotated git tag: `git tag -a v<version> -m "Release v<version>"`
-- [ ] Tag message includes brief release summary
+- [ ] Release tags are signed, annotated tags with a declared tagger identity. From the operator-private release env, set `SUMPTER_RELEASE_TAG`, `SUMPTER_PGP_KEY_ID`, `SUMPTER_GPG_HOMEDIR`, `SUMPTER_TAGGER_NAME`, and `SUMPTER_TAGGER_EMAIL`
+- [ ] The signing public key is uploaded to the GitHub account that will show the tag badge, and `SUMPTER_TAGGER_EMAIL` is a verified email on that account
+- [ ] Create and verify the signed tag on synced, clean `main`: `make release-tag` (message is `Release v<version>`; the target refuses to sign unless every guard passes and deletes its own tag if verification fails)
 
 ### Publishing
 
 - [ ] Push commits: `git push origin main`
-- [ ] Push tag: `git push origin v<version>`
+- [ ] Push only the tag: `make release-tag-push` (re-verifies, then pushes `refs/tags/v<version>`; never forced)
+- [ ] Confirm GitHub shows the tag as **Verified**: `gh api repos/fulmenhq/sumpter/git/tags/$(git rev-parse v<version>) --jq .verification` must report `verified: true` and `reason: valid`. If it reports `unverified`, `unknown_key`, or `bad_email`, stop and fix the identity before publishing the draft release
 - [ ] Verify GitHub release appears
 - [ ] Create GitHub Release notes
 
