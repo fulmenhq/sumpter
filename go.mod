@@ -15,7 +15,7 @@ require (
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/fulmenhq/goneat v0.6.0
 	github.com/google/uuid v1.6.0
-	github.com/parquet-go/parquet-go v0.30.1
+	github.com/parquet-go/parquet-go v0.32.0
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.59.0
