@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpterhq.github.io/schemas/provenance/v1.json",
+  "$id": "contract://sumpter.provenance/v1/provenance.schema.json",
   "title": "Sumpter Provenance Manifest",
   "description": "Canonical sidecar manifest for Sumpter extract provenance.",
   "type": "object",

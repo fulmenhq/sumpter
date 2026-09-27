@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.sumpter.fulmenhq.dev/extract/v0.1.0/extract-record-envelope.schema.json",
+  "$id": "contract://sumpter.extract/v0.1.0/extract-record-envelope.schema.json",
   "title": "Sumpter Extract Record Envelope",
   "description": "Validates one emitted extract record row (a single NDJSON line in records.jsonl). The envelope wraps the recipe-owned payload (extract.data) with runtime provenance (_runtime) and optional validation/summary blocks. The structural envelope (top-level keys, the extract block) is sumpter-owned and closed; the payload (extract.data), summaries, validation report, and _runtime provenance set are additively extensible. Rows self-identify via _runtime.envelope_schema so future contract mappings stay additive.",
   "type": "object",

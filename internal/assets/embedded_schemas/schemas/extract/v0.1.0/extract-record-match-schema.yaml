@@ -1,4 +1,5 @@
 $schema: "https://json-schema.org/draft/2020-12/schema"
+$id: contract://sumpter.extract/v0.1.0/extract-record-match-schema.yaml
 title: Extract Record Match Schema
 description: User configuration for extracting specific records from XML files without hardcoding patterns. Enables dynamic extraction of structured data based on XPath selectors and field mappings.
 type: object

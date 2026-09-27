@@ -1,4 +1,5 @@
 $schema: "https://json-schema.org/draft/2020-12/schema"
+$id: contract://sumpter.inspect/v0.1.1/inspect-report.schema.yaml
 title: XML Inspection Report
 description: Analysis report for XML file structure and streaming suitability
 type: object

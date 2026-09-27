@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpterhq.github.io/schemas/config/v0.1.0/sumpter-config.schema.json",
+  "$id": "contract://sumpter.config/v0.1.0/sumpter-config.schema.json",
   "title": "Sumpter Configuration (v0.1.0)",
   "description": "Main configuration schema for Sumpter XML processing engine",
   "type": "object",

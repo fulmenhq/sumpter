@@ -2,7 +2,7 @@
 # JSON Schema 2020-12 for validating retrieve command configuration
 # Defines configuration for data source integrations and realm-specific settings
 $schema: https://json-schema.org/draft/2020-12/schema
-$id: https://sumpterhq.github.io/schemas/retrieve/v0.1.0/retrieve-config.schema.yaml
+$id: contract://sumpter.retrieve/v0.1.0/retrieve-config.schema.yaml
 title: Retrieve Configuration (v0.1.0)
 description: |
   Configuration schema for Sumpter data source integrations.

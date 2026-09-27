@@ -1,0 +1,17 @@
+{
+  "capability": "contract: sumpter.extract/v0",
+  "entry_schema": "extract-record-envelope.schema.json",
+  "object_schemas": {
+    "dispositions": "dispositions.schema.json",
+    "extract-record-match": "extract-record-match-schema.yaml",
+    "failures": "failures.schema.json",
+    "file-signature": "file-signature-schema.yaml"
+  },
+  "kinds": {
+    "entry": "output",
+    "dispositions": "output",
+    "extract-record-match": "input",
+    "failures": "output",
+    "file-signature": "input"
+  }
+}

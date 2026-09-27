@@ -1,0 +1,13 @@
+{
+  "name": "sumpter-schema-interop-smoke",
+  "private": true,
+  "description": "Resolves the envinfo schema family from the published catalog with an external validator (ajv), offline",
+  "type": "module",
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "capability": "contract: sumpter.dialects/v0",
+  "entry_schema": "dialect-registry.schema.yaml",
+  "kinds": {
+    "entry": "input"
+  }
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/paths.schema.json",
+  "$id": "contract://sumpter.envinfo/v0.1.0/paths.schema.json",
   "title": "Sumpter Application Paths",
   "description": "Schema for application directory paths from sumpter envinfo paths",
   "type": "object",

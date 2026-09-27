@@ -227,3 +227,30 @@ jobs:
             exit 1
           fi
           echo "passed subtests: $(grep -c -- '    --- PASS' "${log}")"
+  # Job 4: Schema interop smoke
+  #
+  # Resolves the envinfo schema family from schemas/index.json with an
+  # independent validator (ajv), offline: schemas are registered by catalog id
+  # and no remote loader is configured, so an unresolved $ref fails.
+  schema-interop:
+    name: Schema Interop Smoke (ajv, offline)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: tests/interop/ajv
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Install pinned validator
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run smoke
+        run: node smoke.mjs

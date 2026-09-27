@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/system.schema.json",
+  "$id": "contract://sumpter.envinfo/v0.1.0/system.schema.json",
   "title": "Sumpter System Information",
   "description": "Schema for system information output from sumpter envinfo system",
   "type": "object",

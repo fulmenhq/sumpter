@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.sumpter.fulmenhq.dev/extract/v0.1.0/failures.schema.json",
+  "$id": "contract://sumpter.extract/v0.1.0/failures.schema.json",
   "title": "Sumpter Extract Failure Manifest",
   "description": "Machine-readable per-input failure summary emitted by extract runs using continue-on-error.",
   "type": "object",

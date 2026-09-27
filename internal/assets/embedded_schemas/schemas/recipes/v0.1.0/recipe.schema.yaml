@@ -1,4 +1,5 @@
 $schema: "https://json-schema.org/draft/2020-12/schema"
+$id: contract://sumpter.recipes/v0.1.0/recipe.schema.yaml
 title: "Sumpter Recipe Manifest"
 description: "Structured metadata for Sumpter recipe workspaces"
 type: object

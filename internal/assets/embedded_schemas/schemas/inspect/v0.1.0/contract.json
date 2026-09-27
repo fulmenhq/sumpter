@@ -1,0 +1,7 @@
+{
+  "capability": "contract: sumpter.inspect/v0",
+  "entry_schema": "inspect-report.schema.yaml",
+  "kinds": {
+    "entry": "output"
+  }
+}

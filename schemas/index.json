@@ -1,0 +1,234 @@
+{
+  "resources": [
+    {
+      "id": "contract://sumpter.config/v0.1.0/logger-config.schema.json",
+      "capability": "contract: sumpter.config/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "config/v0.1.0/logger-config.schema.json",
+      "sha256": "sha256:4c2895507887fbd5fa811c1e175a6b0243a77d81ca1e00f411aabcf9aa050074"
+    },
+    {
+      "id": "contract://sumpter.config/v0.1.0/pii-config.schema.json",
+      "capability": "contract: sumpter.config/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "config/v0.1.0/pii-config.schema.json",
+      "sha256": "sha256:deee33f79d08f1ee72309fe0f4d7061f78772aedb4ae8158d0e24d98d2b200da"
+    },
+    {
+      "id": "contract://sumpter.config/v0.1.0/sumpter-config.schema.json",
+      "capability": "contract: sumpter.config/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "config/v0.1.0/sumpter-config.schema.json",
+      "sha256": "sha256:d7cc214ea24f5008d1e16409a4713f9f540f59d0462d118289affed0490d47da"
+    },
+    {
+      "id": "contract://sumpter.dialects/v0.1.0/dialect-registry.schema.yaml",
+      "capability": "contract: sumpter.dialects/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "dialects/v0.1.0/dialect-registry.schema.yaml",
+      "sha256": "sha256:0737b8e3dca417d122d3067ea483b6bfa02c683c7ecbb20205ac167b3f7628ae"
+    },
+    {
+      "id": "contract://sumpter.envinfo/v0.1.0/complete.schema.json",
+      "capability": "contract: sumpter.envinfo/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "envinfo/v0.1.0/complete.schema.json",
+      "sha256": "sha256:e97254a53ac0c6927597dc9f3608b1788c4f9ccb518e99da6983b6cb5f3a7fa2"
+    },
+    {
+      "id": "contract://sumpter.envinfo/v0.1.0/network.schema.json",
+      "capability": "contract: sumpter.envinfo/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "envinfo/v0.1.0/network.schema.json",
+      "sha256": "sha256:cc5d4c3db365c5a1d617c1507c613d1c6e91dc950e3460f06be602934a371083"
+    },
+    {
+      "id": "contract://sumpter.envinfo/v0.1.0/paths.schema.json",
+      "capability": "contract: sumpter.envinfo/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "envinfo/v0.1.0/paths.schema.json",
+      "sha256": "sha256:44eb587c271765ebded23fcd89a8b69a5a086d91d4804b0f8eca3409ad40cfbf"
+    },
+    {
+      "id": "contract://sumpter.envinfo/v0.1.0/system.schema.json",
+      "capability": "contract: sumpter.envinfo/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "envinfo/v0.1.0/system.schema.json",
+      "sha256": "sha256:e83ab985cd5032f4d5c1e33e159d10c7bff2ccdc875e9833078749f3dc173694"
+    },
+    {
+      "id": "contract://sumpter.envinfo/v0.1.0/vars.schema.json",
+      "capability": "contract: sumpter.envinfo/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "envinfo/v0.1.0/vars.schema.json",
+      "sha256": "sha256:be84253b946a7ddf6bd8359ed0083cf85f08f97b6103b18d058aa7457c485721"
+    },
+    {
+      "id": "contract://sumpter.envinfo/v0.1.0/xml.schema.json",
+      "capability": "contract: sumpter.envinfo/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "envinfo/v0.1.0/xml.schema.json",
+      "sha256": "sha256:083e376107550c8573f008cdd49d80bac7837d487a724769bc191cf58e34721c"
+    },
+    {
+      "id": "contract://sumpter.extract/v0.1.0/dispositions.schema.json",
+      "capability": "contract: sumpter.extract/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "extract/v0.1.0/dispositions.schema.json",
+      "sha256": "sha256:38e26d5d2344a1e58f4ff0b3f9fcf5cfc74aec5b76feded93d4389dbcf0e13b8"
+    },
+    {
+      "id": "contract://sumpter.extract/v0.1.0/extract-record-envelope.schema.json",
+      "capability": "contract: sumpter.extract/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "extract/v0.1.0/extract-record-envelope.schema.json",
+      "sha256": "sha256:c2a4777279652eb450978d089f44d1d6bdb972d4c11ae97104b094c80a6801b1"
+    },
+    {
+      "id": "contract://sumpter.extract/v0.1.0/extract-record-match-schema.yaml",
+      "capability": "contract: sumpter.extract/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "extract/v0.1.0/extract-record-match-schema.yaml",
+      "sha256": "sha256:95466e838eeac6b05d8860a1749b7390f74541f8e01f2d16e4c4b36012b328c0"
+    },
+    {
+      "id": "contract://sumpter.extract/v0.1.0/failures.schema.json",
+      "capability": "contract: sumpter.extract/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "extract/v0.1.0/failures.schema.json",
+      "sha256": "sha256:962f042b2995e37ecd75763a828080f4b521b3e087ce6e12e7b8c8dc982b0073"
+    },
+    {
+      "id": "contract://sumpter.extract/v0.1.0/file-signature-schema.yaml",
+      "capability": "contract: sumpter.extract/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "extract/v0.1.0/file-signature-schema.yaml",
+      "sha256": "sha256:8cbba489134f6ce1725d338ef5f231b4d6e632fdde36789257ea7a584e9df35d"
+    },
+    {
+      "id": "contract://sumpter.index/v0.1.0/record-index.schema.json",
+      "capability": "contract: sumpter.index/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "index/v0.1.0/record-index.schema.json",
+      "sha256": "sha256:34d26f0d7a1ac64788239b5aa23d163604796509bb8f9806ff9f105b5fbf6349"
+    },
+    {
+      "id": "contract://sumpter.index/v0.1.1/record-index.schema.json",
+      "capability": "contract: sumpter.index/v0",
+      "version": "v0.1.1",
+      "kind": "output",
+      "path": "index/v0.1.1/record-index.schema.json",
+      "sha256": "sha256:6b608f45bd6ec47e389a9675910b0535e2f8253a5ce12837c348ac347048c33e"
+    },
+    {
+      "id": "contract://sumpter.index/v0.1.2/record-index.schema.json",
+      "capability": "contract: sumpter.index/v0",
+      "version": "v0.1.2",
+      "kind": "output",
+      "path": "index/v0.1.2/record-index.schema.json",
+      "sha256": "sha256:5042994df2d123447a9475875574d1d30f64927a64c600a1887ab10b58fb90c4"
+    },
+    {
+      "id": "contract://sumpter.inspect/v0.1.0/inspect-report.schema.yaml",
+      "capability": "contract: sumpter.inspect/v0",
+      "version": "v0.1.0",
+      "kind": "output",
+      "path": "inspect/v0.1.0/inspect-report.schema.yaml",
+      "sha256": "sha256:73acef70c4fd4337a28ee06dffba21990384a5b431736a156fd710e2e459fde7"
+    },
+    {
+      "id": "contract://sumpter.inspect/v0.1.1/inspect-report.schema.yaml",
+      "capability": "contract: sumpter.inspect/v0",
+      "version": "v0.1.1",
+      "kind": "output",
+      "path": "inspect/v0.1.1/inspect-report.schema.yaml",
+      "sha256": "sha256:d55740ed00436c3eafd6cad4a24efc997f5212bdf14e56cf702e733f13b9daf5"
+    },
+    {
+      "id": "contract://sumpter.provenance/v1/provenance.schema.json",
+      "capability": "contract: sumpter.provenance/v1",
+      "version": "v1",
+      "kind": "output",
+      "path": "provenance/v1.json",
+      "sha256": "sha256:4ce699985d1492f549afa626e2d272e73df1fee05f39f76cbb8b641bf77d07aa"
+    },
+    {
+      "id": "contract://sumpter.recipes/v0.1.0/applicability.schema.yaml",
+      "capability": "contract: sumpter.recipes/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "recipes/v0.1.0/applicability.schema.yaml",
+      "sha256": "sha256:f1761fd4dde163dd528d956ae64a95e4c30db9aa912ccd4e8fa455b4b6bca0ef"
+    },
+    {
+      "id": "contract://sumpter.recipes/v0.1.0/recipe.schema.yaml",
+      "capability": "contract: sumpter.recipes/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "recipes/v0.1.0/recipe.schema.yaml",
+      "sha256": "sha256:61169efc068db62802e49ceaf8e33e3128ce988eb6fe2741fcfc7f0aedcf4378"
+    },
+    {
+      "id": "contract://sumpter.retrieve/v0.1.0/retrieve-config.schema.yaml",
+      "capability": "contract: sumpter.retrieve/v0",
+      "version": "v0.1.0",
+      "kind": "input",
+      "path": "retrieve/v0.1.0/retrieve-config.schema.yaml",
+      "sha256": "sha256:84a13ca3f915bb08f38d26884fd5e2f74802f52c12b57f3a38b86b200803ebf7"
+    }
+  ],
+  "current": {
+    "config": {
+      "version": "v0.1.0",
+      "entry": "contract://sumpter.config/v0.1.0/sumpter-config.schema.json"
+    },
+    "dialects": {
+      "version": "v0.1.0",
+      "entry": "contract://sumpter.dialects/v0.1.0/dialect-registry.schema.yaml"
+    },
+    "envinfo": {
+      "version": "v0.1.0",
+      "entry": "contract://sumpter.envinfo/v0.1.0/complete.schema.json"
+    },
+    "extract": {
+      "version": "v0.1.0",
+      "entry": "contract://sumpter.extract/v0.1.0/extract-record-envelope.schema.json"
+    },
+    "index": {
+      "version": "v0.1.2",
+      "entry": "contract://sumpter.index/v0.1.2/record-index.schema.json"
+    },
+    "inspect": {
+      "version": "v0.1.1",
+      "entry": "contract://sumpter.inspect/v0.1.1/inspect-report.schema.yaml"
+    },
+    "provenance": {
+      "version": "v1",
+      "entry": "contract://sumpter.provenance/v1/provenance.schema.json"
+    },
+    "recipes": {
+      "version": "v0.1.0",
+      "entry": "contract://sumpter.recipes/v0.1.0/recipe.schema.yaml"
+    },
+    "retrieve": {
+      "version": "v0.1.0",
+      "entry": "contract://sumpter.retrieve/v0.1.0/retrieve-config.schema.yaml"
+    }
+  }
+}

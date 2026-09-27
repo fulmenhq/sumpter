@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpter.dev/schemas/envinfo/v0.1.0/network.schema.json",
+  "$id": "contract://sumpter.envinfo/v0.1.0/network.schema.json",
   "title": "Sumpter Network Information",
   "description": "Schema for network information from sumpter envinfo network",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sumpter.dev/schemas/index/v0.1.0/record-index.schema.json",
+  "$id": "contract://sumpter.index/v0.1.0/record-index.schema.json",
   "title": "Sumpter XML Record Index",
   "description": "Schema for XML record index metadata enabling seekable parallel extraction with integrity verification",
   "type": "object",

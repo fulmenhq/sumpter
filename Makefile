@@ -88,7 +88,7 @@ dev: ## Set up development environment
 
 # Quality checks
 .PHONY: check-all
-check-all: fmt-strict vet lint safety-check schema-validate extract-output-contract-check data-artifact-contract-check process-run-contract-check ## Run all quality checks (fast)
+check-all: fmt-strict vet lint safety-check schema-validate schema-contract-check extract-output-contract-check data-artifact-contract-check process-run-contract-check ## Run all quality checks (fast)
 	@echo "$(GREEN)✅ All quality checks passed!$(NC)"
 
 # Schema validation
@@ -97,6 +97,19 @@ schema-validate: ## Validate JSON schemas using goneat
 	@echo "$(BLUE)Validating JSON schemas...$(NC)"
 	@goneat validate --include schemas/ --exclude "schemas/extract/v0.1.0/file-signature-schema.yaml" --format json --fail-on high
 	@echo "$(GREEN)✅ Schema validation passed!$(NC)"
+
+# Schema bundle contract: resource ids, manifests, reference audit, catalog
+# drift, and the embedded runtime copy of the config schemas.
+.PHONY: schema-contract-check
+schema-contract-check: ## Check schema ids, manifests, $ref audit, and that schemas/index.json is current
+	@echo "$(BLUE)Checking schema bundle contract...$(NC)"
+	@go run ./scripts/schema-contract check schemas
+	@diff -r -x contract.json schemas/config internal/assets/embedded_schemas/config >/dev/null || { echo "$(RED)❌ internal/assets/embedded_schemas/config schemas differ from schemas/config$(NC)"; diff -r -x contract.json schemas/config internal/assets/embedded_schemas/config; exit 1; }
+	@echo "$(GREEN)✅ Schema bundle contract check passed$(NC)"
+
+.PHONY: schema-catalog
+schema-catalog: ## Regenerate schemas/index.json from the schema bundle
+	@go run ./scripts/schema-contract catalog schemas
 
 # Extract record-envelope contract (meta-validation of emitted-row fixtures)
 .PHONY: extract-output-contract-check
