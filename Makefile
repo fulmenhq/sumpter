@@ -978,35 +978,8 @@ release-verify-keys: ## Verify exported public keys are public-only (no secrets)
 	@if [ -f "$(DIST_RELEASE)/$(BINARY_NAME)-release-signing-key.asc" ]; then ./scripts/verify-public-key.sh "$(DIST_RELEASE)/$(BINARY_NAME)-release-signing-key.asc"; else echo "ℹ️  No PGP public key found (skipping)"; fi
 
 .PHONY: release-verify-signatures
-release-verify-signatures: ## Verify signatures on checksum manifests
-	@echo "$(BLUE)🔍 Verifying signatures in $(DIST_RELEASE)...$(NC)"
-	@has_any=false; \
-	if [ -f "$(DIST_RELEASE)/SHA256SUMS.minisig" ]; then \
-		if [ ! -f "$(DIST_RELEASE)/$(BINARY_NAME)-minisign.pub" ]; then \
-			echo "$(RED)❌ minisign public key not found; run 'make release-export-keys' first$(NC)"; exit 1; \
-		fi; \
-		echo "$(BLUE)🔐 Verifying minisign signatures...$(NC)"; \
-		(cd "$(DIST_RELEASE)" && minisign -V -p $(BINARY_NAME)-minisign.pub -m SHA256SUMS); \
-		if [ -f "$(DIST_RELEASE)/SHA512SUMS.minisig" ]; then (cd "$(DIST_RELEASE)" && minisign -V -p $(BINARY_NAME)-minisign.pub -m SHA512SUMS); fi; \
-		echo "$(GREEN)✅ Minisign signatures verified$(NC)"; \
-		has_any=true; \
-	fi; \
-	if [ -f "$(DIST_RELEASE)/SHA256SUMS.asc" ]; then \
-		echo "$(BLUE)🔐 Verifying PGP signatures...$(NC)"; \
-		GPG_HOME="$${SUMPTER_GPG_HOMEDIR:-}"; \
-		if [ -n "$$GPG_HOME" ]; then \
-			(cd "$(DIST_RELEASE)" && gpg --homedir "$$GPG_HOME" --verify SHA256SUMS.asc SHA256SUMS); \
-			if [ -f "$(DIST_RELEASE)/SHA512SUMS.asc" ]; then (cd "$(DIST_RELEASE)" && gpg --homedir "$$GPG_HOME" --verify SHA512SUMS.asc SHA512SUMS); fi; \
-		else \
-			(cd "$(DIST_RELEASE)" && gpg --verify SHA256SUMS.asc SHA256SUMS); \
-			if [ -f "$(DIST_RELEASE)/SHA512SUMS.asc" ]; then (cd "$(DIST_RELEASE)" && gpg --verify SHA512SUMS.asc SHA512SUMS); fi; \
-		fi; \
-		echo "$(GREEN)✅ PGP signatures verified$(NC)"; \
-		has_any=true; \
-	fi; \
-	if [ "$$has_any" = false ]; then \
-		echo "$(RED)❌ No signatures found to verify$(NC)"; exit 1; \
-	fi
+release-verify-signatures: ## Verify checksum-manifest signatures against the exported keys (fails closed)
+	@./scripts/verify-release-signatures.sh "$(DIST_RELEASE)" "$(BINARY_NAME)"
 
 .PHONY: release-notes
 release-notes: release-guard-tag-version ## Copy docs/releases/vX.Y.Z.md into dist/release/release-notes-vX.Y.Z.md

@@ -27,10 +27,18 @@ type releaseKeys struct {
 	foreign string
 }
 
-func requireTools(t *testing.T) {
+// releaseTagTools are the external tools the release-tag tests need.
+var releaseTagTools = []string{"git", "gpg", "gpgconf", "bash"}
+
+// requireTools skips the test when a tool is missing, or fails it when
+// SUMPTER_REQUIRE_CRYPTO_TOOLS=1 (set by the CI job that must run these tests).
+func requireTools(t *testing.T, tools ...string) {
 	t.Helper()
-	for _, tool := range []string{"git", "gpg", "gpgconf", "bash"} {
+	for _, tool := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
+			if os.Getenv("SUMPTER_REQUIRE_CRYPTO_TOOLS") == "1" {
+				t.Fatalf("%s unavailable and SUMPTER_REQUIRE_CRYPTO_TOOLS=1: %v", tool, err)
+			}
 			t.Skipf("%s unavailable: %v", tool, err)
 		}
 	}
@@ -214,7 +222,7 @@ func expectFail(t *testing.T, out string, err error, want string) {
 }
 
 func TestReleaseTagGuards(t *testing.T) {
-	requireTools(t)
+	requireTools(t, releaseTagTools...)
 	keys := newReleaseKeys(t)
 
 	for _, name := range []string{"SUMPTER_RELEASE_TAG", "SUMPTER_PGP_KEY_ID", "SUMPTER_GPG_HOMEDIR", "SUMPTER_TAGGER_NAME", "SUMPTER_TAGGER_EMAIL"} {
@@ -307,7 +315,7 @@ func TestReleaseTagGuards(t *testing.T) {
 }
 
 func TestReleaseTagSignatureChecks(t *testing.T) {
-	requireTools(t)
+	requireTools(t, releaseTagTools...)
 	keys := newReleaseKeys(t)
 
 	t.Run("forced key rejects sibling subkey of same primary", func(t *testing.T) {
@@ -397,7 +405,7 @@ func TestReleaseTagSignatureChecks(t *testing.T) {
 }
 
 func TestReleaseTagHappyPath(t *testing.T) {
-	requireTools(t)
+	requireTools(t, releaseTagTools...)
 	keys := newReleaseKeys(t)
 
 	t.Run("forced signing subkey: create, verify, push", func(t *testing.T) {

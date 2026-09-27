@@ -106,7 +106,7 @@ Follow the Fulmen "manifest-only" provenance pattern:
 
 - [ ] Export public keys: `make release-export-keys`
 - [ ] Verify exported keys are public-only: `make release-verify-keys`
-- [ ] Verify signatures: `make release-verify-signatures` (confirms BOTH minisign AND PGP signature output if both were created — silent on either side means the verify step skipped that signature, dig into why before promoting)
+- [ ] Verify signatures: `make release-verify-signatures`. It fails on any bad, missing, or orphaned signature and prints its ✅ lines only after every check passes. Confirm **both** `✅ Minisign signatures verified` and `✅ PGP signatures verified` appear: the target cannot tell that a whole signature family was never produced. It verifies against the exported public keys in `dist/release`, which proves the artifacts match those keys; the keys themselves are authenticated by exporting them on the signing machine (`make release-export-keys`), not by this step. Release tag signing uses the operator's isolated keyring instead
 - [ ] Copy release notes: `make release-notes`
 - [ ] Upload provenance assets: `make release-upload`
 - [ ] **Promote draft → public** (final step — CI publishes as draft so consumers don't see an unsigned release window): `make release-publish`
