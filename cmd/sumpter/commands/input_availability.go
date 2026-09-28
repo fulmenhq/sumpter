@@ -22,14 +22,16 @@ const (
 
 // noInputsMatchedError reports a run whose input root exists but matched no
 // files. It names the root as the operator wrote it and the patterns, and says
-// what a relative root is relative to; it never prints a resolved path.
+// what a relative root is relative to; it never prints a resolved path. Under a
+// provenance root a local root is shown as the opaque input label, with no base.
 func noInputsMatchedError(opts *ExtractOptions) error {
 	root := opts.inputDisplay
 	if root == "" {
 		root = opts.InputPath
 	}
+	display := provenanceRootInputLabel(opts, root, root)
 	var b strings.Builder
-	fmt.Fprintf(&b, "no input files matched under %s", root)
+	fmt.Fprintf(&b, "no input files matched under %s", display)
 	if opts.IncludePattern != "" || opts.ExcludePattern != "" {
 		b.WriteString(" (")
 		if opts.IncludePattern != "" {
@@ -43,7 +45,7 @@ func noInputsMatchedError(opts *ExtractOptions) error {
 		}
 		b.WriteString(")")
 	}
-	if kind := relativeBaseKind(root, opts.inputBaseKind); kind != "" {
+	if kind := relativeBaseKind(root, opts.inputBaseKind); kind != "" && display == root {
 		fmt.Fprintf(&b, " relative to the %s", kind)
 	}
 	return fmt.Errorf("%s", b.String())

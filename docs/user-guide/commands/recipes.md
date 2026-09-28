@@ -91,7 +91,8 @@ Multi-file runs may opt into per-file failure isolation with
 `--continue-on-error`. A named input (`--files`, a file-list entry, or a recipe
 file) that is missing or not readable, local or `s3://`, is recorded as
 `input_unavailable` and the others continue; an object missing from an
-`--input-path` listing still stops the run. Such an input has no row in the
+`--input-path` listing still stops the run, and under `--provenance-root` a
+missing local input fails the root's containment check and stops the run. Such an input has no row in the
 provenance manifest, so an aggregate manifest then omits its input counts: a
 manifest without input counts makes no completeness claim, and `failures.json`
 is the authoritative record of dropped inputs. In v0 this flag requires

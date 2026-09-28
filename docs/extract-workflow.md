@@ -717,6 +717,12 @@ cloud URIs are skipped by containment and remain unchanged. Manifests add
 `input_path_form: "root_relative"`, including mixed and cloud-only input sets.
 The root is never written to the manifest, sanitized argv, logs, or errors, and
 it is not added to the ordinary sanitizer roots used by other path surfaces.
+In root mode, an error for a local input root that matches no files reads
+`no input files matched under <input>`, followed by any include and exclude
+patterns, and names no base directory; an `s3://` root is shown as given. A
+named local input that does not exist cannot be resolved inside the root, so it
+fails this check and stops the run even under `--continue-on-error`; it is not
+recorded as `input_unavailable` and no `failures.json` is written.
 
 Input ordinals are assigned in the resolved order and are not changed by this
 option:
