@@ -14,6 +14,8 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ### Changed
 
+- **Document access routed through a node interface** — extraction now reads input documents through a format-neutral node interface (`internal/docnode`) with XML as the only registered format. No behavior change: output, errors, and streaming/parallel routes are unchanged.
+
 - **Schema `$id` values** — every schema now uses a host-independent `contract://sumpter.<family>/v<version>/<file>` id instead of a hosted URL (for example `contract://sumpter.index/v0.1.2/record-index.schema.json`). Tools that matched on the previous `https://` ids need updating. Emitted output is unchanged.
 
 - **Release signature verification fails closed** — `make release-verify-signatures` now exits non-zero on any failed minisign or PGP verification and prints success only after every check passes. It also now fails when a manifest is missing its signature or a signature is missing its manifest, detects a signature family from any of its signature files, and verifies PGP signatures against the exported release key in a temporary keyring (rejecting expired or revoked keys) instead of `SUMPTER_GPG_HOMEDIR` or the default keyring.

@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/antchfx/xmlquery"
 )
 
 // Synthetic ledger-style document for xpath-sum-multiply regressions.
@@ -314,7 +312,7 @@ func TestXPathSumMultiplyNamespaceBoundPrepared(t *testing.T) {
 //
 //	//Credit[sum(.//Entry[not(@excluded='true')]/Amount) * (1 - 2*count(self::Credit)) < 0]
 func TestXPathSumMultiplySignatureRouting(t *testing.T) {
-	doc, err := xmlquery.Parse(strings.NewReader(xpathSumMultiplyXML))
+	doc, err := parseXMLDoc(strings.NewReader(xpathSumMultiplyXML))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -332,7 +330,7 @@ func TestXPathSumMultiplySignatureRouting(t *testing.T) {
 	if err := prepareSignatureConfig(sig); err != nil {
 		t.Fatalf("prepareSignatureConfig: %v", err)
 	}
-	matched, conf, err := matchesSignature(doc, sig)
+	matched, conf, err := matchesSignature(doc.Root(), sig)
 	if err != nil {
 		t.Fatalf("matchesSignature: %v", err)
 	}
@@ -355,7 +353,7 @@ func TestXPathSumMultiplySignatureRouting(t *testing.T) {
 	if err := validateApplicabilityConfig(appCfg); err != nil {
 		t.Fatalf("validateApplicabilityConfig: %v", err)
 	}
-	appOK, err := evaluateXPathBoolean(doc, appCfg.Applicability.Expression)
+	appOK, err := evaluateXPathBoolean(doc.Root(), appCfg.Applicability.Expression)
 	if err != nil {
 		t.Fatalf("applicability evaluateXPathBoolean: %v", err)
 	}
@@ -365,7 +363,7 @@ func TestXPathSumMultiplySignatureRouting(t *testing.T) {
 
 	// Supplemental helper-seam check on the Credit node (not a substitute for
 	// the signature/applicability rows above).
-	rec := xmlquery.FindOne(doc, "//Credit")
+	rec := findNode(doc, "//Credit")
 	if rec == nil {
 		t.Fatal("Credit not found")
 	}

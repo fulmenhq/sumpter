@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antchfx/xmlquery"
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	"github.com/fulmenhq/sumpter/internal/reftable"
@@ -383,7 +382,7 @@ func TestProcessFileWithProvenanceTracksPerSelectorCounts(t *testing.T) {
 }
 
 func TestExtractRecordsUniformSchemaNullFillsDeclaredProperties(t *testing.T) {
-	doc, err := xmlquery.Parse(strings.NewReader(`<root><item><id>A-1</id><present>yes</present></item></root>`))
+	doc, err := parseXMLDoc(strings.NewReader(`<root><item><id>A-1</id><present>yes</present></item></root>`))
 	if err != nil {
 		t.Fatalf("Parse XML: %v", err)
 	}
@@ -444,7 +443,7 @@ func TestExtractRecordsUniformSchemaNullFillsDeclaredProperties(t *testing.T) {
 }
 
 func TestExtractRecordsUniformSchemaDisabledOmitsAbsentProperties(t *testing.T) {
-	doc, err := xmlquery.Parse(strings.NewReader(`<root><item><id>A-1</id></item></root>`))
+	doc, err := parseXMLDoc(strings.NewReader(`<root><item><id>A-1</id></item></root>`))
 	if err != nil {
 		t.Fatalf("Parse XML: %v", err)
 	}
@@ -654,7 +653,7 @@ func TestLoadExtractConfig_InvalidSchema(t *testing.T) {
 
 func TestExtractRecordsOutputSchemaValidation(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><Identifier>id-1</Identifier></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -696,7 +695,7 @@ func TestExtractRecordsOutputSchemaValidation(t *testing.T) {
 
 func TestExtractRecordsExpressionFieldMappings(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><A>2</A><B>3</B></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -739,7 +738,7 @@ func TestExtractRecordsExpressionFieldMappings(t *testing.T) {
 
 func TestExtractRecordsExpressionFieldMappingTernary(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><Status>online</Status></Record><Record><Status>training</Status></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -773,7 +772,7 @@ func TestExtractRecordsExpressionFieldMappingTernary(t *testing.T) {
 
 func TestExtractRecordsExpressionFieldMappingExternalParameters(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><Tenant>Tenant-A</Tenant></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -808,7 +807,7 @@ func TestExtractRecordsExpressionFieldMappingExternalParameters(t *testing.T) {
 
 func TestExtractRecordsExternalFieldCollidesWithXPathField(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><Tenant>Tenant-A</Tenant></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -835,7 +834,7 @@ func TestExtractRecordsExternalFieldCollidesWithXPathField(t *testing.T) {
 
 func TestExtractRecordsExpressionFieldMappingUndefinedExternalParameter(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><Tenant>Tenant-A</Tenant></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -863,7 +862,7 @@ func TestExtractRecordsExpressionFieldMappingUndefinedExternalParameter(t *testi
 
 func TestExtractRecordsExternalFieldCollidesWithExpressionField(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><Tenant>Tenant-A</Tenant></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -891,7 +890,7 @@ func TestExtractRecordsExternalFieldCollidesWithExpressionField(t *testing.T) {
 
 func TestExtractRecordsExpressionFieldMappingStringFunctions(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><Status>  ACTIVE	</Status><Identifier>abcdef1234</Identifier></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -932,7 +931,7 @@ func TestExtractRecordsExpressionFieldMappingStringFunctions(t *testing.T) {
 
 func TestExtractRecordsExpressionFieldMappingUndefinedVariable(t *testing.T) {
 	docContent := `<?xml version="1.0"?><Envelope><Record><A>2</A></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(docContent))
+	doc, err := parseXMLDoc(strings.NewReader(docContent))
 	if err != nil {
 		t.Fatalf("failed to parse xml: %v", err)
 	}
@@ -1137,7 +1136,7 @@ use_cases: ["validation"]
 
 func TestMatchesSignature(t *testing.T) {
 	xmlContent := `<?xml version="1.0"?><Envelope><Record><ID>123</ID></Record></Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(xmlContent))
+	doc, err := parseXMLDoc(strings.NewReader(xmlContent))
 	if err != nil {
 		t.Fatalf("failed to parse XML: %v", err)
 	}
@@ -1185,7 +1184,7 @@ func TestMatchesSignature(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, _, err := matchesSignature(doc, tt.signature)
+			result, _, err := matchesSignature(doc.Root(), tt.signature)
 			if tt.expectError && err == nil {
 				t.Errorf("expected error but got none")
 			}
@@ -1210,7 +1209,7 @@ func TestMatchesPattern_SelectorForms(t *testing.T) {
   <Record><ID>2</ID></Record>
   <Record><ID>3</ID></Record>
 </Envelope>`
-	doc, err := xmlquery.Parse(strings.NewReader(xmlContent))
+	doc, err := parseXMLDoc(strings.NewReader(xmlContent))
 	if err != nil {
 		t.Fatalf("failed to parse XML: %v", err)
 	}
@@ -1252,7 +1251,7 @@ func TestMatchesPattern_SelectorForms(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesPattern(doc, MatchPattern{Selector: tt.selector, Weight: 1.0}, nil)
+			got := matchesPattern(doc.Root(), MatchPattern{Selector: tt.selector, Weight: 1.0}, nil)
 			if got != tt.want {
 				t.Errorf("matchesPattern(%q) = %v, want %v", tt.selector, got, tt.want)
 			}

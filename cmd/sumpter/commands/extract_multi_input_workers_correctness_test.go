@@ -11,8 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/antchfx/xmlquery"
-
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
@@ -357,7 +356,7 @@ func TestExtractMulti_InputWorkersBackpressureBound(t *testing.T) {
 
 	var started int32
 	block := make(chan struct{})
-	d.parseFile = func(p string, a bool) (*xmlquery.Node, error) {
+	d.parseFile = func(p string, a bool) (docnode.Document, error) {
 		atomic.AddInt32(&started, 1)
 		if filepath.Base(p) == "inA.xml" { // ordinal 1 — the head of line
 			<-block // hold the earliest input until we have measured
@@ -397,7 +396,7 @@ func TestExtractMulti_InputWorkersPanicContainment(t *testing.T) {
 
 	parseWithPanicOn := func(d *multiDispatcher, badBase string) {
 		realParse := d.parseFile
-		d.parseFile = func(p string, a bool) (*xmlquery.Node, error) {
+		d.parseFile = func(p string, a bool) (docnode.Document, error) {
 			if filepath.Base(p) == badBase {
 				panic("synthetic parse panic for " + badBase)
 			}

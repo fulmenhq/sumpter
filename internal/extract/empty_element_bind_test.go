@@ -4,23 +4,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 )
 
 // empty-element-bind (v0.2.1): a present-but-empty XML element binds its string field
 // as "" (a defined value) so the boolean-guard-then-reference recipe pattern no longer
 // hard-aborts, while an absent element stays undefined.
 
-func eebParse(t *testing.T, xml string) *xmlquery.Node {
+func eebParse(t *testing.T, xml string) docnode.Document {
 	t.Helper()
-	doc, err := xmlquery.Parse(strings.NewReader(xml))
+	doc, err := parseXMLDoc(strings.NewReader(xml))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	return doc
 }
 
-func eebExtract(t *testing.T, doc *xmlquery.Node, cfg *ExtractRecordMatch, ext map[string]interface{}) []map[string]interface{} {
+func eebExtract(t *testing.T, doc docnode.Document, cfg *ExtractRecordMatch, ext map[string]interface{}) []map[string]interface{} {
 	t.Helper()
 	if err := prepareExtractConfig(cfg); err != nil {
 		t.Fatalf("prepare: %v", err)

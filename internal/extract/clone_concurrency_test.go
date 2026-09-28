@@ -4,8 +4,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/antchfx/xmlquery"
 )
 
 // TestCloneRecordMatchGivesPerHolderXPathState is the focused race-fix site-B test:
@@ -20,7 +18,7 @@ import (
 // polymorphic match_xpath + nested field — the full compiled-state surface the clone
 // clears.
 func TestCloneRecordMatchGivesPerHolderXPathState(t *testing.T) {
-	doc, err := xmlquery.Parse(strings.NewReader(`<?xml version="1.0"?><Envelope>` +
+	doc, err := parseXMLDoc(strings.NewReader(`<?xml version="1.0"?><Envelope>` +
 		`<Record><Status>online</Status><Items><Item><Code>A</Code></Item><Item><Code>B</Code></Item></Items>` +
 		`<Payload kind="alpha"><Alpha>av</Alpha></Payload></Record>` +
 		`<Record><Status>training</Status><Items><Item><Code>C</Code></Item></Items>` +

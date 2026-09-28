@@ -1,12 +1,12 @@
 package parallel
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
-	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/logging"
@@ -22,6 +22,8 @@ type SeekableExtractor struct {
 	externalFields map[string]interface{}
 	provenance     provenance.RuntimeOptions
 	namespaces     map[int][]index.NamespaceDeclaration
+	format         docnode.Format
+	formatErr      error
 	logger         *logging.ComponentLogger
 }
 
@@ -32,7 +34,7 @@ func NewSeekableExtractor(filePath string, extCfg *extract.ExtractRecordMatch, s
 		runtimeFields = runtimeProvenance[0]
 	}
 
-	return &SeekableExtractor{
+	se := &SeekableExtractor{
 		filePath:       filePath,
 		extCfg:         extCfg,
 		sigCfg:         sigCfg,
@@ -40,10 +42,16 @@ func NewSeekableExtractor(filePath string, extCfg *extract.ExtractRecordMatch, s
 		provenance:     runtimeFields,
 		logger:         logging.Component("parallel-extractor"),
 	}
+	format, ok := docnode.Lookup(docnode.Default)
+	if !ok {
+		se.formatErr = fmt.Errorf("input format %q is not registered", docnode.Default)
+	}
+	se.format = format
+	return se
 }
 
 // SetNamespaceContexts installs the index-level namespace context table used to
-// reconstruct standalone record fragments before xmlquery parsing.
+// reconstruct standalone record fragments before parsing.
 func (se *SeekableExtractor) SetNamespaceContexts(contexts []index.NamespaceContext) {
 	se.namespaces = index.NamespaceContextByID(contexts)
 }
@@ -67,18 +75,24 @@ func (se *SeekableExtractor) ExtractRecord(item WorkItem) WorkResult {
 		result.Error = fmt.Errorf("failed to read byte range for record %d: %w", item.RecordNum, err)
 		return result
 	}
+	record := &docnode.Record{Raw: xmlData, Num: item.RecordNum}
 	if len(se.namespaces) > 0 {
-		xmlData, err = injectNamespaceContext(xmlData, se.namespaces[item.NamespaceContextRef])
-		if err != nil {
-			err = se.provenance.DiagnosticError(err, se.filePath)
+		record.Context = se.namespaces[item.NamespaceContextRef]
+	}
+	if se.formatErr != nil {
+		result.Error = fmt.Errorf("failed to parse XML for record %d: %w", item.RecordNum, se.formatErr)
+		return result
+	}
+
+	// Parse XML into mini-DOM, applying the record's namespace context
+	doc, err := se.format.ParseRecord(record)
+	if err != nil {
+		var contextErr *docnode.ContextError
+		if errors.As(err, &contextErr) {
+			err = se.provenance.DiagnosticError(contextErr.Err, se.filePath)
 			result.Error = fmt.Errorf("failed to apply namespace context for record %d: %w", item.RecordNum, err)
 			return result
 		}
-	}
-
-	// Parse XML into mini-DOM
-	doc, err := xmlquery.Parse(bytes.NewReader(xmlData))
-	if err != nil {
 		err = se.provenance.DiagnosticError(err, se.filePath)
 		result.Error = fmt.Errorf("failed to parse XML for record %d: %w", item.RecordNum, err)
 		return result
@@ -132,7 +146,7 @@ func (se *SeekableExtractor) readByteRange(start, end int64) ([]byte, error) {
 }
 
 // extractFields extracts field mappings from an XML document
-func (se *SeekableExtractor) extractFields(doc *xmlquery.Node) (map[string]interface{}, error) {
+func (se *SeekableExtractor) extractFields(doc docnode.Document) (map[string]interface{}, error) {
 	// Use existing extract package logic
 	return extract.ExtractFieldsWithExternal(doc, se.extCfg, se.externalFields)
 }

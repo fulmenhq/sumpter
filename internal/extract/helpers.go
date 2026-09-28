@@ -3,17 +3,17 @@ package extract
 import (
 	"fmt"
 
-	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 )
 
 // ExtractFields extracts field mappings from an XML document node
 // This is a public wrapper around extractRecords for use by parallel extraction
-func ExtractFields(doc *xmlquery.Node, cfg *ExtractRecordMatch) (map[string]interface{}, error) {
+func ExtractFields(doc docnode.Document, cfg *ExtractRecordMatch) (map[string]interface{}, error) {
 	return ExtractFieldsWithExternal(doc, cfg, nil)
 }
 
 // ExtractFieldsWithExternal extracts field mappings with external fields in scope.
-func ExtractFieldsWithExternal(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) (map[string]interface{}, error) {
+func ExtractFieldsWithExternal(doc docnode.Document, cfg *ExtractRecordMatch, externalFields map[string]interface{}) (map[string]interface{}, error) {
 	if doc == nil {
 		return nil, fmt.Errorf("document node cannot be nil")
 	}

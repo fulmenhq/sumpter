@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 )
 
 const (
@@ -17,14 +17,14 @@ const (
 	nsExtURI  = "urn:example:sumpter-records-ext"
 )
 
-func fixtureDoc(t *testing.T, name string) *xmlquery.Node {
+func fixtureDoc(t *testing.T, name string) docnode.Document {
 	t.Helper()
 	path := filepath.Join("..", "..", "tests", "fixtures", "namespace-conformance", name)
 	data, err := os.ReadFile(path) // #nosec G304 - test fixture path
 	if err != nil {
 		t.Fatalf("read fixture %s: %v", name, err)
 	}
-	doc, err := xmlquery.Parse(strings.NewReader(string(data)))
+	doc, err := parseXMLDoc(strings.NewReader(string(data)))
 	if err != nil {
 		t.Fatalf("parse fixture %s: %v", name, err)
 	}
@@ -160,7 +160,7 @@ func TestNamespacePrefixShadowingScopingFidelity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	doc, err := xmlquery.Parse(strings.NewReader(string(data)))
+	doc, err := parseXMLDoc(strings.NewReader(string(data)))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestSignatureNamespaceBinding(t *testing.T) {
 		t.Fatalf("prepare signature: %v", err)
 	}
 	// /n:Ledger (core URI) matches the default-namespace document.
-	matched, _, err := matchesSignature(fixtureDoc(t, "default-ns.xml"), sig)
+	matched, _, err := matchesSignature(fixtureDoc(t, "default-ns.xml").Root(), sig)
 	if err != nil {
 		t.Fatalf("matchesSignature: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestNamespaceSchemaParity(t *testing.T) {
 func TestNamespaceURINotDereferenced(t *testing.T) {
 	const ssrfURI = "http://169.254.169.254/latest/meta-data"
 	xml := `<Ledger xmlns:s="` + ssrfURI + `"><s:Record id="R-1"/></Ledger>`
-	doc, err := xmlquery.Parse(strings.NewReader(xml))
+	doc, err := parseXMLDoc(strings.NewReader(xml))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

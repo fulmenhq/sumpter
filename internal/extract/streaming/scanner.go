@@ -8,6 +8,8 @@ import (
 	"sort"
 
 	"golang.org/x/net/html/charset"
+
+	"github.com/fulmenhq/sumpter/internal/docnode"
 )
 
 // NewRecordScanner creates a new scanner for streaming XML records.
@@ -22,7 +24,7 @@ import (
 //	    if err == io.EOF {
 //	        break
 //	    }
-//	    // Process record.XML
+//	    // Process record.Raw
 //	}
 func NewRecordScanner(reader io.Reader, recordSelector string) *RecordScanner {
 	return newRecordScanner(reader, recordSelector, false)
@@ -68,7 +70,7 @@ func newRecordScanner(reader io.Reader, recordSelector string, sizeOnly bool) *R
 // Next returns the next record from the XML stream.
 // Returns io.EOF when no more records are available.
 // Returns other errors if XML parsing fails.
-func (s *RecordScanner) Next() (*RecordBuffer, error) {
+func (s *RecordScanner) Next() (*docnode.Record, error) {
 	// If we had a previous error, return it
 	if s.err != nil {
 		return nil, s.err
@@ -126,7 +128,7 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 
 			// Check if this closes the current record
 			if s.inRecord && s.depth == s.recordDepth {
-				var recordXML string
+				var recordXML []byte
 				if !s.sizeOnly {
 					// We've completed a record - serialize and return it
 					var err error
@@ -141,15 +143,15 @@ func (s *RecordScanner) Next() (*RecordBuffer, error) {
 				endOffset := s.decoder.InputOffset()
 				sizeBytes := endOffset - recordStartOffset
 
-				result := &RecordBuffer{
-					XML:              recordXML,
-					RecordNum:        s.recordCount,
-					StartOffset:      recordStartOffset,
-					EndOffset:        endOffset,
-					SizeBytes:        sizeBytes,
-					ElementName:      s.elementName,
-					Depth:            s.recordDepth,
-					NamespaceContext: s.currentNamespaceContext(),
+				result := &docnode.Record{
+					Raw:         recordXML,
+					Num:         s.recordCount,
+					StartOffset: recordStartOffset,
+					EndOffset:   endOffset,
+					SizeBytes:   sizeBytes,
+					Name:        s.elementName,
+					Depth:       s.recordDepth,
+					Context:     s.currentNamespaceContext(),
 				}
 
 				s.popNamespaceContext()
@@ -223,10 +225,10 @@ func (s *RecordScanner) matchesRecordElement(elementName string) bool {
 	return elementName == s.elementName
 }
 
-// serializeTokens converts buffered tokens back into XML string
-func (s *RecordScanner) serializeTokens() (string, error) {
+// serializeTokens converts buffered tokens back into XML bytes
+func (s *RecordScanner) serializeTokens() ([]byte, error) {
 	if len(s.buffer) == 0 {
-		return "", nil
+		return nil, nil
 	}
 
 	var buf bytes.Buffer
@@ -234,15 +236,16 @@ func (s *RecordScanner) serializeTokens() (string, error) {
 
 	for _, token := range s.buffer {
 		if err := encoder.EncodeToken(token); err != nil {
-			return "", fmt.Errorf("failed to encode token: %w", err)
+			return nil, fmt.Errorf("failed to encode token: %w", err)
 		}
 	}
 
 	if err := encoder.Flush(); err != nil {
-		return "", fmt.Errorf("failed to flush encoder: %w", err)
+		return nil, fmt.Errorf("failed to flush encoder: %w", err)
 	}
 
-	return buf.String(), nil
+	// buf is local to this record, so its bytes can be returned without a copy.
+	return buf.Bytes(), nil
 }
 
 // RecordCount returns the number of records scanned so far

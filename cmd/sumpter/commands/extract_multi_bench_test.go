@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 )
 
 // BenchmarkExtractMultiParseAmortization demonstrates the headline throughput
@@ -42,7 +42,7 @@ func BenchmarkExtractMultiParseAmortization(b *testing.B) {
 		d := newMultiDispatcher(shared, io.Discard)
 		parses := 0
 		real := d.parseFile
-		d.parseFile = func(p string, a bool) (*xmlquery.Node, error) {
+		d.parseFile = func(p string, a bool) (docnode.Document, error) {
 			parses++
 			return real(p, a)
 		}

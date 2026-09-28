@@ -3,6 +3,8 @@ package streaming
 import (
 	"encoding/xml"
 	"io"
+
+	"github.com/fulmenhq/sumpter/internal/docnode"
 )
 
 // RecordScanner scans an XML stream and extracts individual records
@@ -40,17 +42,10 @@ func (c *countingReader) Bytes() int64 {
 	return c.count
 }
 
-// RecordBuffer holds a complete XML record as a string
-type RecordBuffer struct {
-	XML              string                 // Raw XML content of the record (empty in size-only mode)
-	RecordNum        int                    // Sequential record number (1-based)
-	StartOffset      int64                  // Byte offset where record started (if available)
-	EndOffset        int64                  // Byte offset where record ended (if available)
-	SizeBytes        int64                  // Size of the record in bytes
-	ElementName      string                 // Name of the root element for this record
-	Depth            int                    // Nesting depth of the record element (1 = top-level)
-	NamespaceContext []NamespaceDeclaration // Namespace declarations in scope at the record root
-}
+// Records are returned as *docnode.Record: Raw holds the record's XML (nil in
+// size-only mode), Name the record element name, Depth the element's nesting
+// depth (1 = top-level), and Context the []NamespaceDeclaration in scope at
+// the record root.
 
 // NamespaceDeclaration records one in-scope XML namespace declaration. Prefix is
 // empty for the default namespace.
@@ -61,6 +56,6 @@ type NamespaceDeclaration struct {
 
 // ScanResult represents the result of scanning for the next record
 type ScanResult struct {
-	Record *RecordBuffer
+	Record *docnode.Record
 	Error  error
 }
