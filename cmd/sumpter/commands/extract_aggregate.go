@@ -702,7 +702,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 			if !opts.ContinueOnError {
 				if result.Error != nil {
 					logger.Error("Failed to process file", zap.String("file", displayPath), zap.Error(provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)))
-					return fmt.Errorf("failed to process file %s: %w", displayPath, result.Error)
+					return inputFailureError(displayPath, result.Error, result.Error)
 				}
 				return fmt.Errorf("failed to process file %s", displayPath)
 			}
@@ -837,6 +837,9 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 // the per-input inventory (record_count 0, disposition failed) so aggregate provenance
 // stays gap-free (R5) and the shard == Σ per-input invariant holds (R4).
 func recordFailedAggregateInput(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, ident *inputIdentity) error {
+	// Classify before sanitizing: sanitizing can rebuild the error and drop
+	// the chain that identifies an unavailable input.
+	applyInputUnavailable(&result)
 	result.Error = provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)
 	result.DispositionDetail = provenanceRootInputText(opts, result.DispositionDetail, result.File, result.LogicalURI)
 	if result.Disposition == "" {

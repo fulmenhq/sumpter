@@ -194,6 +194,9 @@ const (
 	// DispositionReasonRouteUnsupported records a deliberate refusal: the
 	// input needs a route its format does not support in this release.
 	DispositionReasonRouteUnsupported DispositionReason = "route_unsupported"
+	// DispositionReasonInputUnavailable records an input that could not be
+	// read: missing, or not readable with the run's permissions.
+	DispositionReasonInputUnavailable DispositionReason = "input_unavailable"
 )
 
 // OutputOptions controls optional output sections.

@@ -609,6 +609,15 @@ func runExtract(opts *ExtractOptions) (err error) {
 		}
 		return noInputsMatchedError(opts)
 	}
+	if err := preflightLocalInputs(opts, files, logicalByLocal); err != nil {
+		if session != nil {
+			_ = session.Close()
+		}
+		return err
+	}
+	if afterLocalInputPreflight != nil {
+		afterLocalInputPreflight()
+	}
 	if err := preflightProvenanceRootInputs(opts, aggregatePreflightOrder(opts, files), logicalByLocal); err != nil {
 		if session != nil {
 			_ = session.Close()
@@ -808,8 +817,8 @@ func runExtract(opts *ExtractOptions) (err error) {
 				}
 				result.Disposition = extract.DispositionFailed
 				result.DispositionReason = reason
-				result.DispositionDetail = result.Error.Error()
-				failureManifest.add(result.LogicalURI, reason, provenanceRootDiagnosticText(opts, result.Error.Error()), sanitizeRoots)
+				result.DispositionDetail = failureDetail(reason, result.Error)
+				failureManifest.add(result.LogicalURI, reason, provenanceRootDiagnosticText(opts, result.DispositionDetail), sanitizeRoots)
 				if manifestEnabled {
 					input, ledgerErr := ledgerInputFor(opts, result, ident, sanitizeRoots...)
 					if ledgerErr != nil {
@@ -823,7 +832,7 @@ func runExtract(opts *ExtractOptions) (err error) {
 				}
 				continue
 			}
-			return fmt.Errorf("failed to process file %s: %w", displayPath, provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI))
+			return inputFailureError(displayPath, result.Error, provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI))
 		}
 
 		if result.Disposition != extract.DispositionNotApplicable {
@@ -1059,6 +1068,10 @@ func failureErrorForResult(opts *ExtractOptions, result extract.ExtractResult, r
 	file := provenance.SanitizePath(result.LogicalURI, roots...)
 	if provenanceRootActive(opts) {
 		file = provenanceRootInputLabel(opts, result.File, result.LogicalURI)
+	}
+	if result.DispositionReason == extract.DispositionReasonInputUnavailable {
+		class := strings.TrimPrefix(result.DispositionDetail, "input unavailable: ")
+		return &inputUnavailableError{display: file, class: class, err: result.Error}
 	}
 	if result.Error != nil {
 		err := provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)
@@ -1364,7 +1377,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 					zap.Error(provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)))
 			}
 			if !opts.ContinueOnError && originalDisposition != extract.DispositionFailed && result.Error != nil {
-				return fmt.Errorf("failed to process file %s: %w", displayPath, result.Error)
+				return inputFailureError(displayPath, result.Error, result.Error)
 			}
 			failureErr := recordFailedSequentialResult(result, opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, manifestEnabled, logger)
 			if !opts.ContinueOnError && dispositionFailure == nil {
@@ -1454,6 +1467,9 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 }
 
 func recordFailedSequentialResult(result extract.ExtractResult, opts *ExtractOptions, extCfg *extract.ExtractRecordMatch, manifestInputs *[]provenance.Input, dispositionSummary *dispositionSummaryFile, failureManifest *extractFailureManifestFile, sanitizeRoots []string, manifestEnabled bool, logger *zap.Logger) error {
+	// Classify before sanitizing: sanitizing can rebuild the error and drop
+	// the chain that identifies an unavailable input.
+	applyInputUnavailable(&result)
 	result.Error = provenanceRootInputError(opts, result.Error, result.File, result.LogicalURI)
 	result.DispositionDetail = provenanceRootInputText(opts, result.DispositionDetail, result.File, result.LogicalURI)
 	if result.Disposition == "" {
@@ -2003,6 +2019,9 @@ func failureReasonForError(err error) extract.DispositionReason {
 	}
 	if errors.Is(err, docnode.ErrRouteUnsupported) {
 		return extract.DispositionReasonRouteUnsupported
+	}
+	if _, ok := unavailableClass(err); ok {
+		return extract.DispositionReasonInputUnavailable
 	}
 	text := err.Error()
 	switch {

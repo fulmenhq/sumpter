@@ -86,9 +86,11 @@ non-zero when any file failed. Output-write and failure-manifest-write errors
 remain terminal. The failure manifest is schema-backed by
 `schemas/extract/v0.1.0/failures.schema.json` and uses the closed reason set
 `parse_error`, `signature_mismatch`, `min_occurrences_violation`,
-`validation_error`, `internal_error`, and `route_unsupported` (a deliberate
+`validation_error`, `internal_error`, `route_unsupported` (a deliberate
 refusal: the input's format has no route for it in this release, such as a
-JSON file above the large-file threshold without `--allow-large-files`).
+JSON file above the large-file threshold without `--allow-large-files`), and
+`input_unavailable` (the input is missing or not readable; the detail says
+`not found` or `permission denied`).
 
 Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
 For the full expression grammar, function set, and parser behavior contracts,

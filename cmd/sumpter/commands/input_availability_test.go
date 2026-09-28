@@ -2,10 +2,18 @@ package commands
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	goneatschema "github.com/fulmenhq/goneat/pkg/schema"
+
+	"github.com/fulmenhq/sumpter/internal/extract"
 )
 
 const jsonCaseDir = "../../../examples/cases/14-json-basic-extraction"
@@ -176,5 +184,107 @@ func copyFile(t *testing.T, from, to string) {
 	}
 	if err := os.WriteFile(to, data, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func (f availabilityFixture) writeList(t *testing.T, name string, entries ...string) string {
+	t.Helper()
+	p := filepath.Join(f.dir, name)
+	if err := os.WriteFile(p, []byte(strings.Join(entries, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestMissingInputFailFastAbortsBeforeSibling(t *testing.T) {
+	f := newAvailabilityFixture(t)
+	list := f.writeList(t, "list.txt", f.good, filepath.Join(f.dir, "missing.json"))
+	err := runSumpter(t, f.filesArgs("--file-list", list, "--output-path", f.out))
+	var unavailable *inputUnavailableError
+	if !errors.As(err, &unavailable) || !strings.HasSuffix(err.Error(), ": not found") {
+		t.Fatalf("error = %v, want an input-unavailable not-found failure", err)
+	}
+	if strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("error carries raw OS text: %v", err)
+	}
+	f.assertOutputUntouched(t) // the good sibling wrote nothing
+}
+
+func TestMissingInputContinueOnErrorRecordsInputUnavailable(t *testing.T) {
+	for _, mode := range []string{"per-input", "aggregate"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newAvailabilityFixture(t)
+			out := filepath.Join(f.dir, "fresh-out")
+			list := f.writeList(t, "list.txt", f.good, filepath.Join(f.dir, "missing.json"))
+			args := f.filesArgs("--file-list", list, "--output-path", out, "--continue-on-error")
+			if mode == "aggregate" {
+				args = append(args, "--output-mode", "aggregate", "--output-pattern", "records.jsonl")
+			}
+			if err := runSumpter(t, args); err == nil || !strings.Contains(err.Error(), "partial extraction failure: applied=1 failed=1") {
+				t.Fatalf("error = %v, want a non-zero partial failure", err)
+			}
+			raw, err := os.ReadFile(filepath.Join(out, "failures.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var failures struct {
+				Failures []struct{ File, Reason, Detail string } `json:"failures"`
+			}
+			if err := json.Unmarshal(raw, &failures); err != nil {
+				t.Fatal(err)
+			}
+			if len(failures.Failures) != 1 || failures.Failures[0].Reason != "input_unavailable" || failures.Failures[0].Detail != "input unavailable: not found" {
+				t.Fatalf("failures = %+v", failures.Failures)
+			}
+			validateAgainstSchema(t, "../../../schemas/extract/v0.1.0/failures.schema.json", raw)
+		})
+	}
+}
+
+func TestUnreadableAfterPreflightFailsAtRead(t *testing.T) {
+	f := newAvailabilityFixture(t)
+	second := filepath.Join(f.dir, "second.json")
+	copyFile(t, f.good, second)
+	afterLocalInputPreflight = func() { _ = os.Remove(second) }
+	t.Cleanup(func() { afterLocalInputPreflight = nil })
+	list := f.writeList(t, "list.txt", f.good, second)
+	err := runSumpter(t, f.filesArgs("--file-list", list, "--output-path", filepath.Join(f.dir, "fresh-out")))
+	var unavailable *inputUnavailableError
+	if !errors.As(err, &unavailable) || !strings.HasSuffix(err.Error(), ": not found") {
+		t.Fatalf("error = %v, want an input-unavailable failure at read", err)
+	}
+}
+
+func TestFailureReasonForUnavailableInput(t *testing.T) {
+	for _, err := range []error{
+		fmt.Errorf("failed to read file: %w", &fs.PathError{Op: "stat", Path: "x", Err: fs.ErrNotExist}),
+		fmt.Errorf("failed to read file: %w", &fs.PathError{Op: "open", Path: "x", Err: fs.ErrPermission}),
+		&inputUnavailableError{display: "x", class: "not found", err: fs.ErrNotExist},
+	} {
+		if got := failureReasonForError(err); got != extract.DispositionReasonInputUnavailable {
+			t.Errorf("failureReasonForError(%v) = %q", err, got)
+		}
+	}
+	if got := failureDetail(extract.DispositionReasonInputUnavailable, fmt.Errorf("x: %w", fs.ErrPermission)); got != "input unavailable: permission denied" {
+		t.Errorf("detail = %q", got)
+	}
+}
+
+func validateAgainstSchema(t *testing.T, schemaPath string, doc []byte) {
+	t.Helper()
+	schema, err := os.ReadFile(schemaPath) // #nosec G304 - test fixture path
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v any
+	if err := json.Unmarshal(doc, &v); err != nil {
+		t.Fatal(err)
+	}
+	res, err := goneatschema.ValidateFromBytes(schema, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Valid {
+		t.Fatalf("document fails %s: %v", schemaPath, res.Errors)
 	}
 }
