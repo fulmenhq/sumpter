@@ -52,7 +52,22 @@ type InspectOptions struct {
 	CredentialOverrides []string
 }
 
-// InspectReportV0 matches the v0.1.1 schema
+// InspectReportVersion is the report contract version every report carries.
+const InspectReportVersion = "inspect-report/v0.1.2"
+
+// inspectReportSchemaPath is the embedded schema --validate-output checks
+// reports against; it moves together with InspectReportVersion.
+const inspectReportSchemaPath = "schemas/inspect/v0.1.2/inspect-report.schema.yaml"
+
+// Input formats inspect reports on (input.format).
+const (
+	inspectFormatXML  = "xml"
+	inspectFormatJSON = "json"
+)
+
+// InspectReportV0 matches the v0.1.2 schema. JSON-profile reports marshal
+// through a separate shape (see MarshalJSON); XML reports keep the field set
+// and omitempty behavior they have always had.
 type InspectReportV0 struct {
 	Version           string            `json:"version"`
 	Input             InspectInput      `json:"input"`
@@ -73,6 +88,8 @@ type InspectInput struct {
 	EncodingForced   *string `json:"encoding_forced,omitempty"`
 	Compressed       bool    `json:"compressed"`
 	Compression      string  `json:"compression"`
+	// Format is the input syntax (--input-format), never chosen by content.
+	Format string `json:"format"`
 }
 
 type InspectMetrics struct {
@@ -84,10 +101,27 @@ type InspectMetrics struct {
 }
 
 type InspectPath struct {
-	Path       string             `json:"path"`
+	// Path is the display form: Segments joined by inspectPathString.
+	Path string `json:"path"`
+	// Segments are the verbatim node names from the root; the authoritative
+	// identity of the path.
+	Segments   []string           `json:"segments"`
 	Count      int                `json:"count"`
 	Attributes []InspectAttribute `json:"attributes,omitempty"`
 	Samples    []string           `json:"samples,omitempty"`
+	// ValueKinds counts occurrences by value kind. JSON input only.
+	ValueKinds *InspectValueKinds `json:"value_kinds,omitempty"`
+}
+
+// InspectValueKinds counts a JSON path's occurrences by value kind; the counts
+// sum to the path's count.
+type InspectValueKinds struct {
+	String int `json:"string"`
+	Number int `json:"number"`
+	Bool   int `json:"bool"`
+	Null   int `json:"null"`
+	Object int `json:"object"`
+	Array  int `json:"array"`
 }
 
 type InspectAttribute struct {
@@ -357,8 +391,10 @@ func NewInspectCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "inspect [file]",
-		Short: "Inspect XML file structure, encoding, and content",
+		Short: "Inspect XML or JSON document structure, encoding, and content",
 		Long: `Inspect XML files to understand their structure, encoding, and content patterns.
+With --input-format json, inspect profiles one JSON document instead: key paths,
+counts, samples, and per-path value kinds.
 
 This command performs a streaming analysis of XML files to:
 - Detect encoding (BOM, XML declaration, charset detection)
@@ -391,7 +427,7 @@ records the logical s3:// URI, never the staging path.`,
 	cmd.Flags().IntVar(&opts.MaxPaths, "max-paths", 200, "Maximum number of unique paths to track")
 	cmd.Flags().IntVar(&opts.SamplesPerPath, "samples-per-path", 2, "Number of text samples to collect per path")
 	cmd.Flags().StringVar(&opts.ForceEncoding, "force-encoding", "", "Force specific encoding (e.g., windows-1252)")
-	cmd.Flags().StringVar(&opts.InputFormat, "input-format", "xml", "Input syntax: xml (JSON inspection arrives in a later release)")
+	cmd.Flags().StringVar(&opts.InputFormat, "input-format", "xml", "Input syntax: xml|json (declared, never detected from content)")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress for large files")
 	cmd.Flags().BoolVar(&opts.IncludeAttrs, "include-attributes", true, "Include attribute analysis")
 	cmd.Flags().BoolVar(&opts.ValidateOutput, "validate-output", false, "Validate JSON output against schema")
@@ -416,6 +452,11 @@ records the logical s3:// URI, never the staging path.`,
 func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 	log := logging.Component("inspect")
 	startTime := time.Now()
+
+	inputFormat, err := resolveInspectInputFormat(opts)
+	if err != nil {
+		return err
+	}
 
 	// Resolve the source through the uriio read boundary. A cloud (s3://) source
 	// is staged to a local working copy that inspect reads byte-for-byte; the
@@ -478,14 +519,19 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 		}
 	}
 
-	if err := checkInspectInput(opts.InputFormat, &reader); err != nil {
+	if err := checkInspectInput(inputFormat, &reader); err != nil {
 		return err
 	}
 
-	// Detect encoding
-	encodingInfo, encodedReader, err := detectEncoding(reader, opts.ForceEncoding)
-	if err != nil {
-		return fmt.Errorf("encoding detection failed: %w", err)
+	// Detect encoding. JSON input is UTF-8 by definition; the walker rejects
+	// anything else.
+	encodingInfo := EncodingInfo{Detected: "UTF-8", Confidence: "json"}
+	encodedReader := reader
+	if inputFormat == inspectFormatXML {
+		encodingInfo, encodedReader, err = detectEncoding(reader, opts.ForceEncoding)
+		if err != nil {
+			return fmt.Errorf("encoding detection failed: %w", err)
+		}
 	}
 
 	// INFO start
@@ -585,7 +631,12 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 	}
 
 	// Perform inspection
-	report, err := inspectXML(cr, fileInfo, encodingInfo, opts)
+	var report *InspectReportV0
+	if inputFormat == inspectFormatJSON {
+		report, err = inspectJSON(cr, fileInfo, opts)
+	} else {
+		report, err = inspectXML(cr, fileInfo, encodingInfo, opts)
+	}
 	if err != nil {
 		return fmt.Errorf("inspection failed: %w", err)
 	}
@@ -897,13 +948,14 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 			pathStack = append(pathStack, element.Name.Local)
 
 			// Build current path
-			currentPath := strings.Join(pathStack, ".")
+			currentPath := inspectPathString(pathStack)
 
 			// Track path if we haven't hit the limit
 			if len(pathMap) < maxPaths || pathMap[currentPath] != nil {
 				if pathMap[currentPath] == nil {
 					pathMap[currentPath] = &InspectPath{
 						Path:       currentPath,
+						Segments:   append([]string(nil), pathStack...),
 						Count:      0,
 						Attributes: []InspectAttribute{},
 						Samples:    []string{},
@@ -931,18 +983,14 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 
 		case xml.CharData:
 			if len(pathStack) > 0 {
-				currentPath := strings.Join(pathStack, ".")
+				currentPath := inspectPathString(pathStack)
 				text := strings.TrimSpace(string(element))
 
 				// Only collect non-empty text samples
 				if text != "" && pathMap[currentPath] != nil {
 					// Collect text samples
 					if len(sampleMap[currentPath]) < samplesPerPath {
-						// Truncate very long text
-						if len(text) > 100 {
-							text = text[:97] + "..."
-						}
-						sampleMap[currentPath] = append(sampleMap[currentPath], text)
+						sampleMap[currentPath] = append(sampleMap[currentPath], truncateInspectSample(text))
 					} else if samplesPerPath > 0 {
 						// We've hit the cap for this path and saw more content
 						samplesTruncatedAny = true
@@ -989,29 +1037,9 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 	}
 
 	// Build input
-	input := InspectInput{
-		Path:             fileInfo.Path,
-		SizeBytes:        fileInfo.Size,
-		EncodingDetected: encodingInfo.Detected,
-		Compressed:       false,
-		Compression:      "none",
-	}
+	input := newInspectInput(fileInfo, encodingInfo.Detected, inspectFormatXML)
 	if opts.ForceEncoding != "" {
 		input.EncodingForced = &opts.ForceEncoding
-	}
-
-	// Detect compression based on file extension
-	if strings.HasSuffix(strings.ToLower(fileInfo.Path), ".gz") ||
-		strings.HasSuffix(strings.ToLower(fileInfo.Path), ".gzip") {
-		input.Compressed = true
-		input.Compression = "gzip"
-	} else if strings.HasSuffix(strings.ToLower(fileInfo.Path), ".bz2") ||
-		strings.HasSuffix(strings.ToLower(fileInfo.Path), ".bzip2") {
-		input.Compressed = true
-		input.Compression = "bzip2"
-	} else if strings.HasSuffix(strings.ToLower(fileInfo.Path), ".xz") {
-		input.Compressed = true
-		input.Compression = "xz"
 	}
 
 	// Build caps (sample truncation inferred)
@@ -1022,7 +1050,7 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 	}
 
 	report := &InspectReportV0{
-		Version: "inspect-report/v0.1.1",
+		Version: InspectReportVersion,
 		Input:   input,
 		Metrics: InspectMetrics{
 			BytesProcessed:        fileInfo.Size,
@@ -1042,7 +1070,7 @@ func inspectXML(reader io.Reader, fileInfo FileInfo, encodingInfo EncodingInfo, 
 // validateJSONAgainstEmbeddedSchema validates JSON output against embedded schema
 func validateJSONAgainstEmbeddedSchema(jsonData []byte) error {
 	// CRITICAL: Use embedded schema via assets package
-	schemaPath := "schemas/inspect/v0.1.1/inspect-report.schema.yaml"
+	schemaPath := inspectReportSchemaPath
 
 	// Load schema from embedded assets
 	schemasFS, err := assets.GetSchemasFS()
@@ -1123,7 +1151,11 @@ func generateJSONReport(output io.Writer, report *InspectReportV0) error {
 }
 
 func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
-	if _, err := fmt.Fprintf(output, "# XML Inspection Report\n\n"); err != nil {
+	header := "XML"
+	if report.Input.Format == inspectFormatJSON {
+		header = "JSON"
+	}
+	if _, err := fmt.Fprintf(output, "# %s Inspection Report\n\n", header); err != nil {
 		return fmt.Errorf("failed to write report header: %w", err)
 	}
 	if _, err := fmt.Fprintf(output, "**Size:** %.2f MB\n\n", float64(report.Input.SizeBytes)/1024/1024); err != nil {

@@ -1,0 +1,69 @@
+{
+  "version": "inspect-report/v0.1.1",
+  "input": {
+    "path": "u16le-bom.xml",
+    "size_bytes": 266,
+    "encoding_detected": "UTF-16LE",
+    "compressed": false,
+    "compression": "none"
+  },
+  "metrics": {
+    "bytes_processed": 136,
+    "elapsed_ms": 0,
+    "throughput_bytes_per_sec": 657738.5662288336,
+    "replacement_count": 0,
+    "rss_peak_mb": 3.8264312744140625
+  },
+  "paths": [
+    {
+      "path": "WidgetCoData",
+      "count": 1
+    },
+    {
+      "path": "WidgetCoData.Orders",
+      "count": 1
+    },
+    {
+      "path": "WidgetCoData.Orders.Order",
+      "count": 1,
+      "attributes": [
+        {
+          "name": "id",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "path": "WidgetCoData.Orders.Order.Customer",
+      "count": 1,
+      "samples": [
+        "Café"
+      ]
+    }
+  ],
+  "caps": {
+    "paths_truncated": false,
+    "attributes_truncated": false,
+    "samples_truncated": false
+  },
+  "streaming_analysis": {
+    "suitable_for_streaming": false,
+    "recommended_selector": "",
+    "confidence": "",
+    "reasoning": "",
+    "warnings": null,
+    "memory_estimates": {
+      "streaming_typical_mb": 0,
+      "streaming_worst_mb": 0,
+      "non_streaming_gb": 0
+    },
+    "performance_estimates": {
+      "streaming_sequential": "",
+      "manifest_parallel_32x": ""
+    }
+  },
+  "metadata": {
+    "generator": "sumpter inspect",
+    "timestamp": "2026-09-28T12:13:56-04:00"
+  }
+}

@@ -18,6 +18,8 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 - **`route_unsupported` disposition** — an input refused because its format has no route for it in this release (for example a JSON file above the large-file threshold without `--allow-large-files`) is recorded with disposition reason `route_unsupported` in the manifest, `dispositions.json`, and `failures.json`, rather than as an internal error.
 
+- **`inspect` JSON profile** — `sumpter inspect --input-format json` profiles one JSON document: key paths as extraction sees them, counts, samples, and a per-path `value_kinds` count (`string`, `number`, `bool`, `null`, `object`, `array`). The document is walked as a stream and checked exactly as extraction checks it, with the same error texts. `--force-encoding`, `--analyze-records`, and `--generate-config` are refused with JSON input. See [inspect](docs/user-guide/commands/inspect.md#input-format).
+
 - **Schema manifests and catalog** — every schema version directory now has a `contract.json` manifest (capability token, entry schema, owned schemas, input/output kind), and `schemas/index.json` catalogs every schema with its id, version, kind, and digest. `make schema-contract-check` (part of `make check-all`) verifies ids, ownership, and that every `$ref` resolves inside the bundle before any schema is compiled. See [Schema identity](docs/standards/schema-identity.md).
 
 ### Changed
@@ -26,7 +28,9 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 - **Signature `format_type: protobuf` is rejected** — `protobuf` stays in the signature enum but is now rejected at load as reserved, not implemented. A recipe with `defaults.input.format: json` must declare `format_type: json` in its signature.
 
-- **`inspect` refuses input it cannot report on** — JSON, gzip-compressed, and other non-XML input now exits non-zero with a message instead of printing an empty XML report. `--input-format json` is accepted and refused until JSON inspection lands.
+- **`inspect` refuses input it cannot report on** — gzip-compressed input, and input that does not match the declared `--input-format` (non-XML input without `--input-format json`, XML input with it), now exits non-zero with a message instead of printing an empty XML report. The format is never chosen from the content.
+
+- **Inspect reports are `inspect-report/v0.1.2`** — every `inspect` report, XML and JSON, now carries `version: inspect-report/v0.1.2` (schema `schemas/inspect/v0.1.2/`, now the catalog's current inspect schema). The change is additive: `input.format` (`xml` or `json`) and `paths[].segments` (the verbatim node names, the path's authoritative identity) are always present, and JSON reports add `paths[].value_kinds`. `path` stays the dot-joined display string; a `.` or `\` inside a name is now escaped with `\`, which changes XML reports only for element names containing those characters. The v0.1.2 schema no longer requires `analysis_metadata`, which reports without `--analyze-records` never carried.
 
 - **Document access routed through a node interface** — extraction now reads input documents through a format-neutral node interface (`internal/docnode`) with XML as the only registered format. No behavior change: output, errors, and streaming/parallel routes are unchanged.
 

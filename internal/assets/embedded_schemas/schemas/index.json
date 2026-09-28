@@ -161,6 +161,14 @@
       "sha256": "sha256:d55740ed00436c3eafd6cad4a24efc997f5212bdf14e56cf702e733f13b9daf5"
     },
     {
+      "id": "contract://sumpter.inspect/v0.1.2/inspect-report.schema.yaml",
+      "capability": "contract: sumpter.inspect/v0",
+      "version": "v0.1.2",
+      "kind": "output",
+      "path": "inspect/v0.1.2/inspect-report.schema.yaml",
+      "sha256": "sha256:f65dba6c976c0fb772436b75ecb40903eab2aba2307b46f6c5575a04a104704c"
+    },
+    {
       "id": "contract://sumpter.provenance/v1/provenance.schema.json",
       "capability": "contract: sumpter.provenance/v1",
       "version": "v1",
@@ -215,8 +223,8 @@
       "entry": "contract://sumpter.index/v0.1.2/record-index.schema.json"
     },
     "inspect": {
-      "version": "v0.1.1",
-      "entry": "contract://sumpter.inspect/v0.1.1/inspect-report.schema.yaml"
+      "version": "v0.1.2",
+      "entry": "contract://sumpter.inspect/v0.1.2/inspect-report.schema.yaml"
     },
     "provenance": {
       "version": "v1",

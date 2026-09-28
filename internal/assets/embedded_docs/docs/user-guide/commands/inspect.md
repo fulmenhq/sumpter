@@ -1,6 +1,6 @@
 # Inspect Command
 
-Inspect XML file structure, encoding, and content patterns.
+Inspect XML (or, with `--input-format json`, JSON) document structure, encoding, and content patterns.
 
 ## Usage
 
@@ -31,15 +31,63 @@ The `inspect` command performs a comprehensive streaming analysis of XML files t
 
 ### Input Format
 
-`inspect` reports on XML input. JSON inspection arrives in a later release.
+`inspect` reports on XML by default. `--input-format json` profiles one JSON
+document instead. The format is always declared, never detected from the
+content or the file name.
 
-- `--input-format`: Input syntax (default `xml`). `json` is accepted but
-  refused with "JSON inspection arrives in a later release".
-- Input whose first non-whitespace byte (after any byte-order mark) is not
-  `<` is refused with "input does not look like XML; JSON inspection arrives
-  in a later release". This check only refuses; it never selects a format.
-- Gzip-compressed input is refused with "inspect does not read gzip input;
-  decompress it first (for example: gunzip -k <file>)".
+- `--input-format`: Input syntax, `xml` (default) or `json`.
+
+Under `json`, `inspect` walks the document as a stream (bounded memory) and
+reports every key path the way extraction sees it (see the
+[document node model](../../standards/document-node-model.md)): a member whose
+value is an array produces one element per item, an empty array produces no
+element, and the items of a top-level array are named `item`.
+
+- **`input.format`** is `json`; `encoding_detected` is `UTF-8`. One leading
+  UTF-8 byte-order mark is accepted; UTF-16 and UTF-32 input is refused with
+  "JSON input must be UTF-8".
+- **`paths[].value_kinds`** counts each path's occurrences by value kind
+  (`string`, `number`, `bool`, `null`, `object`, `array`); the counts always sum
+  to `count`. `{"tags": ["a", "b"]}` gives path `tags` with count 2 and
+  `string: 2`; `array` appears only for an array nested directly in an array
+  (`{"m": [[1, 2], [3]]}` gives `m` with `array: 2` and `m.m` with `number: 3`).
+- **Samples** are scalar values, with the same limits as XML (`--samples-per-path`,
+  100-character truncation, `samples_truncated`); `null` has no sample.
+- **`attributes`** is always `[]` and `caps.attributes_truncated` is always
+  `false`: JSON has no attributes.
+- The record-analysis sections (`record_candidates`, `streaming_analysis`,
+  `oom_summary`) are omitted, and the Markdown header reads
+  `# JSON Inspection Report`.
+- The input is checked exactly as extraction checks it: invalid UTF-8,
+  duplicate keys, nesting deeper than 1024, a second top-level value, truncated
+  input, a top-level scalar, and empty input all fail with no report, using the
+  same error text as extraction. Errors carry byte offsets, not input excerpts.
+
+**Paths.** Every path entry carries `segments`, the verbatim node names from the
+root, which are the path's authoritative identity. `path` is a display string:
+the segments joined with `.`, where a `.` or `\` inside a segment is escaped
+with `\`. The JSON key `"a.b"` has path `a\.b` (written `"a\\.b"` in the JSON
+report) and `segments: ["a.b"]`; the nested keys `{"a": {"b": 1}}` have path
+`a.b` and `segments: ["a", "b"]`.
+XML element names that contain `.` are escaped the same way. Tools that build
+selectors should read `segments`.
+
+**Refusals.** These only refuse; they never select a format.
+
+- Without `--input-format json`, input whose first non-whitespace byte (after
+  any UTF-8 byte-order mark) is not `<` is refused with "input does not look
+  like XML; use --input-format json for JSON input".
+- With `--input-format json`, input whose first non-whitespace byte is `<` is
+  refused with "input looks like XML; drop --input-format json".
+- Gzip-compressed input is refused in both modes with "inspect does not read
+  gzip input; decompress it first (for example: gunzip -k <file>)".
+- `--force-encoding` does not apply to JSON (JSON input must be UTF-8), and
+  `--analyze-records` and `--generate-config` do not yet support
+  `--input-format json`; each is refused before any input is read.
+
+All reports, XML and JSON, use `inspect-report/v0.1.2`. It adds `input.format`
+and `paths[].segments` to every report and `paths[].value_kinds` to JSON
+reports; an XML report is otherwise unchanged from v0.1.1.
 
 ### Performance Options
 
@@ -69,6 +117,12 @@ sumpter inspect data.xml
 
 ```bash
 cat data.xml | sumpter inspect -
+```
+
+### Inspect a JSON Document
+
+```bash
+sumpter inspect data.json --input-format json --format json
 ```
 
 ### JSON Output Format
@@ -162,11 +216,14 @@ sumpter inspect data.xml --format json --validate-output
 
 ```json
 {
-  "version": "inspect-report/v0.1.0",
+  "version": "inspect-report/v0.1.2",
   "input": {
     "path": "data.xml",
     "size_bytes": 2621440,
-    "encoding_detected": "UTF-8"
+    "encoding_detected": "UTF-8",
+    "compressed": false,
+    "compression": "none",
+    "format": "xml"
   },
   "metrics": {
     "bytes_processed": 2621440,
@@ -178,6 +235,7 @@ sumpter inspect data.xml --format json --validate-output
   "paths": [
     {
       "path": "Envelope.Header.Message",
+      "segments": ["Envelope", "Header", "Message"],
       "count": 1500,
       "attributes": [
         { "name": "id", "count": 1500 },
