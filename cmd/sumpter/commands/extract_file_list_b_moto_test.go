@@ -117,7 +117,7 @@ func TestMotoFileListDeclaredMatchEager(t *testing.T) {
 	cmd := recipeRunExtractTestCommand()
 	if err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{
 		ManifestPath:           "recipe.yaml",
-		FileList:               filepath.Base(list),
+		FileList:               list,
 		CredentialsPath:        credPath,
 		InputCredentialsHandle: "reader",
 		Progress:               false,
@@ -181,7 +181,7 @@ func TestMotoFileListDeclaredDigestMismatchContinueOnError(t *testing.T) {
 	cmd := recipeRunExtractTestCommand()
 	err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{
 		ManifestPath:           "recipe.yaml",
-		FileList:               filepath.Base(list),
+		FileList:               list,
 		CredentialsPath:        credPath,
 		InputCredentialsHandle: "reader",
 		ContinueOnError:        true,
@@ -229,7 +229,7 @@ func TestMotoFileListDeclaredMalformedAggregateContinueOnError(t *testing.T) {
 	cmd := recipeRunExtractTestCommand()
 	err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{
 		ManifestPath:           "recipe.yaml",
-		FileList:               filepath.Base(list),
+		FileList:               list,
 		OutputMode:             "aggregate",
 		CredentialsPath:        credPath,
 		InputCredentialsHandle: "reader",

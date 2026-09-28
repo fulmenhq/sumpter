@@ -17,6 +17,7 @@ import (
 // present one passes.
 func TestMotoDryRunHeadsNamedObjects(t *testing.T) {
 	m := motoEnvOrSkip(t)
+	t.Setenv("SUMPTER_HOME", t.TempDir())
 	dir := createExtractManifestFixture(t)
 	key := runKeyPrefix() + "dry/doc.xml"
 	m.putObject(t, key, []byte(motoSourceXML))
@@ -44,6 +45,7 @@ func TestMotoDryRunHeadsNamedObjects(t *testing.T) {
 // on a real run and a dry run, leaving an earlier manifest untouched.
 func TestMotoEmptyPrefixFailsBeforeOutput(t *testing.T) {
 	m := motoEnvOrSkip(t)
+	t.Setenv("SUMPTER_HOME", t.TempDir())
 	dir := createExtractManifestFixture(t)
 	prefix := "s3://" + m.bucket + "/" + runKeyPrefix() + "empty/"
 	out := filepath.Join(dir, "out")
@@ -76,6 +78,7 @@ func TestMotoEmptyPrefixFailsBeforeOutput(t *testing.T) {
 // sibling, and that a zero-object prefix fails without touching the output.
 func TestMotoMultiBoundedMissingObjectAccounted(t *testing.T) {
 	m := motoEnvOrSkip(t)
+	t.Setenv("SUMPTER_HOME", t.TempDir())
 	f := newMultiAvailabilityFixture(t)
 	prefix := runKeyPrefix()
 	good := prefix + "multi/good.xml"
