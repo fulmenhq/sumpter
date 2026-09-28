@@ -104,11 +104,6 @@ func failureDetail(reason extract.DispositionReason, err error) string {
 	return err.Error()
 }
 
-// afterLocalInputPreflight, when set by a test, runs between the local input
-// preflight and the first read, so a test can make an input unavailable after
-// it passed preflight.
-var afterLocalInputPreflight func()
-
 // preflightLocalInputs opens and closes each explicit local input before any
 // input is processed, so under fail-fast a missing or unreadable input stops
 // the run before a sibling writes records. Under --continue-on-error it does
@@ -202,47 +197,34 @@ func inputFailureError(display string, raw, shown error) error {
 	return fmt.Errorf("failed to process file %s: %w", display, shown)
 }
 
-// errCloudContinueOnError refuses --continue-on-error with cloud inputs: an
-// unavailable cloud object cannot yet be recorded while the others proceed.
-var errCloudContinueOnError = errors.New("--continue-on-error is not supported with s3:// inputs in this release")
-
-// refuseCloudContinueOnError rejects --continue-on-error when any input is an
-// s3:// reference, including a mixed local and cloud file list and bounded
-// cloud input mode. It classifies references only (reading a local file list
-// to find them) and runs before any cloud client is built.
-func refuseCloudContinueOnError(opts *ExtractOptions) error {
-	if !opts.ContinueOnError {
-		return nil
+// acquireInputSource acquires one input for a run: through the run's
+// acquireSource when a test set one, else the cloud session or the local path.
+func acquireInputSource(ctx context.Context, opts *ExtractOptions, session *uriio.Session, ref string) (*uriio.AcquiredSource, error) {
+	handle := resolvedInputHandle(opts)
+	switch {
+	case opts.acquireSource != nil:
+		return opts.acquireSource(ctx, session, ref, handle)
+	case session != nil:
+		return session.Acquire(ctx, ref, handle)
 	}
-	cloud, err := referencesIncludeCloud(opts)
-	if err != nil {
-		return err
-	}
-	if cloud {
-		return errCloudContinueOnError
-	}
-	return nil
+	return uriio.Acquire(ctx, uriio.AcquireRequest{Reference: ref})
 }
 
-// errEagerCloudContinueOnError refuses --continue-on-error with cloud inputs on
-// extract-multi in eager mode, where a missing object stops the run; bounded
-// mode records it and continues.
-var errEagerCloudContinueOnError = errors.New("--continue-on-error with s3:// inputs requires --cloud-input-mode bounded in this release")
+// unavailableInputResult is the failed result recorded for an input whose
+// acquisition failed as missing or denied: no bytes were read and no output is
+// written for it.
+func unavailableInputResult(file, logical string, err error) extract.ExtractResult {
+	result := recoverableFailureResult(file, logical, err, extract.DispositionReasonInputUnavailable)
+	result.DispositionDetail = failureDetail(extract.DispositionReasonInputUnavailable, err)
+	return result
+}
 
-// refuseEagerCloudContinueOnError rejects extract-multi --continue-on-error when
-// any input is an s3:// reference and the cloud input mode is eager. Bounded
-// mode is allowed. It classifies references only and runs before any cloud
-// client is built.
-func refuseEagerCloudContinueOnError(opts *ExtractOptions, continueOnError bool) error {
-	if !continueOnError || boundedCloudInput(opts) {
-		return nil
+// durableFailureCount is the failed-input count from the run's failures.json,
+// which is written only under --continue-on-error when an input failed (a
+// failed write ends the run first); it is 0 otherwise.
+func durableFailureCount(opts *ExtractOptions, failures *extractFailureManifestFile) int {
+	if opts == nil || !opts.ContinueOnError || failures == nil {
+		return 0
 	}
-	cloud, err := referencesIncludeCloud(opts)
-	if err != nil {
-		return err
-	}
-	if cloud {
-		return errEagerCloudContinueOnError
-	}
-	return nil
+	return failures.Failed
 }

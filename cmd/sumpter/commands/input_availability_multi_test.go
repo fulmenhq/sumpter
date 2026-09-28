@@ -106,33 +106,3 @@ func TestMultiMissingInputRecordedInputUnavailable(t *testing.T) {
 		t.Fatalf("fail-fast error = %v, want input unavailable", err)
 	}
 }
-
-func TestMultiEagerCloudContinueOnErrorRefused(t *testing.T) {
-	f := newMultiAvailabilityFixture(t)
-	creds := failIfCalledCredentials(t, f.dir)
-	list := filepath.Join(f.dir, "mixed.txt")
-	if err := os.WriteFile(list, []byte(f.good+"\ns3://bucket/in/doc.xml\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := f.run(multiSharedOptions{FileList: list, ContinueOnError: true, CredentialsPath: creds})
-	if err == nil || err.Error() != "--continue-on-error with s3:// inputs requires --cloud-input-mode bounded in this release" {
-		t.Fatalf("error = %v, want the eager cloud refusal", err)
-	}
-	if got, _ := os.ReadFile(filepath.Join(f.recipeOut, "manifest.json")); string(got) != string(f.prior) {
-		t.Fatalf("earlier manifest rewritten: %s", got)
-	}
-}
-
-func TestBoundedCloudContinueOnErrorNotRefused(t *testing.T) {
-	opts := &ExtractOptions{Files: "s3://bucket/in/doc.xml", CloudInputMode: cloudInputModeBounded}
-	if err := refuseEagerCloudContinueOnError(opts, true); err != nil {
-		t.Fatalf("bounded mode refused: %v", err)
-	}
-	opts.CloudInputMode = cloudInputModeEager
-	if err := refuseEagerCloudContinueOnError(opts, true); !errors.Is(err, errEagerCloudContinueOnError) {
-		t.Fatalf("eager mode not refused: %v", err)
-	}
-	if err := refuseEagerCloudContinueOnError(opts, false); err != nil {
-		t.Fatalf("refused without --continue-on-error: %v", err)
-	}
-}

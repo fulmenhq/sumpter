@@ -88,9 +88,14 @@ outputs of inputs already processed may remain in the output directory; the
 non-zero exit is authoritative.
 
 Multi-file runs may opt into per-file failure isolation with
-`--continue-on-error`. It is not supported with `s3://` inputs in this
-release: the run is refused before any cloud request, including under
-`--dry-run`. In v0 this flag requires `--output-path`; successful
+`--continue-on-error`. A named input (`--files`, a file-list entry, or a recipe
+file) that is missing or not readable, local or `s3://`, is recorded as
+`input_unavailable` and the others continue; an object missing from an
+`--input-path` listing still stops the run. Such an input has no row in the
+provenance manifest, so an aggregate manifest then omits its input counts: a
+manifest without input counts makes no completeness claim, and `failures.json`
+is the authoritative record of dropped inputs. In v0 this flag requires
+`--output-path`; successful
 input files still emit their normal output artifacts, recoverable per-file
 failures are written to `<output-path>/failures.json`, and the command exits
 non-zero when any file failed. Output-write and failure-manifest-write errors

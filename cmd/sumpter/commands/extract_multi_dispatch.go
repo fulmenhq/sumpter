@@ -70,6 +70,9 @@ type multiDispatcher struct {
 	// declarations carries integrity-bound file-list declarations by input
 	// ordinal (nil entries for URI-only lines; nil slice when no file list).
 	declarations []*fileListDeclaration
+	// acquireFailures holds, by input ordinal, the named inputs whose
+	// acquisition failed as missing or denied under --continue-on-error.
+	acquireFailures map[int]error
 
 	// processCard is the optional discovery-root card (nil when stream-only or off).
 	// On clean exit the card is swept; the durable event stream is retained.
@@ -296,10 +299,7 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	if err := validateCloudInputOptions(inputOpts); err != nil {
 		return err
 	}
-	if err := refuseEagerCloudContinueOnError(inputOpts, shared.ContinueOnError); err != nil {
-		return err
-	}
-	files, logicalByLocal, decls, inputSession, err := resolveInputSources(context.Background(), inputOpts, shared.RunID)
+	files, logicalByLocal, decls, acquireFailures, inputSession, err := resolveInputSources(context.Background(), inputOpts, shared.RunID)
 	if err != nil {
 		return err
 	}
@@ -314,6 +314,7 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	d.inputSession = inputSession
 	d.inputOpts = inputOpts
 	d.declarations = decls
+	d.acquireFailures = acquireFailures
 	if inputSession != nil {
 		defer func() {
 			if cerr := inputSession.Close(); cerr != nil {
@@ -466,9 +467,14 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 // concurrent worker path keeps per-input panic containment.
 func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref string, logicalByLocal map[string]string, states []*recipeRunState, allowLargeFiles bool, parse func(string, bool) (docnode.Document, error)) (o builtInputOutcome) {
 	decl := declarationAt(d.declarations, idx+1)
+	// An input whose acquisition failed is recorded before anything opens it.
+	if ferr := d.acquireFailures[idx+1]; ferr != nil {
+		return builtInputOutcome{idx: idx, ordinal: idx + 1, file: ref, logical: ref, parseErr: ferr, rawErr: ferr}
+	}
 	local, logical, cleanup, aerr := d.prepareInput(ctx, ref, logicalByLocal, decl)
 	o = builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
 	if aerr != nil {
+		o.rawErr = aerr
 		o.parseErr = provenanceRootInputError(d.inputOpts, aerr, local, logical)
 		if decl != nil {
 			o.parseErr = fmt.Errorf("input %d (%s): %w", o.ordinal, provenanceRootInputLabel(d.inputOpts, local, logical), o.parseErr)
@@ -518,6 +524,7 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 	}
 	doc, perr := parse(parseTarget, allowLargeFiles)
 	if perr != nil {
+		o.rawErr = perr
 		perr = sanitizePrivateInputError(perr, logical, parseTarget, local)
 		o.parseErr = provenanceRootInputError(d.inputOpts, perr, local, logical, parseTarget)
 		cleanup()
@@ -527,6 +534,7 @@ func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref st
 		// URI-only inputs keep the historical parse-then-hash order byte-for-byte.
 		hsum, hsz, herr := provenance.HashLocalInput(local)
 		if herr != nil {
+			o.rawErr = herr
 			o.parseErr = provenanceRootInputError(d.inputOpts, herr, local, logical)
 			cleanup()
 			return o
@@ -659,6 +667,7 @@ type builtInputOutcome struct {
 	file        string
 	logical     string
 	parseErr    error
+	rawErr      error // parseErr before sanitizing, kept to classify the failure
 	apps        []builtApplication
 	records     int
 	inputSHA256 string
@@ -676,7 +685,10 @@ func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOu
 	if o.parseErr != nil {
 		// Classify before sanitizing: sanitizing can rebuild the error and drop
 		// the chain that identifies an unavailable input.
-		raw := o.parseErr
+		raw := o.rawErr
+		if raw == nil {
+			raw = o.parseErr
+		}
 		reason := extract.DispositionReasonParseError
 		if _, ok := unavailableClass(raw); ok {
 			reason = extract.DispositionReasonInputUnavailable
@@ -1071,6 +1083,8 @@ func sharedInputOptions(shared *multiSharedOptions) *ExtractOptions {
 		CloudStagingMaxFiles:   shared.CloudStagingMaxFiles,
 		CloudObjectMaxBytes:    shared.CloudObjectMaxBytes,
 		EmitInputIdentity:      shared.EmitInputIdentity,
+		ContinueOnError:        shared.ContinueOnError,
+		acquireSource:          shared.acquireSource,
 	}
 }
 
@@ -1219,7 +1233,7 @@ func (st *recipeRunState) finalize(startedAt time.Time) error {
 // A published descriptor that is followed by a later validation error still remains
 // on the terminal event list.
 func (st *recipeRunState) publishAndBridgeDataArtifact(manifest provenance.Manifest) error {
-	published, err := writeDataArtifactDescriptor(st.plan.opts, manifest)
+	published, err := writeDataArtifactDescriptor(st.plan.opts, manifest, durableFailureCount(st.plan.opts, st.failures))
 	if err != nil {
 		return err
 	}

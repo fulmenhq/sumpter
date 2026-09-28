@@ -82,6 +82,20 @@ func (f availabilityFixture) assertOutputUntouched(t *testing.T) {
 	}
 }
 
+// extractOptions is a direct extract files run over the fixture's recipe with
+// JSON output, for tests that set per-invocation hooks.
+func (f availabilityFixture) extractOptions(out string) *ExtractOptions {
+	return &ExtractOptions{
+		SignatureConfig: f.sig,
+		ExtractConfig:   f.ext,
+		OutputPath:      out,
+		Format:          "json",
+		OutputPattern:   "extract-{}.json",
+		CommandName:     "sumpter extract files",
+		Argv:            []string{"extract", "files"},
+	}
+}
+
 func (f availabilityFixture) filesArgs(extra ...string) []string {
 	return append([]string{"extract", "files", "--signature-config-path", f.sig, "--extract-config-path", f.ext}, extra...)
 }
@@ -247,10 +261,10 @@ func TestUnreadableAfterPreflightFailsAtRead(t *testing.T) {
 	f := newAvailabilityFixture(t)
 	second := filepath.Join(f.dir, "second.json")
 	copyFile(t, f.good, second)
-	afterLocalInputPreflight = func() { _ = os.Remove(second) }
-	t.Cleanup(func() { afterLocalInputPreflight = nil })
-	list := f.writeList(t, "list.txt", f.good, second)
-	err := runSumpter(t, f.filesArgs("--file-list", list, "--output-path", filepath.Join(f.dir, "fresh-out")))
+	opts := f.extractOptions(filepath.Join(f.dir, "fresh-out"))
+	opts.FileList = f.writeList(t, "list.txt", f.good, second)
+	opts.afterLocalInputPreflight = func() { _ = os.Remove(second) }
+	err := runExtract(opts)
 	var unavailable *inputUnavailableError
 	if !errors.As(err, &unavailable) || !strings.HasSuffix(err.Error(), ": not found") {
 		t.Fatalf("error = %v, want an input-unavailable failure at read", err)
@@ -311,9 +325,11 @@ func TestDryRunChecksNamedLocalInputs(t *testing.T) {
 
 // failIfCalledCredentials writes a credentials config whose default handle
 // points at a server that fails the test on any request, proving a code path
-// makes no cloud call.
+// makes no cloud call. It also gives the run a private SUMPTER_HOME, since a
+// cloud session needs a work directory.
 func failIfCalledCredentials(t *testing.T, dir string) string {
 	t.Helper()
+	t.Setenv("SUMPTER_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected cloud request: %s %s", r.Method, r.URL)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -326,39 +342,6 @@ func failIfCalledCredentials(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-func TestCloudContinueOnErrorRefusedBeforeWork(t *testing.T) {
-	f := newAvailabilityFixture(t)
-	creds := failIfCalledCredentials(t, f.dir)
-	mixed := f.writeList(t, "mixed.txt", f.good, "s3://bucket/in/doc.json")
-	out := filepath.Join(f.dir, "fresh-out")
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{"s3 files", f.filesArgs("--files", "s3://bucket/in/doc.json")},
-		{"s3 prefix", f.filesArgs("--input-path", "s3://bucket/in/")},
-		{"mixed file list", f.filesArgs("--file-list", mixed)},
-	} {
-		for _, dry := range []bool{false, true} {
-			args := append(append([]string{}, tc.args...), "--continue-on-error", "--credentials", creds, "--output-path", out)
-			if dry {
-				args = append(args, "--dry-run")
-			}
-			err := runSumpter(t, args)
-			if err == nil || err.Error() != "--continue-on-error is not supported with s3:// inputs in this release" {
-				t.Fatalf("%s dry=%v: error = %v, want the cloud refusal", tc.name, dry, err)
-			}
-			if _, serr := os.Stat(out); !os.IsNotExist(serr) {
-				t.Fatalf("%s dry=%v: output directory created", tc.name, dry)
-			}
-		}
-	}
-	// Local inputs keep --continue-on-error.
-	if err := runSumpter(t, f.filesArgs("--files", f.good, "--continue-on-error", "--output-path", out)); err != nil {
-		t.Fatalf("local continue-on-error refused: %v", err)
-	}
 }
 
 // recipeWorkspace copies the JSON example recipe into dir/recipe with the given

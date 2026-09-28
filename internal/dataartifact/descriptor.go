@@ -30,6 +30,11 @@ type DescriptorOptions struct {
 	RecordIndexPath string
 	// RecordIndexRowCount is the index summary total when known (0 if unknown).
 	RecordIndexRowCount int
+	// RunFailed is the run's count of failed inputs from its durably written
+	// failure record (failures.json), or 0 when none was written. It is the
+	// second lifecycle input: an input that failed before it could be identified
+	// has no manifest row, so the manifest alone would read as complete.
+	RunFailed int
 }
 
 type Descriptor struct {
@@ -243,7 +248,7 @@ func BuildExtractDescriptor(manifest provenance.Manifest, artifactUUID string, o
 	return Descriptor{
 		Capabilities: []string{artifactcontract.DataArtifactCapability},
 		ArtifactID:   "urn:uuid:" + artifactUUID,
-		Lifecycle:    LifecycleFromManifest(manifest),
+		Lifecycle:    LifecycleForRun(manifest, opts.RunFailed),
 		Producer: Producer{
 			Name:    "sumpter",
 			Version: valueOrUnknown(manifest.SumpterVersion),

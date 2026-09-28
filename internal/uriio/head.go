@@ -30,21 +30,21 @@ func (s *Session) Head(ctx context.Context, reference, handle string) error {
 		_, e := prov.Head(ctx, ref.Key)
 		return e
 	})
-	return classifyHeadError(herr, ref.LogicalURI, s.pool.redactionSecrets(handle))
+	return classifyObjectError("head", herr, ref.LogicalURI, s.pool.redactionSecrets(handle))
 }
 
-// classifyHeadError maps a provider Head error to a uriio error by type:
-// not-found and access-denied become the typed sentinels, and anything else a
-// redacted message. The provider error itself is not wrapped, so its text
-// cannot leak through the chain.
-func classifyHeadError(err error, logicalURI string, secrets []string) error {
+// classifyObjectError maps a provider error from op ("head" or "get") to a
+// uriio error by type: not-found and access-denied become the typed sentinels,
+// and anything else a redacted message. The provider error itself is not
+// wrapped, so its text cannot leak through the chain.
+func classifyObjectError(op string, err error, logicalURI string, secrets []string) error {
 	switch {
 	case err == nil:
 		return nil
 	case gonimbusprovider.IsNotFound(err):
-		return fmt.Errorf("uriio: head %s: %w", logicalURI, ErrObjectNotFound)
+		return fmt.Errorf("uriio: %s %s: %w", op, logicalURI, ErrObjectNotFound)
 	case gonimbusprovider.IsAccessDenied(err):
-		return fmt.Errorf("uriio: head %s: %w", logicalURI, ErrObjectAccessDenied)
+		return fmt.Errorf("uriio: %s %s: %w", op, logicalURI, ErrObjectAccessDenied)
 	}
-	return fmt.Errorf("uriio: head %s failed: %s", logicalURI, cloudOpError(err, secrets))
+	return fmt.Errorf("uriio: %s %s failed: %s", op, logicalURI, cloudOpError(err, secrets))
 }

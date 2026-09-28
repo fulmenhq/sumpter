@@ -74,9 +74,12 @@ type Manifest struct {
 	// invariant inputs_applied + inputs_failed + inputs_not_applicable ==
 	// inputs_total == len(inputs) holds by construction. The portable semantic
 	// lifecycle (complete / partial / incomplete) is not stored here: when
-	// --artifact-descriptor is enabled, dataartifact.LifecycleFromManifest maps
+	// --artifact-descriptor is enabled, dataartifact.LifecycleForRun maps
 	// Incomplete + these counts + inputs[].disposition onto the data-artifact/v0
-	// lifecycle field without inventing new accounting.
+	// lifecycle field, with the run's durable failures.json count as a second
+	// input. A failed input that could not be identified has no inputs[] row, so
+	// an aggregate inventory short of its cohort is not gap-free and these counts
+	// are omitted; a manifest without them makes no completeness claim.
 	InputsTotal         *int `json:"inputs_total,omitempty"`
 	InputsApplied       *int `json:"inputs_applied,omitempty"`
 	InputsNotApplicable *int `json:"inputs_not_applicable,omitempty"`

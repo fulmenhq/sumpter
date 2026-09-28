@@ -121,6 +121,12 @@ type ExtractOptions struct {
 	// directory.
 	inputDisplay  string
 	inputBaseKind string
+	// acquireSource, when a test sets it, replaces input acquisition for this
+	// run, so acquisition failures can be injected without a network.
+	acquireSource func(ctx context.Context, session *uriio.Session, ref, handle string) (*uriio.AcquiredSource, error)
+	// afterLocalInputPreflight, when a test sets it, runs between the local
+	// input preflight and the first read.
+	afterLocalInputPreflight func()
 	// includePatternExplicit records that --include-pattern was given, so the
 	// format-dependent default does not override it.
 	includePatternExplicit bool
@@ -255,7 +261,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symbolic links")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 1, "Number of parallel workers")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview the run without writing anything: resolves and checks every input (stats local files, reads list files, LIST/HEAD on s3:// references), reports what would be processed, and exits non-zero if any input is missing, unreadable, or matches nothing")
-	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file failures instead of aborting; the run still exits non-zero and lists every dropped input in failures.json — reconcile it so inputs are not silently dropped. Requires --output-path. Not supported with s3:// inputs in this release")
+	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file failures instead of aborting; the run still exits non-zero and lists every dropped input in failures.json — reconcile it so inputs are not silently dropped. Requires --output-path. A named input that is missing or not readable, local or s3://, is recorded as input_unavailable")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "json", "Output format")
 	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Output formats (comma-separated or repeatable; json/ndjson/parquet)")
@@ -472,11 +478,6 @@ func runExtract(opts *ExtractOptions) (err error) {
 	if opts.ContinueOnError && strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
 		return fmt.Errorf("--continue-on-error requires --output-path")
 	}
-	// Refused for dry runs too, and before any cloud listing, metadata read or
-	// acquisition: a missing object would abort the run without accounting.
-	if err := refuseCloudContinueOnError(opts); err != nil {
-		return err
-	}
 	if err := validateArtifactDescriptorOptions(opts); err != nil {
 		return err
 	}
@@ -605,7 +606,7 @@ func runExtract(opts *ExtractOptions) (err error) {
 	// carries local read paths; logicalByLocal maps each staged path back to its
 	// logical URI so provenance, manifests, and output naming record the logical
 	// source identity, never the staged working path.
-	files, logicalByLocal, decls, session, err := resolveInputSources(context.Background(), opts, runtimeProvenance.RunID)
+	files, logicalByLocal, decls, acquireFailures, session, err := resolveInputSources(context.Background(), opts, runtimeProvenance.RunID)
 	if err != nil {
 		return err
 	}
@@ -623,8 +624,8 @@ func runExtract(opts *ExtractOptions) (err error) {
 		}
 		return err
 	}
-	if afterLocalInputPreflight != nil {
-		afterLocalInputPreflight()
+	if opts.afterLocalInputPreflight != nil {
+		opts.afterLocalInputPreflight()
 	}
 	if err := preflightProvenanceRootInputs(opts, aggregatePreflightOrder(opts, files), logicalByLocal); err != nil {
 		if session != nil {
@@ -680,11 +681,11 @@ func runExtract(opts *ExtractOptions) (err error) {
 		// output that should have failed. When floors are declared (or --continue-on-error
 		// is set) the writer buffers per input, so this holds for cloud too — a discarded
 		// input is never published. See runAggregateJSONStreamingExtraction.
-		return runAggregateJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, decls, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
+		return runAggregateJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, decls, acquireFailures, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 
 	if shouldUseSequentialJSONStreaming(opts, extCfg, outputFormats) {
-		return runSequentialJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, decls, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
+		return runSequentialJSONStreamingExtraction(opts, sigCfg, extCfg, files, logicalByLocal, decls, acquireFailures, fieldPlan, warnLimiter, runtimeProvenance, startedAt)
 	}
 	warnSequentialMinOccurrencesBufferedFallback(logger, opts, extCfg, outputFormats)
 
@@ -708,6 +709,11 @@ func runExtract(opts *ExtractOptions) (err error) {
 	for i, file := range files {
 		logical := logicalIdentity(file, logicalByLocal)
 		displayPath := provenanceRootInputLabel(opts, file, logical)
+		// An input whose acquisition failed is recorded before anything opens it.
+		if aerr := acquireFailures[i+1]; aerr != nil {
+			results <- unavailableInputResult(file, logical, aerr)
+			continue
+		}
 		// Integrity-bound file-list inputs verify declared content identity BEFORE
 		// the bytes are parsed. The verified bytes are a private snapshot that the
 		// parse below reads, so verification and parsing cannot be separated by a
@@ -950,7 +956,7 @@ func runExtract(opts *ExtractOptions) (err error) {
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
-		if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if _, err := writeDataArtifactDescriptor(opts, manifest, durableFailureCount(opts, failureManifest)); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -1267,7 +1273,7 @@ func isJSONOutputFailure(err error) bool {
 	return errors.Is(err, errJSONOutput)
 }
 
-func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, decls []*fileListDeclaration, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
+func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, decls []*fileListDeclaration, acquireFailures map[int]error, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) error {
 	logger := logging.GetLogger()
 	ctx := context.Background()
 	manifestEnabled := shouldWriteManifest(opts)
@@ -1286,6 +1292,13 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 	for i, file := range files {
 		logical := logicalIdentity(file, logicalByLocal)
 		displayPath := provenanceRootInputLabel(opts, file, logical)
+		// An input whose acquisition failed is recorded before anything opens it.
+		if aerr := acquireFailures[i+1]; aerr != nil {
+			if err := recordFailedSequentialResult(unavailableInputResult(file, logical, aerr), opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, manifestEnabled, logger); err != nil {
+				return err
+			}
+			continue
+		}
 		// Integrity-bound file-list inputs verify declared content identity BEFORE
 		// parse/output. The verified bytes are a private snapshot that the parse
 		// below reads, so verification and parsing cannot be separated by a
@@ -1454,7 +1467,7 @@ func runSequentialJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
-		if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if _, err := writeDataArtifactDescriptor(opts, manifest, durableFailureCount(opts, failureManifest)); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -1913,7 +1926,7 @@ func runParallelExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, 
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
-		if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if _, err := writeDataArtifactDescriptor(opts, manifest, 0); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -1988,7 +2001,7 @@ func runParallelJSONStreamingExtraction(opts *ExtractOptions, extCfg *extract.Ex
 		if err := writeProvenanceManifest(opts, manifestPath, manifest); err != nil {
 			return err
 		}
-		if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+		if _, err := writeDataArtifactDescriptor(opts, manifest, 0); err != nil {
 			return err
 		}
 		if err := maybeValidateExtractOutput(opts, manifest); err != nil {
@@ -3379,7 +3392,11 @@ var extractOutputValidateHook func(opts *ExtractOptions, manifest provenance.Man
 // descriptor when --artifact-descriptor is set. The receipt is non-nil only after
 // Publish returns nil (create/validate/stage alone is insufficient). Flag-off
 // returns (nil, nil).
-func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manifest) (*publishedDataArtifact, error) {
+// writeDataArtifactDescriptor writes the optional data-artifact descriptor.
+// runFailed is the failed-input count from the run's durably written
+// failures.json (see durableFailureCount), or 0 where the route keeps none; it
+// is the descriptor lifecycle's second input (dataartifact.LifecycleForRun).
+func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manifest, runFailed int) (*publishedDataArtifact, error) {
 	if opts == nil || !opts.ArtifactDescriptor {
 		return nil, nil
 	}
@@ -3391,7 +3408,7 @@ func writeDataArtifactDescriptor(opts *ExtractOptions, manifest provenance.Manif
 	// same SanitizePath hygiene as provenance inputs/outputs (relative under known
 	// roots, else basename). The local filesystem path is only used to count rows.
 	localIndexPath := strings.TrimSpace(opts.RecordIndex)
-	descriptorOpts := dataartifact.DescriptorOptions{}
+	descriptorOpts := dataartifact.DescriptorOptions{RunFailed: runFailed}
 	if localIndexPath != "" {
 		descriptorOpts.RecordIndexPath = provenance.SanitizePath(localIndexPath, manifestSanitizeRoots(opts)...)
 		if n, cerr := countIndexedRecords(localIndexPath); cerr == nil {
@@ -3742,16 +3759,16 @@ func discoverInputReferencesForPreview(ctx context.Context, opts *ExtractOptions
 // declarations by input ordinal (nil entries for URI-only lines; nil slice when
 // the run did not use a file list), and the run session (nil for an all-local
 // run). The caller owns Close on the returned session.
-func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string) ([]string, map[string]string, []*fileListDeclaration, *uriio.Session, error) {
+func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string) ([]string, map[string]string, []*fileListDeclaration, map[int]error, *uriio.Session, error) {
 	cloud, err := referencesIncludeCloud(opts)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	var session *uriio.Session
 	if cloud {
 		session, err = newCloudSession(opts, runID)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 	}
 	var (
@@ -3766,7 +3783,7 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 			if session != nil {
 				_ = session.Close()
 			}
-			return nil, nil, nil, nil, eerr
+			return nil, nil, nil, nil, nil, eerr
 		}
 		refs = make([]string, len(entries))
 		decls = make([]*fileListDeclaration, len(entries))
@@ -3780,7 +3797,7 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 			if session != nil {
 				_ = session.Close()
 			}
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 	}
 
@@ -3788,17 +3805,26 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 		attachStagingBudget(session, opts)
 		// Bounded mode discovers only. Acquire happens just-in-time in the
 		// extract pipeline so peak staging obeys the run-global budgets.
-		return refs, map[string]string{}, decls, session, nil
+		return refs, map[string]string{}, decls, nil, session, nil
 	}
 
 	files := make([]string, 0, len(refs))
 	logicalByLocal := make(map[string]string, len(refs))
-	for _, ref := range refs {
-		var src *uriio.AcquiredSource
-		if session != nil {
-			src, err = session.Acquire(ctx, ref, resolvedInputHandle(opts))
-		} else {
-			src, err = uriio.Acquire(ctx, uriio.AcquireRequest{Reference: ref})
+	var acquireFailures map[int]error
+	// Under --continue-on-error, a named input that is missing or denied is kept
+	// in place (its logical reference stands in for the local path) and its error
+	// recorded by ordinal, so the run records it and continues. Any other error,
+	// and any miss in a listed --input-path, stops the run as before.
+	dropUnavailable := opts.ContinueOnError && strings.TrimSpace(opts.InputPath) == ""
+	for i, ref := range refs {
+		src, err := acquireInputSource(ctx, opts, session, ref)
+		if _, unavailable := unavailableClass(err); err != nil && dropUnavailable && unavailable {
+			if acquireFailures == nil {
+				acquireFailures = make(map[int]error)
+			}
+			acquireFailures[i+1] = err
+			files = append(files, ref)
+			continue
 		}
 		if err != nil {
 			if session != nil {
@@ -3806,9 +3832,9 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 			}
 			resolveErr := fmt.Errorf("resolve input %s: %w", ref, err)
 			if classified, cerr := uriio.Classify(ref); cerr == nil && classified.IsCloud() {
-				return nil, nil, nil, nil, provenanceRootSanitizeError(opts, resolveErr)
+				return nil, nil, nil, nil, nil, provenanceRootSanitizeError(opts, resolveErr)
 			}
-			return nil, nil, nil, nil, provenanceRootSanitizeError(opts, resolveErr, ref)
+			return nil, nil, nil, nil, nil, provenanceRootSanitizeError(opts, resolveErr, ref)
 		}
 		files = append(files, src.LocalPath)
 		// Only cloud sources carry a distinct logical identity. file:// stays a
@@ -3818,7 +3844,7 @@ func resolveInputSources(ctx context.Context, opts *ExtractOptions, runID string
 			logicalByLocal[src.LocalPath] = src.LogicalURI
 		}
 	}
-	return files, logicalByLocal, decls, session, nil
+	return files, logicalByLocal, decls, acquireFailures, session, nil
 }
 
 func discoverInputFiles(opts *ExtractOptions) ([]string, error) {

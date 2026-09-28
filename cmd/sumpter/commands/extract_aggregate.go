@@ -574,7 +574,7 @@ func (w *aggregateWriter) abort() error {
 // runAggregateJSONStreamingExtraction streams every input's records to one NDJSON
 // writer (rolling shards) in deterministic resolved-input order, recording the
 // per-input inventory and per-shard integrity digests in the provenance manifest.
-func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, decls []*fileListDeclaration, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) (err error) {
+func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.FileSignature, extCfg *extract.ExtractRecordMatch, files []string, logicalByLocal map[string]string, decls []*fileListDeclaration, acquireFailures map[int]error, fieldPlan *externalFieldPlan, warnLimiter *sourceExtractionWarnLimiter, runtimeProvenance provenance.RuntimeOptions, startedAt time.Time) (err error) {
 	logger := logging.GetLogger()
 	ctx := context.Background()
 	sanitizeRoots := manifestSanitizeRoots(opts)
@@ -617,6 +617,16 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 		// records stay buffered until the input commits (flush) or fails (discard), so a
 		// failed input never reaches the shared shard.
 		writer.beginInput()
+
+		// An input whose acquisition failed is recorded before anything opens it;
+		// it contributed no rows, so its empty buffer is discarded.
+		if aerr := acquireFailures[ordinal]; aerr != nil {
+			writer.discardInput()
+			if recordErr := recordFailedAggregateInput(unavailableInputResult(file, logical, aerr), opts, extCfg, &manifestInputs, dispositionSummary, failureManifest, sanitizeRoots, nil); recordErr != nil {
+				return recordErr
+			}
+			continue
+		}
 
 		// Integrity-bound file-list inputs verify declared content identity BEFORE
 		// the bytes are parsed. The verified bytes are a private snapshot that the
@@ -797,11 +807,15 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	manifest.OutputMode = outputModeAggregate
 	manifest.AggregateOutputs = writer.shards
 	manifest.RowIdentityEmitted = opts.EmitInputIdentity
-	// Emit the input-accounting integers from the gap-free inputs[] inventory this
-	// completed aggregate run holds (R5). An unaccounted disposition would be a
-	// producer bug, so fail rather than emit unsubstantiated counts.
-	if err := manifest.SetInputAccounting(); err != nil {
-		return fmt.Errorf("compute input accounting for aggregate manifest: %w", err)
+	// Emit the input-accounting integers only from a gap-free inputs[] inventory
+	// (R5). A failed input that could not be identified has no row, so the
+	// inventory is short of the walked cohort; the counts are then omitted and
+	// failures.json is the authoritative record. An unaccounted disposition would
+	// be a producer bug, so fail rather than emit unsubstantiated counts.
+	if len(manifest.Inputs) == failureManifest.CohortSize {
+		if err := manifest.SetInputAccounting(); err != nil {
+			return fmt.Errorf("compute input accounting for aggregate manifest: %w", err)
+		}
 	}
 	if err := validateAggregateBeforeManifest(opts, manifest); err != nil {
 		return err
@@ -816,7 +830,7 @@ func runAggregateJSONStreamingExtraction(opts *ExtractOptions, sigCfg *extract.F
 	// later sidecar failures (including the optional descriptor) should fail the run
 	// without overwriting a complete manifest.
 	manifestFinalized = true
-	if _, err := writeDataArtifactDescriptor(opts, manifest); err != nil {
+	if _, err := writeDataArtifactDescriptor(opts, manifest, durableFailureCount(opts, failureManifest)); err != nil {
 		return err
 	}
 	if err := maybeValidateExtractOutput(opts, manifest); err != nil {

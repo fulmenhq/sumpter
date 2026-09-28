@@ -22,7 +22,8 @@ const inputDispositionFailed = "failed"
 // LifecycleFromManifest maps sumpter provenance completeness signals onto the
 // portable data-artifact/v0 lifecycle field. It invents no new accounting: it
 // reads only Incomplete, InputsFailed, and per-input disposition values already
-// present on the manifest (the SUM-065 input-accounting floor).
+// present on the manifest. Descriptors are derived with LifecycleForRun, which
+// adds the run's durable failure count as a second input.
 //
 // Precedence (first match wins):
 //  1. Incomplete == true → incomplete
@@ -51,4 +52,18 @@ func LifecycleFromManifest(manifest provenance.Manifest) string {
 		}
 	}
 	return LifecycleComplete
+}
+
+// LifecycleForRun is the descriptor lifecycle: LifecycleFromManifest, except that
+// a complete result becomes partial when runFailed, the failed-input count from
+// the run's durably written failures.json, is non-zero. An input that failed
+// before it could be identified (missing or unreadable) has no manifest row, so
+// without this second input such a run would read as complete. incomplete still
+// takes precedence.
+func LifecycleForRun(manifest provenance.Manifest, runFailed int) string {
+	lifecycle := LifecycleFromManifest(manifest)
+	if lifecycle == LifecycleComplete && runFailed > 0 {
+		return LifecyclePartial
+	}
+	return lifecycle
 }
