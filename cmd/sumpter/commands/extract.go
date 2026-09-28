@@ -18,6 +18,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/artifactcontract"
 	"github.com/fulmenhq/sumpter/internal/config"
 	"github.com/fulmenhq/sumpter/internal/dataartifact"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/extract/parallel"
 	"github.com/fulmenhq/sumpter/internal/extract/parquetwriter"
@@ -112,6 +113,13 @@ type ExtractOptions struct {
 	CommandName              string
 	Argv                     []string
 	Recipe                   *provenance.Recipe
+	// InputFormat is the recipe's defaults.input.format (recipe mode only).
+	InputFormat string
+	// includePatternExplicit records that --include-pattern was given, so the
+	// format-dependent default does not override it.
+	includePatternExplicit bool
+	// effectiveInputFormat is the resolved input format for provenance.
+	effectiveInputFormat string
 	// Parallel extraction options
 	RecordIndex       string // Path to record index file
 	MaxRecordSizeMB   int    // Maximum record size in MB (0 = no limit)
@@ -219,6 +227,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 				opts.Format = ""
 			}
 			opts.AllowLargeFiles = allowLargeFiles
+			opts.includePatternExplicit = cmd.Flags().Changed("include-pattern")
 			if err := resolveProvenanceRootFlag(cmd, opts); err != nil {
 				return err
 			}
@@ -488,6 +497,20 @@ func runExtract(opts *ExtractOptions) (err error) {
 		return err
 	}
 	logger.Debug("Extract config loaded", zap.String("record_type", extCfg.RecordType))
+	inputFormatToken, err := extract.ResolveInputFormat(opts.InputFormat, opts.Recipe != nil, sigCfg, extCfg, opts.ApplicabilityConfig)
+	if err != nil {
+		return err
+	}
+	if inputFormatToken != extract.FormatXML {
+		if opts.RecordIndex != "" {
+			return fmt.Errorf("record-index extraction supports xml input only in this release; input format is %q", inputFormatToken)
+		}
+		if opts.Recipe == nil && !opts.includePatternExplicit && opts.IncludePattern == recipesmanifest.DefaultIncludePattern(extract.FormatXML) {
+			opts.IncludePattern = recipesmanifest.DefaultIncludePattern(inputFormatToken)
+			opts.Argv = buildExtractArgv(opts)
+		}
+	}
+	opts.effectiveInputFormat = inputFormatToken
 	if err := validateParquetWithholdColumns(opts.ParquetWithholdColumns, extCfg.OutputSchema); err != nil {
 		return err
 	}
@@ -1964,9 +1987,12 @@ func failureReasonForError(err error) extract.DispositionReason {
 	if err == nil {
 		return ""
 	}
+	if errors.Is(err, docnode.ErrRouteUnsupported) {
+		return extract.DispositionReasonRouteUnsupported
+	}
 	text := err.Error()
 	switch {
-	case strings.Contains(text, "failed to parse XML") || strings.Contains(text, "XML syntax error"):
+	case strings.Contains(text, "failed to parse XML") || strings.Contains(text, "failed to parse JSON") || strings.Contains(text, "XML syntax error"):
 		return extract.DispositionReasonParseError
 	case strings.Contains(text, "signature mismatch"):
 		return extract.DispositionReasonSignatureMismatch
@@ -2326,6 +2352,13 @@ func buildProvenanceManifest(opts *ExtractOptions, runtimeProvenance provenance.
 	argv := opts.Argv
 	if len(argv) == 0 {
 		argv = buildExtractArgv(opts)
+	}
+	inputFormat := opts.effectiveInputFormat
+	if inputFormat == "" {
+		inputFormat = extract.FormatXML
+	}
+	for i := range inputs {
+		inputs[i].Format = inputFormat
 	}
 	manifest := provenance.Manifest{
 		SchemaVersion:  provenance.ManifestSchemaVersion,

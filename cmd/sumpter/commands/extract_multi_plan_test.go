@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeMultiRecipeWorkspace creates a minimal, self-contained extract recipe
@@ -265,5 +266,91 @@ defaults:
 	want := filepath.Join(plan.Workspace, "data")
 	if plan.opts.SourceExtractionInput.Path != want {
 		t.Errorf("SourceExtractionInput.Path = %q, want workspace-rooted %q", plan.opts.SourceExtractionInput.Path, want)
+	}
+}
+
+func TestLoadRecipePlan_RejectsJSONInput(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "jsonrecipe")
+	recipe, err := os.ReadFile(filepath.Join(ws, "recipe.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withFormat := strings.Replace(string(recipe), "  input:\n", "  input:\n    format: json\n", 1)
+	if err := os.WriteFile(filepath.Join(ws, "recipe.yaml"), []byte(withFormat), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sig := filepath.Join(ws, "signature/signature.yaml")
+	sigBytes, err := os.ReadFile(sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sig, append(sigBytes, []byte("format_type: json\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outputDir := filepath.Join(t.TempDir(), "jsonrecipe")
+	shared := &multiSharedOptions{FileList: filepath.Join(t.TempDir(), "f.txt"), RunID: testMultiRunID}
+	_, err = loadRecipePlan(ws, shared, outputDir, io.Discard)
+	want := `extract-multi supports xml input only in this release; recipe jsonrecipe declares json input; run json recipes with "sumpter extract"`
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+	if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
+		t.Fatalf("output directory exists after refusal: %v", statErr)
+	}
+}
+
+func TestLoadRecipePlan_JSONFormatMismatchPrecedesRefusal(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "mismatch")
+	recipe, err := os.ReadFile(filepath.Join(ws, "recipe.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withFormat := strings.Replace(string(recipe), "  input:\n", "  input:\n    format: json\n", 1)
+	if err := os.WriteFile(filepath.Join(ws, "recipe.yaml"), []byte(withFormat), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shared := &multiSharedOptions{FileList: filepath.Join(t.TempDir(), "f.txt"), RunID: testMultiRunID}
+	_, err = loadRecipePlan(ws, shared, filepath.Join(t.TempDir(), "mismatch"), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), `signature format_type defaults to xml: add "format_type: json" to the signature`) {
+		t.Fatalf("error = %v, want the omitted format_type error", err)
+	}
+}
+
+func TestExtractMultiMixedBundleRefusedBeforeOutput(t *testing.T) {
+	xmlWS := writeMultiRecipeWorkspace(t, "xmlrecipe")
+	jsonWS := writeMultiRecipeWorkspace(t, "jsonrecipe")
+	recipe, err := os.ReadFile(filepath.Join(jsonWS, "recipe.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withFormat := strings.Replace(string(recipe), "  input:\n", "  input:\n    format: json\n", 1)
+	if err := os.WriteFile(filepath.Join(jsonWS, "recipe.yaml"), []byte(withFormat), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sig := filepath.Join(jsonWS, "signature/signature.yaml")
+	sigBytes, err := os.ReadFile(sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sig, append(sigBytes, []byte("format_type: json\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fileList, _ := writeMultiInputSet(t, 2)
+	out := t.TempDir()
+	shared := &multiSharedOptions{FileList: fileList, OutputPath: out, RunID: testMultiRunID}
+	err = runExtractMulti(shared, []string{xmlWS, jsonWS}, io.Discard, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "recipe jsonrecipe declares json input") {
+		t.Fatalf("error = %v, want the json refusal naming jsonrecipe", err)
+	}
+	entries, readErr := os.ReadDir(out)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("output root not empty after refusal: %v", names)
 	}
 }

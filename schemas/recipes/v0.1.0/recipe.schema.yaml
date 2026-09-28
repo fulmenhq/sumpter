@@ -139,6 +139,22 @@ properties:
             pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
           include_pattern:
             type: string
+            description: |
+              Glob for path-mode discovery. Defaults to `*.xml`, or `*.json`
+              when `format` is `json`. An explicit pattern always wins.
+          format:
+            type: string
+            enum: ["xml", "json"]
+            default: "xml"
+            description: |
+              Input syntax of the documents this recipe reads. `json` parses
+              each input as one JSON document (the whole-document route).
+              The signature's `format_type` must declare the same value; an
+              omitted `format_type` means `xml`. File names are never used to
+              choose a format. Note the difference from
+              `defaults.output.format`: there, `json` and `ndjson` name one
+              NDJSON writer; for input they are distinct syntaxes, and
+              line-delimited input (`ndjson`) arrives in a later release.
           exclude_pattern:
             type: string
           max_depth:

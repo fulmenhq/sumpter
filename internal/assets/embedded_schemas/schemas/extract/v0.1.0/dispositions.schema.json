@@ -62,7 +62,8 @@
               "min_occurrences_violation",
               "parse_error",
               "validation_error",
-              "internal_error"
+              "internal_error",
+              "route_unsupported"
             ]
           },
           "disposition_detail": {

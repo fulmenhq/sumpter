@@ -191,6 +191,9 @@ const (
 	DispositionReasonParseError                  DispositionReason = "parse_error"
 	DispositionReasonValidationError             DispositionReason = "validation_error"
 	DispositionReasonInternalError               DispositionReason = "internal_error"
+	// DispositionReasonRouteUnsupported records a deliberate refusal: the
+	// input needs a route its format does not support in this release.
+	DispositionReasonRouteUnsupported DispositionReason = "route_unsupported"
 )
 
 // OutputOptions controls optional output sections.

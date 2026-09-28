@@ -45,11 +45,13 @@ func TestManifestSchemaAllowsRootRelativeInputPathForm(t *testing.T) {
 			Path:      "inputs/source.xml",
 			SHA256:    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			SizeBytes: 42,
+			Format:    "xml",
 		},
 		{
 			Path:      "s3://bucket/source.xml",
 			SHA256:    "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 			SizeBytes: 7,
+			Format:    "xml",
 		},
 	}
 	assertValidManifest(t, manifest)
@@ -486,6 +488,7 @@ func testManifest(t *testing.T) Manifest {
 			Path:      "input.xml",
 			SHA256:    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			SizeBytes: 42,
+			Format:    "xml",
 		}},
 		Outputs: []Output{{
 			Path:        "records.json",

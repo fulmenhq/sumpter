@@ -65,7 +65,7 @@ func assertManifestOutputPath(t *testing.T, manifestBytes []byte, wantOutput, st
 // substring scan for short sentinel creds (the moto harness uses key/secret
 // "test", which is a substring of the public bucket/prefix and would false-fire).
 var allowedManifestInputFields = map[string]bool{
-	"path": true, "credentials_handle": true, "sha256": true, "size_bytes": true,
+	"path": true, "credentials_handle": true, "sha256": true, "size_bytes": true, "format": true,
 	"record_type": true, "disposition": true, "disposition_reason": true, "disposition_detail": true,
 }
 

@@ -1,0 +1,16 @@
+{
+  "WidgetCoData": {
+    "Customer": "Acme Corp",
+    "first name": "Ada",
+    "@id": "w-1",
+    "1st": "one",
+    "Record": [
+      {"id": "r1", "qty": 2.50},
+      {"id": "r2", "qty": 1e3}
+    ],
+    "tags": ["a", "b"],
+    "empty": [],
+    "flag": true,
+    "missing": null
+  }
+}

@@ -32,6 +32,7 @@ type InspectOptions struct {
 	MaxPaths          int
 	SamplesPerPath    int
 	ForceEncoding     string
+	InputFormat       string
 	Progress          bool
 	IncludeAttrs      bool
 	ValidateOutput    bool
@@ -390,6 +391,7 @@ records the logical s3:// URI, never the staging path.`,
 	cmd.Flags().IntVar(&opts.MaxPaths, "max-paths", 200, "Maximum number of unique paths to track")
 	cmd.Flags().IntVar(&opts.SamplesPerPath, "samples-per-path", 2, "Number of text samples to collect per path")
 	cmd.Flags().StringVar(&opts.ForceEncoding, "force-encoding", "", "Force specific encoding (e.g., windows-1252)")
+	cmd.Flags().StringVar(&opts.InputFormat, "input-format", "xml", "Input syntax: xml (JSON inspection arrives in a later release)")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress for large files")
 	cmd.Flags().BoolVar(&opts.IncludeAttrs, "include-attributes", true, "Include attribute analysis")
 	cmd.Flags().BoolVar(&opts.ValidateOutput, "validate-output", false, "Validate JSON output against schema")
@@ -474,6 +476,10 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 			SizeMB:  fmt.Sprintf("%.2f", float64(stat.Size())/1024/1024),
 			IsStdin: false,
 		}
+	}
+
+	if err := checkInspectInput(opts.InputFormat, &reader); err != nil {
+		return err
 	}
 
 	// Detect encoding

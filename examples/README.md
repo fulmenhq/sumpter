@@ -32,6 +32,7 @@ Positive cases live in `01`-`89`; negative cases live in `90`-`99`.
 | `08-polymorphic-line-items`                      | Polymorphic array mapping                         |
 | `09-predicate-match-selector`                    | Predicate match selectors                         |
 | `10-optional-fields`                             | Optional fields and boolean coercion              |
+| `14-json-basic-extraction`                       | JSON input (twin of case 01)                      |
 | `90-negative-malformed-xml`                      | XML parser failure                                |
 | `91-negative-missing-required`                   | Output schema required failure                    |
 | `92-negative-validation-fails`                   | Validation failure                                |

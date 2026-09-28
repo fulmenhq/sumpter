@@ -19,7 +19,8 @@ import (
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/assets"
 	"github.com/fulmenhq/sumpter/internal/docnode"
-	_ "github.com/fulmenhq/sumpter/internal/docnode/xml" // registers the XML format
+	_ "github.com/fulmenhq/sumpter/internal/docnode/json" // registers the JSON format
+	_ "github.com/fulmenhq/sumpter/internal/docnode/xml"  // registers the XML format
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
 	"github.com/fulmenhq/sumpter/internal/logging"
@@ -744,7 +745,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		return finish()
 	}
 
-	format, err := inputFormat()
+	format, err := inputFormat(sigCfg)
 	if err != nil {
 		logger.Error("Failed to resolve input format", zap.String("file", diagnosticPath), zap.Error(err))
 		result.Error = err
@@ -916,6 +917,18 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	const streamingThreshold = 100 * 1024 * 1024 // 100MB
 
 	shouldStream, estimatedSize, streamCompressed := shouldUseLargeFileStreaming(filePath, allowLargeFiles, sink, appCfg, streamingThreshold)
+	if isJSONInput(sigCfg) {
+		// JSON has no streaming route in this release: above the threshold it
+		// parses as one document only with --allow-large-files.
+		if estimatedSize > streamingThreshold && !allowLargeFiles {
+			t.result.Error = errJSONStreamingUnsupported
+			t.markFailed(DispositionReasonRouteUnsupported, t.result.Error.Error())
+			t.markBoundaryFailure(DispositionReasonRouteUnsupported, t.result.Error.Error())
+			t.emitBoundary()
+			return t.result
+		}
+		shouldStream = false
+	}
 	if shouldStream {
 		if appCfg != nil {
 			t.result.Error = fmt.Errorf("applicability declared but not supported in streaming mode")
@@ -957,7 +970,7 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 
 	// Parse XML document
 	logger.Debug("Parsing XML document", zap.String("file", diagnosticPath))
-	format, err := inputFormat()
+	format, err := inputFormat(sigCfg)
 	if err != nil {
 		t.result.Error = err
 		t.markFailed(DispositionReasonParseError, t.result.Error.Error())
@@ -968,8 +981,9 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 	doc, err := format.Parse(bytes.NewReader(content))
 	if err != nil {
 		err = runtimeProvenance.DiagnosticError(err, filePath)
-		logger.Error("Failed to parse XML", zap.String("file", diagnosticPath), zap.Error(err))
-		t.result.Error = fmt.Errorf("failed to parse XML: %w", err)
+		label := strings.ToUpper(format.Token())
+		logger.Error("Failed to parse "+label, zap.String("file", diagnosticPath), zap.Error(err))
+		t.result.Error = fmt.Errorf("failed to parse %s: %w", label, err)
 		t.markFailed(DispositionReasonParseError, t.result.Error.Error())
 		t.markBoundaryFailure(DispositionReasonParseError, t.result.Error.Error())
 		t.emitBoundary()
@@ -1238,7 +1252,7 @@ func ParseFileForDOMDispatch(filePath string, allowLargeFiles bool) (docnode.Doc
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
-	format, err := inputFormat()
+	format, err := inputFormat(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1247,16 +1261,6 @@ func ParseFileForDOMDispatch(filePath string, allowLargeFiles bool) (docnode.Doc
 		return nil, fmt.Errorf("failed to parse XML: %w", err)
 	}
 	return doc, nil
-}
-
-// inputFormat returns the format used to parse extraction inputs. Only the
-// default format is selectable in this release.
-func inputFormat() (docnode.Format, error) {
-	format, ok := docnode.Lookup(docnode.Default)
-	if !ok {
-		return nil, fmt.Errorf("input format %q is not registered", docnode.Default)
-	}
-	return format, nil
 }
 
 func evaluateApplicability(doc docnode.Node, cfg *ApplicabilityConfig) (bool, error) {
@@ -1931,7 +1935,7 @@ func extractValue(format docnode.Format, node docnode.Node, mapping *FieldMappin
 		return nil, nil
 	}
 
-	value, err := evaluateXPathValue(node, mapping.XPath, mapping.CompiledXPath)
+	value, err := evaluateXPathValue(format, node, mapping.XPath, mapping.CompiledXPath)
 	if err != nil {
 		return nil, err
 	}
@@ -2159,6 +2163,9 @@ func extractArrayValue(format docnode.Format, node docnode.Node, mapping *FieldM
 		}
 
 		if len(items) == 0 {
+			if err := checkUnmatchedPolymorphic(format, nodes, mapping); err != nil {
+				return nil, err
+			}
 			return nil, nil
 		}
 		return items, nil
@@ -2214,7 +2221,7 @@ func evaluateExists(format docnode.Format, node docnode.Node, expr string, compi
 	return len(nodes) > 0, nil
 }
 
-func evaluateXPathValue(node docnode.Node, expr string, compiled *xpath.Expr) (interface{}, error) {
+func evaluateXPathValue(format docnode.Format, node docnode.Node, expr string, compiled *xpath.Expr) (interface{}, error) {
 	if node == nil {
 		return nil, nil
 	}
@@ -2243,12 +2250,29 @@ func evaluateXPathValue(node docnode.Node, expr string, compiled *xpath.Expr) (i
 		return strings.TrimSpace(v), nil
 	case *xpath.NodeIterator:
 		if v.MoveNext() {
+			if isNullNode(format, v.Current()) {
+				return nil, nil
+			}
 			return strings.TrimSpace(v.Current().Value()), nil
 		}
 		return nil, nil
 	default:
 		return fmt.Sprintf("%v", v), nil
 	}
+}
+
+// isNullNode reports whether a json iterator position is a null value, which
+// binds as absent. XML positions are never null.
+func isNullNode(format docnode.Format, nav xpath.NodeNavigator) bool {
+	if format == nil || format.Token() != FormatJSON {
+		return false
+	}
+	n, ok := format.NodeOf(nav)
+	if !ok {
+		return false
+	}
+	s, ok := n.(docnode.Scalar)
+	return ok && s.Kind() == docnode.ScalarNull
 }
 
 func evaluateNodeSet(format docnode.Format, node docnode.Node, compiled *xpath.Expr, expr string) ([]docnode.Node, error) {

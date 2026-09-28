@@ -86,7 +86,7 @@
       "version": "v0.1.0",
       "kind": "output",
       "path": "extract/v0.1.0/dispositions.schema.json",
-      "sha256": "sha256:38e26d5d2344a1e58f4ff0b3f9fcf5cfc74aec5b76feded93d4389dbcf0e13b8"
+      "sha256": "sha256:7df77191618010e0e25bfc6efe9e29cc03d8b00aed492bebc7c57772fe234755"
     },
     {
       "id": "contract://sumpter.extract/v0.1.0/extract-record-envelope.schema.json",
@@ -110,7 +110,7 @@
       "version": "v0.1.0",
       "kind": "output",
       "path": "extract/v0.1.0/failures.schema.json",
-      "sha256": "sha256:962f042b2995e37ecd75763a828080f4b521b3e087ce6e12e7b8c8dc982b0073"
+      "sha256": "sha256:0adca160132aef4c25ffc8ca4a4710362462466aa6d3c5b0ad8addc03a78b163"
     },
     {
       "id": "contract://sumpter.extract/v0.1.0/file-signature-schema.yaml",
@@ -118,7 +118,7 @@
       "version": "v0.1.0",
       "kind": "input",
       "path": "extract/v0.1.0/file-signature-schema.yaml",
-      "sha256": "sha256:8cbba489134f6ce1725d338ef5f231b4d6e632fdde36789257ea7a584e9df35d"
+      "sha256": "sha256:3f7b28d4a6441e38a64e822ca20d720ca85f29b64986ca1bf507729fcb7cd3e2"
     },
     {
       "id": "contract://sumpter.index/v0.1.0/record-index.schema.json",
@@ -166,7 +166,7 @@
       "version": "v1",
       "kind": "output",
       "path": "provenance/v1.json",
-      "sha256": "sha256:4ce699985d1492f549afa626e2d272e73df1fee05f39f76cbb8b641bf77d07aa"
+      "sha256": "sha256:3c5d0668c43ca6293ac7d8b502e3ae3c3989cd08861e45bf72919a6bcf5700a4"
     },
     {
       "id": "contract://sumpter.recipes/v0.1.0/applicability.schema.yaml",
@@ -182,7 +182,7 @@
       "version": "v0.1.0",
       "kind": "input",
       "path": "recipes/v0.1.0/recipe.schema.yaml",
-      "sha256": "sha256:61169efc068db62802e49ceaf8e33e3128ce988eb6fe2741fcfc7f0aedcf4378"
+      "sha256": "sha256:12d740f32a72fb4401258160ad3f7aa313a9bb69fc9bb0ee5b786089607ab91b"
     },
     {
       "id": "contract://sumpter.retrieve/v0.1.0/retrieve-config.schema.yaml",

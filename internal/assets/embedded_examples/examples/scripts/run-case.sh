@@ -19,6 +19,11 @@ fi
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sumpter-example-${CASE_NAME}.XXXXXX")"
 trap 'rm -rf "$OUT_DIR"' EXIT
 
+INPUT_FILE="$CASE_DIR/input.xml"
+if [ ! -f "$INPUT_FILE" ] && [ -f "$CASE_DIR/input.json" ]; then
+	INPUT_FILE="$CASE_DIR/input.json"
+fi
+
 OUTPUT_PATTERN="records.jsonl"
 RUN_ID="0196d5b2-0d00-7c00-8000-000000000006"
 
@@ -26,7 +31,7 @@ case "$CASE_NAME" in
 9[0-9]-*)
 	set +e
 	OUTPUT="$("$SUMPTER_BIN" recipes run extract "$CASE_DIR/recipe" \
-		--files "$CASE_DIR/input.xml" \
+		--files "$INPUT_FILE" \
 		--output-path "$OUT_DIR" \
 		--output-pattern "$OUTPUT_PATTERN" \
 		--run-id "$RUN_ID" \
@@ -54,7 +59,7 @@ case "$CASE_NAME" in
 esac
 
 "$SUMPTER_BIN" recipes run extract "$CASE_DIR/recipe" \
-	--files "$CASE_DIR/input.xml" \
+	--files "$INPUT_FILE" \
 	--output-path "$OUT_DIR" \
 	--output-pattern "$OUTPUT_PATTERN" \
 	--run-id "$RUN_ID" \

@@ -10,7 +10,7 @@ import (
 
 // parseXMLDoc parses a test document through the registered input format.
 func parseXMLDoc(r io.Reader) (docnode.Document, error) {
-	format, err := inputFormat()
+	format, err := inputFormat(nil)
 	if err != nil {
 		return nil, err
 	}

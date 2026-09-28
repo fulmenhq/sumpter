@@ -351,6 +351,7 @@ func loadRecipePlan(workspace string, shared *multiSharedOptions, outputDir stri
 
 	defaults := manifest.Defaults
 	opts := &ExtractOptions{
+		InputFormat:            manifest.Defaults.Input.Format,
 		SignatureConfig:        signaturePath,
 		ExtractConfig:          extractPath,
 		ApplicabilityConfig:    applicabilityCfg,
@@ -519,6 +520,14 @@ func assembleRecipePlan(recipeID, absWorkspace, outputDir string, opts *ExtractO
 	if err != nil {
 		return nil, fmt.Errorf("recipe %q: failed to load extract config: %w", recipeID, err)
 	}
+	inputFormatToken, err := extract.ResolveInputFormat(opts.InputFormat, true, sigCfg, extCfg, opts.ApplicabilityConfig)
+	if err != nil {
+		return nil, fmt.Errorf("recipe %q: %w", recipeID, err)
+	}
+	if inputFormatToken != extract.FormatXML {
+		return nil, fmt.Errorf("extract-multi supports xml input only in this release; recipe %s declares %s input; run json recipes with \"sumpter extract\"", recipeID, inputFormatToken)
+	}
+	opts.effectiveInputFormat = inputFormatToken
 	if err := extract.SetUniformSchema(extCfg, opts.UniformSchema); err != nil {
 		return nil, err
 	}

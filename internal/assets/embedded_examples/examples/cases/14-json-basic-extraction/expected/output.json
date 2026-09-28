@@ -1,0 +1,14 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "customer": "WidgetCo North",
+          "order_id": "ORDER-1001",
+          "status": "open",
+          "total_amount": 42.5
+        }
+      }
+    }
+  ]
+}
