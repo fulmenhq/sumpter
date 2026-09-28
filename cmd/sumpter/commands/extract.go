@@ -115,6 +115,12 @@ type ExtractOptions struct {
 	Recipe                   *provenance.Recipe
 	// InputFormat is the recipe's defaults.input.format (recipe mode only).
 	InputFormat string
+	// inputDisplay is the input root as the operator wrote it and inputBaseKind
+	// names what a relative root resolves against; diagnostics show these, not a
+	// resolved path. Empty means --input-path as given, relative to the working
+	// directory.
+	inputDisplay  string
+	inputBaseKind string
 	// includePatternExplicit records that --include-pattern was given, so the
 	// format-dependent default does not override it.
 	includePatternExplicit bool
@@ -594,6 +600,14 @@ func runExtract(opts *ExtractOptions) (err error) {
 	files, logicalByLocal, decls, session, err := resolveInputSources(context.Background(), opts, runtimeProvenance.RunID)
 	if err != nil {
 		return err
+	}
+	// Zero discovered inputs fail before any output setup, so an earlier run's
+	// artifacts under the output path are left untouched.
+	if len(files) == 0 {
+		if session != nil {
+			_ = session.Close()
+		}
+		return noInputsMatchedError(opts)
 	}
 	if err := preflightProvenanceRootInputs(opts, aggregatePreflightOrder(opts, files), logicalByLocal); err != nil {
 		if session != nil {
@@ -3649,6 +3663,9 @@ func runDryRunPreview(ctx context.Context, opts *ExtractOptions, runID string) e
 	}
 	if err != nil {
 		return err
+	}
+	if len(refs) == 0 {
+		return noInputsMatchedError(opts)
 	}
 	if isAggregateMode(opts) && strings.TrimSpace(opts.InputPath) != "" {
 		sort.Strings(refs)

@@ -535,6 +535,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 	if opts.InputPath != "" {
 		extractOpts.InputPath = resolveMaybeRelative(absWorkspace, opts.InputPath)
+		extractOpts.inputDisplay, extractOpts.inputBaseKind = opts.InputPath, baseKindRecipeDir
 		sourceExtractionInput.Path = extractOpts.InputPath
 	}
 	if !cliInput {
@@ -549,6 +550,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 			extractOpts.FileList = resolveMaybeRelative(absWorkspace, defaults.Input.FilesFrom)
 		case defaults.Input.Path != "":
 			extractOpts.InputPath = resolveMaybeRelative(absWorkspace, defaults.Input.Path)
+			extractOpts.inputDisplay, extractOpts.inputBaseKind = defaults.Input.Path, baseKindRecipeDir
 			sourceExtractionInput.Path = extractOpts.InputPath
 		}
 	}

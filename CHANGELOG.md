@@ -24,6 +24,8 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ### Changed
 
+- **An input root that matches no files is an error** — `extract files` and `recipes run extract` now exit non-zero when `--input-path` or a recipe's `defaults.input.path` exists but matches no files, including under `--dry-run` and `--continue-on-error`. A scheduled job that used to exit 0 on an empty day now fails. The run stops before creating the output directory or writing anything, so an earlier run's manifest and data under the same `--output-path` are left untouched. The error names the root as given, the include and exclude patterns, and what a relative root is relative to. There is no option yet to allow an empty run.
+
 - **JSON parsing reports the first fault in input order** — invalid UTF-8 is reported with its byte offset, and when a JSON input has more than one fault, the first one in byte order is reported. A duplicate key longer than 64 bytes is shown as a prefix followed by its length in bytes.
 
 - **Signature `format_type: protobuf` is rejected** — `protobuf` stays in the signature enum but is now rejected at load as reserved, not implemented. A recipe with `defaults.input.format: json` must declare `format_type: json` in its signature.
