@@ -52,6 +52,12 @@ attribute or namespace nodes.
 | member whose value is an object | element `k` whose children are the object's members |
 | scalar value | the element has one text-node child carrying the string-value below |
 
+## Encoding
+
+JSON input is UTF-8. One leading UTF-8 byte order mark (`EF BB BF`) is
+accepted and ignored; the input digest still covers the raw bytes, byte order
+mark included. Any other encoding is refused.
+
 ## Scalars
 
 | JSON value | String-value | Scalar kind |
@@ -78,16 +84,48 @@ empty array binds absent.
 - The string-value of an object or array element is the concatenation of its
   descendant text in document order, as in XML.
 
+## Selecting keys that are not XML names
+
+A key that is an XML NCName (an XML name without `:`) is selected with a
+plain step: `Order`, or `a.b` for the key `"a.b"`, which is distinct from the
+nested keys `a` then `b` (`a/b`). Every other key is selected with
+`*[local-name()=LIT]`, where `LIT` is an XPath 1.0 string literal. XPath 1.0
+has no escapes, so a key without `'` is quoted with `'`, a key with `'` but
+without `"` is quoted with `"`, and a key with both is built with `concat()`.
+`inspect --generate-config` builds its selectors this way.
+
+<!-- key-steps:begin -->
+| Key | Step |
+| --- | --- |
+| `first name` | `*[local-name()='first name']` |
+| `123` | `*[local-name()='123']` |
+| `$ref` | `*[local-name()='$ref']` |
+| `@id` | `*[local-name()='@id']` |
+| `a:b` | `*[local-name()='a:b']` |
+| `a\b` | `*[local-name()='a\b']` |
+| (empty key) | `*[local-name()='']` |
+| `it's` | `*[local-name()="it's"]` |
+| `say "hi"` | `*[local-name()='say "hi"']` |
+| `both'and"` | `*[local-name()=concat('both',"'",'and"')]` |
+<!-- key-steps:end -->
+
+A plain step `a:b` selects nothing: XPath reads `a` as a namespace prefix.
+
 ## What JSON input rejects
 
 These are hard errors. Parse errors produce no records, even when well-formed
 records come before the bad byte. Load errors are raised before any input is
-read.
+read. Byte offsets are relative to the start of the file.
+
+When an input has more than one fault, the first fault in byte order is
+reported, whether the input is extracted or inspected. Every byte is checked,
+including bytes after a complete top-level value.
 
 | Condition | When | Error names |
 | --- | --- | --- |
-| invalid UTF-8 | parse | — |
-| duplicate key in one object | parse | the key and its byte offset |
+| input not UTF-8 (a UTF-16 or UTF-32 byte order mark, or UTF-16 text without one) | parse | "JSON input must be UTF-8" |
+| invalid UTF-8 | parse | the byte offset of the first invalid byte |
+| duplicate key in one object | parse | the key and the byte offset of its opening quote; a key longer than 64 bytes is shown as its first 64 bytes or fewer, cut on a character boundary, followed by `…(N bytes)` with its length in bytes |
 | nesting deeper than 1024 | parse | the limit |
 | data after the top-level value | parse | the offset |
 | input ends inside an open object or array | parse | — |

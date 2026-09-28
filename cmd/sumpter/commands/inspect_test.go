@@ -15,7 +15,7 @@ import (
 func TestInspectReportV0_JSON_Schema(t *testing.T) {
 	// Create a sample report
 	report := &InspectReportV0{
-		Version: "inspect-report/v0.1.1",
+		Version: InspectReportVersion,
 		Input: InspectInput{
 			Path:             "/test/file.xml",
 			SizeBytes:        1024,
@@ -63,8 +63,8 @@ func TestInspectReportV0_JSON_Schema(t *testing.T) {
 	}
 
 	// Verify required fields
-	if parsed.Version != "inspect-report/v0.1.1" {
-		t.Errorf("Expected version 'inspect-report/v0.1.1', got %s", parsed.Version)
+	if parsed.Version != InspectReportVersion {
+		t.Errorf("Expected version %s, got %s", InspectReportVersion, parsed.Version)
 	}
 
 	if parsed.Input.Path != "/test/file.xml" {
@@ -230,8 +230,8 @@ func TestInspectXML_Basic(t *testing.T) {
 	}
 
 	// Verify basic structure
-	if report.Version != "inspect-report/v0.1.1" {
-		t.Errorf("Expected version 'inspect-report/v0.1.1', got %s", report.Version)
+	if report.Version != InspectReportVersion {
+		t.Errorf("Expected version %s, got %s", InspectReportVersion, report.Version)
 	}
 
 	if report.Input.Path != "test.xml" {
@@ -410,13 +410,14 @@ func TestAnalyzeRecordBoundaries_SizeOnly_NoBuffering(t *testing.T) {
 func TestInspectReportV0_JSON_Schema_Validation(t *testing.T) {
 	// Create a sample report with record analysis
 	report := &InspectReportV0{
-		Version: "inspect-report/v0.1.1",
+		Version: InspectReportVersion,
 		Input: InspectInput{
 			Path:             "/test/file.xml",
 			SizeBytes:        1024,
 			EncodingDetected: "UTF-8",
 			Compressed:       false,
 			Compression:      "none",
+			Format:           "xml",
 		},
 		Metrics: InspectMetrics{
 			BytesProcessed:        1024,
@@ -426,8 +427,9 @@ func TestInspectReportV0_JSON_Schema_Validation(t *testing.T) {
 		},
 		Paths: []InspectPath{
 			{
-				Path:  "root.record",
-				Count: 2,
+				Path:     "root.record",
+				Segments: []string{"root", "record"},
+				Count:    2,
 				Attributes: []InspectAttribute{
 					{Name: "id", Count: 2},
 				},
@@ -538,7 +540,7 @@ func TestInspectCommand_Integration_AnalyzeRecords(t *testing.T) {
 
 	// Extract JSON from output (find the JSON that contains version)
 	outputStr := string(cmdOutput)
-	versionIndex := strings.Index(outputStr, `"version": "inspect-report/v0.1.1"`)
+	versionIndex := strings.Index(outputStr, `"version": "inspect-report/`)
 	if versionIndex == -1 {
 		t.Fatalf("No version found in output: %s", outputStr)
 	}
