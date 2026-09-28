@@ -1233,7 +1233,7 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 			attrCount := len(path.Attributes)
 			sampleCount := len(path.Samples)
 			if _, err := fmt.Fprintf(output, "| %s | %d | %d | %d |\n",
-				path.Path, path.Count, attrCount, sampleCount); err != nil {
+				mdText(path.Path), path.Count, attrCount, sampleCount); err != nil {
 				return fmt.Errorf("failed to write path row: %w", err)
 			}
 		}
@@ -1245,7 +1245,7 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 	// Show attributes if available
 	for _, path := range report.Paths {
 		if len(path.Attributes) > 0 {
-			if _, err := fmt.Fprintf(output, "### Attributes for %s\n\n", path.Path); err != nil {
+			if _, err := fmt.Fprintf(output, "### Attributes for %s\n\n", mdText(path.Path)); err != nil {
 				return fmt.Errorf("failed to write attributes header: %w", err)
 			}
 			if _, err := fmt.Fprintf(output, "| Attribute | Count |\n"); err != nil {
@@ -1256,7 +1256,7 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 			}
 
 			for _, attr := range path.Attributes {
-				if _, err := fmt.Fprintf(output, "| %s | %d |\n", attr.Name, attr.Count); err != nil {
+				if _, err := fmt.Fprintf(output, "| %s | %d |\n", mdText(attr.Name), attr.Count); err != nil {
 					return fmt.Errorf("failed to write attribute row: %w", err)
 				}
 			}
@@ -1269,11 +1269,11 @@ func generateMarkdownReport(output io.Writer, report *InspectReportV0) error {
 	// Show text samples if available
 	for _, path := range report.Paths {
 		if len(path.Samples) > 0 {
-			if _, err := fmt.Fprintf(output, "### Samples for %s\n\n", path.Path); err != nil {
+			if _, err := fmt.Fprintf(output, "### Samples for %s\n\n", mdText(path.Path)); err != nil {
 				return fmt.Errorf("failed to write samples header: %w", err)
 			}
 			for _, sample := range path.Samples {
-				if _, err := fmt.Fprintf(output, "- `%s`\n", sample); err != nil {
+				if _, err := fmt.Fprintf(output, "- %s\n", mdCode(sample)); err != nil {
 					return fmt.Errorf("failed to write sample: %w", err)
 				}
 			}

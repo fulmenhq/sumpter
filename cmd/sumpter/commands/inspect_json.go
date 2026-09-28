@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	docjson "github.com/fulmenhq/sumpter/internal/docnode/json"
 )
@@ -37,12 +38,16 @@ func writeInspectSegment(b *strings.Builder, seg string) {
 }
 
 // truncateInspectSample applies the sample length cap shared by every input
-// format.
+// format: at most 100 bytes, cut on a rune boundary.
 func truncateInspectSample(text string) string {
-	if len(text) > 100 {
-		return text[:97] + "..."
+	if len(text) <= 100 {
+		return text
 	}
-	return text
+	cut := 97
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "..."
 }
 
 // newInspectInput builds the report's input block. Compression is inferred
