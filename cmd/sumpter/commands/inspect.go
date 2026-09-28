@@ -713,7 +713,7 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 
 	// Generate output
 	if opts.GenerateConfig {
-		if err := generateExtractConfig(cmd, opts, localReadPath, displayPath); err != nil {
+		if err := generateExtractConfig(cmd, opts, inputFormat, localReadPath, displayPath); err != nil {
 			return err
 		}
 	} else {
@@ -743,9 +743,29 @@ func runInspectCommand(cmd *cobra.Command, opts *InspectOptions) error {
 // from localReadPath (the staged working copy for a cloud source) but records
 // displayPath (the logical s3:// URI or local path) as the source identity, so a
 // staging path never leaks into the generated config.
-func generateExtractConfig(cmd *cobra.Command, opts *InspectOptions, localReadPath, displayPath string) error {
+func generateExtractConfig(cmd *cobra.Command, opts *InspectOptions, inputFormat, localReadPath, displayPath string) error {
 	if opts.File == "-" {
 		return fmt.Errorf("--generate-config requires a seekable file path; stdin is not supported")
+	}
+
+	if inputFormat == inspectFormatJSON {
+		file, err := os.Open(localReadPath) // #nosec G304 - user-selected inspect input path (staged locally for cloud sources)
+		if err != nil {
+			return fmt.Errorf("failed to open file for config generation: %w", err)
+		}
+		defer func() { _ = file.Close() }()
+		result, err := configgen.GenerateJSON(file, configgen.Options{
+			SourcePath:        displayPath,
+			ConfigPath:        opts.Output,
+			RecordSelector:    opts.RecordSelector,
+			MinOccurrence:     opts.MinOccurrence,
+			OptionalThreshold: opts.OptionalThreshold,
+			GeneratedAt:       time.Now().UTC(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to generate extract config: %w", err)
+		}
+		return writeInspectBytes(cmd, opts.Output, result.YAML)
 	}
 
 	readerFactory := func() (io.ReadCloser, error) {

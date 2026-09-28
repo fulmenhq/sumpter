@@ -13,7 +13,10 @@ import (
 )
 
 type Options struct {
-	SourcePath        string
+	SourcePath string
+	// ConfigPath is where the generated config is written, when known; the
+	// JSON header names it in the first-run command.
+	ConfigPath        string
 	RecordSelector    string
 	MinOccurrence     int
 	OptionalThreshold float64
@@ -86,15 +89,7 @@ func Generate(readerFactory ReaderFactory, opts Options) (*Result, error) {
 	if readerFactory == nil {
 		return nil, fmt.Errorf("reader factory is required")
 	}
-	if opts.MinOccurrence <= 0 {
-		opts.MinOccurrence = 2
-	}
-	if opts.OptionalThreshold <= 0 || opts.OptionalThreshold > 1 {
-		opts.OptionalThreshold = 0.5
-	}
-	if opts.GeneratedAt.IsZero() {
-		opts.GeneratedAt = time.Now().UTC()
-	}
+	applyDefaults(&opts)
 
 	reader, err := readerFactory()
 	if err != nil {
@@ -139,6 +134,18 @@ func Generate(readerFactory ReaderFactory, opts Options) (*Result, error) {
 		SkippedSparse:  skipped,
 		Warnings:       warnings,
 	}, nil
+}
+
+func applyDefaults(opts *Options) {
+	if opts.MinOccurrence <= 0 {
+		opts.MinOccurrence = 2
+	}
+	if opts.OptionalThreshold <= 0 || opts.OptionalThreshold > 1 {
+		opts.OptionalThreshold = 0.5
+	}
+	if opts.GeneratedAt.IsZero() {
+		opts.GeneratedAt = time.Now().UTC()
+	}
 }
 
 func scanDocument(reader io.Reader) (*documentStats, error) {
@@ -758,6 +765,10 @@ func writeConfig(out *strings.Builder, selector string, records []recordPath, ma
 	if len(records) == 1 && records[0].Local != "" {
 		recordType = snakeCase(records[0].Local)
 	}
+	writeConfigBody(out, recordType, selector, mappings)
+}
+
+func writeConfigBody(out *strings.Builder, recordType, selector string, mappings []mapping) {
 	fmt.Fprintf(out, "record_type: %s\n", quote(recordType))
 	out.WriteString("match_selectors:\n")
 	fmt.Fprintf(out, "  - xpath: %s\n", quote(selector))

@@ -628,7 +628,6 @@ func TestInspectJSONFlagRefusals(t *testing.T) {
 	}{
 		{"force-encoding", []string{"--force-encoding", "utf-8"}, "--force-encoding does not apply to --input-format json"},
 		{"analyze-records", []string{"--analyze-records", "--record-selector", "//a"}, "streaming input is not supported for json in this release"},
-		{"generate-config", []string{"--generate-config"}, "--generate-config does not support --input-format json"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -84,6 +84,33 @@ empty array binds absent.
 - The string-value of an object or array element is the concatenation of its
   descendant text in document order, as in XML.
 
+## Selecting keys that are not XML names
+
+A key that is an XML NCName (an XML name without `:`) is selected with a
+plain step: `Order`, or `a.b` for the key `"a.b"`, which is distinct from the
+nested keys `a` then `b` (`a/b`). Every other key is selected with
+`*[local-name()=LIT]`, where `LIT` is an XPath 1.0 string literal. XPath 1.0
+has no escapes, so a key without `'` is quoted with `'`, a key with `'` but
+without `"` is quoted with `"`, and a key with both is built with `concat()`.
+`inspect --generate-config` builds its selectors this way.
+
+<!-- key-steps:begin -->
+| Key | Step |
+| --- | --- |
+| `first name` | `*[local-name()='first name']` |
+| `123` | `*[local-name()='123']` |
+| `$ref` | `*[local-name()='$ref']` |
+| `@id` | `*[local-name()='@id']` |
+| `a:b` | `*[local-name()='a:b']` |
+| `a\b` | `*[local-name()='a\b']` |
+| (empty key) | `*[local-name()='']` |
+| `it's` | `*[local-name()="it's"]` |
+| `say "hi"` | `*[local-name()='say "hi"']` |
+| `both'and"` | `*[local-name()=concat('both',"'",'and"')]` |
+<!-- key-steps:end -->
+
+A plain step `a:b` selects nothing: XPath reads `a` as a namespace prefix.
+
 ## What JSON input rejects
 
 These are hard errors. Parse errors produce no records, even when well-formed

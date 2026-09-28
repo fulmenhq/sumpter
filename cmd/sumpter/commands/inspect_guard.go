@@ -19,7 +19,6 @@ var (
 	errInspectLooksXML  = errors.New("input looks like XML; drop --input-format json")
 	errInspectGzipped   = errors.New("inspect does not read gzip input; decompress it first (for example: gunzip -k <file>)")
 	errInspectJSONForce = errors.New("--force-encoding does not apply to --input-format json; JSON input must be UTF-8")
-	errInspectJSONGen   = errors.New("--generate-config does not support --input-format json in this release")
 )
 
 // resolveInspectInputFormat validates --input-format and the flags that do
@@ -40,9 +39,6 @@ func resolveInspectInputFormat(opts *InspectOptions) (string, error) {
 		// yet; report it with the format's own route-unsupported error.
 		_, err := docjson.Format{}.NewScanner(nil, "", false)
 		return "", err
-	}
-	if opts.GenerateConfig {
-		return "", errInspectJSONGen
 	}
 	return inspectFormatJSON, nil
 }

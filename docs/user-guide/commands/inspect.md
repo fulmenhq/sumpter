@@ -82,8 +82,27 @@ selectors should read `segments`.
 - Gzip-compressed input is refused in both modes with "inspect does not read
   gzip input; decompress it first (for example: gunzip -k <file>)".
 - `--force-encoding` does not apply to JSON (JSON input must be UTF-8), and
-  `--analyze-records` and `--generate-config` do not yet support
-  `--input-format json`; each is refused before any input is read.
+  `--analyze-records` does not yet support `--input-format json`; each is
+  refused before any input is read.
+
+**Generating a starter config from JSON.** `--generate-config` with
+`--input-format json` writes one `extract.yaml`, loadable as it is. The record
+selector is the most-repeated object path at the shallowest depth (or
+`--record-selector`, any XPath). Selectors are built from key names as the
+[document node model](../../standards/document-node-model.md#selecting-keys-that-are-not-xml-names)
+describes, so keys that are not XML names are selected exactly. Field types
+come from the JSON value kinds. JSON input is declared by a signature's
+`format_type`, so the header carries two commented, ready-to-copy blocks, a
+signature with `format_type: json` and a recipe manifest fragment with
+`defaults.input.format: json`, and names the first run:
+
+```bash
+sumpter inspect data.json --input-format json --generate-config --output extract.yaml
+# 1. copy the signature block from the header to extract-signature.yaml
+# 2. run the command the header names:
+sumpter extract files --signature-config-path extract-signature.yaml \
+  --extract-config-path extract.yaml --files data.json --output-path extract-out
+```
 
 All reports, XML and JSON, use `inspect-report/v0.1.2`. It adds `input.format`
 and `paths[].segments` to every report and `paths[].value_kinds` to JSON
