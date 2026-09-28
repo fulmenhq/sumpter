@@ -945,3 +945,49 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+func loadManifestWithInput(t *testing.T, input string) (*Manifest, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "recipe.yaml")
+	content := `version: recipe/v0.1.0
+kind: extract
+id: test_recipe
+assets:
+  signature: signature/test-signature.yaml
+  extract: extract/test-extract.yaml
+defaults:
+  input:
+` + input
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	return LoadManifest(path)
+}
+
+func TestLoadManifestInputFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, wantPattern, errPart string
+	}{
+		{name: "json default pattern", input: "    format: json\n", wantPattern: "*.json"},
+		{name: "xml default pattern", input: "    format: xml\n", wantPattern: "*.xml"},
+		{name: "explicit pattern wins", input: "    format: json\n    include_pattern: \"*.txt\"\n", wantPattern: "*.txt"},
+		{name: "ndjson later release", input: "    format: ndjson\n", errPart: "arrives in a later release"},
+		{name: "unknown token", input: "    format: csv\n", errPart: "defaults.input.format"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := loadManifestWithInput(t, tc.input)
+			if tc.errPart != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.errPart) {
+					t.Fatalf("error = %v, want containing %q", err, tc.errPart)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadManifest: %v", err)
+			}
+			if m.Defaults.Input.IncludePattern != tc.wantPattern {
+				t.Fatalf("include pattern = %q, want %q", m.Defaults.Input.IncludePattern, tc.wantPattern)
+			}
+		})
+	}
+}

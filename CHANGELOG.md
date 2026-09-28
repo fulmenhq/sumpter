@@ -10,9 +10,19 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ### Added
 
+- **JSON document input** — recipes can declare `defaults.input.format: json` (with `format_type: json` in the signature) to extract records from JSON documents with the same recipe grammar and output as XML. JSON uses the whole-document route; a file above the large-file threshold needs `--allow-large-files`, and record-index extraction and `extract-multi` accept XML only. The mapping from JSON to the XPath node tree is published as the [document node model](docs/standards/document-node-model.md). Path-mode discovery defaults to `*.json` for JSON input.
+
+- **Input format in provenance** — each `inputs[]` entry of the provenance manifest now records the `format` it was parsed as (`xml` or `json`).
+
+- **`route_unsupported` disposition** — an input refused because its format has no route for it in this release (for example a JSON file above the large-file threshold without `--allow-large-files`) is recorded with disposition reason `route_unsupported` in the manifest, `dispositions.json`, and `failures.json`, rather than as an internal error.
+
 - **Schema manifests and catalog** — every schema version directory now has a `contract.json` manifest (capability token, entry schema, owned schemas, input/output kind), and `schemas/index.json` catalogs every schema with its id, version, kind, and digest. `make schema-contract-check` (part of `make check-all`) verifies ids, ownership, and that every `$ref` resolves inside the bundle before any schema is compiled. See [Schema identity](docs/standards/schema-identity.md).
 
 ### Changed
+
+- **Signature `format_type: protobuf` is rejected** — `protobuf` stays in the signature enum but is now rejected at load as reserved, not implemented. A recipe with `defaults.input.format: json` must declare `format_type: json` in its signature.
+
+- **`inspect` refuses input it cannot report on** — JSON, gzip-compressed, and other non-XML input now exits non-zero with a message instead of printing an empty XML report. `--input-format json` is accepted and refused until JSON inspection lands.
 
 - **Document access routed through a node interface** — extraction now reads input documents through a format-neutral node interface (`internal/docnode`) with XML as the only registered format. No behavior change: output, errors, and streaming/parallel routes are unchanged.
 

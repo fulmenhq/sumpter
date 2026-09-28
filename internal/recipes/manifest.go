@@ -193,9 +193,12 @@ type InputDefaults struct {
 	Path              string   `yaml:"path"`
 	CredentialsHandle string   `yaml:"credentials_handle,omitempty"`
 	IncludePattern    string   `yaml:"include_pattern"`
-	ExcludePattern    string   `yaml:"exclude_pattern"`
-	MaxDepth          int      `yaml:"max_depth"`
-	FollowSymlinks    bool     `yaml:"follow_symlinks"`
+	// Format is the input syntax: xml (default) or json. It must agree with
+	// the signature's format_type.
+	Format         string `yaml:"format,omitempty"`
+	ExcludePattern string `yaml:"exclude_pattern"`
+	MaxDepth       int    `yaml:"max_depth"`
+	FollowSymlinks bool   `yaml:"follow_symlinks"`
 }
 
 // OutputDefaults controls output formatting when executing extract recipes.
@@ -224,6 +227,21 @@ func LoadManifest(manifestPath string) (*Manifest, error) {
 	data, err := os.ReadFile(manifestPath) // #nosec G304 - User-specified manifest file (top-level input)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest %s: %w", manifestPath, err)
+	}
+
+	// A later-release input format gets its own message ahead of the schema's
+	// generic enum error.
+	var probe struct {
+		Defaults struct {
+			Input struct {
+				Format string `yaml:"format"`
+			} `yaml:"input"`
+		} `yaml:"defaults"`
+	}
+	if yaml.Unmarshal(data, &probe) == nil {
+		if err := validateInputFormat(probe.Defaults.Input.Format); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := validateAgainstSchema(data, manifestPath); err != nil {
@@ -283,6 +301,9 @@ func (m *Manifest) validate() error {
 	case KindExtract, KindAcquire:
 	default:
 		return fmt.Errorf("unsupported manifest kind %s", m.Kind)
+	}
+	if err := validateInputFormat(m.Defaults.Input.Format); err != nil {
+		return err
 	}
 
 	if m.Kind == KindExtract {
@@ -551,7 +572,7 @@ func (m *Manifest) applyDefaults() {
 		m.Defaults.Input.Mode = "path"
 	}
 	if m.Defaults.Input.IncludePattern == "" {
-		m.Defaults.Input.IncludePattern = "*.xml"
+		m.Defaults.Input.IncludePattern = DefaultIncludePattern(m.Defaults.Input.Format)
 	}
 	if m.Defaults.Output.Format == "" && len(m.Defaults.Output.Formats) == 0 {
 		m.Defaults.Output.Format = OutputFormatJSON
@@ -645,4 +666,24 @@ func (m *Manifest) ListAssets(base string) []string {
 // WorkspaceFilesystem returns an fs.FS rooted at the workspace for convenience.
 func WorkspaceFilesystem(base string) (fs.FS, error) {
 	return os.DirFS(base), nil
+}
+
+// DefaultIncludePattern is the discovery pattern used when a recipe gives
+// none: *.json for json input, *.xml otherwise.
+func DefaultIncludePattern(format string) string {
+	if strings.EqualFold(strings.TrimSpace(format), "json") {
+		return "*.json"
+	}
+	return "*.xml"
+}
+
+func validateInputFormat(format string) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "xml", "json":
+		return nil
+	case "ndjson":
+		return fmt.Errorf("defaults.input.format %q is not supported: line-delimited JSON input arrives in a later release", format)
+	default:
+		return fmt.Errorf("defaults.input.format %q is not supported (supported: xml, json)", format)
+	}
 }

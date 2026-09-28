@@ -86,7 +86,9 @@ non-zero when any file failed. Output-write and failure-manifest-write errors
 remain terminal. The failure manifest is schema-backed by
 `schemas/extract/v0.1.0/failures.schema.json` and uses the closed reason set
 `parse_error`, `signature_mismatch`, `min_occurrences_violation`,
-`validation_error`, and `internal_error`.
+`validation_error`, `internal_error`, and `route_unsupported` (a deliberate
+refusal: the input's format has no route for it in this release, such as a
+JSON file above the large-file threshold without `--allow-large-files`).
 
 Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
 For the full expression grammar, function set, and parser behavior contracts,
@@ -112,6 +114,10 @@ Apply several extract recipes to **one** input set in a single parse-once pass.
 ```bash
 sumpter recipes run extract-multi <workspace>... [flags]
 ```
+
+`extract-multi` accepts XML input only in this release: a bundle containing any
+recipe with `defaults.input.format: json` fails at load, before any input is
+parsed or any output is opened. Run JSON recipes with `recipes run extract`.
 
 Each input file is read and parsed **once**, then dispatched to every recipe, so
 the read/parse cost is amortized from ~N× to 1× across N recipes — the dominant
@@ -246,7 +252,8 @@ defaults:
 
 - **`assets`** points at the core configuration files required to run the recipe.
 - **`defaults.output.uniform_schema`** optionally emits every declared `output_schema.properties` key on each record, using JSON `null` for absent values.
-- **`defaults.input`** defines how the runner discovers XML (directory scanning or explicit file list). `defaults.input.files_from` and CLI `--file-list` accept URI-only lines or integrity-bound JSON object lines with `uri`, `size`, and `sha256`; see the [input-selection contract](../../extract-workflow.md#input-selection-batch-lists-directories-large-trees).
+- **`defaults.input.format`** selects the input syntax: `xml` (default) or `json`, which parses each input as one JSON document. The signature must declare the same `format_type`; an omitted `format_type` means `xml`, so a JSON recipe sets `format_type: json` explicitly. File names never choose the format. JSON input has no attributes, so XPaths write `k` where an XML recipe writes `@k`. Input `json` and `ndjson` are different syntaxes (line-delimited input arrives in a later release), unlike `defaults.output.format`, where they name one writer. See the [document node model](../../standards/document-node-model.md).
+- **`defaults.input`** defines how the runner discovers inputs (directory scanning or explicit file list). `include_pattern` defaults to `*.json` for JSON input and `*.xml` otherwise. `defaults.input.files_from` and CLI `--file-list` accept URI-only lines or integrity-bound JSON object lines with `uri`, `size`, and `sha256`; see the [input-selection contract](../../extract-workflow.md#input-selection-batch-lists-directories-large-trees).
 - **`defaults.output`** controls output formatting and destination. For the record stream, `format: json` is the legacy/canonical token and `format: ndjson` is an accepted alias for it — both emit the same newline-delimited JSON (NDJSON/JSONL) record envelopes and are behavior-identical (neither produces a single-file JSON array). `parquet` selects the columnar secondary projection.
 - **`defaults.cadence`** records operator-readable run cadence intent such as `daily-rolling`, `weekly`, `weekly-2x`, `on-demand`, `hourly`, `monthly`, or `quarterly`.
 - **`defaults.client_id` / `site_id`** pre-populate metadata for downstream consumers.

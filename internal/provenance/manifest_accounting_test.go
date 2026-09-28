@@ -14,6 +14,7 @@ func inputWithDisposition(disposition string) Input {
 		Path:        "input.xml",
 		SHA256:      "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		SizeBytes:   42,
+		Format:      "xml",
 		Disposition: disposition,
 		RecordCount: &rc,
 	}

@@ -29,6 +29,18 @@ The `inspect` command performs a comprehensive streaming analysis of XML files t
 
 - `--force-encoding`: Force specific encoding (e.g., `windows-1252`)
 
+### Input Format
+
+`inspect` reports on XML input. JSON inspection arrives in a later release.
+
+- `--input-format`: Input syntax (default `xml`). `json` is accepted but
+  refused with "JSON inspection arrives in a later release".
+- Input whose first non-whitespace byte (after any byte-order mark) is not
+  `<` is refused with "input does not look like XML; JSON inspection arrives
+  in a later release". This check only refuses; it never selects a format.
+- Gzip-compressed input is refused with "inspect does not read gzip input;
+  decompress it first (for example: gunzip -k <file>)".
+
 ### Performance Options
 
 - `--progress`, `-p`: Show progress for large files

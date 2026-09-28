@@ -632,6 +632,14 @@
           "type": "integer",
           "minimum": 0
         },
+        "format": {
+          "type": "string",
+          "enum": [
+            "xml",
+            "json"
+          ],
+          "description": "Input syntax the run parsed this input as. Writers set it on every input; readers must not default it. Absent only in manifests written before this field existed."
+        },
         "record_type": {
           "type": "string"
         },
@@ -651,7 +659,8 @@
             "min_occurrences_violation",
             "parse_error",
             "validation_error",
-            "internal_error"
+            "internal_error",
+            "route_unsupported"
           ]
         },
         "disposition_detail": {

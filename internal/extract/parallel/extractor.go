@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/extract"
@@ -41,6 +42,10 @@ func NewSeekableExtractor(filePath string, extCfg *extract.ExtractRecordMatch, s
 		externalFields: externalFields,
 		provenance:     runtimeFields,
 		logger:         logging.Component("parallel-extractor"),
+	}
+	if sigCfg != nil && strings.TrimSpace(sigCfg.FormatType) != "" && !strings.EqualFold(strings.TrimSpace(sigCfg.FormatType), extract.FormatXML) {
+		se.formatErr = fmt.Errorf("record-index extraction supports xml input only in this release; input format is %q", sigCfg.FormatType)
+		return se
 	}
 	format, ok := docnode.Lookup(docnode.Default)
 	if !ok {

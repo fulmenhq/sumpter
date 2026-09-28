@@ -2,6 +2,36 @@
 
 The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. JSON/NDJSON file output uses the record-sink path for sequential runs and record-index parallel runs, streaming records as they are produced instead of retaining the full output slice for that format. Memory for those routes is bounded with respect to emitted result count by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Unambiguous record-index parallel runs enforce `min_occurrences` from index counts before publishing output and can still use the streaming route. Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed-floor recipes remain buffered in v0.2.0. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
 
+## Input Formats
+
+Sumpter reads XML (default) and JSON documents. The format is declared, never
+inferred from a file name:
+
+- in a recipe, `defaults.input.format: json`, with `format_type: json` in the
+  signature (an omitted `format_type` means `xml`, so the two must agree);
+- outside a recipe, the signature's `format_type`.
+
+A JSON document maps onto the same node tree the XPaths already use: members
+become elements, array items become repeated siblings named by their key,
+numbers keep their source text, `null` binds absent, and there are no
+attributes, so `@k` in an XML recipe becomes `k`. The
+[document node model](standards/document-node-model.md) is the full contract,
+including the wrapper idiom for polymorphic arrays and the inputs JSON rejects.
+
+JSON uses the whole-document route. A JSON file above the large-file
+threshold parses as one document only with `--allow-large-files`; without it
+the run fails with a route error rather than falling back to streaming.
+Record-index extraction and `extract-multi` accept XML input only in this
+release. Path-mode discovery defaults to `*.json` for JSON input.
+
+The provenance manifest records each input's parsed format in
+`inputs[].format`.
+
+| Setting | `json` | `ndjson` |
+| --- | --- | --- |
+| input (`defaults.input.format`) | one JSON document per file | line-delimited input; arrives in a later release |
+| output (`defaults.output.format`) | newline-delimited JSON records | the same writer as `json` |
+
 ## Output Formats
 
 | Mode                 | Description                                                                                                                                    | When to use                                                      |

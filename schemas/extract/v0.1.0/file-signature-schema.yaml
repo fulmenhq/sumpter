@@ -105,7 +105,8 @@ properties:
     type: string
     enum: ["xml", "json", "protobuf"]
     default: "xml"
-    description: Expected format of the file.
+    description: >-
+      Input syntax this signature matches. An omitted value means `xml`. `json` selects the JSON document format; a recipe declaring `defaults.input.format: json` must set it explicitly. `protobuf` is reserved and rejected at load.
   tags:
     type: array
     items:

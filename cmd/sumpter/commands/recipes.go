@@ -493,6 +493,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 
 	extractOpts := &ExtractOptions{
+		InputFormat:            manifest.Defaults.Input.Format,
 		SignatureConfig:        signaturePath,
 		ExtractConfig:          extractPath,
 		ApplicabilityConfig:    applicabilityCfg,
