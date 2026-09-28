@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"unicode/utf8"
 )
 
@@ -34,58 +35,71 @@ type Handler interface {
 }
 
 var (
-	errTruncated   = errors.New("json: unexpected end of JSON input")
-	errInvalidUTF8 = errors.New("json: invalid UTF-8 in input")
-	errEmptyInput  = errors.New("json: empty input")
-	errTopLevel    = errors.New("json: top-level value must be an object or array")
+	errTruncated  = errors.New("json: unexpected end of JSON input")
+	errNotUTF8    = errors.New("json: JSON input must be UTF-8")
+	errEmptyInput = errors.New("json: empty input")
+	errTopLevel   = errors.New("json: top-level value must be an object or array")
 )
 
-// byteSource gives the walker read-back access to input bytes for error
-// offsets. It may not hold every byte.
-type byteSource interface {
-	byteAt(off int64) (byte, bool)
+// invalidUTF8Error reports the file-relative offset of the first byte of an
+// invalid or incomplete UTF-8 sequence.
+type invalidUTF8Error struct {
+	offset int64
 }
 
-// keySpanSource is implemented by sources that track string delimiters as
-// bytes stream through, so a key's opening quote is known exactly however
-// long the key is.
-type keySpanSource interface {
-	// keyOpen returns the opening-quote offset of the string whose closing
-	// quote is at close.
-	keyOpen(close int64) (int64, bool)
-	// prune drops tracking for strings that closed before off.
-	prune(off int64)
+func (e *invalidUTF8Error) Error() string {
+	return fmt.Sprintf("json: invalid UTF-8 at byte offset %d", e.offset)
 }
 
-type sliceSource []byte
+// isEncodingError reports whether err came from the validating reader.
+func isEncodingError(err error) bool {
+	var u *invalidUTF8Error
+	return errors.As(err, &u) || errors.Is(err, errNotUTF8)
+}
 
-func (s sliceSource) byteAt(off int64) (byte, bool) {
-	if off < 0 || off >= int64(len(s)) {
-		return 0, false
+// maxKeyText bounds how many bytes of a key an error message shows.
+const maxKeyText = 64
+
+// keyText quotes key for an error message. A key longer than maxKeyText
+// bytes is cut on a rune boundary and followed by its length in bytes.
+func keyText(key string) string {
+	if len(key) <= maxKeyText {
+		return strconv.Quote(key)
 	}
-	return s[off], true
+	cut := maxKeyText
+	for cut > 0 && !utf8.RuneStart(key[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s…(%d bytes)", strconv.Quote(key[:cut]), len(key))
 }
 
 // walker enforces every structural guard and reports elements to a Handler.
 type walker struct {
 	dec   *stdjson.Decoder
-	src   byteSource
+	vr    *validatingReader
 	h     Handler
 	depth int
+	// base is added to decoder offsets to make them file-relative (a stripped
+	// byte order mark shifts the decoder's stream).
+	base int64
 }
 
 // Walk streams one JSON document from r, applies the same guards as Parse,
 // and reports its elements to h. It holds at most a bounded window of the
 // input in memory.
 func Walk(r io.Reader, h Handler) error {
-	vr := newValidatingReader(r)
-	return walk(vr, vr, h)
+	return walk(newValidatingReader(r), h)
 }
 
-func walk(r io.Reader, src byteSource, h Handler) error {
-	dec := stdjson.NewDecoder(r)
+// walk reads through vr to EOF: a fault the reader defers past the last
+// token is still reported.
+func walk(vr *validatingReader, h Handler) error {
+	if err := vr.start(); err != nil {
+		return err
+	}
+	dec := stdjson.NewDecoder(vr)
 	dec.UseNumber()
-	w := &walker{dec: dec, src: src, h: h}
+	w := &walker{dec: dec, vr: vr, h: h, base: vr.skipped}
 
 	tok, err := dec.Token()
 	if err != nil {
@@ -111,11 +125,11 @@ func walk(r io.Reader, src byteSource, h Handler) error {
 	}
 	w.depth--
 
-	end := dec.InputOffset()
+	end := w.offset()
 	switch _, err := dec.Token(); {
 	case err == io.EOF:
 		return nil
-	case errors.Is(err, errInvalidUTF8):
+	case isEncodingError(err):
 		return err
 	case err != nil:
 		return fmt.Errorf("json: unexpected data after top-level value: %w", err)
@@ -126,9 +140,7 @@ func walk(r io.Reader, src byteSource, h Handler) error {
 
 // token reads the next token inside an open container.
 func (w *walker) token() (stdjson.Token, error) {
-	if ks, ok := w.src.(keySpanSource); ok {
-		ks.prune(w.dec.InputOffset())
-	}
+	w.vr.prune(w.offset())
 	tok, err := w.dec.Token()
 	if err != nil {
 		return nil, w.wrap(err)
@@ -136,9 +148,14 @@ func (w *walker) token() (stdjson.Token, error) {
 	return tok, nil
 }
 
+// offset is the decoder's position as a file-relative byte offset.
+func (w *walker) offset() int64 {
+	return w.dec.InputOffset() + w.base
+}
+
 func (w *walker) wrap(err error) error {
-	if errors.Is(err, errInvalidUTF8) {
-		return errInvalidUTF8
+	if isEncodingError(err) {
+		return err
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return errTruncated
@@ -149,7 +166,7 @@ func (w *walker) wrap(err error) error {
 func (w *walker) enter() error {
 	w.depth++
 	if w.depth > MaxDepth {
-		return fmt.Errorf("json: nesting depth exceeds %d at byte offset %d", MaxDepth, w.dec.InputOffset()-1)
+		return fmt.Errorf("json: nesting depth exceeds %d at byte offset %d", MaxDepth, w.offset()-1)
 	}
 	return nil
 }
@@ -167,10 +184,14 @@ func (w *walker) object() error {
 		}
 		key, ok := tok.(string)
 		if !ok {
-			return fmt.Errorf("json: unexpected token %v at byte offset %d", tok, w.dec.InputOffset())
+			return fmt.Errorf("json: unexpected token %v at byte offset %d", tok, w.offset())
 		}
 		if _, dup := seen[key]; dup {
-			return fmt.Errorf("json: duplicate key %q at byte offset %d", key, w.keyStart())
+			start, err := w.keyStart()
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("json: duplicate key %s at byte offset %d", keyText(key), start)
 		}
 		seen[key] = struct{}{}
 		tok, err = w.token()
@@ -243,7 +264,7 @@ func (w *walker) value(name string, tok stdjson.Token, inArray bool) error {
 		}
 		return w.h.EndElement()
 	default:
-		return fmt.Errorf("json: unexpected token %v at byte offset %d", tok, w.dec.InputOffset())
+		return fmt.Errorf("json: unexpected token %v at byte offset %d", tok, w.offset())
 	}
 }
 
@@ -258,42 +279,21 @@ func (w *walker) scalar(name string, kind Kind, value string) error {
 }
 
 // keyStart returns the byte offset of the opening quote of the key token just
-// read.
-func (w *walker) keyStart() int64 {
-	end := w.dec.InputOffset() - 1 // closing quote
-	if ks, ok := w.src.(keySpanSource); ok {
-		if open, found := ks.keyOpen(end); found {
-			return open
-		}
+// read. The reader records every string the decoder can have consumed, so a
+// miss means the tracking is broken; it fails rather than guess an offset.
+func (w *walker) keyStart() (int64, error) {
+	end := w.offset() - 1 // closing quote
+	if open, ok := w.vr.keyOpen(end); ok {
+		return open, nil
 	}
-	for i := end - 1; i >= 0; i-- {
-		b, ok := w.src.byteAt(i)
-		if !ok {
-			return end
-		}
-		if b != '"' {
-			continue
-		}
-		bs := 0
-		for j := i - 1; j >= 0; j-- {
-			c, ok := w.src.byteAt(j)
-			if !ok || c != '\\' {
-				break
-			}
-			bs++
-		}
-		if bs%2 == 0 {
-			return i
-		}
-	}
-	return end
+	return 0, fmt.Errorf("json: internal error: no string recorded ending at byte offset %d", end)
 }
 
 // skipSpace returns the offset of the first non-whitespace byte at or after
 // off that the source holds.
 func (w *walker) skipSpace(off int64) int64 {
 	for {
-		b, ok := w.src.byteAt(off)
+		b, ok := w.vr.byteAt(off)
 		if !ok || !isSpace(b) {
 			return off
 		}
@@ -305,22 +305,38 @@ func isSpace(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
 
-// windowSize bounds the read-back window a streaming walk keeps for error
-// offsets.
+// windowSize is the read-back a walk keeps for error offsets; the window
+// holds at least this much recent input and at most twice it.
 const windowSize = 64 << 10
 
-// validatingReader rejects invalid UTF-8 as bytes stream through and keeps a
-// bounded window of recent input for error offsets.
+// fillSize is how much input the validating reader requests at a time.
+const fillSize = 32 << 10
+
+// validatingReader strips one leading UTF-8 byte order mark, refuses other
+// encodings, and rejects invalid UTF-8 as bytes stream through. It hands the
+// decoder only complete, valid UTF-8: bytes before a fault are handed on and
+// the fault is returned on the next read, so the decoder meets faults in byte
+// order. It keeps a bounded window of recent input for error offsets, and
+// tracks the strings in the bytes it hands on so a key's opening quote is
+// known exactly however long the key is.
 type validatingReader struct {
 	r       io.Reader
-	carry   []byte // incomplete rune from the previous read
-	window  []byte
-	winBase int64 // offset of window[0]
-	err     error
+	started bool
+	skipped int64 // bytes of a stripped byte order mark
+	chunk   []byte
 
-	// String-delimiter tracking over the bytes handed to the decoder: spans
-	// holds strings the decoder may not have consumed yet, in order.
-	pos     int64 // offset of the next byte handed out
+	buf     []byte // bytes read but not yet handed on
+	off     int64  // file offset of buf[0]
+	valid   int    // leading bytes of buf known to be valid UTF-8
+	pending error  // fault to return once the bytes before it are handed on
+	eof     bool
+	err     error // sticky: a refused encoding or a read error
+
+	window  []byte
+	winBase int64 // file offset of window[0]
+
+	// String tracking over the bytes handed on: spans holds, in order, the
+	// strings the decoder may not have consumed yet.
 	inStr   bool
 	escaped bool
 	strOpen int64
@@ -333,58 +349,114 @@ func newValidatingReader(r io.Reader) *validatingReader {
 	return &validatingReader{r: r}
 }
 
-func (v *validatingReader) Read(p []byte) (int, error) {
+// start inspects the first bytes: it strips one UTF-8 byte order mark and
+// refuses UTF-16 and UTF-32 input.
+func (v *validatingReader) start() error {
+	if v.started {
+		return v.err
+	}
+	v.started = true
+	for len(v.buf) < 4 && !v.eof && v.err == nil {
+		v.fill()
+	}
 	if v.err != nil {
-		return 0, v.err
+		return v.err
 	}
-	n, err := v.r.Read(p)
-	if n > 0 {
-		v.remember(p[:n])
-		if verr := v.check(p[:n], err == io.EOF); verr != nil {
-			v.err = verr
-			return 0, verr
-		}
-		v.track(p[:n])
+	head := v.buf
+	switch {
+	case len(head) >= 3 && head[0] == 0xef && head[1] == 0xbb && head[2] == 0xbf:
+		v.buf = v.buf[3:]
+		v.off, v.skipped = 3, 3
+	case len(head) >= 2 && (head[0] == 0xff && head[1] == 0xfe || head[0] == 0xfe && head[1] == 0xff):
+		v.err = errNotUTF8 // UTF-16 or UTF-32LE byte order mark
+	case len(head) >= 2 && (head[0] == 0 || head[1] == 0):
+		v.err = errNotUTF8 // UTF-16 or UTF-32 without a byte order mark, or UTF-32BE's
 	}
-	if err == io.EOF && len(v.carry) > 0 {
-		v.err = errInvalidUTF8
-		return n, v.err
-	}
-	return n, err
+	return v.err
 }
 
-// check validates chunk, carrying an incomplete trailing rune to the next
-// read.
-func (v *validatingReader) check(chunk []byte, final bool) error {
-	buf := chunk
-	if len(v.carry) > 0 {
-		buf = append(append([]byte{}, v.carry...), chunk...)
-		v.carry = v.carry[:0]
+// fill reads more input into buf.
+func (v *validatingReader) fill() {
+	if v.chunk == nil {
+		v.chunk = make([]byte, fillSize)
 	}
-	for len(buf) > 0 {
-		if buf[0] < utf8.RuneSelf {
-			buf = buf[1:]
+	n, err := v.r.Read(v.chunk)
+	if n > 0 {
+		v.remember(v.chunk[:n], v.off+int64(len(v.buf)))
+		v.buf = append(v.buf, v.chunk[:n]...)
+	}
+	switch {
+	case err == io.EOF:
+		v.eof = true
+	case err != nil:
+		v.err = err
+	}
+}
+
+func (v *validatingReader) Read(p []byte) (int, error) {
+	if err := v.start(); err != nil {
+		return 0, err
+	}
+	for {
+		v.scan()
+		if v.valid > 0 {
+			n := copy(p, v.buf[:v.valid])
+			v.track(v.buf[:n], v.off)
+			v.buf = v.buf[n:]
+			v.valid -= n
+			v.off += int64(n)
+			return n, nil
+		}
+		switch {
+		case v.pending != nil:
+			return 0, v.pending
+		case v.err != nil:
+			return 0, v.err
+		case v.eof && len(v.buf) > 0:
+			// Only an incomplete sequence remains.
+			v.pending = &invalidUTF8Error{offset: v.off}
+		case v.eof:
+			return 0, io.EOF
+		default:
+			v.fill()
+		}
+	}
+}
+
+// scan extends valid over buf. It stops at an incomplete trailing sequence,
+// which waits for more input, or at an invalid one, which becomes pending.
+func (v *validatingReader) scan() {
+	if v.pending != nil {
+		return
+	}
+	b := v.buf
+	i := v.valid
+	for i < len(b) {
+		if b[i] < utf8.RuneSelf {
+			i++
 			continue
 		}
-		if !utf8.FullRune(buf) {
-			if final {
-				return errInvalidUTF8
-			}
-			v.carry = append(v.carry, buf...)
-			return nil
+		if !utf8.FullRune(b[i:]) {
+			break
 		}
-		r, size := utf8.DecodeRune(buf)
+		r, size := utf8.DecodeRune(b[i:])
 		if r == utf8.RuneError && size <= 1 {
-			return errInvalidUTF8
+			v.pending = &invalidUTF8Error{offset: v.off + int64(i)}
+			break
 		}
-		buf = buf[size:]
+		i += size
 	}
-	return nil
+	v.valid = i
 }
 
-func (v *validatingReader) remember(chunk []byte) {
+func (v *validatingReader) remember(chunk []byte, at int64) {
+	if len(v.window) == 0 {
+		v.winBase = at
+	}
 	v.window = append(v.window, chunk...)
-	if over := len(v.window) - windowSize; over > 0 {
+	// Compact only at twice the window, so the copy is amortized over reads.
+	if len(v.window) > 2*windowSize {
+		over := len(v.window) - windowSize
 		v.window = append(v.window[:0], v.window[over:]...)
 		v.winBase += int64(over)
 	}
@@ -398,15 +470,15 @@ func (v *validatingReader) byteAt(off int64) (byte, bool) {
 	return v.window[i], true
 }
 
-// track records the offsets of string delimiters in chunk, the next bytes the
-// decoder will see.
-func (v *validatingReader) track(chunk []byte) {
+// track records the strings in chunk, the next bytes the decoder will see,
+// which start at file offset at.
+func (v *validatingReader) track(chunk []byte, at int64) {
 	for i, b := range chunk {
 		switch {
 		case !v.inStr:
 			if b == '"' {
 				v.inStr = true
-				v.strOpen = v.pos + int64(i)
+				v.strOpen = at + int64(i)
 			}
 		case v.escaped:
 			v.escaped = false
@@ -414,12 +486,13 @@ func (v *validatingReader) track(chunk []byte) {
 			v.escaped = true
 		case b == '"':
 			v.inStr = false
-			v.spans = append(v.spans, strSpan{open: v.strOpen, close: v.pos + int64(i)})
+			v.spans = append(v.spans, strSpan{open: v.strOpen, close: at + int64(i)})
 		}
 	}
-	v.pos += int64(len(chunk))
 }
 
+// keyOpen returns the opening-quote offset of the string whose closing quote
+// is at close.
 func (v *validatingReader) keyOpen(close int64) (int64, bool) {
 	i := sort.Search(len(v.spans), func(i int) bool { return v.spans[i].close >= close })
 	if i < len(v.spans) && v.spans[i].close == close {
@@ -428,6 +501,7 @@ func (v *validatingReader) keyOpen(close int64) (int64, bool) {
 	return 0, false
 }
 
+// prune drops strings that closed before off, which the decoder has consumed.
 func (v *validatingReader) prune(off int64) {
 	i := sort.Search(len(v.spans), func(i int) bool { return v.spans[i].close >= off })
 	if i > 0 {

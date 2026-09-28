@@ -14,11 +14,15 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 - **Input format in provenance** — each `inputs[]` entry of the provenance manifest now records the `format` it was parsed as (`xml` or `json`).
 
+- **UTF-8 byte order mark in JSON input** — a JSON document may begin with one UTF-8 byte order mark, which is ignored; the input digest still covers the raw bytes. UTF-16 and UTF-32 JSON is refused with "JSON input must be UTF-8".
+
 - **`route_unsupported` disposition** — an input refused because its format has no route for it in this release (for example a JSON file above the large-file threshold without `--allow-large-files`) is recorded with disposition reason `route_unsupported` in the manifest, `dispositions.json`, and `failures.json`, rather than as an internal error.
 
 - **Schema manifests and catalog** — every schema version directory now has a `contract.json` manifest (capability token, entry schema, owned schemas, input/output kind), and `schemas/index.json` catalogs every schema with its id, version, kind, and digest. `make schema-contract-check` (part of `make check-all`) verifies ids, ownership, and that every `$ref` resolves inside the bundle before any schema is compiled. See [Schema identity](docs/standards/schema-identity.md).
 
 ### Changed
+
+- **JSON parsing reports the first fault in input order** — invalid UTF-8 is reported with its byte offset, and when a JSON input has more than one fault, the first one in byte order is reported. A duplicate key longer than 64 bytes is shown as a prefix followed by its length in bytes.
 
 - **Signature `format_type: protobuf` is rejected** — `protobuf` stays in the signature enum but is now rejected at load as reserved, not implemented. A recipe with `defaults.input.format: json` must declare `format_type: json` in its signature.
 

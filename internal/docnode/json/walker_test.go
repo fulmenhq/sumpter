@@ -92,7 +92,7 @@ func TestValidatingReaderSplitRunes(t *testing.T) {
 	if err := Walk(iotest.OneByteReader(strings.NewReader(src)), &recorder{}); err != nil {
 		t.Fatalf("multi-byte runes split across reads rejected: %v", err)
 	}
-	if err := Walk(iotest.OneByteReader(strings.NewReader("{\"k\":\"\xe4\xb8\"}")), &recorder{}); errText(err) != errInvalidUTF8.Error() {
+	if err := Walk(iotest.OneByteReader(strings.NewReader("{\"k\":\"\xe4\xb8\"}")), &recorder{}); errText(err) != "json: invalid UTF-8 at byte offset 6" {
 		t.Fatalf("truncated rune: %v", err)
 	}
 }
@@ -124,7 +124,7 @@ func TestWalkLongDuplicateKeyExactOffset(t *testing.T) {
 	k := strings.Repeat("k", 70<<10)
 	src := `{"` + k + `":1,"` + k + `":2}`
 	_, parseErr := parse([]byte(src))
-	want := `json: duplicate key "` + k + `" at byte offset ` + fmt.Sprint(2+len(k)+4)
+	want := `json: duplicate key "` + k[:64] + `"…(71680 bytes) at byte offset ` + fmt.Sprint(2+len(k)+4)
 	if errText(parseErr) != want {
 		t.Fatalf("Parse: got %.60q…, want the opening quote at %d", errText(parseErr), 2+len(k)+4)
 	}
@@ -154,7 +154,7 @@ func TestKeySpanTrackingStaysBounded(t *testing.T) {
 	b.WriteString(`]}`)
 	vr := newValidatingReader(strings.NewReader(b.String()))
 	h := &spanPeek{vr: vr}
-	if err := walk(vr, vr, h); err != nil {
+	if err := walk(vr, h); err != nil {
 		t.Fatal(err)
 	}
 	if h.max > 4096 {

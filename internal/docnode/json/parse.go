@@ -2,7 +2,6 @@ package json
 
 import (
 	"bytes"
-	"unicode/utf8"
 
 	"github.com/fulmenhq/sumpter/internal/docnode"
 )
@@ -10,18 +9,13 @@ import (
 // MaxDepth is the deepest container nesting Parse and Walk accept.
 const MaxDepth = 1024
 
-// parse builds the tree for one JSON document. It never returns a partial
-// tree: any error discards it.
+// parse builds the tree for one JSON document through the same validating
+// reader and walker as Walk, so both report the same first fault. It never
+// returns a partial tree: any error discards it.
 func parse(data []byte) (*jnode, error) {
-	if !utf8.Valid(data) {
-		return nil, errInvalidUTF8
-	}
-	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, errEmptyInput
-	}
 	b := &treeBuilder{root: &jnode{typ: rootNode}}
 	b.cur = b.root
-	if err := walk(bytes.NewReader(data), sliceSource(data), b); err != nil {
+	if err := walk(newValidatingReader(bytes.NewReader(data)), b); err != nil {
 		return nil, err
 	}
 	return b.root, nil
