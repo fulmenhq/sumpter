@@ -79,7 +79,9 @@ Do not place `type:` or `expression:` at the asset file top level; the schema
 requires `applicability.type` and `applicability.expression`.
 
 Multi-file runs may opt into per-file failure isolation with
-`--continue-on-error`. In v0 this flag requires `--output-path`; successful
+`--continue-on-error`. It is not supported with `s3://` inputs in this
+release: the run is refused before any cloud request, including under
+`--dry-run`. In v0 this flag requires `--output-path`; successful
 input files still emit their normal output artifacts, recoverable per-file
 failures are written to `<output-path>/failures.json`, and the command exits
 non-zero when any file failed. Output-write and failure-manifest-write errors

@@ -26,6 +26,8 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ### Changed
 
+- **`--continue-on-error` is refused with `s3://` inputs** — `extract files` and `recipes run extract` now reject `--continue-on-error` when any input is an `s3://` reference, including a mixed local and cloud list and under `--dry-run`, with "--continue-on-error is not supported with s3:// inputs in this release". The refusal happens before any cloud request. Previously the flag was accepted, but a missing cloud object still stopped the whole run without recording the other inputs. Local inputs keep `--continue-on-error`.
+
 - **`--dry-run` checks every input** — a dry run of `extract files` or `recipes run extract` now opens each named local input and makes a metadata-only HEAD request for each named `s3://` object. It exits non-zero with the input and `not found` or `permission denied` when one is unavailable, instead of listing it as if the run would succeed. It still writes nothing, stages nothing, and fetches no object bytes.
 
 - **An input root that matches no files is an error** — `extract files` and `recipes run extract` now exit non-zero when `--input-path` or a recipe's `defaults.input.path` exists but matches no files, including under `--dry-run` and `--continue-on-error`. A scheduled job that used to exit 0 on an empty day now fails. The run stops before creating the output directory or writing anything, so an earlier run's manifest and data under the same `--output-path` are left untouched. The error names the root as given, the include and exclude patterns, and what a relative root is relative to. There is no option yet to allow an empty run.

@@ -252,7 +252,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symbolic links")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 1, "Number of parallel workers")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview the run without writing anything: resolves and checks every input (stats local files, reads list files, LIST/HEAD on s3:// references), reports what would be processed, and exits non-zero if any input is missing, unreadable, or matches nothing")
-	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file failures instead of aborting; the run still exits non-zero and lists every dropped input in failures.json — reconcile it so inputs are not silently dropped. Requires --output-path")
+	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file failures instead of aborting; the run still exits non-zero and lists every dropped input in failures.json — reconcile it so inputs are not silently dropped. Requires --output-path. Not supported with s3:// inputs in this release")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "json", "Output format")
 	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Output formats (comma-separated or repeatable; json/ndjson/parquet)")
@@ -468,6 +468,11 @@ func runExtract(opts *ExtractOptions) (err error) {
 	}
 	if opts.ContinueOnError && strings.TrimSpace(opts.OutputPath) == "" && !opts.DryRun {
 		return fmt.Errorf("--continue-on-error requires --output-path")
+	}
+	// Refused for dry runs too, and before any cloud listing, metadata read or
+	// acquisition: a missing object would abort the run without accounting.
+	if err := refuseCloudContinueOnError(opts); err != nil {
+		return err
 	}
 	if err := validateArtifactDescriptorOptions(opts); err != nil {
 		return err

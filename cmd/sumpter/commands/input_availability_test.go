@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -304,5 +306,57 @@ func TestDryRunChecksNamedLocalInputs(t *testing.T) {
 	}
 	if err := runSumpter(t, f.filesArgs("--files", f.good, "--dry-run")); err != nil {
 		t.Fatalf("dry run of an available input failed: %v", err)
+	}
+}
+
+// failIfCalledCredentials writes a credentials config whose default handle
+// points at a server that fails the test on any request, proving a code path
+// makes no cloud call.
+func failIfCalledCredentials(t *testing.T, dir string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected cloud request: %s %s", r.Method, r.URL)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	path := filepath.Join(dir, "credentials.yaml")
+	body := "handles:\n  default:\n    region: us-east-1\n    endpoint: " + srv.URL + "\n" +
+		"    force_path_style: true\n    insecure: true\n    access_key_id: test\n    secret_access_key: test\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestCloudContinueOnErrorRefusedBeforeWork(t *testing.T) {
+	f := newAvailabilityFixture(t)
+	creds := failIfCalledCredentials(t, f.dir)
+	mixed := f.writeList(t, "mixed.txt", f.good, "s3://bucket/in/doc.json")
+	out := filepath.Join(f.dir, "fresh-out")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"s3 files", f.filesArgs("--files", "s3://bucket/in/doc.json")},
+		{"s3 prefix", f.filesArgs("--input-path", "s3://bucket/in/")},
+		{"mixed file list", f.filesArgs("--file-list", mixed)},
+	} {
+		for _, dry := range []bool{false, true} {
+			args := append(append([]string{}, tc.args...), "--continue-on-error", "--credentials", creds, "--output-path", out)
+			if dry {
+				args = append(args, "--dry-run")
+			}
+			err := runSumpter(t, args)
+			if err == nil || err.Error() != "--continue-on-error is not supported with s3:// inputs in this release" {
+				t.Fatalf("%s dry=%v: error = %v, want the cloud refusal", tc.name, dry, err)
+			}
+			if _, serr := os.Stat(out); !os.IsNotExist(serr) {
+				t.Fatalf("%s dry=%v: output directory created", tc.name, dry)
+			}
+		}
+	}
+	// Local inputs keep --continue-on-error.
+	if err := runSumpter(t, f.filesArgs("--files", f.good, "--continue-on-error", "--output-path", out)); err != nil {
+		t.Fatalf("local continue-on-error refused: %v", err)
 	}
 }

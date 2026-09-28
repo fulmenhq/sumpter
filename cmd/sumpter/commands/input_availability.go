@@ -201,3 +201,25 @@ func inputFailureError(display string, raw, shown error) error {
 	}
 	return fmt.Errorf("failed to process file %s: %w", display, shown)
 }
+
+// errCloudContinueOnError refuses --continue-on-error with cloud inputs: an
+// unavailable cloud object cannot yet be recorded while the others proceed.
+var errCloudContinueOnError = errors.New("--continue-on-error is not supported with s3:// inputs in this release")
+
+// refuseCloudContinueOnError rejects --continue-on-error when any input is an
+// s3:// reference, including a mixed local and cloud file list and bounded
+// cloud input mode. It classifies references only (reading a local file list
+// to find them) and runs before any cloud client is built.
+func refuseCloudContinueOnError(opts *ExtractOptions) error {
+	if !opts.ContinueOnError {
+		return nil
+	}
+	cloud, err := referencesIncludeCloud(opts)
+	if err != nil {
+		return err
+	}
+	if cloud {
+		return errCloudContinueOnError
+	}
+	return nil
+}
