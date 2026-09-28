@@ -26,6 +26,8 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ### Changed
 
+- **Command-line paths for `recipes run extract` are relative to the working directory** — `--file-list`, `--input-path`, and `--output-path` given to `recipes run extract` now resolve against the working directory, as `--files` already did and as every other command does. They previously resolved against the recipe directory, so a relative `--output-path` wrote into the recipe. Paths in `recipe.yaml` (`defaults` and `assets`) are still relative to the recipe directory, and entries in a file list are relative to the list file's directory.
+
 - **`--continue-on-error` is refused with `s3://` inputs** — `extract files` and `recipes run extract` now reject `--continue-on-error` when any input is an `s3://` reference, including a mixed local and cloud list and under `--dry-run`, with "--continue-on-error is not supported with s3:// inputs in this release". The refusal happens before any cloud request. Previously the flag was accepted, but a missing cloud object still stopped the whole run without recording the other inputs. Local inputs keep `--continue-on-error`.
 
 - **`--dry-run` checks every input** — a dry run of `extract files` or `recipes run extract` now opens each named local input and makes a metadata-only HEAD request for each named `s3://` object. It exits non-zero with the input and `not found` or `permission denied` when one is unavailable, instead of listing it as if the run would succeed. It still writes nothing, stages nothing, and fetches no object bytes.

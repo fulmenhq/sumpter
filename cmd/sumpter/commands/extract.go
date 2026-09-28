@@ -218,6 +218,9 @@ precisely-scoped sets). Processing many files in one invocation is the supported
 faster path for large sets. Matching records are extracted according to the
 extract configuration, producing structured output.
 
+Without --continue-on-error the run stops at the first failed input; outputs of
+inputs already processed may remain, and the non-zero exit is authoritative.
+
 Source input and result output may be S3-compatible cloud URIs (s3://) using
 credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 		RunE: func(cmd *cobra.Command, args []string) error {

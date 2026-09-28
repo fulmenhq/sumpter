@@ -235,7 +235,7 @@ func TestRecipeFileListObjectLineUnknownFieldFailsClosed(t *testing.T) {
 		`{"uri":"testdata/a.xml","size":1,"sha256":"` + testHex64 + `","version_id":"v1"}`,
 	})
 	cmd := recipeRunExtractTestCommand()
-	err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", FileList: filepath.Base(list), Progress: false})
+	err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", FileList: list, Progress: false})
 	if err == nil || !strings.Contains(err.Error(), `unknown field "version_id"`) {
 		t.Fatalf("err = %v, want unknown-field rejection", err)
 	}
@@ -255,7 +255,7 @@ func TestRecipeFileListObjectLinePerInputMode(t *testing.T) {
 		objectLine(t, "testdata/a.xml", int64(len(aBody)), fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(aBody)))),
 	})
 	cmd := recipeRunExtractTestCommand()
-	if err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", FileList: filepath.Base(list), Progress: false}); err != nil {
+	if err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{ManifestPath: "recipe.yaml", FileList: list, Progress: false}); err != nil {
 		t.Fatalf("executeExtractRecipe (declared per-input): %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(ws, "outputs", "extract-a.xml.json")); err != nil {
@@ -282,7 +282,7 @@ func TestRecipeFileListObjectLineAggregateMatch(t *testing.T) {
 	cmd := recipeRunExtractTestCommand()
 	if err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{
 		ManifestPath: "recipe.yaml",
-		FileList:     filepath.Base(list),
+		FileList:     list,
 		OutputMode:   "aggregate",
 		Progress:     false,
 	}); err != nil {
@@ -316,7 +316,7 @@ func TestRecipeFileListObjectLineAggregateMismatchFailsFast(t *testing.T) {
 	cmd := recipeRunExtractTestCommand()
 	err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{
 		ManifestPath: "recipe.yaml",
-		FileList:     filepath.Base(list),
+		FileList:     list,
 		OutputMode:   "aggregate",
 		Progress:     false,
 	})

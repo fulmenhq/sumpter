@@ -78,6 +78,15 @@ applicability:
 Do not place `type:` or `expression:` at the asset file top level; the schema
 requires `applicability.type` and `applicability.expression`.
 
+**Paths.** Paths given on the command line (`--files`, `--file-list`,
+`--input-path`, `--output-path`) are relative to the working directory. Paths in
+`recipe.yaml` (`defaults` and `assets`) are relative to the recipe directory.
+Entries inside a file list are relative to the list file's directory.
+
+Without `--continue-on-error`, a run stops at the first failed input. The
+outputs of inputs already processed may remain in the output directory; the
+non-zero exit is authoritative.
+
 Multi-file runs may opt into per-file failure isolation with
 `--continue-on-error`. It is not supported with `s3://` inputs in this
 release: the run is refused before any cloud request, including under

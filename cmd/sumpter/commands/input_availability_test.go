@@ -360,3 +360,84 @@ func TestCloudContinueOnErrorRefusedBeforeWork(t *testing.T) {
 		t.Fatalf("local continue-on-error refused: %v", err)
 	}
 }
+
+// recipeWorkspace copies the JSON example recipe into dir/recipe with the given
+// defaults block and returns the workspace path.
+func recipeWorkspace(t *testing.T, f availabilityFixture, defaults string) string {
+	t.Helper()
+	ws := filepath.Join(f.dir, "recipe")
+	for _, sub := range []string{"signature", "extract"} {
+		if err := os.MkdirAll(filepath.Join(ws, sub), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	copyFile(t, f.sig, filepath.Join(ws, "signature", "signature.yaml"))
+	copyFile(t, f.ext, filepath.Join(ws, "extract", "extract.yaml"))
+	manifest := "version: \"recipe/v0.1.0\"\nkind: \"extract\"\nid: paths\n" +
+		"display_name: \"Paths\"\ncreated_at: \"2026-09-28T00:00:00Z\"\ncontent_version: \"0.0.1\"\n" +
+		"assets:\n  signature: signature/signature.yaml\n  extract: extract/extract.yaml\n" + defaults
+	if err := os.WriteFile(filepath.Join(ws, "recipe.yaml"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return ws
+}
+
+// TestRecipeCLIPathsRelativeToWorkingDir runs from a working directory that is
+// neither the recipe directory nor a list's directory.
+func TestRecipeCLIPathsRelativeToWorkingDir(t *testing.T) {
+	f := newAvailabilityFixture(t)
+	ws := recipeWorkspace(t, f, "defaults:\n  input:\n    format: json\n  output:\n    format: json\n    pattern: records.jsonl\n")
+	cwd := filepath.Join(f.dir, "cwd")
+	for _, d := range []string{filepath.Join(cwd, "in"), filepath.Join(cwd, "lists", "data")} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	copyFile(t, f.good, filepath.Join(cwd, "in", "good.json"))
+	copyFile(t, f.good, filepath.Join(cwd, "lists", "data", "good.json"))
+	if err := os.WriteFile(filepath.Join(cwd, "lists", "l.txt"), []byte("data/good.json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	for _, tc := range []struct {
+		name  string
+		input []string
+		out   string
+	}{
+		{"input-path", []string{"--input-path", "in"}, "out-a"},
+		{"file-list", []string{"--file-list", "lists/l.txt"}, "out-b"},
+	} {
+		args := append([]string{"recipes", "run", "extract", ws}, tc.input...)
+		args = append(args, "--output-path", tc.out, "--no-manifest")
+		if err := runSumpter(t, args); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if _, err := os.Stat(filepath.Join(cwd, tc.out, "records.jsonl")); err != nil {
+			t.Fatalf("%s: records not under the working directory: %v", tc.name, err)
+		}
+		if _, err := os.Stat(filepath.Join(ws, tc.out)); !os.IsNotExist(err) {
+			t.Fatalf("%s: output written inside the recipe directory", tc.name)
+		}
+	}
+}
+
+// TestRecipeDefaultOutputPathRelativeToRecipeDir keeps a path written in
+// recipe.yaml relative to the recipe directory.
+func TestRecipeDefaultOutputPathRelativeToRecipeDir(t *testing.T) {
+	f := newAvailabilityFixture(t)
+	ws := recipeWorkspace(t, f, "defaults:\n  input:\n    format: json\n  output:\n    format: json\n    pattern: records.jsonl\n    path: recipe-out\n")
+	if err := runSumpter(t, []string{"recipes", "run", "extract", ws, "--files", f.good, "--no-manifest"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(ws, "recipe-out", "records.jsonl")); err != nil {
+		t.Fatalf("defaults.output.path is not relative to the recipe directory: %v", err)
+	}
+}

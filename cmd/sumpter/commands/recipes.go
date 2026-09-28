@@ -316,8 +316,8 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 
 	cmd.Flags().StringVar(&opts.ManifestPath, "manifest", "recipe.yaml", "Path to recipe manifest relative to workspace")
 	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of files to process (overrides manifest; short ad hoc sets — use --file-list for large batches)")
-	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local or s3://), one per line; # comments ignored. No walk, no argv limit (overrides manifest). A line may instead be a JSON object {\"uri\",\"size\",\"sha256\"} declaring the input's exact bytes (fail-closed). Mutually exclusive with --files/--input-path")
-	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory of XML files to process; walks and filters by include/exclude patterns — for large or precisely-scoped sets prefer --file-list (overrides manifest)")
+	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local or s3://), one per line; # comments ignored. No walk, no argv limit (overrides manifest). A line may instead be a JSON object {\"uri\",\"size\",\"sha256\"} declaring the input's exact bytes (fail-closed). Mutually exclusive with --files/--input-path. Relative to the working directory; entries in the list are relative to the list file's directory")
+	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory of XML files to process; walks and filters by include/exclude patterns — for large or precisely-scoped sets prefer --file-list (overrides manifest). Relative to the working directory")
 	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "", "Override manifest include pattern")
 	cmd.Flags().StringVar(&opts.ExcludePattern, "exclude-pattern", "", "Override manifest exclude pattern")
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", -1, "Override manifest max depth")
@@ -328,7 +328,7 @@ docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().IntVar(&opts.Workers, "workers", 0, "Number of parallel workers (overrides manifest)")
 	cmd.Flags().StringVar(&opts.Format, "format", "", "Override output format")
 	cmd.Flags().StringSliceVar(&opts.Formats, "formats", nil, "Override output formats (comma-separated or repeatable; json/ndjson/parquet)")
-	cmd.Flags().StringVar(&opts.OutputPath, "output-path", "", "Override output path")
+	cmd.Flags().StringVar(&opts.OutputPath, "output-path", "", "Override output path. Relative to the working directory; defaults.output.path in recipe.yaml is relative to the recipe directory")
 	cmd.Flags().StringVar(&opts.OutputPattern, "output-pattern", "", "Override output filename pattern")
 	cmd.Flags().StringVar(&opts.OutputMode, "output-mode", outputModePerInput, "Record-file fan-out: per-input (one file per input) or aggregate (stream all inputs to one NDJSON writer per invocation, rolling to numbered shards). Aggregate requires --output-path + a manifest and is JSON/NDJSON only")
 	cmd.Flags().IntVar(&opts.AggregateMaxRecords, "aggregate-max-records", 0, "Aggregate mode: roll to the next shard before exceeding this record count per shard (0 = uncapped)")
@@ -409,6 +409,12 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	absWorkspace, err := filepath.Abs(workspace)
 	if err != nil {
 		return fmt.Errorf("failed to resolve workspace: %w", err)
+	}
+	// Paths given on the command line are relative to the working directory;
+	// paths in recipe.yaml are relative to the recipe directory.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to resolve working directory: %w", err)
 	}
 
 	manifestPath := opts.ManifestPath
@@ -528,14 +534,14 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	// flag is given does the manifest's input mode apply (files / files_from / path).
 	cliInput := opts.FileList != "" || opts.Files != "" || opts.InputPath != ""
 	if opts.FileList != "" {
-		extractOpts.FileList = resolveMaybeRelative(absWorkspace, opts.FileList)
+		extractOpts.FileList = resolveMaybeRelative(cwd, opts.FileList)
 	}
 	if opts.Files != "" {
 		extractOpts.Files = opts.Files
 	}
 	if opts.InputPath != "" {
-		extractOpts.InputPath = resolveMaybeRelative(absWorkspace, opts.InputPath)
-		extractOpts.inputDisplay, extractOpts.inputBaseKind = opts.InputPath, baseKindRecipeDir
+		extractOpts.InputPath = resolveMaybeRelative(cwd, opts.InputPath)
+		extractOpts.inputDisplay, extractOpts.inputBaseKind = opts.InputPath, baseKindWorkingDir
 		sourceExtractionInput.Path = extractOpts.InputPath
 	}
 	if !cliInput {
@@ -599,7 +605,7 @@ func executeExtractRecipe(cmd *cobra.Command, workspace string, opts *recipeRunE
 	}
 
 	if opts.OutputPath != "" {
-		extractOpts.OutputPath = resolveMaybeRelative(absWorkspace, opts.OutputPath)
+		extractOpts.OutputPath = resolveMaybeRelative(cwd, opts.OutputPath)
 	} else if defaults.Output.Path != "" {
 		extractOpts.OutputPath = resolveMaybeRelative(absWorkspace, defaults.Output.Path)
 	}
