@@ -152,7 +152,7 @@ invented:
 | Provenance signal | `lifecycle` |
 | --- | --- |
 | `incomplete: true` (hard failure; orphans may exist) | `incomplete` |
-| Any failed inputs (`inputs_failed > 0` or `inputs[].disposition == "failed"`) | `partial` |
+| Any failed inputs (`inputs_failed > 0`, `inputs[].disposition == "failed"`, or a failed input recorded in `failures.json`) | `partial` |
 | Otherwise (applied and/or not_applicable only) | `complete` |
 
 `draft`, `building`, and `retired` are reserved by the contract. Sumpter extract
@@ -390,18 +390,20 @@ hundreds). Use these signals to verify every input was applied, in order of auth
     outputs. Use the default when completeness is non-negotiable.
 3. **`--continue-on-error` is an explicit opt-in to drop-tolerance**, and it moves the
    completeness burden to you. The run still exits non-zero if anything failed;
-   `failures.json` enumerates **every** dropped input (path + reason); and the manifest
-   `inputs[]` inventory is **gap-free** — every resolved input ordinal appears exactly once
-   with a `disposition` (`applied` / `failed`) and a `record_count`. A pipeline can assert
-   completeness positively: `len(inputs)` equals the expected count and no input has
-   `disposition: failed`.
+   `failures.json` enumerates **every** dropped input (path + reason) and is the
+   authoritative record of dropped inputs. In an aggregate manifest, each applied or
+   not_applicable input has an `inputs[]` row with its `disposition` and `record_count`,
+   and a failed input has a `failed` row only when its content could be hashed, because a
+   row records the input's `sha256` and size. An input that could not be read
+   (`input_unavailable`) has no row. So `len(inputs)` is not a completeness check under
+   `--continue-on-error`: gate on the exit code and `failures.json`.
 4. **`incomplete: true` is not the completeness signal.** It flags a hard output failure
    with possibly-orphaned cloud objects (R8), a different condition from "some inputs
    failed". Do not gate completeness on this flag alone.
 
 **Input-accounting summary (aggregate manifests).** A completed aggregate
-manifest carries four optional top-level integers derived from the gap-free
-`inputs[]` inventory, so a consumer can reconcile completeness from a single
+manifest carries four optional top-level integers derived from the
+`inputs[]` inventory when it has a row for every resolved input, so a consumer can reconcile completeness from a single
 place rather than walking every entry. They mirror the closed input-disposition
 enum exactly:
 
@@ -413,13 +415,16 @@ enum exactly:
 
 The reconciliation invariant is `applied + failed + not_applicable == total == len(inputs)`.
 These counts are present only on aggregate manifests with an authoritative
-inventory — omitted on per-input/default manifests and on `incomplete: true`
-manifests, which are not a completeness signal. The exit code remains
+inventory. They are omitted on per-input/default manifests, on `incomplete: true`
+manifests, and when a resolved input has no row in `inputs[]`, such as an input
+that could not be read under `--continue-on-error`. A manifest without input counts makes no
+completeness claim; `failures.json` is the authoritative record of dropped
+inputs. The exit code remains
 authoritative; the counts are a convenience over the `inputs[]` inventory, not a
 replacement for checking it. When `--artifact-descriptor` is enabled, the
 portable descriptor `lifecycle` field maps these same signals (plus
-`incomplete: true` and per-input `disposition`) onto the data-artifact/v0
-lifecycle enum — see [Portable Artifact Descriptor](#portable-artifact-descriptor).
+`incomplete: true`, per-input `disposition`, and the failed-input count recorded
+in `failures.json`) onto the data-artifact/v0 lifecycle enum — see [Portable Artifact Descriptor](#portable-artifact-descriptor).
 
 **With `extract-multi`.** `--output-mode aggregate` applies to
 [`recipes run extract-multi`](#run-multiple-recipes-in-one-pass-extract-multi) too: each

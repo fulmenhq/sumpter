@@ -158,7 +158,7 @@ Descriptor `lifecycle` is mapped from existing provenance completeness signals
 | Provenance signal | `lifecycle` |
 | --- | --- |
 | `incomplete: true` | `incomplete` |
-| Any failed inputs | `partial` |
+| Any failed inputs (in the manifest or in `failures.json`) | `partial` |
 | Otherwise | `complete` |
 
 `draft`, `building`, and `retired` are reserved by the contract and are not
