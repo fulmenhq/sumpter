@@ -1375,7 +1375,7 @@ func analyzeRecordBoundaries(reader io.Reader, selector string, encoding string,
 		}
 
 		// Get element name from record (available in size-only mode)
-		elementName := record.ElementName
+		elementName := record.Name
 		if elementName == "" {
 			logger.Warn("Missing element name in record")
 			continue

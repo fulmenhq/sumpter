@@ -3,8 +3,6 @@ package extract
 import (
 	"strings"
 	"testing"
-
-	"github.com/antchfx/xmlquery"
 )
 
 // TestInternalFieldVisibleInScopeNotEmitted is the focused seam test for
@@ -14,7 +12,7 @@ import (
 // emit. Exercises the DOM record path (extractRecords) — its emission merge loop
 // and buildExpressionScope.
 func TestInternalFieldVisibleInScopeNotEmitted(t *testing.T) {
-	doc, err := xmlquery.Parse(strings.NewReader(`<root><item><name>Alpha</name></item></root>`))
+	doc, err := parseXMLDoc(strings.NewReader(`<root><item><name>Alpha</name></item></root>`))
 	if err != nil {
 		t.Fatalf("parse xml: %v", err)
 	}
@@ -69,7 +67,7 @@ func TestInternalFieldVisibleInScopeNotEmitted(t *testing.T) {
 // ExtractFieldsWithExternal, where external fields are returned as the record:
 // internal captures must be dropped there too, ordinary fields kept.
 func TestInternalFieldNotEmittedOnZeroRecordPath(t *testing.T) {
-	doc, err := xmlquery.Parse(strings.NewReader(`<root></root>`)) // no //item -> zero records
+	doc, err := parseXMLDoc(strings.NewReader(`<root></root>`)) // no //item -> zero records
 	if err != nil {
 		t.Fatalf("parse xml: %v", err)
 	}

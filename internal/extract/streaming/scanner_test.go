@@ -97,11 +97,11 @@ func TestRecordScanner_BasicScan(t *testing.T) {
 		t.Fatal("expected record, got nil")
 		return
 	}
-	if record.RecordNum != 1 {
-		t.Errorf("first record number = %d, want 1", record.RecordNum)
+	if record.Num != 1 {
+		t.Errorf("first record number = %d, want 1", record.Num)
 	}
-	if !strings.Contains(record.XML, "First") {
-		t.Errorf("first record doesn't contain expected content: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "First") {
+		t.Errorf("first record doesn't contain expected content: %s", string(record.Raw))
 	}
 
 	// Scan second record
@@ -109,11 +109,11 @@ func TestRecordScanner_BasicScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on second record: %v", err)
 	}
-	if record.RecordNum != 2 {
-		t.Errorf("second record number = %d, want 2", record.RecordNum)
+	if record.Num != 2 {
+		t.Errorf("second record number = %d, want 2", record.Num)
 	}
-	if !strings.Contains(record.XML, "Second") {
-		t.Errorf("second record doesn't contain expected content: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "Second") {
+		t.Errorf("second record doesn't contain expected content: %s", string(record.Raw))
 	}
 
 	// Scan third record
@@ -121,11 +121,11 @@ func TestRecordScanner_BasicScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on third record: %v", err)
 	}
-	if record.RecordNum != 3 {
-		t.Errorf("third record number = %d, want 3", record.RecordNum)
+	if record.Num != 3 {
+		t.Errorf("third record number = %d, want 3", record.Num)
 	}
-	if !strings.Contains(record.XML, "Third") {
-		t.Errorf("third record doesn't contain expected content: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "Third") {
+		t.Errorf("third record doesn't contain expected content: %s", string(record.Raw))
 	}
 
 	// Should get EOF on next call
@@ -168,8 +168,8 @@ func TestRecordScanner_MatchesLocalElementNameExactly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first record: %v", err)
 	}
-	if strings.Contains(record.XML, "<record>") {
-		t.Fatalf("scanner matched lowercase element unexpectedly: %s", record.XML)
+	if strings.Contains(string(record.Raw), "<record>") {
+		t.Fatalf("scanner matched lowercase element unexpectedly: %s", string(record.Raw))
 	}
 
 	record, err = scanner.Next()
@@ -201,20 +201,20 @@ func TestRecordScanner_NestedElements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on first record: %v", err)
 	}
-	if !strings.Contains(record.XML, "First record") {
-		t.Errorf("first record missing expected content: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "First record") {
+		t.Errorf("first record missing expected content: %s", string(record.Raw))
 	}
 	// The nested <Record> should be included in the first record's XML
-	if !strings.Contains(record.XML, "<nested>data</nested>") {
-		t.Errorf("first record should contain nested Record element: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "<nested>data</nested>") {
+		t.Errorf("first record should contain nested Record element: %s", string(record.Raw))
 	}
 
 	record, err = scanner.Next()
 	if err != nil {
 		t.Fatalf("unexpected error on second record: %v", err)
 	}
-	if !strings.Contains(record.XML, "Second record") {
-		t.Errorf("second record missing expected content: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "Second record") {
+		t.Errorf("second record missing expected content: %s", string(record.Raw))
 	}
 
 	// Should get EOF
@@ -241,8 +241,8 @@ func TestRecordScanner_EmptyRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on first record: %v", err)
 	}
-	if record.RecordNum != 1 {
-		t.Errorf("first record number = %d, want 1", record.RecordNum)
+	if record.Num != 1 {
+		t.Errorf("first record number = %d, want 1", record.Num)
 	}
 
 	// Second empty record (with separate closing tag)
@@ -250,8 +250,8 @@ func TestRecordScanner_EmptyRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on second record: %v", err)
 	}
-	if record.RecordNum != 2 {
-		t.Errorf("second record number = %d, want 2", record.RecordNum)
+	if record.Num != 2 {
+		t.Errorf("second record number = %d, want 2", record.Num)
 	}
 
 	// Third record with content
@@ -259,11 +259,11 @@ func TestRecordScanner_EmptyRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on third record: %v", err)
 	}
-	if record.RecordNum != 3 {
-		t.Errorf("third record number = %d, want 3", record.RecordNum)
+	if record.Num != 3 {
+		t.Errorf("third record number = %d, want 3", record.Num)
 	}
-	if !strings.Contains(record.XML, "Has content") {
-		t.Errorf("third record missing expected content: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "Has content") {
+		t.Errorf("third record missing expected content: %s", string(record.Raw))
 	}
 
 	// EOF
@@ -310,8 +310,8 @@ func TestRecordScanner_CompressedStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on first record: %v", err)
 	}
-	if !strings.Contains(record.XML, "Compressed") {
-		t.Errorf("first record missing expected content: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "Compressed") {
+		t.Errorf("first record missing expected content: %s", string(record.Raw))
 	}
 
 	// Scan second record
@@ -319,8 +319,8 @@ func TestRecordScanner_CompressedStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on second record: %v", err)
 	}
-	if !strings.Contains(record.XML, "Records") {
-		t.Errorf("second record missing expected content: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "Records") {
+		t.Errorf("second record missing expected content: %s", string(record.Raw))
 	}
 
 	// EOF
@@ -346,14 +346,14 @@ func TestRecordScanner_AttributesPreserved(t *testing.T) {
 	}
 
 	// Check that attributes are preserved
-	if !strings.Contains(record.XML, `id="test-123"`) {
-		t.Errorf("record XML missing id attribute: %s", record.XML)
+	if !strings.Contains(string(record.Raw), `id="test-123"`) {
+		t.Errorf("record XML missing id attribute: %s", string(record.Raw))
 	}
-	if !strings.Contains(record.XML, `type="sale"`) {
-		t.Errorf("record XML missing type attribute: %s", record.XML)
+	if !strings.Contains(string(record.Raw), `type="sale"`) {
+		t.Errorf("record XML missing type attribute: %s", string(record.Raw))
 	}
-	if !strings.Contains(record.XML, `attr="value"`) {
-		t.Errorf("record XML missing nested attribute: %s", record.XML)
+	if !strings.Contains(string(record.Raw), `attr="value"`) {
+		t.Errorf("record XML missing nested attribute: %s", string(record.Raw))
 	}
 }
 
@@ -410,12 +410,12 @@ func TestRecordScanner_LargeRecord(t *testing.T) {
 
 	// Verify the record contains all items
 	expectedSize := 100 * 1000 // approximately (ignoring XML tags)
-	if len(record.XML) < expectedSize {
-		t.Errorf("record XML size = %d, expected at least %d", len(record.XML), expectedSize)
+	if len(string(record.Raw)) < expectedSize {
+		t.Errorf("record XML size = %d, expected at least %d", len(string(record.Raw)), expectedSize)
 	}
 
 	// Verify we can parse the extracted XML
-	if !strings.Contains(record.XML, "<item>") {
+	if !strings.Contains(string(record.Raw), "<item>") {
 		t.Error("record XML doesn't contain expected item elements")
 	}
 }
@@ -468,11 +468,11 @@ func TestRecordScanner_CommentsAndProcessingInstructions(t *testing.T) {
 	}
 
 	// Comments and PIs should be preserved in the record XML
-	if !strings.Contains(record.XML, "<!-- This is a comment -->") {
-		t.Errorf("record XML missing comment: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "<!-- This is a comment -->") {
+		t.Errorf("record XML missing comment: %s", string(record.Raw))
 	}
-	if !strings.Contains(record.XML, "<?processing instruction?>") {
-		t.Errorf("record XML missing processing instruction: %s", record.XML)
+	if !strings.Contains(string(record.Raw), "<?processing instruction?>") {
+		t.Errorf("record XML missing processing instruction: %s", string(record.Raw))
 	}
 }
 

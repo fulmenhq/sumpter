@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
@@ -183,11 +183,11 @@ func TestAbsentInternalDoesNotFallBackToExternal(t *testing.T) {
 	}
 
 	workerCfg := preparedFieldConfig(t, base, ".", nil)
-	item := xmlquery.FindOne(doc, "//item")
+	item := findNode(doc, "//item")
 	if item == nil {
 		t.Fatal("missing item")
 	}
-	_, err = ExtractFieldsWithExternal(item, workerCfg, external)
+	_, err = ExtractFieldsWithExternal(subDoc(doc, item), workerCfg, external)
 	if err == nil {
 		t.Fatal("worker: expected collision when absent internal shares external key")
 	}
@@ -215,11 +215,11 @@ func TestInternalMappingBufferedAndWorkerParity(t *testing.T) {
 
 	// Worker/indexed path inherits the same helper via ExtractFieldsWithExternal.
 	workerCfg := preparedFieldConfig(t, base, ".", nil)
-	item := xmlquery.FindOne(doc, "//item")
+	item := findNode(doc, "//item")
 	if item == nil {
 		t.Fatal("missing item node")
 	}
-	worker, err := ExtractFieldsWithExternal(item, workerCfg, nil)
+	worker, err := ExtractFieldsWithExternal(subDoc(doc, item), workerCfg, nil)
 	if err != nil {
 		t.Fatalf("worker ExtractFieldsWithExternal: %v", err)
 	}
@@ -661,9 +661,9 @@ func preparedInternalMappingConfig(t *testing.T, mappings []FieldMapping) *Extra
 	return preparedFieldConfig(t, mappings, "//item", nil)
 }
 
-func mustParseXML(t *testing.T, raw string) *xmlquery.Node {
+func mustParseXML(t *testing.T, raw string) docnode.Document {
 	t.Helper()
-	doc, err := xmlquery.Parse(strings.NewReader(raw))
+	doc, err := parseXMLDoc(strings.NewReader(raw))
 	if err != nil {
 		t.Fatalf("parse xml: %v", err)
 	}

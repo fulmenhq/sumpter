@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/antchfx/xmlquery"
-
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
@@ -150,7 +149,7 @@ func (s *collectingRecordSink) Close(context.Context) error { return nil }
 // only the recipe's read-only plan and a per-file config clone, so it is safe to run off
 // the ordered committer in a later slice. The returned bundle's verdict fields tell the
 // committer which path to take.
-func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc *xmlquery.Node) aggregateApplication {
+func (st *recipeRunState) buildAggregateApplication(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc docnode.Document) aggregateApplication {
 	app := aggregateApplication{file: file, logical: logical, ordinal: ordinal, inputSHA256: inputSHA256, inputSize: inputSize}
 	opts := st.plan.opts
 
@@ -232,7 +231,7 @@ type perInputApplication struct {
 // bundle WITHOUT creating the durable per-input output target (that is a commit-stage
 // concern). It reads only the read-only plan + a per-file config clone and enforces the
 // per-input bundle budget (G4) as records are appended, exactly like the aggregate build.
-func (st *recipeRunState) buildPerInputApplication(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node) perInputApplication {
+func (st *recipeRunState) buildPerInputApplication(ctx context.Context, file, logical string, ordinal int, doc docnode.Document) perInputApplication {
 	app := perInputApplication{file: file, logical: logical, ordinal: ordinal}
 	opts := st.plan.opts
 
@@ -414,7 +413,7 @@ func (st *recipeRunState) commitPerInputApplication(ctx context.Context, app per
 // hook, when non-nil, is a test-only seam invoked inside the recovery region before the
 // application runs, so injected panics exercise containment and injected blocking exercises
 // concurrency/backpressure. It is always nil in production.
-func (st *recipeRunState) buildAggregateApplicationContained(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc *xmlquery.Node, hook func(ordinal int)) (app aggregateApplication) {
+func (st *recipeRunState) buildAggregateApplicationContained(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc docnode.Document, hook func(ordinal int)) (app aggregateApplication) {
 	defer func() {
 		if r := recover(); r != nil {
 			app = aggregateApplication{file: file, logical: logical, ordinal: ordinal}
@@ -558,7 +557,7 @@ func (a perInputApplication) recordCount() int { return len(a.records) }
 // becomes a recipe-level failure verdict the committer records (continue-on-error) or
 // aborts on (fail-fast), rather than crashing the worker. hook is a test-only seam (nil in
 // production).
-func (st *recipeRunState) buildPerInputApplicationContained(ctx context.Context, file, logical string, ordinal int, doc *xmlquery.Node, hook func(ordinal int)) (app perInputApplication) {
+func (st *recipeRunState) buildPerInputApplicationContained(ctx context.Context, file, logical string, ordinal int, doc docnode.Document, hook func(ordinal int)) (app perInputApplication) {
 	defer func() {
 		if r := recover(); r != nil {
 			app = perInputApplication{file: file, logical: logical, ordinal: ordinal}
@@ -574,7 +573,7 @@ func (st *recipeRunState) buildPerInputApplicationContained(ctx context.Context,
 // buildApplicationContained builds one recipe's worker-safe bundle for the input, routing by
 // output mode. Both branches are panic-contained (G3) and return a builtApplication the
 // ordered committer applies in input order.
-func (st *recipeRunState) buildApplicationContained(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc *xmlquery.Node, hook func(ordinal int)) builtApplication {
+func (st *recipeRunState) buildApplicationContained(ctx context.Context, file, logical string, ordinal int, inputSHA256 string, inputSize int64, doc docnode.Document, hook func(ordinal int)) builtApplication {
 	if st.aggWriter != nil {
 		return st.buildAggregateApplicationContained(ctx, file, logical, ordinal, inputSHA256, inputSize, doc, hook)
 	}

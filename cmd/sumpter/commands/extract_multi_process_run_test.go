@@ -14,10 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/antchfx/xmlquery"
-
 	"github.com/fulmenhq/sumpter/internal/artifactcontract"
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/processrun"
 )
 
@@ -323,7 +322,7 @@ func TestExtractMultiProcessRun_CanceledTerminal(t *testing.T) {
 			d := newMultiDispatcher(shared, io.Discard)
 			var parses atomic.Int32
 			realParse := d.parseFile
-			d.parseFile = func(p string, a bool) (*xmlquery.Node, error) {
+			d.parseFile = func(p string, a bool) (docnode.Document, error) {
 				n := parses.Add(1)
 				if n >= 2 {
 					cancel()
@@ -596,7 +595,7 @@ func TestExtractMultiProcessRun_SerialParsePanicRecordsFailedNotCompleted(t *tes
 		ProcessRunEventsPath: eventsPath,
 	}
 	d := newMultiDispatcher(shared, io.Discard)
-	d.parseFile = func(string, bool) (*xmlquery.Node, error) {
+	d.parseFile = func(string, bool) (docnode.Document, error) {
 		panic("injected serial parse panic")
 	}
 

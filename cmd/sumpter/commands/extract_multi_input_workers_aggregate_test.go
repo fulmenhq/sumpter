@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/spf13/cobra"
 )
 
@@ -90,7 +90,7 @@ func TestExtractMulti_InputWorkersConcurrencyProof(t *testing.T) {
 		active, maxActive := 0, 0
 		barrier := make(chan struct{})
 		var once sync.Once
-		d.parseFile = func(p string, a bool) (*xmlquery.Node, error) {
+		d.parseFile = func(p string, a bool) (docnode.Document, error) {
 			mu.Lock()
 			active++
 			if active > maxActive {
@@ -154,7 +154,7 @@ func TestExtractMulti_InputWorkersDeterministic(t *testing.T) {
 		}
 		d := newMultiDispatcher(shared, io.Discard)
 		realParse := d.parseFile
-		d.parseFile = func(p string, a bool) (*xmlquery.Node, error) {
+		d.parseFile = func(p string, a bool) (docnode.Document, error) {
 			if workers > 1 {
 				// Reverse the completion order relative to the (alphabetical) schedule
 				// order: 'inA' sleeps longest, later inputs finish first.
@@ -272,7 +272,7 @@ func TestExtractMulti_InputWorkersParseOnceFanToM(t *testing.T) {
 	realParse := d.parseFile
 	var mu sync.Mutex
 	parseCounts := make(map[string]int)
-	d.parseFile = func(p string, a bool) (*xmlquery.Node, error) {
+	d.parseFile = func(p string, a bool) (docnode.Document, error) {
 		mu.Lock()
 		parseCounts[p]++
 		mu.Unlock()

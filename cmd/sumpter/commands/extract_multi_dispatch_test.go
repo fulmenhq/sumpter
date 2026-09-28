@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/antchfx/xmlquery"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +48,7 @@ func TestRunExtractMulti_ParsesEachFileOnceForAllRecipes(t *testing.T) {
 	d := newMultiDispatcher(shared, io.Discard)
 	parseCounts := make(map[string]int)
 	realParse := d.parseFile
-	d.parseFile = func(p string, a bool) (*xmlquery.Node, error) {
+	d.parseFile = func(p string, a bool) (docnode.Document, error) {
 		parseCounts[p]++
 		return realParse(p, a)
 	}

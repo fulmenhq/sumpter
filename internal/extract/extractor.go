@@ -15,10 +15,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/antchfx/xmlquery"
 	xpath "github.com/antchfx/xpath"
 	"github.com/fulmenhq/goneat/pkg/schema"
 	"github.com/fulmenhq/sumpter/internal/assets"
+	"github.com/fulmenhq/sumpter/internal/docnode"
+	_ "github.com/fulmenhq/sumpter/internal/docnode/xml" // registers the XML format
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 	"github.com/fulmenhq/sumpter/internal/extract/transforms"
 	"github.com/fulmenhq/sumpter/internal/logging"
@@ -677,7 +678,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	boundaryDisposition := DispositionApplied
 	boundaryReason := DispositionReason("")
 	boundaryDetail := ""
-	var scanner *streaming.RecordScanner
+	var scanner docnode.RecordScanner
 
 	markBoundaryFailure := func(reason DispositionReason) {
 		boundaryDisposition = DispositionFailed
@@ -743,6 +744,14 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		return finish()
 	}
 
+	format, err := inputFormat()
+	if err != nil {
+		logger.Error("Failed to resolve input format", zap.String("file", diagnosticPath), zap.Error(err))
+		result.Error = err
+		markBoundaryFailure(DispositionReasonInternalError)
+		return finish()
+	}
+
 	// Open file stream
 	stream, err := openFileStream(filePath)
 	if err != nil {
@@ -760,7 +769,16 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 	}()
 
 	// Create record scanner
-	scanner = streaming.NewRecordScanner(stream, recordSelector)
+	recordScanner, err := format.NewScanner(stream, recordSelector, false)
+	if err != nil {
+		err = runtimeProvenance.DiagnosticError(err, filePath)
+		logger.Error("Failed to create record scanner", zap.String("file", diagnosticPath), zap.Error(err))
+		result.Error = fmt.Errorf("failed to create record scanner: %w", err)
+		markBoundaryFailure(DispositionReasonInternalError)
+		return finish()
+	}
+	scanner = recordScanner
+	var parseRecord docnode.Record
 	defer func() {
 		_ = scanner.Close() // Scanner close is best-effort, errors are not critical
 	}()
@@ -785,20 +803,25 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		}
 
 		// Log progress every 100 records
-		if recordBuffer.RecordNum%100 == 0 {
+		if recordBuffer.Num%100 == 0 {
 			logger.Info("Progress",
-				zap.Int("records_scanned", recordBuffer.RecordNum),
+				zap.Int("records_scanned", recordBuffer.Num),
 				zap.String("file", diagnosticPath))
 		}
 
 		// Parse this record as a mini-DOM
-		recordDoc, err := xmlquery.Parse(strings.NewReader(recordBuffer.XML))
+		// The streaming route parses each record's bytes as scanned; the
+		// scanner's namespace context is not applied here. parseRecord is
+		// reused across iterations because ParseRecord does not retain it.
+		parseRecord.Raw = recordBuffer.Raw
+		parseRecord.Num = recordBuffer.Num
+		recordDoc, err := format.ParseRecord(&parseRecord)
 		if err != nil {
 			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to parse record XML",
-				zap.Int("record_num", recordBuffer.RecordNum),
+				zap.Int("record_num", recordBuffer.Num),
 				zap.Error(err))
-			result.Error = fmt.Errorf("failed to parse record %d: %w", recordBuffer.RecordNum, err)
+			result.Error = fmt.Errorf("failed to parse record %d: %w", recordBuffer.Num, err)
 			markBoundaryFailure(DispositionReasonParseError)
 			return finish()
 		}
@@ -809,21 +832,21 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		if err != nil {
 			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to extract from record",
-				zap.Int("record_num", recordBuffer.RecordNum),
+				zap.Int("record_num", recordBuffer.Num),
 				zap.Error(err))
-			result.Error = fmt.Errorf("failed to extract from record %d: %w", recordBuffer.RecordNum, err)
+			result.Error = fmt.Errorf("failed to extract from record %d: %w", recordBuffer.Num, err)
 			markBoundaryFailure(DispositionReasonInternalError)
 			return finish()
 		}
 
 		recordNums := make([]int, len(records))
 		for i := range records {
-			recordNums[i] = recordBuffer.RecordNum
+			recordNums[i] = recordBuffer.Num
 		}
 		if err := enrichRecordsWithRecordNums(records, recordNums, filePath, sigCfg, streamingCfg, runtimeProvenance); err != nil {
 			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to enrich records",
-				zap.Int("record_num", recordBuffer.RecordNum),
+				zap.Int("record_num", recordBuffer.Num),
 				zap.Error(err))
 			result.Error = err
 			markBoundaryFailure(DispositionReasonInternalError)
@@ -833,9 +856,9 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 			if err := sink.OnRecord(ctx, NewEmittedRecord(record)); err != nil {
 				err = runtimeProvenance.DiagnosticError(err, filePath)
 				logger.Error("Failed to emit record",
-					zap.Int("record_num", recordBuffer.RecordNum),
+					zap.Int("record_num", recordBuffer.Num),
 					zap.Error(err))
-				result.Error = fmt.Errorf("failed to emit record %d: %w", recordBuffer.RecordNum, err)
+				result.Error = fmt.Errorf("failed to emit record %d: %w", recordBuffer.Num, err)
 				markBoundaryFailure(DispositionReasonInternalError)
 				return finish()
 			}
@@ -934,7 +957,15 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 
 	// Parse XML document
 	logger.Debug("Parsing XML document", zap.String("file", diagnosticPath))
-	doc, err := xmlquery.Parse(strings.NewReader(string(content)))
+	format, err := inputFormat()
+	if err != nil {
+		t.result.Error = err
+		t.markFailed(DispositionReasonParseError, t.result.Error.Error())
+		t.markBoundaryFailure(DispositionReasonParseError, t.result.Error.Error())
+		t.emitBoundary()
+		return t.result
+	}
+	doc, err := format.Parse(bytes.NewReader(content))
 	if err != nil {
 		err = runtimeProvenance.DiagnosticError(err, filePath)
 		logger.Error("Failed to parse XML", zap.String("file", diagnosticPath), zap.Error(err))
@@ -956,10 +987,10 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 // input file ONCE and dispatches the parsed document to multiple recipes.
 //
 // The doc MUST be treated as strictly read-only by callers and by extraction:
-// the multi-recipe pass shares a single *xmlquery.Node across recipes, so any
+// the multi-recipe pass shares a single docnode.Node across recipes, so any
 // node mutation would be a cross-recipe shared-state hazard. Each recipe must
 // pass its own extCfg (use CloneRecordMatch per concurrent holder).
-func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) ExtractResult {
+func ProcessParsedDocument(ctx context.Context, doc docnode.Document, filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) ExtractResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -971,7 +1002,7 @@ func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath str
 	t := newBoundaryTracker(ctx, filePath, extCfg, appCfg, runtimeProvenance, sink)
 
 	if appCfg != nil {
-		applies, err := evaluateApplicability(doc, appCfg)
+		applies, err := evaluateApplicability(doc.Root(), appCfg)
 		if err != nil {
 			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to evaluate applicability", zap.String("file", diagnosticPath), zap.Error(err))
@@ -995,7 +1026,7 @@ func ProcessParsedDocument(ctx context.Context, doc *xmlquery.Node, filePath str
 
 	// Check if file matches signature
 	logger.Debug("Checking signature match", zap.String("file", diagnosticPath), zap.String("signature", sigCfg.SignatureID))
-	matches, confidence, err := matchesSignature(doc, sigCfg)
+	matches, confidence, err := matchesSignature(doc.Root(), sigCfg)
 	t.result.SignatureConfidence = confidence
 	if err != nil {
 		err = runtimeProvenance.DiagnosticError(err, filePath)
@@ -1189,7 +1220,7 @@ func shouldUseLargeFileStreaming(filePath string, allowLargeFiles bool, sink Rec
 // extraction does not support the streaming/indexed path. The returned document
 // MUST be treated as strictly read-only by callers (it is shared across
 // recipes via ProcessParsedDocument).
-func ParseFileForDOMDispatch(filePath string, allowLargeFiles bool) (*xmlquery.Node, error) {
+func ParseFileForDOMDispatch(filePath string, allowLargeFiles bool) (docnode.Document, error) {
 	const streamingThreshold = 100 * 1024 * 1024 // 100MB, matching the single-recipe streaming threshold
 	if info, err := os.Stat(filePath); err == nil {
 		estimated := info.Size()
@@ -1207,14 +1238,28 @@ func ParseFileForDOMDispatch(filePath string, allowLargeFiles bool) (*xmlquery.N
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
-	doc, err := xmlquery.Parse(strings.NewReader(string(content)))
+	format, err := inputFormat()
+	if err != nil {
+		return nil, err
+	}
+	doc, err := format.Parse(bytes.NewReader(content))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse XML: %w", err)
 	}
 	return doc, nil
 }
 
-func evaluateApplicability(doc *xmlquery.Node, cfg *ApplicabilityConfig) (bool, error) {
+// inputFormat returns the format used to parse extraction inputs. Only the
+// default format is selectable in this release.
+func inputFormat() (docnode.Format, error) {
+	format, ok := docnode.Lookup(docnode.Default)
+	if !ok {
+		return nil, fmt.Errorf("input format %q is not registered", docnode.Default)
+	}
+	return format, nil
+}
+
+func evaluateApplicability(doc docnode.Node, cfg *ApplicabilityConfig) (bool, error) {
 	if cfg == nil {
 		return true, nil
 	}
@@ -1226,7 +1271,7 @@ func evaluateApplicability(doc *xmlquery.Node, cfg *ApplicabilityConfig) (bool, 
 }
 
 // matchesSignature checks if the document matches the signature
-func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, float64, error) {
+func matchesSignature(doc docnode.Node, cfg *FileSignature) (bool, float64, error) {
 	score := 0.0
 	totalWeight := 0.0
 
@@ -1278,7 +1323,7 @@ func matchesSignature(doc *xmlquery.Node, cfg *FileSignature) (bool, float64, er
 // concurrently. Under a namespaces map, unbound-prefix errors have already been
 // caught at load (prepareSignatureConfig), so a match-time compile error here is
 // an ordinary non-match.
-func matchesPattern(doc *xmlquery.Node, pattern MatchPattern, nsMap map[string]string) bool {
+func matchesPattern(doc docnode.Node, pattern MatchPattern, nsMap map[string]string) bool {
 	selector := strings.TrimSpace(pattern.Selector)
 	if selector == "" {
 		return false
@@ -1294,8 +1339,8 @@ func matchesPattern(doc *xmlquery.Node, pattern MatchPattern, nsMap map[string]s
 // as evaluateXPathBoolean) to a compiled expression's result. An unsupported
 // result type is treated as a non-match, matching matchesPattern's
 // error-as-non-match posture.
-func evaluateCompiledXPathBoolean(doc *xmlquery.Node, expr *xpath.Expr) bool {
-	switch v := expr.Evaluate(xmlquery.CreateXPathNavigator(doc)).(type) {
+func evaluateCompiledXPathBoolean(doc docnode.Node, expr *xpath.Expr) bool {
+	switch v := expr.Evaluate(doc.Navigator()).(type) {
 	case bool:
 		return v
 	case float64:
@@ -1309,7 +1354,7 @@ func evaluateCompiledXPathBoolean(doc *xmlquery.Node, expr *xpath.Expr) bool {
 	}
 }
 
-func evaluateXPathBoolean(doc *xmlquery.Node, selector string) (bool, error) {
+func evaluateXPathBoolean(doc docnode.Node, selector string) (bool, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
 		return false, fmt.Errorf("empty XPath expression")
@@ -1320,7 +1365,7 @@ func evaluateXPathBoolean(doc *xmlquery.Node, selector string) (bool, error) {
 		return false, fmt.Errorf("compile XPath %q: %w", selector, err)
 	}
 
-	switch v := expr.Evaluate(xmlquery.CreateXPathNavigator(doc)).(type) {
+	switch v := expr.Evaluate(doc.Navigator()).(type) {
 	case bool:
 		return v, nil
 	case float64:
@@ -1337,7 +1382,7 @@ func evaluateXPathBoolean(doc *xmlquery.Node, selector string) (bool, error) {
 }
 
 // extractRecords extracts records from document using the extract config
-func extractRecords(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]map[string]interface{}, error) {
+func extractRecords(doc docnode.Document, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]map[string]interface{}, error) {
 	records, _, err := extractRecordsWithCounts(doc, cfg, externalFields)
 	return records, err
 }
@@ -1347,7 +1392,7 @@ type extractedRecord struct {
 	recordNum int
 }
 
-func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]map[string]interface{}, map[int]int, error) {
+func extractRecordsWithCounts(doc docnode.Document, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]map[string]interface{}, map[int]int, error) {
 	extractedRecords, perSelectorCounts, err := extractRecordsWithCountsAndRecordNums(doc, cfg, externalFields)
 	if err != nil {
 		return nil, nil, err
@@ -1356,7 +1401,8 @@ func extractRecordsWithCounts(doc *xmlquery.Node, cfg *ExtractRecordMatch, exter
 	return records, perSelectorCounts, nil
 }
 
-func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]extractedRecord, map[int]int, error) {
+func extractRecordsWithCountsAndRecordNums(doc docnode.Document, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]extractedRecord, map[int]int, error) {
+	format := doc.Format()
 	// Reserve internal mapping names against externalFields before selector
 	// evaluation so zero-match paths cannot fall back to a colliding external.
 	if cfg != nil {
@@ -1371,7 +1417,7 @@ func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecor
 
 	for i := range cfg.MatchSelectors {
 		selector := &cfg.MatchSelectors[i]
-		nodes, err := evaluateNodeSet(doc, selector.CompiledXPath, selector.XPath)
+		nodes, err := evaluateNodeSet(format, doc.Root(), selector.CompiledXPath, selector.XPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to evaluate XPath %s: %w", selector.XPath, err)
 		}
@@ -1382,7 +1428,7 @@ func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecor
 
 		for _, node := range nodes {
 			recordNum++
-			record, err := buildProjectedRecord(node, cfg, externalFields)
+			record, err := buildProjectedRecord(format, node, cfg, externalFields)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1410,7 +1456,8 @@ func extractRecordsWithCountsAndRecordNums(doc *xmlquery.Node, cfg *ExtractRecor
 	return extractedRecords, perSelectorCounts, nil
 }
 
-func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}, sourceFile string, sigCfg *FileSignature, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) (map[int]int, int, error) {
+func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc docnode.Document, cfg *ExtractRecordMatch, externalFields map[string]interface{}, sourceFile string, sigCfg *FileSignature, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) (map[int]int, int, error) {
+	format := doc.Format()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1430,7 +1477,7 @@ func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlqu
 
 	for i := range cfg.MatchSelectors {
 		selector := &cfg.MatchSelectors[i]
-		nodes, err := evaluateNodeSet(doc, selector.CompiledXPath, selector.XPath)
+		nodes, err := evaluateNodeSet(format, doc.Root(), selector.CompiledXPath, selector.XPath)
 		if err != nil {
 			return nil, emittedRecords, fmt.Errorf("failed to evaluate XPath %s: %w", selector.XPath, err)
 		}
@@ -1444,7 +1491,7 @@ func extractRecordsWithCountsAndRecordNumsToSink(ctx context.Context, doc *xmlqu
 				return nil, emittedRecords, err
 			}
 			recordNum++
-			record, err := buildProjectedRecord(node, cfg, externalFields)
+			record, err := buildProjectedRecord(format, node, cfg, externalFields)
 			if err != nil {
 				return nil, emittedRecords, err
 			}
@@ -1869,7 +1916,7 @@ func buildRuntimeMetadata(sourceFile string, sigCfg *FileSignature, cfg *Extract
 }
 
 // extractValue extracts a value using XPath
-func extractValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, error) {
+func extractValue(format docnode.Format, node docnode.Node, mapping *FieldMapping) (interface{}, error) {
 	if mapping == nil {
 		return nil, nil
 	}
@@ -1877,7 +1924,7 @@ func extractValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, erro
 	typeName := strings.ToLower(mapping.Type)
 
 	if typeName == "array" {
-		return extractArrayValue(node, mapping)
+		return extractArrayValue(format, node, mapping)
 	}
 
 	if mapping.XPath == "" {
@@ -1890,7 +1937,7 @@ func extractValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, erro
 	}
 
 	if mapping.Transform == "exists" {
-		exists, err := evaluateExists(node, mapping.XPath, mapping.CompiledXPath)
+		exists, err := evaluateExists(format, node, mapping.XPath, mapping.CompiledXPath)
 		if err != nil {
 			return nil, err
 		}
@@ -1985,7 +2032,7 @@ func buildExpressionScope(record map[string]interface{}, externalFields map[stri
 // XPath first, then expressions in declaration order), merges non-internal
 // external fields after collision checks, and projects InternalField-wrapped
 // mapped keys out before any post-mapping stage (filters, schema, sinks).
-func buildProjectedRecord(node *xmlquery.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) (map[string]interface{}, error) {
+func buildProjectedRecord(format docnode.Format, node docnode.Node, cfg *ExtractRecordMatch, externalFields map[string]interface{}) (map[string]interface{}, error) {
 	record := make(map[string]interface{})
 	if cfg == nil {
 		return record, nil
@@ -2005,7 +2052,7 @@ func buildProjectedRecord(node *xmlquery.Node, cfg *ExtractRecordMatch, external
 		if strings.TrimSpace(mapping.Expression) != "" {
 			continue
 		}
-		value, err := extractValue(node, mapping)
+		value, err := extractValue(format, node, mapping)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract value for field %s: %w", mapping.OutputField, err)
 		}
@@ -2062,12 +2109,12 @@ func rejectExternalCollisionsWithInternalMappings(mappings []FieldMapping, exter
 	return nil
 }
 
-func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{}, error) {
+func extractArrayValue(format docnode.Format, node docnode.Node, mapping *FieldMapping) (interface{}, error) {
 	if mapping == nil {
 		return nil, nil
 	}
 
-	nodes, err := evaluateNodeSet(node, mapping.CompiledXPath, mapping.XPath)
+	nodes, err := evaluateNodeSet(format, node, mapping.CompiledXPath, mapping.XPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate XPath %s: %w", mapping.XPath, err)
 	}
@@ -2081,7 +2128,7 @@ func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{},
 		for _, sourceNode := range nodes {
 			for i := range mapping.Polymorphic {
 				pm := &mapping.Polymorphic[i]
-				targetNodes, err := resolvePolymorphicTargets(sourceNode, pm)
+				targetNodes, err := resolvePolymorphicTargets(format, sourceNode, pm)
 				if err != nil {
 					return nil, err
 				}
@@ -2089,7 +2136,7 @@ func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{},
 					record := make(map[string]interface{})
 					for j := range pm.FieldMappings {
 						fieldMap := &pm.FieldMappings[j]
-						value, err := extractValue(targetNode, fieldMap)
+						value, err := extractValue(format, targetNode, fieldMap)
 						if err != nil {
 							return nil, fmt.Errorf("failed to extract polymorphic field %s: %w", fieldMap.OutputField, err)
 						}
@@ -2123,7 +2170,7 @@ func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{},
 			item := make(map[string]interface{})
 			for j := range mapping.ItemMapping {
 				itemMap := &mapping.ItemMapping[j]
-				value, err := extractValue(itemNode, itemMap)
+				value, err := extractValue(format, itemNode, itemMap)
 				if err != nil {
 					return nil, err
 				}
@@ -2139,7 +2186,7 @@ func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{},
 
 	var values []interface{}
 	for _, itemNode := range nodes {
-		val := strings.TrimSpace(itemNode.InnerText())
+		val := strings.TrimSpace(itemNode.Text())
 		if val != "" {
 			values = append(values, val)
 		}
@@ -2152,7 +2199,7 @@ func extractArrayValue(node *xmlquery.Node, mapping *FieldMapping) (interface{},
 	return values, nil
 }
 
-func evaluateExists(node *xmlquery.Node, expr string, compiled *xpath.Expr) (bool, error) {
+func evaluateExists(format docnode.Format, node docnode.Node, expr string, compiled *xpath.Expr) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
@@ -2160,14 +2207,14 @@ func evaluateExists(node *xmlquery.Node, expr string, compiled *xpath.Expr) (boo
 		return false, nil
 	}
 
-	nodes, err := evaluateNodeSet(node, compiled, expr)
+	nodes, err := evaluateNodeSet(format, node, compiled, expr)
 	if err != nil {
 		return false, fmt.Errorf("failed to evaluate XPath %s: %w", expr, err)
 	}
 	return len(nodes) > 0, nil
 }
 
-func evaluateXPathValue(node *xmlquery.Node, expr string, compiled *xpath.Expr) (interface{}, error) {
+func evaluateXPathValue(node docnode.Node, expr string, compiled *xpath.Expr) (interface{}, error) {
 	if node == nil {
 		return nil, nil
 	}
@@ -2184,7 +2231,7 @@ func evaluateXPathValue(node *xmlquery.Node, expr string, compiled *xpath.Expr) 
 		}
 	}
 
-	value := xp.Evaluate(xmlquery.CreateXPathNavigator(node))
+	value := xp.Evaluate(node.Navigator())
 	switch v := value.(type) {
 	case nil:
 		return nil, nil
@@ -2204,7 +2251,7 @@ func evaluateXPathValue(node *xmlquery.Node, expr string, compiled *xpath.Expr) 
 	}
 }
 
-func evaluateNodeSet(node *xmlquery.Node, compiled *xpath.Expr, expr string) ([]*xmlquery.Node, error) {
+func evaluateNodeSet(format docnode.Format, node docnode.Node, compiled *xpath.Expr, expr string) ([]docnode.Node, error) {
 	if node == nil {
 		return nil, nil
 	}
@@ -2222,25 +2269,25 @@ func evaluateNodeSet(node *xmlquery.Node, compiled *xpath.Expr, expr string) ([]
 		}
 	}
 
-	value := xp.Evaluate(xmlquery.CreateXPathNavigator(node))
+	value := xp.Evaluate(node.Navigator())
 	switch v := value.(type) {
 	case *xpath.NodeIterator:
-		return collectNodes(v), nil
+		return collectNodes(format, v), nil
 	case xpath.NodeIterator:
-		return collectNodes(&v), nil
+		return collectNodes(format, &v), nil
 	case bool:
 		if v {
-			return []*xmlquery.Node{}, nil
+			return []docnode.Node{}, nil
 		}
 		return nil, nil
 	case float64:
 		if v != 0 {
-			return []*xmlquery.Node{}, nil
+			return []docnode.Node{}, nil
 		}
 		return nil, nil
 	case string:
 		if strings.TrimSpace(v) != "" {
-			return []*xmlquery.Node{}, nil
+			return []docnode.Node{}, nil
 		}
 		return nil, nil
 	default:
@@ -2248,50 +2295,48 @@ func evaluateNodeSet(node *xmlquery.Node, compiled *xpath.Expr, expr string) ([]
 	}
 }
 
-func collectNodes(iter *xpath.NodeIterator) []*xmlquery.Node {
-	var nodes []*xmlquery.Node
+func collectNodes(format docnode.Format, iter *xpath.NodeIterator) []docnode.Node {
+	var nodes []docnode.Node
 	if iter == nil {
 		return nodes
 	}
 
 	for iter.MoveNext() {
-		if nav, ok := iter.Current().(*xmlquery.NodeNavigator); ok && nav != nil {
-			if current := nav.Current(); current != nil {
-				nodes = append(nodes, current)
-			}
+		if node, ok := format.NodeOf(iter.Current()); ok {
+			nodes = append(nodes, node)
 		}
 	}
 	return nodes
 }
 
-func resolvePolymorphicTargets(node *xmlquery.Node, mapping *PolymorphicMapping) ([]*xmlquery.Node, error) {
+func resolvePolymorphicTargets(format docnode.Format, node docnode.Node, mapping *PolymorphicMapping) ([]docnode.Node, error) {
 	if mapping == nil {
 		return nil, nil
 	}
 
 	if strings.TrimSpace(mapping.MatchXPath) != "" || mapping.CompiledMatchXPath != nil {
-		return evaluateNodeSet(node, mapping.CompiledMatchXPath, mapping.MatchXPath)
+		return evaluateNodeSet(format, node, mapping.CompiledMatchXPath, mapping.MatchXPath)
 	}
 
 	if strings.TrimSpace(mapping.ElementType) != "" {
 		matches := findChildrenByNameAll(node, mapping.ElementType)
-		if strings.EqualFold(node.Data, mapping.ElementType) {
-			matches = append([]*xmlquery.Node{node}, matches...)
+		if strings.EqualFold(node.LocalName(), mapping.ElementType) {
+			matches = append([]docnode.Node{node}, matches...)
 		}
 		return matches, nil
 	}
 
-	return []*xmlquery.Node{node}, nil
+	return []docnode.Node{node}, nil
 }
 
-func findChildrenByNameAll(node *xmlquery.Node, name string) []*xmlquery.Node {
-	var result []*xmlquery.Node
+func findChildrenByNameAll(node docnode.Node, name string) []docnode.Node {
+	var result []docnode.Node
 	if node == nil {
 		return result
 	}
 
-	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		if child.Type == xmlquery.ElementNode && strings.EqualFold(child.Data, name) {
+	for child, ok := node.FirstElementChild(); ok; child, ok = child.NextElementSibling() {
+		if strings.EqualFold(child.LocalName(), name) {
 			result = append(result, child)
 		}
 	}

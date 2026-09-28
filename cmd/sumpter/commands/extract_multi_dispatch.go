@@ -12,10 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/antchfx/xmlquery"
-
 	"go.uber.org/zap"
 
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/logging"
 	"github.com/fulmenhq/sumpter/internal/processrun"
@@ -38,7 +37,7 @@ func dispatchLogger() *zap.Logger {
 type multiDispatcher struct {
 	shared    *multiSharedOptions
 	warnOut   io.Writer
-	parseFile func(filePath string, allowLargeFiles bool) (*xmlquery.Node, error)
+	parseFile func(filePath string, allowLargeFiles bool) (docnode.Document, error)
 
 	// onBuildApplication is a test-only seam invoked inside the worker's per-input
 	// application stage (within the panic-recovery region of buildApplicationContained, for
@@ -454,7 +453,7 @@ func (d *multiDispatcher) processInputsSerial(ctx context.Context, files []strin
 // input's per-recipe bundles into a committer-ready outcome. Callers pass their
 // parse function so the serial path keeps its no-recovery contract while the
 // concurrent worker path keeps per-input panic containment.
-func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref string, logicalByLocal map[string]string, states []*recipeRunState, allowLargeFiles bool, parse func(string, bool) (*xmlquery.Node, error)) (o builtInputOutcome) {
+func (d *multiDispatcher) buildInputOutcome(ctx context.Context, idx int, ref string, logicalByLocal map[string]string, states []*recipeRunState, allowLargeFiles bool, parse func(string, bool) (docnode.Document, error)) (o builtInputOutcome) {
 	decl := declarationAt(d.declarations, idx+1)
 	local, logical, cleanup, aerr := d.prepareInput(ctx, ref, logicalByLocal, decl)
 	o = builtInputOutcome{idx: idx, ordinal: idx + 1, file: local, logical: logical}
@@ -602,7 +601,7 @@ func (d *multiDispatcher) prepareInput(ctx context.Context, ref string, logicalB
 // invocation or corrupt the shared drain. The serial path intentionally does NOT recover
 // (default behavior is byte-identical to pre-SUM-066); containment is a concurrency
 // concern only.
-func (d *multiDispatcher) parseInputContained(filePath string, allowLargeFiles bool) (node *xmlquery.Node, err error) {
+func (d *multiDispatcher) parseInputContained(filePath string, allowLargeFiles bool) (node docnode.Document, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			node = nil

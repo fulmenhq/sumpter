@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 )
 
@@ -165,16 +166,21 @@ func (b *Builder) BuildTo(writers ...IndexWriter) (result *RecordIndex, err erro
 			return nil, fmt.Errorf("failed to compute hash for record %d: %w", recordNum, err)
 		}
 
+		declarations, err := recordNamespaceContext(rec)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read namespace context for record %d: %w", recordNum, err)
+		}
+
 		// Create record metadata
 		metadata := RecordMetadata{
-			RecordNum:           rec.RecordNum,
+			RecordNum:           rec.Num,
 			StartOffset:         rec.StartOffset,
 			EndOffset:           rec.EndOffset,
 			SizeBytes:           rec.SizeBytes,
 			SHA256:              recordHash,
-			ElementName:         rec.ElementName,
+			ElementName:         rec.Name,
 			Depth:               rec.Depth,
-			NamespaceContextRef: namespaceTable.RefFor(convertStreamingNamespaceContext(rec.NamespaceContext)),
+			NamespaceContextRef: namespaceTable.RefFor(convertStreamingNamespaceContext(declarations)),
 		}
 
 		for _, writer := range writers {
@@ -274,10 +280,27 @@ func (b *Builder) collectNamespaceContexts(selector string) (*NamespaceContextTa
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan namespace context for record %d: %w", scanner.RecordCount()+1, err)
 		}
-		table.RefFor(convertStreamingNamespaceContext(rec.NamespaceContext))
+		declarations, err := recordNamespaceContext(rec)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read namespace context for record %d: %w", rec.Num, err)
+		}
+		table.RefFor(convertStreamingNamespaceContext(declarations))
 	}
 
 	return table, nil
+}
+
+// recordNamespaceContext returns the namespace declarations the XML scanner
+// stored in a record's Context.
+func recordNamespaceContext(rec *docnode.Record) ([]streaming.NamespaceDeclaration, error) {
+	switch ctx := rec.Context.(type) {
+	case nil:
+		return nil, nil
+	case []streaming.NamespaceDeclaration:
+		return ctx, nil
+	default:
+		return nil, fmt.Errorf("unexpected record context type %T", rec.Context)
+	}
 }
 
 func convertStreamingNamespaceContext(declarations []streaming.NamespaceDeclaration) []NamespaceDeclaration {
