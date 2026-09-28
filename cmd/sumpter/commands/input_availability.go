@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -81,9 +82,9 @@ func unavailableClass(err error) (string, bool) {
 	switch {
 	case err == nil:
 		return "", false
-	case errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, uriio.ErrObjectNotFound):
 		return "not found", true
-	case errors.Is(err, fs.ErrPermission):
+	case errors.Is(err, fs.ErrPermission), errors.Is(err, uriio.ErrObjectAccessDenied):
 		return "permission denied", true
 	}
 	return "", false
@@ -125,15 +126,55 @@ func preflightLocalInputs(opts *ExtractOptions, files []string, logicalByLocal m
 		if ref, err := uriio.Classify(file); err != nil || ref.Scheme != uriio.SchemeLocal {
 			continue
 		}
-		f, err := os.Open(file) // #nosec G304 - operator-selected input path
-		if err == nil {
-			_ = f.Close()
+		if err := checkLocalInput(opts, file); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkLocalInput opens and closes a local input without reading it, and
+// returns a bounded input-unavailable error when it is missing or unreadable.
+func checkLocalInput(opts *ExtractOptions, file string) error {
+	f, err := os.Open(file) // #nosec G304 - operator-selected input path
+	if err == nil {
+		return f.Close()
+	}
+	if class, ok := unavailableClass(err); ok {
+		return &inputUnavailableError{display: provenanceRootInputLabel(opts, file, file), class: class, err: err}
+	}
+	return err
+}
+
+// checkPreviewInputs is the dry run's availability check. Each explicitly named
+// input (--files, file-list entries, recipe files) must exist and be readable:
+// local files are opened and closed, and s3:// objects get a metadata-only
+// HEAD. Inputs found by walking or listing --input-path already exist and are
+// not checked again.
+func checkPreviewInputs(ctx context.Context, opts *ExtractOptions, session *uriio.Session, refs []string) error {
+	if strings.TrimSpace(opts.InputPath) != "" {
+		return nil
+	}
+	for _, ref := range refs {
+		r, err := uriio.Classify(ref)
+		if err != nil {
+			return err
+		}
+		if r.Scheme == uriio.SchemeLocal {
+			if err := checkLocalInput(opts, r.LocalPath); err != nil {
+				return err
+			}
 			continue
 		}
-		if class, ok := unavailableClass(err); ok {
-			return &inputUnavailableError{display: provenanceRootInputLabel(opts, file, file), class: class, err: err}
+		if session == nil {
+			return fmt.Errorf("cloud input %s needs a cloud session", ref)
 		}
-		return err
+		if err := session.Head(ctx, ref, resolvedInputHandle(opts)); err != nil {
+			if class, ok := unavailableClass(err); ok {
+				return &inputUnavailableError{display: ref, class: class, err: err}
+			}
+			return err
+		}
 	}
 	return nil
 }

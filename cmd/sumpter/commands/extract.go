@@ -251,7 +251,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", 0, "Maximum directory depth to scan (0 = unlimited)")
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symbolic links")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 1, "Number of parallel workers")
-	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview operation without execution")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview the run without writing anything: resolves and checks every input (stats local files, reads list files, LIST/HEAD on s3:// references), reports what would be processed, and exits non-zero if any input is missing, unreadable, or matches nothing")
 	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue after recoverable per-file failures instead of aborting; the run still exits non-zero and lists every dropped input in failures.json — reconcile it so inputs are not silently dropped. Requires --output-path")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress indicators")
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "json", "Output format")
@@ -3663,12 +3663,11 @@ func discoverInputReferences(ctx context.Context, session *uriio.Session, opts *
 	return refs, nil
 }
 
-// runDryRunPreview prints the input references a run would process, by logical
-// identity, without acquiring (downloading/staging) any cloud object. It is the
-// truly-dry path for --dry-run: cloud prefixes are listed (no download), single
-// cloud objects are echoed (no network at all), and local globs are walked
-// exactly as before. No staging directory is created and no object bytes are
-// read.
+// runDryRunPreview previews the run without writing anything: it resolves and
+// checks every input (stats local files, reads list files, LIST/HEAD on s3://
+// references), reports what would be processed, and exits non-zero if any
+// input is missing, unreadable, or matches nothing. No object bytes are
+// fetched and no staging directory is created.
 func runDryRunPreview(ctx context.Context, opts *ExtractOptions, runID string) error {
 	logger := logging.GetLogger()
 	logger.Debug("Starting dry run")
@@ -3685,6 +3684,9 @@ func runDryRunPreview(ctx context.Context, opts *ExtractOptions, runID string) e
 	}
 	if len(refs) == 0 {
 		return noInputsMatchedError(opts)
+	}
+	if err := checkPreviewInputs(ctx, opts, session, refs); err != nil {
+		return err
 	}
 	if isAggregateMode(opts) && strings.TrimSpace(opts.InputPath) != "" {
 		sort.Strings(refs)

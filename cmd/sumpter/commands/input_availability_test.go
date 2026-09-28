@@ -288,3 +288,21 @@ func validateAgainstSchema(t *testing.T, schemaPath string, doc []byte) {
 		t.Fatalf("document fails %s: %v", schemaPath, res.Errors)
 	}
 }
+
+func TestDryRunChecksNamedLocalInputs(t *testing.T) {
+	f := newAvailabilityFixture(t)
+	list := f.writeList(t, "list.txt", f.good, filepath.Join(f.dir, "missing.json"))
+	for _, args := range [][]string{
+		f.filesArgs("--file-list", list, "--dry-run"),
+		f.filesArgs("--files", f.good+","+filepath.Join(f.dir, "missing.json"), "--dry-run"),
+	} {
+		err := runSumpter(t, args)
+		var unavailable *inputUnavailableError
+		if !errors.As(err, &unavailable) || !strings.HasSuffix(err.Error(), ": not found") {
+			t.Fatalf("%v: error = %v, want an input-unavailable dry-run failure", args, err)
+		}
+	}
+	if err := runSumpter(t, f.filesArgs("--files", f.good, "--dry-run")); err != nil {
+		t.Fatalf("dry run of an available input failed: %v", err)
+	}
+}
