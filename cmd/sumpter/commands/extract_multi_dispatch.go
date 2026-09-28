@@ -296,9 +296,20 @@ func (d *multiDispatcher) run(workspaces []string, startedAt time.Time) (err err
 	if err := validateCloudInputOptions(inputOpts); err != nil {
 		return err
 	}
+	if err := refuseEagerCloudContinueOnError(inputOpts, shared.ContinueOnError); err != nil {
+		return err
+	}
 	files, logicalByLocal, decls, inputSession, err := resolveInputSources(context.Background(), inputOpts, shared.RunID)
 	if err != nil {
 		return err
+	}
+	// Zero discovered inputs fail before any recipe's output setup, so an
+	// earlier run's artifacts under the output root are left untouched.
+	if len(files) == 0 {
+		if inputSession != nil {
+			_ = inputSession.Close()
+		}
+		return noInputsMatchedError(inputOpts)
 	}
 	d.inputSession = inputSession
 	d.inputOpts = inputOpts
@@ -663,10 +674,17 @@ type builtInputOutcome struct {
 // ledgers, and manifests.
 func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOutcome, states []*recipeRunState, shared *multiSharedOptions) error {
 	if o.parseErr != nil {
+		// Classify before sanitizing: sanitizing can rebuild the error and drop
+		// the chain that identifies an unavailable input.
+		raw := o.parseErr
+		reason := extract.DispositionReasonParseError
+		if _, ok := unavailableClass(raw); ok {
+			reason = extract.DispositionReasonInputUnavailable
+		}
 		o.parseErr = provenanceRootInputError(d.inputOpts, o.parseErr, o.file, o.logical)
 		var recordErr error
 		for _, st := range states {
-			recordErr = errors.Join(recordErr, st.recordInputFailure(o.file, o.logical, o.inputSHA256, o.inputSize, o.parseErr))
+			recordErr = errors.Join(recordErr, st.recordInputFailure(o.file, o.logical, o.inputSHA256, o.inputSize, o.parseErr, reason, raw))
 		}
 		d.noteSettledInput()
 		if recordErr != nil {
@@ -676,7 +694,7 @@ func (d *multiDispatcher) commitBuiltOutcome(ctx context.Context, o builtInputOu
 			return o.parseErr
 		}
 		if !shared.ContinueOnError {
-			return fmt.Errorf("failed to process file %s: %w", provenanceRootInputLabel(d.inputOpts, o.file, o.logical), o.parseErr)
+			return inputFailureError(provenanceRootInputLabel(d.inputOpts, o.file, o.logical), raw, o.parseErr)
 		}
 		return nil
 	}
@@ -1136,8 +1154,11 @@ func isTerminalDispatchError(err error) bool {
 // recordInputFailure records an input-level (read/parse) failure for this recipe. In
 // aggregate mode it routes through recordFailedAggregateInput so the failed input
 // carries record_count 0 (part of the aggregate input-set provenance contract, R4/R5).
-func (st *recipeRunState) recordInputFailure(file, logical, inputSHA256 string, inputSize int64, cause error) error {
-	result := recoverableFailureResult(file, logical, fmt.Errorf("failed to read/parse input: %w", cause), extract.DispositionReasonParseError)
+func (st *recipeRunState) recordInputFailure(file, logical, inputSHA256 string, inputSize int64, cause error, reason extract.DispositionReason, raw error) error {
+	result := recoverableFailureResult(file, logical, fmt.Errorf("failed to read/parse input: %w", cause), reason)
+	if reason == extract.DispositionReasonInputUnavailable {
+		result.DispositionDetail = failureDetail(reason, raw)
+	}
 	if st.aggWriter != nil {
 		var ident *inputIdentity
 		if inputSHA256 != "" {

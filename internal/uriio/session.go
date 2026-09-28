@@ -208,7 +208,7 @@ func (s *Session) acquireS3(ctx context.Context, ref Ref, handle string, maxByte
 			meta, e = prov.Head(ctx, ref.Key)
 			return e
 		}); herr != nil {
-			return nil, fmt.Errorf("uriio: head %s failed: %s", ref.LogicalURI, cloudOpError(herr, secrets))
+			return nil, classifyHeadError(herr, ref.LogicalURI, secrets)
 		}
 		if int64(meta.Size) != declaredSize {
 			return nil, fmt.Errorf("uriio: object %s size %d does not match declared size %d; not staged: %w", ref.LogicalURI, meta.Size, declaredSize, ErrDeclaredSizeMismatch)
@@ -261,7 +261,7 @@ func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provide
 		meta, e = prov.Head(ctx, ref.Key)
 		return e
 	}); herr != nil {
-		return nil, fmt.Errorf("uriio: head %s failed: %s", ref.LogicalURI, cloudOpError(herr, secrets))
+		return nil, classifyHeadError(herr, ref.LogicalURI, secrets)
 	}
 	size := meta.Size
 	// Declared-size gate: the HEAD size is already in hand, so a mismatch fails

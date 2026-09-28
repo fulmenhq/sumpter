@@ -223,3 +223,26 @@ func refuseCloudContinueOnError(opts *ExtractOptions) error {
 	}
 	return nil
 }
+
+// errEagerCloudContinueOnError refuses --continue-on-error with cloud inputs on
+// extract-multi in eager mode, where a missing object stops the run; bounded
+// mode records it and continues.
+var errEagerCloudContinueOnError = errors.New("--continue-on-error with s3:// inputs requires --cloud-input-mode bounded in this release")
+
+// refuseEagerCloudContinueOnError rejects extract-multi --continue-on-error when
+// any input is an s3:// reference and the cloud input mode is eager. Bounded
+// mode is allowed. It classifies references only and runs before any cloud
+// client is built.
+func refuseEagerCloudContinueOnError(opts *ExtractOptions, continueOnError bool) error {
+	if !continueOnError || boundedCloudInput(opts) {
+		return nil
+	}
+	cloud, err := referencesIncludeCloud(opts)
+	if err != nil {
+		return err
+	}
+	if cloud {
+		return errEagerCloudContinueOnError
+	}
+	return nil
+}
