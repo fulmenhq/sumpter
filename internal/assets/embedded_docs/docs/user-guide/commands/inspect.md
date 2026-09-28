@@ -42,6 +42,10 @@ reports every key path the way extraction sees it (see the
 [document node model](../../standards/document-node-model.md)): a member whose
 value is an array produces one element per item, an empty array produces no
 element, and the items of a top-level array are named `item`.
+A null value creates an element with no text child, but its mapped field is
+absent; an empty array creates no element, so its mapped field is also absent
+(not []). A null item inside an array of scalars is dropped from the mapped
+array.
 
 - **`input.format`** is `json`; `encoding_detected` is `UTF-8`. One leading
   UTF-8 byte-order mark is accepted; UTF-16 and UTF-32 input is refused with
