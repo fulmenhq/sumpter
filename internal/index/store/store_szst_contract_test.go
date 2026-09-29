@@ -128,6 +128,17 @@ func TestSzstHeaderRefusals(t *testing.T) {
 		{"records_file absolute", func(h map[string]any) { records(h)["records_file"] = "/etc/passwd" }, "must be a file name beside the header"},
 		{"records_file traversal", func(h map[string]any) { records(h)["records_file"] = "../idx.recordindex.records.szst" }, "must be a file name beside the header"},
 		{"records_file parent", func(h map[string]any) { records(h)["records_file"] = ".." }, "is not a file name"},
+		{"json missing table", func(h map[string]any) { delete(h, "namespace_contexts") }, "requires a namespace_contexts table"},
+		{"json empty table", func(h map[string]any) { h["namespace_contexts"] = []any{} }, "requires a namespace_contexts table"},
+		{"json wrong id", func(h map[string]any) {
+			h["namespace_contexts"] = []any{map[string]any{"id": 7, "declarations": []any{}}}
+		}, "only namespace context 0; found context 7"},
+		{"json extra context", func(h map[string]any) {
+			h["namespace_contexts"] = []any{map[string]any{"id": 0, "declarations": []any{}}, map[string]any{"id": 1, "declarations": []any{}}}
+		}, "exactly one namespace context"},
+		{"json duplicate context", func(h map[string]any) {
+			h["namespace_contexts"] = []any{map[string]any{"id": 0, "declarations": []any{}}, map[string]any{"id": 0, "declarations": []any{}}}
+		}, "more than once"},
 		{"record_count overflows size", func(h map[string]any) { records(h)["record_count"] = json.Number("4611686018427387905") }, "exceeds the largest records file"},
 		{"legacy record_count overflows size", func(h map[string]any) {
 			h["version"] = index.LegacySzstStoreVersion
@@ -152,6 +163,39 @@ func TestSzstHeaderRefusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSzstXMLHeaderRequiresNamespaceTable(t *testing.T) {
+	for name, edit := range map[string]func(map[string]any){
+		"missing table": func(h map[string]any) { delete(h, "namespace_contexts") },
+		"empty table":   func(h map[string]any) { h["namespace_contexts"] = []any{} },
+	} {
+		path := writeContractStore(t, t.TempDir(), index.SourceFormatXML)
+		editHeader(t, path, edit)
+		s, err := Open(path)
+		if err == nil {
+			_ = s.Close()
+			t.Fatalf("%s: header accepted", name)
+		}
+		if !strings.Contains(err.Error(), "requires a namespace_contexts table") {
+			t.Fatalf("%s: error %q", name, err)
+		}
+	}
+	// A legacy XML header may omit the table; it reads as the empty context.
+	path := writeContractStore(t, t.TempDir(), index.SourceFormatXML)
+	editHeader(t, path, func(h map[string]any) {
+		h["version"] = index.LegacySzstStoreVersion
+		r := records(h)
+		delete(r, "layout")
+		r["record_width_bytes"], r["sha_encoding"], r["endianness"] = BinaryRecordWidth, "raw32", "little"
+		delete(source(h), "format")
+		delete(h, "namespace_contexts")
+	})
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("legacy header without a table refused: %v", err)
+	}
+	_ = s.Close()
 }
 
 func TestSzstLegacyXMLHeaderStillReads(t *testing.T) {

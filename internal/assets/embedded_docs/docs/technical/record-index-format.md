@@ -17,9 +17,11 @@ an unknown version, or an unknown format is refused when the index is opened.
 Namespace-bound extraction requires namespace context data and fails loudly
 on older indexes with rebuild guidance.
 
-A current header writes an empty namespace context as `"declarations": []`
-and is refused if it carries `null` there. Headers from earlier releases may
-carry `null`, which reads as an empty context.
+A current header must carry a non-empty `namespace_contexts` table with
+unique context ids, writes an empty namespace context as `"declarations": []`,
+and is refused if the table is missing or empty or a context carries `null`.
+Headers from earlier releases may omit the table or carry `null`, which reads
+as an empty context.
 
 ## Namespace Context Table
 
@@ -78,8 +80,9 @@ meaning as on the streaming route, and each selected element is a record.
 leading byte order mark counts toward offsets but is never inside a record),
 and `sha256` covers exactly `source[start_offset:end_offset]`. Records are
 numbered in document order, and records of the same name may nest.
-`namespace_contexts` is the single empty context `0`, and every
-`namespace_context_ref` is `0`. `ndjson` sources are not indexed in this
+`namespace_contexts` is exactly the single empty context `0`, and every
+`namespace_context_ref` is `0`; any other table is refused when the index is
+opened. `ndjson` sources are not indexed in this
 release.
 
 `sumpter index verify --input-format json` scans the source again with the

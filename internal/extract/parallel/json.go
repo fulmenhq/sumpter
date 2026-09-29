@@ -108,10 +108,8 @@ func (pe *ParallelExtractor) newJSONRun(indexStore store.IndexStore, header *ind
 	if requested.Raw != indexed.Raw {
 		return nil, fmt.Errorf("the recipe selects %q, but the index was built for %q; rebuild the index with the recipe's selector", requested.Raw, indexed.Raw)
 	}
-	for _, c := range header.NamespaceContexts {
-		if len(c.Declarations) != 0 {
-			return nil, fmt.Errorf("record index for json input carries namespace declarations in context %d", c.ID)
-		}
+	if err := index.ValidateNamespaceContextShape(header); err != nil {
+		return nil, err
 	}
 	limit, err := jsonRecordLimit(pe.opts.MaxRecordSizeMB)
 	if err != nil {

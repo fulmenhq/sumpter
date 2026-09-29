@@ -4,6 +4,7 @@ package parallel
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,5 +40,49 @@ func TestJSONIndexedRouteSeekableStore(t *testing.T) {
 	}
 	if _, _, err := f.run(t, f.opts(4)); err == nil || !strings.Contains(err.Error(), "record 4 bytes do not match the index hash") {
 		t.Fatalf("changed record byte: %v", err)
+	}
+}
+
+// TestJSONIndexedRouteSeekableStoreRefusesBadNamespaceTables requires a
+// seekable JSON header to hold exactly the empty context 0; any other table
+// fails the input before a row is published.
+func TestJSONIndexedRouteSeekableStoreRefusesBadNamespaceTables(t *testing.T) {
+	empty := func(id int) map[string]any { return map[string]any{"id": id, "declarations": []any{}} }
+	for _, tc := range []struct {
+		name string
+		edit func(map[string]any)
+		want string
+	}{
+		{"missing table", func(h map[string]any) { delete(h, "namespace_contexts") }, "requires a namespace_contexts table"},
+		{"empty table", func(h map[string]any) { h["namespace_contexts"] = []any{} }, "requires a namespace_contexts table"},
+		{"wrong id", func(h map[string]any) { h["namespace_contexts"] = []any{empty(7)} }, "found context 7"},
+		{"extra context", func(h map[string]any) { h["namespace_contexts"] = []any{empty(0), empty(1)} }, "exactly one namespace context"},
+		{"duplicate context", func(h map[string]any) { h["namespace_contexts"] = []any{empty(0), empty(0)} }, "more than once"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newJSONFixture(t, tenRows, "//rows")
+			base := filepath.Join(filepath.Dir(f.src), "szst")
+			b := index.NewBuilder(index.BuildOptions{InputPath: f.src, Selector: "//rows", InputFormat: index.SourceFormatJSON})
+			if _, err := b.BuildTo(store.NewSeekableIndexWriter(base)); err != nil {
+				t.Fatal(err)
+			}
+			f.idx = base + ".recordindex.header.json"
+			raw, err := os.ReadFile(f.idx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var h map[string]any
+			if err := json.Unmarshal(raw, &h); err != nil {
+				t.Fatal(err)
+			}
+			tc.edit(h)
+			if raw, err = json.Marshal(h); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(f.idx, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			assertFailedInput(t, f, f.opts(4), tc.want)
+		})
 	}
 }

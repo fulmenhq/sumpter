@@ -227,6 +227,24 @@ func TestJSONIndexSemanticVerify(t *testing.T) {
 			t.Fatalf("result %+v", res)
 		}
 	})
+	for _, tc := range []struct {
+		name     string
+		contexts []NamespaceContext
+		want     string
+	}{
+		{"missing table", nil, "requires a namespace_contexts table"},
+		{"wrong id", []NamespaceContext{{ID: 7, Declarations: []NamespaceDeclaration{}}}, "found context 7"},
+		{"extra context", []NamespaceContext{{ID: 0, Declarations: []NamespaceDeclaration{}}, {ID: 1, Declarations: []NamespaceDeclaration{}}}, "exactly one namespace context"},
+		{"duplicate context", []NamespaceContext{{ID: 0, Declarations: []NamespaceDeclaration{}}, {ID: 0, Declarations: []NamespaceDeclaration{}}}, "more than once"},
+	} {
+		t.Run("namespace table "+tc.name, func(t *testing.T) {
+			c := clone()
+			c.NamespaceContexts = tc.contexts
+			if _, err := NewVerifier(VerifyOptions{InputPath: in, InputFormat: SourceFormatJSON}).VerifyWithProvider(memProvider{c}); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v, want %q", err, tc.want)
+			}
+		})
+	}
 	t.Run("format mismatch", func(t *testing.T) {
 		if _, err := NewVerifier(VerifyOptions{InputPath: in, InputFormat: SourceFormatXML}).VerifyWithProvider(memProvider{idx}); err == nil || !strings.Contains(err.Error(), "built from json input") {
 			t.Fatalf("error %v", err)

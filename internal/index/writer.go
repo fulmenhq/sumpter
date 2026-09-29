@@ -78,7 +78,7 @@ func (w *JSONIndexWriter) Start(index *RecordIndex) (err error) {
 	if err := requireWritableFormat(&header); err != nil {
 		return err
 	}
-	header.NamespaceContexts = EmptyContextsAsArrays(header.NamespaceContexts)
+	header.NamespaceContexts = WritableNamespaceContexts(header.NamespaceContexts)
 
 	if _, err := fmt.Fprintln(w.file, "{"); err != nil {
 		return err
@@ -152,7 +152,7 @@ func (w *JSONIndexWriter) Prepare(index *RecordIndex) error {
 	final.Version = SchemaVersion
 	final.Records = nil
 	NormalizeRecordIndex(&final)
-	final.NamespaceContexts = EmptyContextsAsArrays(final.NamespaceContexts)
+	final.NamespaceContexts = WritableNamespaceContexts(final.NamespaceContexts)
 
 	if err := writeJSONField(w.file, "summary", final.Summary, true); err != nil {
 		return err

@@ -71,6 +71,9 @@ func (v *Verifier) VerifyWithProvider(provider RecordProvider) (*VerifyResult, e
 	if v.opts.InputFormat != "" && v.opts.InputFormat != format {
 		return nil, fmt.Errorf("index was built from %s input, but --input-format is %s", format, v.opts.InputFormat)
 	}
+	if err := ValidateNamespaceContextShape(header); err != nil {
+		return nil, err
+	}
 	NormalizeRecordIndex(header)
 
 	if err := ValidateSourceByteOffsets(header, v.opts.InputPath); err != nil {

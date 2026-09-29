@@ -336,7 +336,7 @@ func (b *Builder) WriteToFile(index *RecordIndex, outputPath string) error {
 	if err := requireWritableFormat(&normalized); err != nil {
 		return err
 	}
-	normalized.NamespaceContexts = EmptyContextsAsArrays(normalized.NamespaceContexts)
+	normalized.NamespaceContexts = WritableNamespaceContexts(normalized.NamespaceContexts)
 
 	// Create output directory if needed
 	dir := filepath.Dir(outputPath)

@@ -203,7 +203,7 @@ func (w *SeekableIndexWriter) Prepare(idx *index.RecordIndex) error {
 		Version:           SzstStoreVersion,
 		Source:            normalized.Source,
 		Selector:          normalized.Selector,
-		NamespaceContexts: index.EmptyContextsAsArrays(normalized.NamespaceContexts),
+		NamespaceContexts: index.WritableNamespaceContexts(normalized.NamespaceContexts),
 		Summary:           normalized.Summary,
 		Metadata:          normalized.Metadata,
 		Records: SzstRecordsMetadata{

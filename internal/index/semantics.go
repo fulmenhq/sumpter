@@ -44,6 +44,8 @@ func EmptyContextsAsArrays(contexts []NamespaceContext) []NamespaceContext {
 }
 
 // NormalizeRecordIndex fills backward-compatible defaults for older indexes.
+// A current header's namespace table is never filled in: a reader refuses a
+// missing table rather than repairing it (see ValidateNamespaceContextShape).
 func NormalizeRecordIndex(idx *RecordIndex) {
 	if idx == nil {
 		return
@@ -51,9 +53,19 @@ func NormalizeRecordIndex(idx *RecordIndex) {
 	if strings.TrimSpace(idx.Source.OffsetKind) == "" {
 		idx.Source.OffsetKind = OffsetKindSourceBytes
 	}
-	if (idx.Version == SchemaVersion || idx.Version == LegacySchemaVersionV012) && len(idx.NamespaceContexts) == 0 {
+	if idx.Version == LegacySchemaVersionV012 && len(idx.NamespaceContexts) == 0 {
 		idx.NamespaceContexts = []NamespaceContext{{ID: 0, Declarations: []NamespaceDeclaration{}}}
 	}
+}
+
+// WritableNamespaceContexts returns the namespace table a writer emits: the
+// reserved empty context 0 when contexts is empty, and every empty
+// declaration list as an empty array rather than null.
+func WritableNamespaceContexts(contexts []NamespaceContext) []NamespaceContext {
+	if len(contexts) == 0 {
+		return []NamespaceContext{{ID: 0, Declarations: []NamespaceDeclaration{}}}
+	}
+	return EmptyContextsAsArrays(contexts)
 }
 
 // ValidateRecordIndexVersion rejects unsupported JSON record-index versions.
@@ -169,17 +181,41 @@ func CompressedSourceIndexBuildError(path, format string) error {
 }
 
 // ValidateNamespaceContextShape refuses a current header whose namespace
-// context lists declarations as null or omits them: this release writes an
-// empty context as an empty array, and a reader does not repair invalid new
-// input. Legacy headers may carry null, which reads as an empty context.
+// table is missing or empty, lists a context id more than once or below zero,
+// or lists a context's declarations as null or omits them: this release
+// writes an empty context as an empty array, and a reader does not repair
+// invalid new input. A JSON header must hold exactly the empty context 0.
+// Legacy headers may omit the table or carry null, which reads as an empty
+// context. It must run before NormalizeRecordIndex and after SourceFormat.
 func ValidateNamespaceContextShape(idx *RecordIndex) error {
 	if idx == nil || (idx.Version != SchemaVersion && idx.Version != SzstStoreVersion) {
 		return nil
 	}
+	if len(idx.NamespaceContexts) == 0 {
+		return fmt.Errorf("record index %s requires a namespace_contexts table", idx.Version)
+	}
+	seen := make(map[int]bool, len(idx.NamespaceContexts))
 	for _, c := range idx.NamespaceContexts {
-		if c.Declarations == nil {
+		switch {
+		case c.ID < 0:
+			return fmt.Errorf("record index %s namespace context id %d is negative", idx.Version, c.ID)
+		case seen[c.ID]:
+			return fmt.Errorf("record index %s lists namespace context %d more than once", idx.Version, c.ID)
+		case c.Declarations == nil:
 			return fmt.Errorf("record index %s namespace context %d has no declarations array", idx.Version, c.ID)
 		}
+		seen[c.ID] = true
+	}
+	if idx.Source.Format != SourceFormatJSON {
+		return nil
+	}
+	if len(idx.NamespaceContexts) != 1 {
+		return fmt.Errorf("record index for json input must hold exactly one namespace context (id 0, no declarations); found %d", len(idx.NamespaceContexts))
+	}
+	if c := idx.NamespaceContexts[0]; c.ID != 0 {
+		return fmt.Errorf("record index for json input must hold only namespace context 0; found context %d", c.ID)
+	} else if len(c.Declarations) != 0 {
+		return fmt.Errorf("record index for json input carries namespace declarations in context %d", c.ID)
 	}
 	return nil
 }

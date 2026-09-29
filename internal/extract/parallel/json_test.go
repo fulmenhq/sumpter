@@ -216,6 +216,17 @@ func TestJSONIndexedRouteRefusesBadIndexes(t *testing.T) {
 		{"corrupted hash", func(d map[string]any) { rec(d, 6)["sha256"] = strings.Repeat("0", 64) }, "record 7 bytes do not match the index hash"},
 		{"forged selector", func(d map[string]any) { d["selector"] = map[string]any{"xpath": "//id", "element_name": "id"} }, "rebuild the index with the recipe's selector"},
 		{"selector and name disagree", func(d map[string]any) { d["selector"].(map[string]any)["element_name"] = "x" }, "but the header records element_name"},
+		{"missing namespace table", func(d map[string]any) { delete(d, "namespace_contexts") }, "requires a namespace_contexts table"},
+		{"empty namespace table", func(d map[string]any) { d["namespace_contexts"] = []any{} }, "requires a namespace_contexts table"},
+		{"wrong namespace context id", func(d map[string]any) {
+			d["namespace_contexts"] = []any{map[string]any{"id": 7, "declarations": []any{}}}
+		}, "found context 7"},
+		{"extra namespace context", func(d map[string]any) {
+			d["namespace_contexts"] = []any{map[string]any{"id": 0, "declarations": []any{}}, map[string]any{"id": 1, "declarations": []any{}}}
+		}, "exactly one namespace context"},
+		{"duplicate namespace context", func(d map[string]any) {
+			d["namespace_contexts"] = []any{map[string]any{"id": 0, "declarations": []any{}}, map[string]any{"id": 0, "declarations": []any{}}}
+		}, "more than once"},
 		{"namespace declarations", func(d map[string]any) {
 			d["namespace_contexts"] = []any{map[string]any{"id": 0, "declarations": []any{map[string]any{"prefix": "p", "uri": "urn:x"}}}}
 		}, "carries namespace declarations"},
