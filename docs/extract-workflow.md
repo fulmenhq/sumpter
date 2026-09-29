@@ -25,8 +25,9 @@ it, it is read record by record, provided the signature declares
 buffered output. Otherwise the input fails with a route error naming the
 blocker, and `--allow-large-files` parses it as one document instead. An
 `ndjson` input is always read record by record and needs a
-`match_scope: record` signature. Record-index extraction and `extract-multi`
-accept XML input only in this release. Path-mode discovery defaults to
+`match_scope: record` signature. Record-index extraction accepts XML and JSON
+input (JSON under a `match_scope: record` signature), and `extract-multi`
+accepts XML input only in this release. Path-mode discovery defaults to
 `*.json` for JSON input and `*.ndjson` for `ndjson` input. The
 [document node model](standards/document-node-model.md) defines the
 streaming records, line-delimited input, and signature scope.
