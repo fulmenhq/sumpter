@@ -2046,7 +2046,7 @@ func failureReasonForError(err error) extract.DispositionReason {
 	}
 	text := err.Error()
 	switch {
-	case strings.Contains(text, "failed to parse XML") || strings.Contains(text, "failed to parse JSON") || strings.Contains(text, "XML syntax error"):
+	case strings.Contains(text, "failed to parse XML") || strings.Contains(text, "failed to parse JSON") || strings.Contains(text, "failed to parse NDJSON") || strings.Contains(text, "XML syntax error"):
 		return extract.DispositionReasonParseError
 	case strings.Contains(text, "signature mismatch"):
 		return extract.DispositionReasonSignatureMismatch

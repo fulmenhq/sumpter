@@ -103,10 +103,16 @@ properties:
     description: Minimum confidence score required for a match.
   format_type:
     type: string
-    enum: ["xml", "json", "protobuf"]
+    enum: ["xml", "json", "ndjson", "protobuf"]
     default: "xml"
     description: >-
-      Input syntax this signature matches. An omitted value means `xml`. `json` selects the JSON document format; a recipe declaring `defaults.input.format: json` must set it explicitly. `protobuf` is reserved and rejected at load.
+      Input syntax this signature matches. An omitted value means `xml`. `json` selects the JSON document format and `ndjson` line-delimited JSON, one object per line; a recipe declaring `defaults.input.format: json` or `ndjson` must set the same value explicitly. `protobuf` is reserved and rejected at load.
+  match_scope:
+    type: string
+    enum: ["document", "record"]
+    default: "document"
+    description: >-
+      What the match patterns are evaluated against. `document` (the default) evaluates them against the whole input document. `record` evaluates them against each record the single extract match selector picks, as its own document holding that one record element; every record must reach `confidence_threshold`. `record` requires exactly one match selector of the form `Name` or `//Name`, is required for `ndjson`, and is not supported for `xml`. A `json` signature with `document` scope keeps an input above the large-file threshold off the streaming route.
   tags:
     type: array
     items:

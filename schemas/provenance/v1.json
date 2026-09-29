@@ -636,7 +636,8 @@
           "type": "string",
           "enum": [
             "xml",
-            "json"
+            "json",
+            "ndjson"
           ],
           "description": "Input syntax the run parsed this input as. Writers set it on every input; readers must not default it. Absent only in manifests written before this field existed."
         },

@@ -118,7 +118,7 @@
       "version": "v0.1.0",
       "kind": "input",
       "path": "extract/v0.1.0/file-signature-schema.yaml",
-      "sha256": "sha256:3f7b28d4a6441e38a64e822ca20d720ca85f29b64986ca1bf507729fcb7cd3e2"
+      "sha256": "sha256:cc9f9afd7da8e2dff6f55cf1c05942ca2dd9d8588647ce7d1d7623efa1deba1c"
     },
     {
       "id": "contract://sumpter.index/v0.1.0/record-index.schema.json",
@@ -174,7 +174,7 @@
       "version": "v1",
       "kind": "output",
       "path": "provenance/v1.json",
-      "sha256": "sha256:19ae5521525f85ce745db56a12f6e73a9c3c75fd26b732841c46d6fe12fce590"
+      "sha256": "sha256:cd1b6dbdc46f047e01033069e8e000d487147ca297e0f9c35044bf0974c3973d"
     },
     {
       "id": "contract://sumpter.recipes/v0.1.0/applicability.schema.yaml",
@@ -190,7 +190,7 @@
       "version": "v0.1.0",
       "kind": "input",
       "path": "recipes/v0.1.0/recipe.schema.yaml",
-      "sha256": "sha256:12d740f32a72fb4401258160ad3f7aa313a9bb69fc9bb0ee5b786089607ab91b"
+      "sha256": "sha256:739bdccc00f04ca9d5717da38a26c2ba3d1f848057e8e50d22bf17c1043ca813"
     },
     {
       "id": "contract://sumpter.retrieve/v0.1.0/retrieve-config.schema.yaml",

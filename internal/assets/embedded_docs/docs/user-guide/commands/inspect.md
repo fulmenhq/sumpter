@@ -86,8 +86,9 @@ selectors should read `segments`.
 - Gzip-compressed input is refused in both modes with "inspect does not read
   gzip input; decompress it first (for example: gunzip -k <file>)".
 - `--force-encoding` does not apply to JSON (JSON input must be UTF-8), and
-  `--analyze-records` does not yet support `--input-format json`; each is
-  refused before any input is read.
+  record analysis (`--analyze-records`) is not supported for `json` or
+  `ndjson` input in this release; each is refused before any input is read.
+- `--input-format ndjson` is not supported by `inspect` in this release.
 
 **Generating a starter config from JSON.** `--generate-config` with
 `--input-format json` writes one `extract.yaml`, loadable as it is. The record

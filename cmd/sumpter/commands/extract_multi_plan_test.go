@@ -299,6 +299,36 @@ func TestLoadRecipePlan_RejectsJSONInput(t *testing.T) {
 	}
 }
 
+func TestLoadRecipePlan_RejectsNDJSONInput(t *testing.T) {
+	ws := writeMultiRecipeWorkspace(t, "ndjsonrecipe")
+	recipe, err := os.ReadFile(filepath.Join(ws, "recipe.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withFormat := strings.Replace(string(recipe), "  input:\n", "  input:\n    format: ndjson\n", 1)
+	if err := os.WriteFile(filepath.Join(ws, "recipe.yaml"), []byte(withFormat), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sig := filepath.Join(ws, "signature/signature.yaml")
+	sigBytes, err := os.ReadFile(sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sig, append(sigBytes, []byte("format_type: ndjson\nmatch_scope: record\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outputDir := filepath.Join(t.TempDir(), "ndjsonrecipe")
+	shared := &multiSharedOptions{FileList: filepath.Join(t.TempDir(), "f.txt"), RunID: testMultiRunID}
+	_, err = loadRecipePlan(ws, shared, outputDir, io.Discard)
+	want := `extract-multi supports xml input only in this release; recipe ndjsonrecipe declares ndjson input; run ndjson recipes with "sumpter extract"`
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+	if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
+		t.Fatalf("output directory exists after refusal: %v", statErr)
+	}
+}
+
 func TestLoadRecipePlan_JSONFormatMismatchPrecedesRefusal(t *testing.T) {
 	ws := writeMultiRecipeWorkspace(t, "mismatch")
 	recipe, err := os.ReadFile(filepath.Join(ws, "recipe.yaml"))

@@ -241,15 +241,3 @@ func TestJSONOverThresholdRequiresAllowLargeFiles(t *testing.T) {
 		t.Fatalf("with --allow-large-files: error = %v, want a whole-document parse error", res.Error)
 	}
 }
-
-func TestJSONStreamingRouteRefused(t *testing.T) {
-	sig, ext := jsonProcessConfigs()
-	ext.MatchSelectors[0].XPath = "//Order"
-	res := ProcessFileStreaming(writeTempFile(t, "in.json", `{"D":{"Order":[{"id":"1"}]}}`), sig, ext, nil)
-	if !errors.Is(res.Error, docnode.ErrRouteUnsupported) {
-		t.Fatalf("streaming json error = %v, want route unsupported", res.Error)
-	}
-	if len(res.Records) != 0 {
-		t.Fatalf("emitted %d records", len(res.Records))
-	}
-}

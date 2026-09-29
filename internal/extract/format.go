@@ -5,12 +5,14 @@ import (
 	"strings"
 
 	"github.com/fulmenhq/sumpter/internal/docnode"
+	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 )
 
 // Input format tokens accepted in this release.
 const (
-	FormatXML  = "xml"
-	FormatJSON = "json"
+	FormatXML    = "xml"
+	FormatJSON   = "json"
+	FormatNDJSON = "ndjson"
 )
 
 // jsonNoAttributesHint is the fix carried by every attribute-axis rejection
@@ -25,12 +27,12 @@ func NormalizeInputFormat(token string) (string, error) {
 		return FormatXML, nil
 	case FormatJSON:
 		return FormatJSON, nil
-	case "ndjson":
-		return "", fmt.Errorf("input format %q is not supported: line-delimited JSON input arrives in a later release", token)
+	case FormatNDJSON:
+		return FormatNDJSON, nil
 	case "protobuf":
 		return "", fmt.Errorf("input format %q is reserved, not implemented", token)
 	default:
-		return "", fmt.Errorf("unknown input format %q (supported: xml, json)", token)
+		return "", fmt.Errorf("unknown input format %q (supported: xml, json, ndjson)", token)
 	}
 }
 
@@ -62,13 +64,65 @@ func ResolveInputFormat(recipeFormat string, recipeMode bool, sig *FileSignature
 			return "", fmt.Errorf("recipe defaults.input.format %q does not match signature format_type %q", effective, sigFormat)
 		}
 	}
-	if effective == FormatJSON {
+	if effective == FormatJSON || effective == FormatNDJSON {
 		if err := checkJSONConfig(sig, ext, app); err != nil {
 			return "", err
 		}
 	}
+	if err := checkMatchScope(effective, sig, ext, app); err != nil {
+		return "", err
+	}
 	sig.FormatType = effective
 	return effective, nil
+}
+
+// Signature match scopes.
+const (
+	MatchScopeDocument = "document"
+	MatchScopeRecord   = "record"
+)
+
+// checkMatchScope enforces where each signature scope may be used. ndjson
+// has no whole document, so its signature must be record-scoped; xml has no
+// record-scoped signature evaluation in this release. A record-scoped
+// signature is evaluated against the records one selector picks, so the same
+// records are scored on every route.
+func checkMatchScope(format string, sig *FileSignature, ext *ExtractRecordMatch, app *ApplicabilityConfig) error {
+	scope := strings.ToLower(strings.TrimSpace(sig.MatchScope))
+	switch scope {
+	case "", MatchScopeDocument, MatchScopeRecord:
+	default:
+		return fmt.Errorf("signature match_scope %q is not supported (supported: document, record)", sig.MatchScope)
+	}
+	if format == FormatNDJSON {
+		if scope != MatchScopeRecord {
+			return fmt.Errorf("signature match_scope: ndjson input has no whole document, so the signature must declare \"match_scope: record\"")
+		}
+		if app != nil {
+			return fmt.Errorf("applicability is not supported for ndjson input: ndjson is always read record by record")
+		}
+	}
+	if scope != MatchScopeRecord {
+		return nil
+	}
+	if format == FormatXML {
+		return fmt.Errorf("signature match_scope: record is not supported for xml input in this release; it is supported for json and ndjson input")
+	}
+	if ext == nil {
+		return nil
+	}
+	if len(ext.MatchSelectors) != 1 {
+		return fmt.Errorf("signature match_scope: record needs exactly one extract match selector; found %d", len(ext.MatchSelectors))
+	}
+	if err := streaming.ValidateRecordSelector(ext.MatchSelectors[0].XPath); err != nil {
+		return fmt.Errorf("signature match_scope: record: %w", err)
+	}
+	return nil
+}
+
+// isRecordScope reports whether the signature is evaluated per record.
+func isRecordScope(sig *FileSignature) bool {
+	return sig != nil && strings.EqualFold(strings.TrimSpace(sig.MatchScope), MatchScopeRecord)
 }
 
 // checkJSONConfig enforces the json totality rule over every recipe XPath.
@@ -235,12 +289,37 @@ func inputFormat(sig *FileSignature) (docnode.Format, error) {
 	return format, nil
 }
 
-// errJSONStreamingUnsupported is returned when a json input would need the
-// streaming route, which json does not have in this release.
-var errJSONStreamingUnsupported = fmt.Errorf("streaming input is not supported for json in this release; use --allow-large-files for whole-document parsing: %w", docnode.ErrRouteUnsupported)
+// jsonStreamingBlocked is the refusal for a json input above the large-file
+// threshold that cannot take the streaming route. It names what blocks the
+// route and the whole-document opt-in.
+func jsonStreamingBlocked(blockers []string) error {
+	return fmt.Errorf("json input above the large-file threshold cannot be streamed because %s; use --allow-large-files to parse it as one document: %w", strings.Join(blockers, " and "), docnode.ErrRouteUnsupported)
+}
+
+// jsonStreamingBlockers lists what keeps a json input off the streaming
+// route: the streaming route has no whole document to evaluate a
+// document-scoped signature or an applicability predicate against, and it
+// writes only through a record sink.
+func jsonStreamingBlockers(sig *FileSignature, app *ApplicabilityConfig, sink RecordSink) []string {
+	var blockers []string
+	if !isRecordScope(sig) {
+		blockers = append(blockers, "the signature is evaluated against the whole document (match_scope: document)")
+	}
+	if app != nil {
+		blockers = append(blockers, "the recipe declares an applicability predicate")
+	}
+	if sink == nil {
+		blockers = append(blockers, "the output is buffered")
+	}
+	return blockers
+}
 
 func isJSONInput(sig *FileSignature) bool {
 	return sig != nil && strings.EqualFold(strings.TrimSpace(sig.FormatType), FormatJSON)
+}
+
+func isNDJSONInput(sig *FileSignature) bool {
+	return sig != nil && strings.EqualFold(strings.TrimSpace(sig.FormatType), FormatNDJSON)
 }
 
 // checkUnmatchedPolymorphic fails a json polymorphic mapping by element_type
@@ -248,7 +327,7 @@ func isJSONInput(sig *FileSignature) bool {
 // parent key's name, so the wrapper idiom is required. XML keeps its empty
 // result.
 func checkUnmatchedPolymorphic(format docnode.Format, sources []docnode.Node, mapping *FieldMapping) error {
-	if format == nil || format.Token() != FormatJSON {
+	if format == nil || (format.Token() != FormatJSON && format.Token() != FormatNDJSON) {
 		return nil
 	}
 	byElementType := false
@@ -271,4 +350,52 @@ func checkUnmatchedPolymorphic(format docnode.Format, sources []docnode.Node, ma
 		return nil
 	}
 	return fmt.Errorf("field mapping %q: no polymorphic branch matched %d items; expected the wrapper idiom, where each array item is an object keyed by its element type (for example [{\"OrderLine\": {...}}])", mapping.OutputField, items)
+}
+
+// recordSignatureMismatch is the error for the first record a record-scoped
+// signature does not admit. It names the record by ordinal only.
+func recordSignatureMismatch(num int, confidence, threshold float64) error {
+	return fmt.Errorf("signature mismatch: record %d scored confidence=%.3f below threshold=%.3f; with match_scope: record the signature is evaluated per record", num, confidence, threshold)
+}
+
+// matchesSignaturePerRecord scores a record-scoped signature on the
+// whole-document route exactly as the streaming route does: each element the
+// single match selector picks, in document order, is copied into its own
+// record document and scored; the first record below the threshold fails the
+// input. With no records nothing is scored and the status stays unknown. The
+// confidence is the lowest record score.
+func matchesSignaturePerRecord(doc docnode.Document, sig *FileSignature, ext *ExtractRecordMatch) (SignatureMatchStatus, float64, error) {
+	if ext == nil || len(ext.MatchSelectors) != 1 {
+		return SignatureMatchUnknown, 0, fmt.Errorf("signature match_scope: record needs exactly one extract match selector")
+	}
+	format := doc.Format()
+	documenter, ok := format.(docnode.RecordDocumenter)
+	if !ok {
+		return SignatureMatchUnknown, 0, fmt.Errorf("signature match_scope: record is not supported for %s input", format.Token())
+	}
+	nodes, err := evaluateNodeSet(format, doc.Root(), nil, ext.MatchSelectors[0].XPath)
+	if err != nil {
+		return SignatureMatchUnknown, 0, fmt.Errorf("failed to evaluate XPath %s: %w", ext.MatchSelectors[0].XPath, err)
+	}
+	minConfidence := 0.0
+	for i, n := range nodes {
+		recordDoc, err := documenter.RecordDocument(n)
+		if err != nil {
+			return SignatureMatchUnknown, 0, err
+		}
+		matches, confidence, err := matchesSignature(recordDoc.Root(), sig)
+		if err != nil {
+			return SignatureMatchUnknown, 0, fmt.Errorf("failed to check signature: %w", err)
+		}
+		if i == 0 || confidence < minConfidence {
+			minConfidence = confidence
+		}
+		if !matches {
+			return SignatureMatchMismatched, minConfidence, recordSignatureMismatch(i+1, confidence, sig.ConfidenceThreshold)
+		}
+	}
+	if len(nodes) == 0 {
+		return SignatureMatchUnknown, 0, nil
+	}
+	return SignatureMatchMatched, minConfidence, nil
 }

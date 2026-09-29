@@ -99,7 +99,7 @@ func walk(vr *validatingReader, h Handler) error {
 	}
 	dec := stdjson.NewDecoder(vr)
 	dec.UseNumber()
-	w := &walker{dec: dec, vr: vr, h: h, base: vr.skipped}
+	w := &walker{dec: dec, vr: vr, h: h, base: vr.off}
 
 	tok, err := dec.Token()
 	if err != nil {
@@ -341,12 +341,22 @@ type validatingReader struct {
 	escaped bool
 	strOpen int64
 	spans   []strSpan
+
+	// capture, when set, receives every byte handed on with its file offset.
+	capture *captureBuf
 }
 
 type strSpan struct{ open, close int64 }
 
 func newValidatingReader(r io.Reader) *validatingReader {
 	return &validatingReader{r: r}
+}
+
+// newValidatingReaderAt reads bytes that start at file offset off in the
+// middle of an input: no byte order mark is stripped or refused, and every
+// offset it reports is file-relative.
+func newValidatingReaderAt(r io.Reader, off int64) *validatingReader {
+	return &validatingReader{r: r, started: true, off: off}
 }
 
 // start inspects the first bytes: it strips one UTF-8 byte order mark and
@@ -402,6 +412,9 @@ func (v *validatingReader) Read(p []byte) (int, error) {
 		if v.valid > 0 {
 			n := copy(p, v.buf[:v.valid])
 			v.track(v.buf[:n], v.off)
+			if v.capture != nil {
+				v.capture.write(v.buf[:n], v.off)
+			}
 			v.buf = v.buf[n:]
 			v.valid -= n
 			v.off += int64(n)

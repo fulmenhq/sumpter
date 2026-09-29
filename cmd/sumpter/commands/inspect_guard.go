@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	docjson "github.com/fulmenhq/sumpter/internal/docnode/json"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 )
 
 // inspectPeekBytes bounds the non-consuming look at the start of the input.
@@ -24,23 +24,30 @@ var (
 // resolveInspectInputFormat validates --input-format and the flags that do
 // not combine with it. It runs before any input is opened or read.
 func resolveInspectInputFormat(opts *InspectOptions) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(opts.InputFormat)) {
+	switch token := strings.ToLower(strings.TrimSpace(opts.InputFormat)); token {
 	case "", inspectFormatXML:
 		return inspectFormatXML, nil
 	case inspectFormatJSON:
+	case inspectFormatNDJSON:
+		if opts.AnalyzeRecords {
+			return "", errInspectAnalyzeRecords(token)
+		}
+		return "", fmt.Errorf("inspect is not supported for ndjson input in this release: %w", docnode.ErrRouteUnsupported)
 	default:
-		return "", fmt.Errorf("unknown --input-format %q (supported: xml, json)", opts.InputFormat)
+		return "", fmt.Errorf("unknown --input-format %q (supported: xml, json, ndjson)", opts.InputFormat)
 	}
 	if opts.ForceEncoding != "" {
 		return "", errInspectJSONForce
 	}
 	if opts.AnalyzeRecords {
-		// Record analysis needs the streaming route, which JSON does not have
-		// yet; report it with the format's own route-unsupported error.
-		_, err := docjson.Format{}.NewScanner(nil, "", false)
-		return "", err
+		return "", errInspectAnalyzeRecords(inspectFormatJSON)
 	}
 	return inspectFormatJSON, nil
+}
+
+// errInspectAnalyzeRecords refuses record analysis for a JSON input format.
+func errInspectAnalyzeRecords(token string) error {
+	return fmt.Errorf("record analysis is not supported for %s input in this release: %w", token, docnode.ErrRouteUnsupported)
 }
 
 // checkInspectInput refuses inputs inspect cannot report on under the

@@ -25,8 +25,11 @@ type FileSignature struct {
 	MatchPatterns       []MatchPattern    `yaml:"match_patterns" json:"match_patterns"`
 	ConfidenceThreshold float64           `yaml:"confidence_threshold" json:"confidence_threshold"`
 	FormatType          string            `yaml:"format_type" json:"format_type"`
-	Tags                []string          `yaml:"tags" json:"tags"`
-	UseCases            []string          `yaml:"use_cases" json:"use_cases"`
+	// MatchScope is what the match patterns are evaluated against: the whole
+	// document (document, the default) or each selected record (record).
+	MatchScope string   `yaml:"match_scope,omitempty" json:"match_scope,omitempty"`
+	Tags       []string `yaml:"tags" json:"tags"`
+	UseCases   []string `yaml:"use_cases" json:"use_cases"`
 }
 
 // MatchPattern represents a pattern for matching files
