@@ -4,8 +4,9 @@ The extract command tokenizes XML inputs incrementally through recipe-driven fie
 
 ## Input Formats
 
-Sumpter reads XML (default) and JSON documents. The format is declared, never
-inferred from a file name:
+Sumpter reads XML (default), JSON documents, and line-delimited JSON
+(`ndjson`, one object per line). The format is declared, never inferred from
+a file name:
 
 - in a recipe, `defaults.input.format: json`, with `format_type: json` in the
   signature (an omitted `format_type` means `xml`, so the two must agree);
@@ -18,18 +19,24 @@ attributes, so `@k` in an XML recipe becomes `k`. The
 [document node model](standards/document-node-model.md) is the full contract,
 including the wrapper idiom for polymorphic arrays and the inputs JSON rejects.
 
-JSON uses the whole-document route. A JSON file above the large-file
-threshold parses as one document only with `--allow-large-files`; without it
-the run fails with a route error rather than falling back to streaming.
-Record-index extraction and `extract-multi` accept XML input only in this
-release. Path-mode discovery defaults to `*.json` for JSON input.
+Below the large-file threshold a JSON file is parsed as one document; above
+it, it is read record by record, provided the signature declares
+`match_scope: record` and the run has no applicability predicate and no
+buffered output. Otherwise the input fails with a route error naming the
+blocker, and `--allow-large-files` parses it as one document instead. An
+`ndjson` input is always read record by record and needs a
+`match_scope: record` signature. Record-index extraction and `extract-multi`
+accept XML input only in this release. Path-mode discovery defaults to
+`*.json` for JSON input and `*.ndjson` for `ndjson` input. The
+[document node model](standards/document-node-model.md) defines the
+streaming records, line-delimited input, and signature scope.
 
 The provenance manifest records each input's parsed format in
 `inputs[].format`.
 
 | Setting | `json` | `ndjson` |
 | --- | --- | --- |
-| input (`defaults.input.format`) | one JSON document per file | line-delimited input; arrives in a later release |
+| input (`defaults.input.format`) | one JSON document per file | one JSON object per line; each line is one record |
 | output (`defaults.output.format`) | newline-delimited JSON records | the same writer as `json` |
 
 ## Output Formats

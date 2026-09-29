@@ -171,7 +171,7 @@ func TestInspectJSONGenerateConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generated config does not load: %v", err)
 	}
-	if len(ext.MatchSelectors) != 1 || ext.MatchSelectors[0].XPath != "/Rows" {
+	if len(ext.MatchSelectors) != 1 || ext.MatchSelectors[0].XPath != "//Rows" {
 		t.Fatalf("match selectors = %+v", ext.MatchSelectors)
 	}
 	for _, want := range []string{

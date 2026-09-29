@@ -971,7 +971,8 @@ func TestLoadManifestInputFormat(t *testing.T) {
 		{name: "json default pattern", input: "    format: json\n", wantPattern: "*.json"},
 		{name: "xml default pattern", input: "    format: xml\n", wantPattern: "*.xml"},
 		{name: "explicit pattern wins", input: "    format: json\n    include_pattern: \"*.txt\"\n", wantPattern: "*.txt"},
-		{name: "ndjson later release", input: "    format: ndjson\n", errPart: "arrives in a later release"},
+		{name: "ndjson default pattern", input: "    format: ndjson\n", wantPattern: "*.ndjson"},
+		{name: "ndjson explicit pattern wins", input: "    format: ndjson\n    include_pattern: \"*.jsonl\"\n", wantPattern: "*.jsonl"},
 		{name: "unknown token", input: "    format: csv\n", errPart: "defaults.input.format"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

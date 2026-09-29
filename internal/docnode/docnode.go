@@ -116,6 +116,14 @@ type Format interface {
 	NodeOf(nav xpath.NodeNavigator) (Node, bool)
 }
 
+// RecordDocumenter is an optional Format capability. RecordDocument returns a
+// new document whose only element is a copy of n: the same tree ParseRecord
+// builds from that element's scanned bytes. n must come from a document of
+// the same format.
+type RecordDocumenter interface {
+	RecordDocument(n Node) (Document, error)
+}
+
 // Default is the format token used when none is selected.
 const Default = "xml"
 

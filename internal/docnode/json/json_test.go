@@ -2,6 +2,7 @@ package json
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -214,15 +215,51 @@ func TestNodeOfRejectsForeignOrEmptyNavigator(t *testing.T) {
 
 type foreignNavigator struct{ xpath.NodeNavigator }
 
-func TestNewScannerUnsupported(t *testing.T) {
+func TestNewScanner(t *testing.T) {
 	for _, sizeOnly := range []bool{false, true} {
-		sc, err := Format{}.NewScanner(strings.NewReader(`[]`), "//item", sizeOnly)
-		if sc != nil || !errors.Is(err, docnode.ErrRouteUnsupported) {
-			t.Fatalf("NewScanner: %v, %v", sc, err)
+		sc, err := Format{}.NewScanner(strings.NewReader(`[{"a":1},{"a":2}]`), "//item", sizeOnly)
+		if err != nil {
+			t.Fatalf("NewScanner(sizeOnly=%v): %v", sizeOnly, err)
 		}
-		if !strings.Contains(err.Error(), "--allow-large-files") {
-			t.Fatalf("error %q", err)
+		for i := 1; i <= 2; i++ {
+			rec, err := sc.Next()
+			if err != nil || rec.Num != i || rec.Name != ItemName || (rec.Raw == nil) != sizeOnly {
+				t.Fatalf("record %d: %+v, %v", i, rec, err)
+			}
 		}
+		if _, err := sc.Next(); err != io.EOF {
+			t.Fatalf("after last record: %v", err)
+		}
+		if sc.RecordCount() != 2 {
+			t.Fatalf("RecordCount %d", sc.RecordCount())
+		}
+		if err := sc.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestParseRecordNamedBuildsRecordElement(t *testing.T) {
+	doc, err := Format{}.ParseRecord(&docnode.Record{Raw: []byte(`{"id":"r1","n":[1,2]}`), Name: "Record", StartOffset: 40})
+	if err != nil {
+		t.Fatalf("ParseRecord: %v", err)
+	}
+	if got := selectNodes(t, doc, "/Record/id"); len(got) != 1 || got[0].Text() != "r1" {
+		t.Fatal("record element does not hold the value's members")
+	}
+	if got := selectNodes(t, doc, "/Record/n"); len(got) != 2 {
+		t.Fatalf("array member: %d elements", len(got))
+	}
+	scalar, err := Format{}.ParseRecord(&docnode.Record{Raw: []byte(`2.50`), Name: "qty"})
+	if err != nil {
+		t.Fatalf("scalar record: %v", err)
+	}
+	if got := selectNodes(t, scalar, "/qty"); len(got) != 1 || got[0].Text() != "2.50" {
+		t.Fatal("scalar record lost its lexeme")
+	}
+	_, err = Format{}.ParseRecord(&docnode.Record{Raw: []byte(`{"a":1,"a":2}`), Name: "r", StartOffset: 100})
+	if err == nil || !strings.Contains(err.Error(), "byte offset 107") {
+		t.Fatalf("named record errors must carry file offsets: %v", err)
 	}
 }
 

@@ -628,6 +628,10 @@ func (mc *multiCloser) Close() error {
 	return nil
 }
 
+// largeFileStreamingThreshold is the estimated uncompressed size above which
+// an input may take the streaming route. Tests lower it to force the route.
+var largeFileStreamingThreshold int64 = 100 * 1024 * 1024
+
 // ProcessFileStreaming processes a large file using streaming to minimize memory usage
 func ProcessFileStreaming(filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, externalFields map[string]interface{}) ExtractResult {
 	return ProcessFileStreamingWithProvenance(filePath, sigCfg, extCfg, externalFields, provenance.RuntimeOptions{})
@@ -752,6 +756,21 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		markBoundaryFailure(DispositionReasonInternalError)
 		return finish()
 	}
+	// JSON input streams only under a record-scoped signature, which is
+	// scored on every record below; anything else is refused here, before
+	// the input is opened, whoever calls this entry point.
+	if token := format.Token(); token != FormatXML {
+		if err := checkMatchScope(token, sigCfg, extCfg, nil); err != nil {
+			result.Error = err
+			markBoundaryFailure(DispositionReasonValidationError)
+			return finish()
+		}
+		if !isRecordScope(sigCfg) {
+			result.Error = jsonStreamingBlocked(jsonStreamingBlockers(sigCfg, nil, sink))
+			markBoundaryFailure(DispositionReasonRouteUnsupported)
+			return finish()
+		}
+	}
 
 	// Open file stream
 	stream, err := openFileStream(filePath)
@@ -784,10 +803,18 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		_ = scanner.Close() // Scanner close is best-effort, errors are not critical
 	}()
 
-	// Note: In streaming mode, signature checking is skipped because we don't have access
-	// to the full document structure. Signature checking should be done before calling
-	// ProcessFileStreaming, or the caller should ensure the file matches the expected format.
-	logger.Debug("Streaming mode: signature checking skipped (checking against individual records)")
+	// XML streaming does not evaluate the signature: the caller must ensure the
+	// file matches it. JSON and ndjson records are scored below against a
+	// record-scoped signature, which the check above requires.
+	if format.Token() == FormatXML {
+		logger.Debug("Streaming XML: signature not evaluated")
+	}
+
+	// A record-scoped signature is scored on each record's document before
+	// any of that record's rows are emitted.
+	recordScope := format.Token() != FormatXML
+	scored := 0
+	minConfidence := 0.0
 
 	// Process records one at a time
 	for {
@@ -798,7 +825,11 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		if err != nil {
 			err = runtimeProvenance.DiagnosticError(err, filePath)
 			logger.Error("Failed to scan record", zap.Error(err))
-			result.Error = fmt.Errorf("failed to scan record: %w", err)
+			if format.Token() == FormatXML {
+				result.Error = fmt.Errorf("failed to scan record: %w", err)
+			} else {
+				result.Error = fmt.Errorf("failed to parse %s: %w", strings.ToUpper(format.Token()), err)
+			}
 			markBoundaryFailure(DispositionReasonParseError)
 			return finish()
 		}
@@ -816,6 +847,8 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		// reused across iterations because ParseRecord does not retain it.
 		parseRecord.Raw = recordBuffer.Raw
 		parseRecord.Num = recordBuffer.Num
+		parseRecord.Name = recordBuffer.Name
+		parseRecord.StartOffset = recordBuffer.StartOffset
 		recordDoc, err := format.ParseRecord(&parseRecord)
 		if err != nil {
 			err = runtimeProvenance.DiagnosticError(err, filePath)
@@ -825,6 +858,26 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 			result.Error = fmt.Errorf("failed to parse record %d: %w", recordBuffer.Num, err)
 			markBoundaryFailure(DispositionReasonParseError)
 			return finish()
+		}
+
+		if recordScope {
+			matches, confidence, err := matchesSignature(recordDoc.Root(), sigCfg)
+			if err != nil {
+				result.Error = fmt.Errorf("failed to check signature: %w", err)
+				markBoundaryFailure(DispositionReasonInternalError)
+				return finish()
+			}
+			if scored == 0 || confidence < minConfidence {
+				minConfidence = confidence
+			}
+			scored++
+			result.SignatureConfidence = minConfidence
+			if !matches {
+				result.SignatureMatchStatus = SignatureMatchMismatched
+				result.Error = recordSignatureMismatch(recordBuffer.Num, confidence, sigCfg.ConfidenceThreshold)
+				markBoundaryFailure(DispositionReasonSignatureMismatch)
+				return finish()
+			}
 		}
 
 		// Extract records from this mini-DOM using a cloned config whose match
@@ -865,6 +918,10 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 			}
 			emittedRecords++
 		}
+	}
+
+	if recordScope && scored > 0 {
+		result.SignatureMatchStatus = SignatureMatchMatched
 	}
 
 	logger.Info("Streaming extraction complete",
@@ -914,20 +971,27 @@ func processFileWithProvenance(ctx context.Context, filePath string, sigCfg *Fil
 
 	// Check if we should use streaming mode for large files
 	// Streaming mode threshold: 100MB uncompressed (or 10MB compressed with 10x ratio estimate)
-	const streamingThreshold = 100 * 1024 * 1024 // 100MB
+	streamingThreshold := largeFileStreamingThreshold
 
 	shouldStream, estimatedSize, streamCompressed := shouldUseLargeFileStreaming(filePath, allowLargeFiles, sink, appCfg, streamingThreshold)
-	if isJSONInput(sigCfg) {
-		// JSON has no streaming route in this release: above the threshold it
-		// parses as one document only with --allow-large-files.
-		if estimatedSize > streamingThreshold && !allowLargeFiles {
-			t.result.Error = errJSONStreamingUnsupported
-			t.markFailed(DispositionReasonRouteUnsupported, t.result.Error.Error())
-			t.markBoundaryFailure(DispositionReasonRouteUnsupported, t.result.Error.Error())
-			t.emitBoundary()
-			return t.result
-		}
+	switch {
+	case isNDJSONInput(sigCfg):
+		// ndjson has no whole-document route: every input is streamed.
+		shouldStream = true
+	case isJSONInput(sigCfg):
+		// Above the threshold json streams only when nothing needs the whole
+		// document; --allow-large-files keeps the whole-document route.
 		shouldStream = false
+		if estimatedSize > streamingThreshold && !allowLargeFiles {
+			if blockers := jsonStreamingBlockers(sigCfg, appCfg, sink); len(blockers) > 0 {
+				t.result.Error = jsonStreamingBlocked(blockers)
+				t.markFailed(DispositionReasonRouteUnsupported, t.result.Error.Error())
+				t.markBoundaryFailure(DispositionReasonRouteUnsupported, t.result.Error.Error())
+				t.emitBoundary()
+				return t.result
+			}
+			shouldStream = true
+		}
 	}
 	if shouldStream {
 		if appCfg != nil {
@@ -1038,6 +1102,29 @@ func ProcessParsedDocument(ctx context.Context, doc docnode.Document, filePath s
 		}
 	}
 
+	if isRecordScope(sigCfg) && doc.Format().Token() != FormatXML {
+		status, confidence, err := matchesSignaturePerRecord(doc, sigCfg, extCfg)
+		t.result.SignatureConfidence = confidence
+		t.result.SignatureMatchStatus = status
+		if err != nil {
+			err = runtimeProvenance.DiagnosticError(err, filePath)
+			logger.Error("Record-scoped signature did not admit the input", zap.String("file", diagnosticPath), zap.Error(err))
+			t.result.Error = err
+			reason := DispositionReasonInternalError
+			if status == SignatureMatchMismatched {
+				reason = DispositionReasonSignatureMismatch
+			}
+			t.result.Disposition = DispositionFailed
+			t.result.DispositionReason = reason
+			t.result.DispositionDetail = err.Error()
+			t.markBoundaryFailure(reason, err.Error())
+			t.result.PerSelectorCounts = zeroSelectorCounts(extCfg)
+			t.emitBoundary()
+			return t.result
+		}
+		return extractParsedDocument(ctx, t, doc, filePath, sigCfg, extCfg, appCfg, externalFields, runtimeProvenance, sink)
+	}
+
 	// Check if file matches signature
 	logger.Debug("Checking signature match", zap.String("file", diagnosticPath), zap.String("signature", sigCfg.SignatureID))
 	matches, confidence, err := matchesSignature(doc.Root(), sigCfg)
@@ -1069,7 +1156,16 @@ func ProcessParsedDocument(ctx context.Context, doc docnode.Document, filePath s
 	}
 
 	t.result.SignatureMatchStatus = SignatureMatchMatched
+	return extractParsedDocument(ctx, t, doc, filePath, sigCfg, extCfg, appCfg, externalFields, runtimeProvenance, sink)
+}
 
+// extractParsedDocument extracts the records of an admitted document.
+func extractParsedDocument(ctx context.Context, t *boundaryTracker, doc docnode.Document, filePath string, sigCfg *FileSignature, extCfg *ExtractRecordMatch, appCfg *ApplicabilityConfig, externalFields map[string]interface{}, runtimeProvenance provenance.RuntimeOptions, sink RecordSink) ExtractResult {
+	logger := logging.GetLogger()
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	diagnosticPath := runtimeProvenance.DiagnosticIdentity(filePath)
 	if err := prepareExtractConfig(extCfg); err != nil {
 		err = runtimeProvenance.DiagnosticError(err, filePath)
 		logger.Error("Failed to prepare extract config", zap.String("file", diagnosticPath), zap.Error(err))

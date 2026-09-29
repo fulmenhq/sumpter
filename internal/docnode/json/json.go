@@ -50,18 +50,34 @@ func (Format) Parse(r io.Reader) (docnode.Document, error) {
 	return document{root: root}, nil
 }
 
-// ParseRecord parses one record's bytes. JSON records carry no context; a
-// non-nil Context is a *docnode.ContextError.
+// ParseRecord parses one record's bytes. A record from a scanner carries its
+// element name: the result is a document holding that one element, built
+// from the record's value as the whole-document route builds it. A record
+// without a name is parsed as a whole document. JSON records carry no
+// context; a non-nil Context is a *docnode.ContextError.
 func (f Format) ParseRecord(rec *docnode.Record) (docnode.Document, error) {
+	return parseRecord(rec)
+}
+
+func parseRecord(rec *docnode.Record) (docnode.Document, error) {
 	if rec.Context != nil {
 		return nil, &docnode.ContextError{Err: fmt.Errorf("unsupported record context type %T", rec.Context)}
 	}
-	return f.Parse(bytes.NewReader(rec.Raw))
+	if rec.Name == "" {
+		return Format{}.Parse(bytes.NewReader(rec.Raw))
+	}
+	root, err := parseRecordValue(rec.Raw, rec.Name, rec.StartOffset)
+	if err != nil {
+		return nil, err
+	}
+	return document{root: root}, nil
 }
 
-// NewScanner reports that streaming JSON input is not supported.
-func (Format) NewScanner(io.Reader, string, bool) (docnode.RecordScanner, error) {
-	return nil, fmt.Errorf("json: streaming input is not supported for json in this release; use --allow-large-files for whole-document parsing: %w", docnode.ErrRouteUnsupported)
+// NewScanner scans one JSON document for the elements named by selector
+// ("Name" or "//Name"). Each element is one record, in document order;
+// records may nest.
+func (Format) NewScanner(r io.Reader, selector string, sizeOnly bool) (docnode.RecordScanner, error) {
+	return newRecordScanner(r, selector, sizeOnly)
 }
 
 // NodeOf returns the node at an iterator position: the element for element
@@ -74,6 +90,37 @@ func (Format) NodeOf(nav xpath.NodeNavigator) (docnode.Node, bool) {
 		return nil, false
 	}
 	return wrap(jn.curr), true
+}
+
+// RecordDocument returns a document holding a copy of the element n, the
+// tree a record-scoped signature is evaluated against on every route.
+func (Format) RecordDocument(n docnode.Node) (docnode.Document, error) {
+	return recordDocument(n)
+}
+
+func recordDocument(n docnode.Node) (docnode.Document, error) {
+	var src *jnode
+	switch x := n.(type) {
+	case node:
+		src = x.n
+	case scalarNode:
+		src = x.n
+	}
+	if src == nil || src.typ != elementNode {
+		return nil, fmt.Errorf("json: record document needs a JSON element, got %T", n)
+	}
+	root := &jnode{typ: rootNode}
+	root.appendChild(copyTree(src))
+	return document{root: root}, nil
+}
+
+// copyTree returns a detached copy of n and its descendants.
+func copyTree(n *jnode) *jnode {
+	c := &jnode{typ: n.typ, scalar: n.scalar, kind: n.kind, name: n.name, value: n.value}
+	for ch := n.firstChild; ch != nil; ch = ch.next {
+		c.appendChild(copyTree(ch))
+	}
+	return c
 }
 
 type document struct {

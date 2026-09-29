@@ -669,21 +669,22 @@ func WorkspaceFilesystem(base string) (fs.FS, error) {
 }
 
 // DefaultIncludePattern is the discovery pattern used when a recipe gives
-// none: *.json for json input, *.xml otherwise.
+// none: *.json for json input, *.ndjson for ndjson input, *.xml otherwise.
 func DefaultIncludePattern(format string) string {
-	if strings.EqualFold(strings.TrimSpace(format), "json") {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json":
 		return "*.json"
+	case "ndjson":
+		return "*.ndjson"
 	}
 	return "*.xml"
 }
 
 func validateInputFormat(format string) error {
 	switch strings.ToLower(strings.TrimSpace(format)) {
-	case "", "xml", "json":
+	case "", "xml", "json", "ndjson":
 		return nil
-	case "ndjson":
-		return fmt.Errorf("defaults.input.format %q is not supported: line-delimited JSON input arrives in a later release", format)
 	default:
-		return fmt.Errorf("defaults.input.format %q is not supported (supported: xml, json)", format)
+		return fmt.Errorf("defaults.input.format %q is not supported (supported: xml, json, ndjson)", format)
 	}
 }

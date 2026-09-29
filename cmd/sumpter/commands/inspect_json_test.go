@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/assets"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	docjson "github.com/fulmenhq/sumpter/internal/docnode/json"
 	"github.com/fulmenhq/sumpter/internal/extract"
 )
@@ -627,7 +629,7 @@ func TestInspectJSONFlagRefusals(t *testing.T) {
 		want string
 	}{
 		{"force-encoding", []string{"--force-encoding", "utf-8"}, "--force-encoding does not apply to --input-format json"},
-		{"analyze-records", []string{"--analyze-records", "--record-selector", "//a"}, "streaming input is not supported for json in this release"},
+		{"analyze-records", []string{"--analyze-records", "--record-selector", "//a"}, "record analysis is not supported for json input in this release"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -642,11 +644,27 @@ func TestInspectJSONFlagRefusals(t *testing.T) {
 		})
 	}
 
-	// The analyze-records refusal is the format's own route-unsupported error.
-	_, want := docjson.Format{}.NewScanner(nil, "", false)
-	_, _, err := runInspect(t, "--input-format", "json", "--analyze-records", doc)
-	if err == nil || err.Error() != want.Error() {
-		t.Fatalf("analyze-records error = %v, want %v", err, want)
+	// Record analysis and ndjson inspection are route refusals; neither
+	// repeats the retired "streaming input is not supported" wording or
+	// points at --allow-large-files.
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--input-format", "json", "--analyze-records", doc}, "record analysis is not supported for json input in this release"},
+		{[]string{"--input-format", "ndjson", "--analyze-records", doc}, "record analysis is not supported for ndjson input in this release"},
+		{[]string{"--input-format", "ndjson", doc}, "inspect is not supported for ndjson input in this release"},
+	} {
+		report, stdout, err := runInspect(t, tc.args...)
+		if !errors.Is(err, docnode.ErrRouteUnsupported) || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%v: error = %v, want route unsupported %q", tc.args, err, tc.want)
+		}
+		if strings.Contains(err.Error(), "streaming input is not supported") || strings.Contains(err.Error(), "--allow-large-files") {
+			t.Fatalf("%v: error %q", tc.args, err)
+		}
+		if report != nil || stdout != "" {
+			t.Fatalf("%v: output written for a refused invocation", tc.args)
+		}
 	}
 
 	// Unknown formats are rejected.

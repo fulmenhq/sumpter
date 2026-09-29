@@ -215,7 +215,7 @@ type Input struct {
 	CredentialsHandle string `json:"credentials_handle,omitempty"`
 	SHA256            string `json:"sha256"`
 	SizeBytes         int64  `json:"size_bytes"`
-	// Format is the input syntax the run parsed this input as (xml or json).
+	// Format is the input syntax the run parsed this input as (xml, json, or ndjson).
 	// Every writer sets it; readers must not default it.
 	Format            string `json:"format"`
 	RecordType        string `json:"record_type,omitempty"`

@@ -61,8 +61,9 @@ const inspectReportSchemaPath = "schemas/inspect/v0.1.2/inspect-report.schema.ya
 
 // Input formats inspect reports on (input.format).
 const (
-	inspectFormatXML  = "xml"
-	inspectFormatJSON = "json"
+	inspectFormatXML    = "xml"
+	inspectFormatJSON   = "json"
+	inspectFormatNDJSON = "ndjson"
 )
 
 // InspectReportV0 matches the v0.1.2 schema. JSON-profile reports marshal

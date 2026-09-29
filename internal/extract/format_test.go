@@ -1,6 +1,7 @@
 package extract
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func TestNormalizeInputFormat(t *testing.T) {
 		{in: "", want: FormatXML},
 		{in: "xml", want: FormatXML},
 		{in: " JSON ", want: FormatJSON},
-		{in: "ndjson", errPart: "arrives in a later release"},
+		{in: " NDJSON ", want: FormatNDJSON},
 		{in: "protobuf", errPart: "reserved, not implemented"},
 		{in: "yaml", errPart: "unknown input format"},
 	} {
@@ -66,7 +67,8 @@ func TestResolveInputFormat(t *testing.T) {
 		{name: "recipe xml, signature json", recipeFormat: "xml", recipeMode: true, sigFormat: "json",
 			errPart: `does not match signature format_type "json"`},
 		{name: "signature protobuf", sigFormat: "protobuf", errPart: "reserved, not implemented"},
-		{name: "recipe ndjson", recipeFormat: "ndjson", recipeMode: true, errPart: "arrives in a later release"},
+		{name: "recipe ndjson, signature omitted", recipeFormat: "ndjson", recipeMode: true,
+			errPart: `signature format_type defaults to xml: add "format_type: ndjson" to the signature`},
 		{name: "signature unknown", sigFormat: "csv", errPart: "unknown input format"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -220,11 +222,26 @@ func TestInputFormatLookup(t *testing.T) {
 	}
 }
 
-func TestJSONStreamingUnsupportedIsRouteError(t *testing.T) {
-	if !errors.Is(errJSONStreamingUnsupported, docnode.ErrRouteUnsupported) {
-		t.Fatal("errJSONStreamingUnsupported does not wrap docnode.ErrRouteUnsupported")
+func TestJSONStreamingBlockedIsRouteError(t *testing.T) {
+	err := jsonStreamingBlocked(jsonStreamingBlockers(&FileSignature{}, &ApplicabilityConfig{}, nil))
+	if !errors.Is(err, docnode.ErrRouteUnsupported) {
+		t.Fatal("blocked streaming does not wrap docnode.ErrRouteUnsupported")
 	}
-	if !strings.Contains(errJSONStreamingUnsupported.Error(), "use --allow-large-files for whole-document parsing") {
-		t.Fatalf("message = %q", errJSONStreamingUnsupported)
+	for _, part := range []string{"match_scope: document", "applicability predicate", "output is buffered", "use --allow-large-files to parse it as one document"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Fatalf("message %q lacks %q", err, part)
+		}
+	}
+	if strings.Contains(err.Error(), "streaming input is not supported for json") {
+		t.Fatalf("message repeats the retired refusal: %q", err)
+	}
+	if got := jsonStreamingBlockers(&FileSignature{MatchScope: "record"}, nil, discardSink{}); len(got) != 0 {
+		t.Fatalf("record scope, no applicability, record sink: blockers %q", got)
 	}
 }
+
+type discardSink struct{}
+
+func (discardSink) OnRecord(context.Context, EmittedRecord) error             { return nil }
+func (discardSink) OnFileBoundary(context.Context, FileEmissionSummary) error { return nil }
+func (discardSink) Close(context.Context) error                               { return nil }

@@ -17,8 +17,9 @@ against that table in CI.
 
 | Where | Field | Values |
 | --- | --- | --- |
-| Recipe manifest | `defaults.input.format` | `xml` (default), `json` |
-| File signature | `format_type` | `xml` (default), `json`; `protobuf` is reserved and rejected |
+| Recipe manifest | `defaults.input.format` | `xml` (default), `json`, `ndjson` |
+| File signature | `format_type` | `xml` (default), `json`, `ndjson`; `protobuf` is reserved and rejected |
+| File signature | `match_scope` | `document` (default), `record`; see [Signature scope](#signature-scope) |
 
 - In a recipe, `defaults.input.format` decides the format, and the signature's
   `format_type` must declare the same value. An omitted `format_type` means
@@ -27,14 +28,15 @@ against that table in CI.
   signature's `format_type` decides.
 - File names and extensions are never used to choose a format. An unknown
   token is a load error.
-- Path-mode discovery defaults to `*.json` for JSON input and `*.xml`
-  otherwise. An explicit include pattern always wins.
+- Path-mode discovery defaults to `*.json` for `json` input, `*.ndjson` for
+  `ndjson` input, and `*.xml` otherwise. An explicit include pattern always
+  wins; a tree of `.jsonl` files sets `--include-pattern '*.jsonl'`.
 
 `json` and `ndjson` mean different things for input and output:
 
 | Setting | `json` | `ndjson` |
 | --- | --- | --- |
-| `defaults.input.format` | one JSON document per file | line-delimited input; arrives in a later release |
+| `defaults.input.format` | one JSON document per file | one JSON object per line; each line is one record |
 | `defaults.output.format` | newline-delimited JSON records | the same writer as `json` |
 
 ## Tree shape
@@ -149,12 +151,85 @@ The wrapper key is the element name the mapping matches. A bare array under an
 
 ## Routes
 
-JSON input uses the whole-document route. Above the large-file threshold it
-parses as one document only with `--allow-large-files`; without the flag the
-input fails with disposition reason `route_unsupported`. There is no streaming
-fallback. Record-index
-(parallel) extraction and `extract-multi` accept XML input only in this
-release.
+Below the large-file threshold (100 MB), a `json` input is parsed as one
+document. Above it, the input is read record by record on the streaming route,
+unless something needs the whole document: a signature with
+`match_scope: document` (the default), an applicability predicate, or a
+buffered output such as Parquet. Then the input fails with disposition reason
+`route_unsupported`, and the error names what blocks streaming.
+`--allow-large-files` parses any input as one document instead.
+
+An `ndjson` input is always read record by record, at any size; it has no
+whole-document route.
+
+Record-index (parallel) extraction, `extract-multi`, `inspect` of `ndjson`
+input, and `inspect --analyze-records` of `json` or `ndjson` input are not
+available in this release; each is refused with `route_unsupported` or a load
+error.
+
+## Streaming records
+
+On the streaming route the record selector (the single extract match
+selector, `Name` or `//Name`) picks the same elements the same XPath picks on
+the whole document: `//Name` every element named `Name`, and `Name` only the
+elements directly under the document node. Each record is evaluated as its
+own document, holding that one element; its string-values, numbers, nulls,
+and child elements are exactly the whole-document route's.
+
+- Records are numbered in document order. An element named `Name` inside
+  another record is also a record: the outer record comes first, then the
+  records inside it.
+- A record's source range is the value's own bytes in the input file: from its
+  first byte to its last, never including surrounding whitespace, array
+  separators, line terminators, or the byte order mark. Offsets count from
+  the first byte of the file, byte order mark included, so `raw[start:end]`
+  parsed on its own gives the record back.
+- A record whose value is a scalar or `null` is a record, as on the
+  whole-document route.
+- Memory depends on the span of the outermost open record, the records nested
+  in it, the nesting depth, and the keys of each open object checked for
+  duplicates. A selected record that spans the input, or a very wide object,
+  can need memory on the scale of the input.
+- A fault anywhere in an input fails that input, and none of its records are
+  published, including records read before the fault; see
+  [What JSON input rejects](#what-json-input-rejects).
+
+## Line-delimited JSON (`ndjson`)
+
+- Each line holds one JSON object, and each object is one record, named by
+  the record selector: field mappings are relative to the line's object, as
+  for one item of `"Name": [...]`.
+- A line of only whitespace is skipped and is not counted. A line ending in
+  `\r\n` or `\n` and a last line with no terminator are read the same way.
+- A line holding an array, a scalar, a truncated value, or more than one value
+  fails the input, naming the record number and byte offset.
+- An input with no JSON value at all (empty, or only blank lines) fails with
+  "input contains no JSON value".
+- The signature must declare `match_scope: record`. Applicability is not
+  supported.
+
+## Signature scope
+
+A signature's `match_scope` sets what its match patterns are evaluated
+against:
+
+- `document` (the default) evaluates them against the whole input document,
+  as in earlier releases.
+- `record` evaluates them against each record, as its own document holding
+  that one record element, with the same weights and `confidence_threshold`.
+  Every record must reach the threshold: the first that does not fails the
+  input with disposition reason `signature_mismatch`, naming the record
+  number. The records scored are the ones the single extract match selector
+  picks, on the whole-document and streaming routes alike, so a recipe admits
+  the same inputs whichever route reads them. When no record is selected,
+  nothing is scored.
+
+Write `record`-scoped patterns relative to the record, for example `/Order`
+or `/Order/id`, not the document root: a pattern such as `/data` never
+matches a record's document. `record` requires exactly one match selector of
+the form `Name` or `//Name`, is required for `ndjson`, and is not supported
+for `xml` in this release. The XML streaming route does not evaluate the
+signature, and it takes only the outermost of nested same-name elements.
 
 ## Conformance examples
 
