@@ -517,10 +517,44 @@ func TestStreamingEntryRefusesUnscopedJSON(t *testing.T) {
 			if len(sink.boundaries) != 1 || sink.boundaries[0].Disposition != DispositionFailed || sink.boundaries[0].DispositionReason != tc.reason {
 				t.Fatalf("boundaries %+v", sink.boundaries)
 			}
-			buffered := ProcessFileStreaming(path, tc.sig, tc.ext, nil)
-			if buffered.Error == nil || len(buffered.Records) != 0 {
-				t.Fatalf("ProcessFileStreaming: %v, %d records", buffered.Error, len(buffered.Records))
+			for name, res := range map[string]ExtractResult{
+				"ProcessFileStreaming":               ProcessFileStreaming(path, tc.sig, tc.ext, nil),
+				"ProcessFileStreamingWithProvenance": ProcessFileStreamingWithProvenance(path, tc.sig, tc.ext, nil, provenance.RuntimeOptions{}),
+			} {
+				if res.Error == nil || !strings.Contains(res.Error.Error(), tc.want) || len(res.Records) != 0 {
+					t.Fatalf("%s: %v, %d records", name, res.Error, len(res.Records))
+				}
 			}
 		})
+	}
+}
+
+// TestStreamingEntryXMLUnchanged pins that the entry guard does not touch
+// XML: the XML streaming route still streams without evaluating the
+// signature, through every exported entry point.
+func TestStreamingEntryXMLUnchanged(t *testing.T) {
+	sig := &FileSignature{
+		SignatureID:         "x",
+		ConfidenceThreshold: 1,
+		MatchPatterns:       []MatchPattern{{PatternID: "never", Selector: "/NoSuchRoot", Weight: 1}},
+	}
+	ext := &ExtractRecordMatch{
+		RecordType:     "rec",
+		MatchSelectors: []MatchSelector{{XPath: "//r"}},
+		FieldMappings:  []FieldMapping{{OutputField: "id", XPath: "id", Type: "string"}},
+	}
+	path := writeTempFile(t, "in.xml", `<root><r><id>1</id></r><r><id>2</id></r></root>`)
+	sink := &boundarySink{}
+	res := ProcessFileStreamingToSink(context.Background(), path, sig, ext, nil, provenance.RuntimeOptions{}, sink)
+	if res.Error != nil || len(sink.records) != 2 {
+		t.Fatalf("ProcessFileStreamingToSink: %v, %d records", res.Error, len(sink.records))
+	}
+	for name, res := range map[string]ExtractResult{
+		"ProcessFileStreaming":               ProcessFileStreaming(path, sig, ext, nil),
+		"ProcessFileStreamingWithProvenance": ProcessFileStreamingWithProvenance(path, sig, ext, nil, provenance.RuntimeOptions{}),
+	} {
+		if res.Error != nil || len(res.Records) != 2 {
+			t.Fatalf("%s: %v, %d records", name, res.Error, len(res.Records))
+		}
 	}
 }

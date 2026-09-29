@@ -803,10 +803,12 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		_ = scanner.Close() // Scanner close is best-effort, errors are not critical
 	}()
 
-	// Note: In streaming mode, signature checking is skipped because we don't have access
-	// to the full document structure. Signature checking should be done before calling
-	// ProcessFileStreaming, or the caller should ensure the file matches the expected format.
-	logger.Debug("Streaming mode: signature checking skipped (checking against individual records)")
+	// XML streaming does not evaluate the signature: the caller must ensure the
+	// file matches it. JSON and ndjson records are scored below against a
+	// record-scoped signature, which the check above requires.
+	if format.Token() == FormatXML {
+		logger.Debug("Streaming XML: signature not evaluated")
+	}
 
 	// A record-scoped signature is scored on each record's document before
 	// any of that record's rows are emitted.
