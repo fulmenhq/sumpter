@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/fulmenhq/sumpter/internal/index"
 )
 
-func injectNamespaceContext(xmlData []byte, declarations []index.NamespaceDeclaration) ([]byte, error) {
-	declarations = index.NormalizeNamespaceDeclarations(declarations)
+func injectNamespaceContext(xmlData []byte, declarations []NamespaceDeclaration) ([]byte, error) {
+	declarations = NormalizeNamespaceDeclarations(declarations)
 	if len(declarations) == 0 {
 		return xmlData, nil
 	}
@@ -21,7 +19,7 @@ func injectNamespaceContext(xmlData []byte, declarations []index.NamespaceDeclar
 		return nil, err
 	}
 	existing := namespacePrefixesOnStart(start)
-	missing := make([]index.NamespaceDeclaration, 0, len(declarations))
+	missing := make([]NamespaceDeclaration, 0, len(declarations))
 	for _, decl := range declarations {
 		if _, ok := existing[decl.Prefix]; ok {
 			continue

@@ -1,6 +1,10 @@
 package index
 
-import "time"
+import (
+	"time"
+
+	docxml "github.com/fulmenhq/sumpter/internal/docnode/xml"
+)
 
 const (
 	// SchemaVersion is the current JSON record index schema version.
@@ -56,12 +60,9 @@ type NamespaceContext struct {
 	Declarations []NamespaceDeclaration `json:"declarations"`
 }
 
-// NamespaceDeclaration records one in-scope XML namespace declaration. Prefix is
-// empty for the default namespace.
-type NamespaceDeclaration struct {
-	Prefix string `json:"prefix"`
-	URI    string `json:"uri"`
-}
+// NamespaceDeclaration records one in-scope XML namespace declaration. It is
+// owned by the XML format; the alias keeps the index's serialized shape.
+type NamespaceDeclaration = docxml.NamespaceDeclaration
 
 // RecordMetadata contains boundary and integrity metadata for a single record
 type RecordMetadata struct {

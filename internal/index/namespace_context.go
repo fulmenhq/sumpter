@@ -2,8 +2,9 @@ package index
 
 import (
 	"fmt"
-	"sort"
 	"strings"
+
+	docxml "github.com/fulmenhq/sumpter/internal/docnode/xml"
 )
 
 // NamespaceContextTable deduplicates namespace contexts while preserving a
@@ -56,28 +57,7 @@ func (t *NamespaceContextTable) Contexts() []NamespaceContext {
 
 // NormalizeNamespaceDeclarations sorts and deduplicates namespace declarations.
 func NormalizeNamespaceDeclarations(declarations []NamespaceDeclaration) []NamespaceDeclaration {
-	latest := map[string]string{}
-	for _, decl := range declarations {
-		prefix := strings.TrimSpace(decl.Prefix)
-		if prefix == "xml" || prefix == "xmlns" {
-			continue
-		}
-		uri := strings.TrimSpace(decl.URI)
-		if uri == "" {
-			continue
-		}
-		latest[prefix] = uri
-	}
-	prefixes := make([]string, 0, len(latest))
-	for prefix := range latest {
-		prefixes = append(prefixes, prefix)
-	}
-	sort.Strings(prefixes)
-	out := make([]NamespaceDeclaration, 0, len(prefixes))
-	for _, prefix := range prefixes {
-		out = append(out, NamespaceDeclaration{Prefix: prefix, URI: latest[prefix]})
-	}
-	return out
+	return docxml.NormalizeNamespaceDeclarations(declarations)
 }
 
 // NamespaceContextByID returns a lookup table for persisted namespace contexts.

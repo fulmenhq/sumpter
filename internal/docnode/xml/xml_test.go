@@ -11,7 +11,6 @@ import (
 	"github.com/antchfx/xpath"
 
 	"github.com/fulmenhq/sumpter/internal/docnode"
-	"github.com/fulmenhq/sumpter/internal/index"
 )
 
 const sample = `<root><rec id="r1"><item a="1">t1</item><item a="2">t2</item><!--c--><note>n</note></rec></root>`
@@ -183,7 +182,7 @@ func TestParseRecordNilContextParsesUnchanged(t *testing.T) {
 // the indexed route applied before parsing.
 func TestParseRecordAppliesNamespaceSplice(t *testing.T) {
 	raw := []byte(`<p:item attr='x>y'>v</p:item>`)
-	decls := []index.NamespaceDeclaration{{Prefix: "p", URI: "urn:x"}, {Prefix: "", URI: "urn:default"}}
+	decls := []NamespaceDeclaration{{Prefix: "p", URI: "urn:x"}, {Prefix: "", URI: "urn:default"}}
 
 	spliced, err := injectNamespaceContext(raw, decls)
 	if err != nil {
@@ -211,7 +210,7 @@ func TestParseRecordContextFailures(t *testing.T) {
 		t.Fatalf("wrong Context type: want *docnode.ContextError, got %v", err)
 	}
 
-	decls := []index.NamespaceDeclaration{{Prefix: "p", URI: "urn:x"}}
+	decls := []NamespaceDeclaration{{Prefix: "p", URI: "urn:x"}}
 	_, err = Format{}.ParseRecord(&docnode.Record{Raw: []byte(`no element here`), Context: decls})
 	if !errors.As(err, &ce) || ce.Error() != "record fragment has no root element" {
 		t.Fatalf("splice failure: want ContextError with the splice text, got %v", err)
