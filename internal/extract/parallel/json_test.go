@@ -465,6 +465,62 @@ func TestJSONIndexedRouteCancelledRunFails(t *testing.T) {
 	}
 }
 
+// TestJSONIndexedRouteCancelledAtFinalCheckFails cancels after every record
+// has reached the sink: as the final source rehash starts, and after the
+// final checks just before success.
+func TestJSONIndexedRouteCancelledAtFinalCheckFails(t *testing.T) {
+	f := newJSONFixture(t, `{"rows":[{"id":1},{"id":2},{"id":3}]}`, "//rows")
+	for _, tc := range []struct {
+		name   string
+		stage  string
+		verify bool
+	}{
+		{"cancelled during final rehash", "rehash", true},
+		{"cancelled after final rehash", "commit", true},
+		{"cancelled after identity check", "commit", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := runtime.NumGoroutine()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			fired := false
+			testHookJSONFinalCheck = func(stage string) {
+				if stage == tc.stage {
+					fired = true
+					cancel()
+				}
+			}
+			defer func() { testHookJSONFinalCheck = nil }()
+			o := f.opts(4)
+			o.VerifyIndex = tc.verify
+			sink := &quietCancelSink{after: -1}
+			summary, err := NewParallelExtractor(o).ExtractToSink(ctx, sink)
+			if !fired {
+				t.Fatalf("stage %q never ran", tc.stage)
+			}
+			if err == nil || !errors.Is(err, context.Canceled) {
+				t.Fatalf("error %v, want a canceled failure", err)
+			}
+			if len(sink.records) != 3 {
+				t.Fatalf("sink took %d records before the final check, want 3", len(sink.records))
+			}
+			if summary.RecordCount != 0 || summary.Disposition != extract.DispositionFailed {
+				t.Fatalf("summary %+v", summary)
+			}
+			if len(sink.boundaries) != 1 || sink.boundaries[0].Disposition != extract.DispositionFailed || sink.boundaries[0].RecordCount != 0 {
+				t.Fatalf("boundaries %+v", sink.boundaries)
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if n := runtime.NumGoroutine(); n > before {
+				t.Fatalf("%d goroutines left running (before %d)", n, before)
+			}
+		})
+	}
+}
+
 // quietCancelSink cancels the run once it has taken after records and keeps
 // accepting records without error.
 type quietCancelSink struct {

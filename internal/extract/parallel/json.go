@@ -23,6 +23,11 @@ import (
 // been opened and checked and before any record is read.
 var testHookJSONSourceOpened func()
 
+// testHookJSONFinalCheck, when a test sets it, runs with "rehash" as the
+// final source rehash starts and with "commit" just before a run reports
+// success.
+var testHookJSONFinalCheck func(stage string)
+
 // DefaultJSONMaxRecordBytes is the record size limit for JSON indexed reads
 // when MaxRecordSizeMB is zero: 100 MiB.
 const DefaultJSONMaxRecordBytes int64 = 100 << 20
@@ -150,12 +155,26 @@ func (pe *ParallelExtractor) newJSONRun(indexStore store.IndexStore, header *ind
 }
 
 // hashSource hashes the whole held source.
-func (r *jsonRun) hashSource() (string, error) {
+func (r *jsonRun) hashSource(ctx context.Context) (string, error) {
 	h := sha256.New()
-	if _, err := io.Copy(h, io.NewSectionReader(r.src, 0, r.srcInfo.Size())); err != nil {
+	src := &ctxReader{ctx: ctx, r: io.NewSectionReader(r.src, 0, r.srcInfo.Size())}
+	if _, err := io.Copy(h, src); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ctxReader stops reading once its context is done.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // validate checks one index record before it is scheduled.
@@ -247,8 +266,11 @@ func (r *jsonRun) run(ctx context.Context, sink extract.RecordSink) (int, error)
 	defer cancel()
 
 	if r.pe.opts.VerifyIndex {
-		sum, err := r.hashSource()
+		sum, err := r.hashSource(ctx)
 		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return 0, fmt.Errorf("extraction canceled: %w", cerr)
+			}
 			return 0, fmt.Errorf("failed to hash source: %w", err)
 		}
 		if sum != r.header.Source.SHA256 {
@@ -411,13 +433,26 @@ func (r *jsonRun) run(ctx context.Context, sink extract.RecordSink) (int, error)
 		return emitted, fmt.Errorf("source was replaced during extraction")
 	}
 	if r.pe.opts.VerifyIndex {
-		sum, err := r.hashSource()
+		if testHookJSONFinalCheck != nil {
+			testHookJSONFinalCheck("rehash")
+		}
+		sum, err := r.hashSource(ctx)
 		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return emitted, fmt.Errorf("extraction canceled: %w", cerr)
+			}
 			return emitted, fmt.Errorf("failed to hash source: %w", err)
 		}
 		if sum != r.header.Source.SHA256 {
 			return emitted, fmt.Errorf("source changed during extraction")
 		}
+	}
+	if testHookJSONFinalCheck != nil {
+		testHookJSONFinalCheck("commit")
+	}
+	// Cancellation during the checks above still fails the run.
+	if err := ctx.Err(); err != nil {
+		return emitted, fmt.Errorf("extraction canceled: %w", err)
 	}
 	return emitted, nil
 }

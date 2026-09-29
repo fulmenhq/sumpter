@@ -275,6 +275,12 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 	}
 	if format == index.SourceFormatJSON {
 		count, err := pe.extractJSON(ctx, indexStore, header, sink)
+		if err == nil {
+			// A run canceled after its last check is still not applied.
+			if cerr := ctx.Err(); cerr != nil {
+				err = fmt.Errorf("extraction canceled: %w", cerr)
+			}
+		}
 		if err != nil {
 			// Rows already given to the sink are provisional; the failed
 			// boundary tells the caller to discard them.
