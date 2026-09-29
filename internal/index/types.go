@@ -128,6 +128,7 @@ type BuildOptions struct {
 	SumpterVersion string // Sumpter version for metadata
 	EmitJSON       bool   // Emit JSON format (*.recordindex.json)
 	EmitSzst       bool   // Emit seekable-zstd format (*.recordindex.header.json + *.recordindex.records.szst)
+	InputFormat    string // Source syntax: xml (default) or json; never inferred from the file name
 }
 
 // VerifyOptions configures index verification behavior
@@ -136,6 +137,7 @@ type VerifyOptions struct {
 	IndexPath     string // Path to index file to verify
 	VerifyRecords bool   // If true, verify individual record checksums (slower)
 	FailFast      bool   // Stop on first verification error
+	InputFormat   string // Declared source syntax; must match the index's source.format when set
 }
 
 // VerifyResult contains the results of index verification

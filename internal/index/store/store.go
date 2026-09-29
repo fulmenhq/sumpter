@@ -117,3 +117,23 @@ func isSeekableZstdStore(path string) bool {
 	}
 	return false
 }
+
+// finalSummaryReader is implemented by stores whose summary may follow the
+// records.
+type finalSummaryReader interface {
+	FinalSummary() (index.SummaryStats, error)
+}
+
+// FinalSummary returns the index summary after every record has been read:
+// the summary a JSON index writes after its records, or the header summary of
+// a store that carries it up front.
+func FinalSummary(s IndexStore) (index.SummaryStats, error) {
+	if r, ok := s.(finalSummaryReader); ok {
+		return r.FinalSummary()
+	}
+	h, err := s.Header()
+	if err != nil {
+		return index.SummaryStats{}, err
+	}
+	return h.Summary, nil
+}

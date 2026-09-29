@@ -268,3 +268,52 @@ func TestSzstV012NullContextRefused(t *testing.T) {
 		t.Fatalf("error %v", err)
 	}
 }
+
+// TestSzstJSONIndexBuildAndSemanticVerify builds a JSON index into the
+// seekable store and verifies it semantically through the store, where the
+// record name comes from the header selector.
+func TestSzstJSONIndexBuildAndSemanticVerify(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.json")
+	src := `{"d":{"rows":[{"id":1},{"id":2}]},"x":{"rows":{"id":3}}}`
+	if err := os.WriteFile(in, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, "in")
+	b := index.NewBuilder(index.BuildOptions{InputPath: in, Selector: "//rows", InputFormat: index.SourceFormatJSON})
+	if _, err := b.BuildTo(NewSeekableIndexWriter(base)); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(base + ".recordindex.header.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	h, err := s.Header()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format, err := index.SourceFormat(h); err != nil || format != index.SourceFormatJSON || h.Summary.TotalRecords != 3 {
+		t.Fatalf("header format %q total %d, %v", format, h.Summary.TotalRecords, err)
+	}
+	res, err := index.NewVerifier(index.VerifyOptions{InputPath: in, InputFormat: index.SourceFormatJSON}).VerifyWithProvider(providerOf{s})
+	if err != nil || !res.Valid || res.RecordsVerified != 3 {
+		t.Fatalf("verify %+v, %v", res, err)
+	}
+	if err := os.WriteFile(in, []byte(strings.Replace(src, `"id":3`, `"id":4`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err = index.NewVerifier(index.VerifyOptions{InputPath: in, InputFormat: index.SourceFormatJSON}).VerifyWithProvider(providerOf{s})
+	if err != nil || res.Valid {
+		t.Fatalf("changed source verified: %+v, %v", res, err)
+	}
+}
+
+// providerOf adapts an IndexStore to the verifier's record provider.
+type providerOf struct{ s IndexStore }
+
+func (p providerOf) Header() (*index.RecordIndex, error) { return p.s.Header() }
+func (p providerOf) Records(ctx context.Context) (index.RecordIterator, error) {
+	return p.s.Records(ctx)
+}
+func (p providerOf) Close() error { return p.s.Close() }

@@ -64,12 +64,23 @@ func (v *Verifier) VerifyWithProvider(provider RecordProvider) (*VerifyResult, e
 	if err := ValidateRecordIndexHeaderVersion(header.Version); err != nil {
 		return nil, err
 	}
+	format, err := SourceFormat(header)
+	if err != nil {
+		return nil, err
+	}
+	if v.opts.InputFormat != "" && v.opts.InputFormat != format {
+		return nil, fmt.Errorf("index was built from %s input, but --input-format is %s", format, v.opts.InputFormat)
+	}
 	NormalizeRecordIndex(header)
 
 	if err := ValidateSourceByteOffsets(header, v.opts.InputPath); err != nil {
 		result.Valid = false
 		result.ErrorMessage = err.Error()
 		return result, nil
+	}
+
+	if format == SourceFormatJSON {
+		return v.verifyJSON(header, provider, result)
 	}
 
 	// Verify source file exists
