@@ -186,9 +186,10 @@ and child elements are exactly the whole-document route's.
   parsed on its own gives the record back.
 - A record whose value is a scalar or `null` is a record, as on the
   whole-document route.
-- Memory holds the outermost open record's bytes, plus the positions of the
-  records inside it and the nesting depth. When one selected record spans the
-  whole input, that is the whole input.
+- Memory depends on the span of the outermost open record, the records nested
+  in it, the nesting depth, and the keys of each open object checked for
+  duplicates. A selected record that spans the input, or a very wide object,
+  can need memory on the scale of the input.
 - A fault anywhere in an input fails that input, and none of its records are
   published, including records read before the fault; see
   [What JSON input rejects](#what-json-input-rejects).
