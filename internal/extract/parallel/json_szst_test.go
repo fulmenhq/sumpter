@@ -5,6 +5,7 @@ package parallel
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,5 +85,31 @@ func TestJSONIndexedRouteSeekableStoreRefusesBadNamespaceTables(t *testing.T) {
 			}
 			assertFailedInput(t, f, f.opts(4), tc.want)
 		})
+	}
+}
+
+// TestJSONIndexedRouteSeekableStoreRefusesRangeSequences writes each
+// out-of-preorder record sequence to a seekable store, whose rows carry no
+// names, and requires a failed input with and without full verification.
+func TestJSONIndexedRouteSeekableStoreRefusesRangeSequences(t *testing.T) {
+	for _, tc := range rangeSequenceEdits {
+		for _, verify := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s verify=%v", tc.name, verify), func(t *testing.T) {
+				f := newJSONFixture(t, nestedRows, "//rows")
+				built, err := index.LoadIndex(f.idx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				built.Records = renumber(tc.edit(built.Records))
+				base := filepath.Join(filepath.Dir(f.src), "szst")
+				if err := store.WriteSeekableIndex(base, built); err != nil {
+					t.Fatal(err)
+				}
+				f.idx = base + ".recordindex.header.json"
+				o := f.opts(4)
+				o.VerifyIndex = verify
+				assertFailedInput(t, f, o, tc.want)
+			})
+		}
 	}
 }

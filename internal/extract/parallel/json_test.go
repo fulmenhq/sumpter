@@ -240,6 +240,102 @@ func TestJSONIndexedRouteRefusesBadIndexes(t *testing.T) {
 	}
 }
 
+// nestedRows has records 1 and 2 at depth 1 with record 3 nested in record 2
+// at depth 2, and record 4 at depth 1 after them.
+const nestedRows = `{"rows":[{"id":1},{"id":2,"rows":[{"id":3}]},{"id":4}]}`
+
+// rangeSequenceEdits are index record sequences that do not follow document
+// preorder, each keeping every record's own range, size and bytes valid.
+var rangeSequenceEdits = []struct {
+	name string
+	edit func([]index.RecordMetadata) []index.RecordMetadata
+	want string
+}{
+	{"reversed", func(r []index.RecordMetadata) []index.RecordMetadata {
+		r[0], r[1] = r[1], r[0]
+		return r
+	}, "record 2 starts at 9, not after record 1 at 18"},
+	{"duplicate range", func(r []index.RecordMetadata) []index.RecordMetadata {
+		r[1] = r[0]
+		return r
+	}, "record 2 starts at 9, not after record 1 at 9"},
+	{"nested record before its parent", func(r []index.RecordMetadata) []index.RecordMetadata {
+		r[1], r[2] = r[2], r[1]
+		return r
+	}, "record 3 starts at 18, not after record 2 at 34"},
+	{"nested record at its parent's depth", func(r []index.RecordMetadata) []index.RecordMetadata {
+		r[2].Depth = 1
+		return r
+	}, "record 3 at depth 1 lies inside a record at depth 1"},
+	{"crossing ranges", func(r []index.RecordMetadata) []index.RecordMetadata {
+		// Record 3 keeps its start inside record 2 but ends inside record 4.
+		r[2].EndOffset = r[3].StartOffset + 2
+		r[2].SizeBytes = r[2].EndOffset - r[2].StartOffset
+		return r
+	}, "crosses the end of an enclosing record"},
+}
+
+// renumber gives records their list positions as ordinals.
+func renumber(r []index.RecordMetadata) []index.RecordMetadata {
+	for i := range r {
+		r[i].RecordNum = i + 1
+	}
+	return r
+}
+
+// TestJSONIndexedRouteRefusesRangeSequences requires index records in
+// document preorder: a later record starts after the one before it and either
+// nests, deeper, inside an open record or starts after it ends. Each case
+// fails the input with and without full verification.
+func TestJSONIndexedRouteRefusesRangeSequences(t *testing.T) {
+	for _, tc := range rangeSequenceEdits {
+		for _, verify := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s verify=%v", tc.name, verify), func(t *testing.T) {
+				f := newJSONFixture(t, nestedRows, "//rows")
+				mutateIndex(t, f, func(d map[string]any) {
+					d["records"] = recordsToJSON(t, renumber(tc.edit(recordsFromJSON(t, d))))
+				})
+				o := f.opts(4)
+				o.VerifyIndex = verify
+				assertFailedInput(t, f, o, tc.want)
+			})
+		}
+	}
+	t.Run("nested records are admitted", func(t *testing.T) {
+		f := newJSONFixture(t, nestedRows, "//rows")
+		sink, summary, err := f.run(t, f.opts(4))
+		if err != nil || summary.RecordCount != 4 || len(sink.records) != 4 {
+			t.Fatalf("nested: %v, %d records", err, summary.RecordCount)
+		}
+	})
+}
+
+func recordsFromJSON(t *testing.T, d map[string]any) []index.RecordMetadata {
+	t.Helper()
+	raw, err := json.Marshal(d["records"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r []index.RecordMetadata
+	if err := json.Unmarshal(raw, &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func recordsToJSON(t *testing.T, r []index.RecordMetadata) []any {
+	t.Helper()
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func TestJSONIndexedRouteSourceIntegrity(t *testing.T) {
 	t.Run("replaced path after open", func(t *testing.T) {
 		f := newJSONFixture(t, tenRows, "//rows")
@@ -517,6 +613,65 @@ func TestJSONIndexedRouteCancelledAtFinalCheckFails(t *testing.T) {
 			if n := runtime.NumGoroutine(); n > before {
 				t.Fatalf("%d goroutines left running (before %d)", n, before)
 			}
+		})
+	}
+}
+
+// TestJSONIndexedRouteSourceChangeDuringFinalRehashFails changes the source
+// as the final rehash starts. The rehash reads only the original length, so
+// the run checks the held file and the path again afterwards; the sink never
+// fails.
+func TestJSONIndexedRouteSourceChangeDuringFinalRehashFails(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(t *testing.T, path string)
+	}{
+		{"appended", func(t *testing.T, path string) {
+			w, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.WriteString("\n"); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"truncated", func(t *testing.T, path string) {
+			if err := os.Truncate(path, 40); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"path replaced", func(t *testing.T, path string) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := path + ".next"
+			if err := os.WriteFile(next, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(next, path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newJSONFixture(t, tenRows, "//rows")
+			o := f.opts(2)
+			o.VerifyIndex = true
+			testHookJSONFinalCheck = func(stage string) {
+				if stage == "rehash" {
+					tc.change(t, f.src)
+				}
+			}
+			defer func() { testHookJSONFinalCheck = nil }()
+			want := "source was replaced during extraction"
+			if tc.name == "truncated" {
+				want = "source changed during extraction" // the short file hashes differently
+			}
+			assertFailedInputOnce(t, f, o, want)
 		})
 	}
 }

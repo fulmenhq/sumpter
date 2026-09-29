@@ -208,6 +208,43 @@ func (r *jsonRun) validate(rec *index.RecordMetadata, expected int) (jsonWorkIte
 	return jsonWorkItem{num: expected, start: rec.StartOffset, end: rec.EndOffset, size: rec.SizeBytes, sha: rec.SHA256, name: name}, nil
 }
 
+// jsonRangeOrder checks that index records follow document preorder: each
+// record starts after the one before it and either lies wholly inside an
+// open ancestor record, one level deeper or more, or starts after it ends.
+type jsonRangeOrder struct {
+	lastStart int64
+	open      []jsonOpenRange // ancestors, outermost first
+}
+
+type jsonOpenRange struct {
+	end   int64
+	depth int
+}
+
+func (o *jsonRangeOrder) admit(item jsonWorkItem, depth int) error {
+	if item.num > 1 && item.start <= o.lastStart {
+		return fmt.Errorf("record %d starts at %d, not after record %d at %d; the index is not in document order", item.num, item.start, item.num-1, o.lastStart)
+	}
+	for len(o.open) > 0 && o.open[len(o.open)-1].end <= item.start {
+		o.open = o.open[:len(o.open)-1]
+	}
+	if n := len(o.open); n > 0 {
+		parent := o.open[n-1]
+		if item.end > parent.end {
+			return fmt.Errorf("record %d range [%d,%d) crosses the end of an enclosing record at %d", item.num, item.start, item.end, parent.end)
+		}
+		if depth <= parent.depth {
+			return fmt.Errorf("record %d at depth %d lies inside a record at depth %d", item.num, depth, parent.depth)
+		}
+		if n >= docjson.MaxDepth {
+			return fmt.Errorf("record %d is nested inside more than %d records", item.num, docjson.MaxDepth)
+		}
+	}
+	o.lastStart = item.start
+	o.open = append(o.open, jsonOpenRange{end: item.end, depth: depth})
+	return nil
+}
+
 // process reads one record's bytes from the held source, checks them against
 // the index hash before parsing, scores the record-scoped signature on the
 // record's document, and extracts it.
@@ -313,6 +350,7 @@ func (r *jsonRun) run(ctx context.Context, sink extract.RecordSink) (int, error)
 		}
 		defer func() { _ = iter.Close() }()
 		expected := 1
+		var order jsonRangeOrder
 		for {
 			rec, err := iter.Next()
 			if errors.Is(err, io.EOF) {
@@ -323,6 +361,9 @@ func (r *jsonRun) run(ctx context.Context, sink extract.RecordSink) (int, error)
 				return
 			}
 			item, err := r.validate(rec, expected)
+			if err == nil {
+				err = order.admit(item, rec.Depth)
+			}
 			if err != nil {
 				terminal(expected, err)
 				return
@@ -445,6 +486,19 @@ func (r *jsonRun) run(ctx context.Context, sink extract.RecordSink) (int, error)
 		}
 		if sum != r.header.Source.SHA256 {
 			return emitted, fmt.Errorf("source changed during extraction")
+		}
+		// The rehash reads only the original length; the held file and the
+		// path must still be that file at that length.
+		held, err := r.src.Stat()
+		if err != nil {
+			return emitted, fmt.Errorf("source is no longer readable: %w", err)
+		}
+		now, err := os.Stat(r.pe.opts.SourcePath)
+		if err != nil {
+			return emitted, fmt.Errorf("source is no longer readable: %w", err)
+		}
+		if held.Size() != r.srcInfo.Size() || !os.SameFile(now, r.srcInfo) || now.Size() != r.srcInfo.Size() {
+			return emitted, fmt.Errorf("source was replaced during extraction")
 		}
 	}
 	if testHookJSONFinalCheck != nil {
