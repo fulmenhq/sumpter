@@ -3,6 +3,7 @@ package parallel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -410,6 +411,76 @@ func TestJSONIndexedRouteCancellationLeavesNoGoroutines(t *testing.T) {
 	if n := runtime.NumGoroutine(); n > before {
 		t.Fatalf("%d goroutines left running (before %d)", n, before)
 	}
+}
+
+// TestJSONIndexedRouteCancelledRunFails requires a canceled run to fail the
+// input even when the sink itself never fails: a failed boundary, no trusted
+// count, no applied boundary, and every goroutine joined.
+func TestJSONIndexedRouteCancelledRunFails(t *testing.T) {
+	var body strings.Builder
+	body.WriteString(`{"rows":[`)
+	for i := 0; i < 2000; i++ {
+		if i > 0 {
+			body.WriteByte(',')
+		}
+		fmt.Fprintf(&body, `{"id":%d}`, i)
+	}
+	body.WriteString(`]}`)
+	f := newJSONFixture(t, body.String(), "//rows")
+	for _, tc := range []struct {
+		name  string
+		after int // records emitted before cancel; -1 cancels before the run
+	}{
+		{"pre-cancelled", -1},
+		{"cancelled after first record", 1},
+		{"cancelled mid-run", 100},
+		{"cancelled at last record", 2000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := runtime.NumGoroutine()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			sink := &quietCancelSink{cancel: cancel, after: tc.after}
+			if tc.after < 0 {
+				cancel()
+			}
+			summary, err := NewParallelExtractor(f.opts(8)).ExtractToSink(ctx, sink)
+			if err == nil || !errors.Is(err, context.Canceled) {
+				t.Fatalf("error %v, want a canceled failure", err)
+			}
+			if summary.RecordCount != 0 || summary.Disposition != extract.DispositionFailed {
+				t.Fatalf("summary %+v", summary)
+			}
+			if len(sink.boundaries) != 1 || sink.boundaries[0].Disposition != extract.DispositionFailed || sink.boundaries[0].RecordCount != 0 {
+				t.Fatalf("boundaries %+v", sink.boundaries)
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if n := runtime.NumGoroutine(); n > before {
+				t.Fatalf("%d goroutines left running (before %d)", n, before)
+			}
+		})
+	}
+}
+
+// quietCancelSink cancels the run once it has taken after records and keeps
+// accepting records without error.
+type quietCancelSink struct {
+	captureSink
+	cancel func()
+	after  int
+}
+
+func (s *quietCancelSink) OnRecord(ctx context.Context, r extract.EmittedRecord) error {
+	if err := s.captureSink.OnRecord(ctx, r); err != nil {
+		return err
+	}
+	if len(s.records) == s.after {
+		s.cancel()
+	}
+	return nil
 }
 
 type cancelAfterSink struct {

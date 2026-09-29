@@ -391,6 +391,11 @@ func (r *jsonRun) run(ctx context.Context, sink extract.RecordSink) (int, error)
 	if failure != nil {
 		return emitted, failure
 	}
+	// A canceled run may have dropped its only error or result on the way
+	// here; it is a failed input, never a short success.
+	if err := ctx.Err(); err != nil {
+		return emitted, fmt.Errorf("extraction canceled: %w", err)
+	}
 	if len(pending) > 0 {
 		return emitted, fmt.Errorf("internal error: %d records were extracted but not emitted in order", len(pending))
 	}
