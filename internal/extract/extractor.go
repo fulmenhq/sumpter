@@ -756,6 +756,21 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 		markBoundaryFailure(DispositionReasonInternalError)
 		return finish()
 	}
+	// JSON input streams only under a record-scoped signature, which is
+	// scored on every record below; anything else is refused here, before
+	// the input is opened, whoever calls this entry point.
+	if token := format.Token(); token != FormatXML {
+		if err := checkMatchScope(token, sigCfg, extCfg, nil); err != nil {
+			result.Error = err
+			markBoundaryFailure(DispositionReasonValidationError)
+			return finish()
+		}
+		if !isRecordScope(sigCfg) {
+			result.Error = jsonStreamingBlocked(jsonStreamingBlockers(sigCfg, nil, sink))
+			markBoundaryFailure(DispositionReasonRouteUnsupported)
+			return finish()
+		}
+	}
 
 	// Open file stream
 	stream, err := openFileStream(filePath)
@@ -795,7 +810,7 @@ func ProcessFileStreamingToSink(ctx context.Context, filePath string, sigCfg *Fi
 
 	// A record-scoped signature is scored on each record's document before
 	// any of that record's rows are emitted.
-	recordScope := isRecordScope(sigCfg) && format.Token() != FormatXML
+	recordScope := format.Token() != FormatXML
 	scored := 0
 	minConfidence := 0.0
 

@@ -467,3 +467,60 @@ func signatureBlock(t *testing.T, config string) []byte {
 	}
 	return []byte(b.String())
 }
+
+// TestStreamingEntryRefusesUnscopedJSON calls the exported streaming entry
+// points directly: a json or ndjson input whose signature is not
+// record-scoped is refused before the input is read, so a signature that the
+// whole-document route would reject can never admit records here.
+func TestStreamingEntryRefusesUnscopedJSON(t *testing.T) {
+	ndSig, ndExt := ndjsonConfigs()
+	ndSig.MatchScope = ""
+	docSig := &FileSignature{
+		SignatureID:         "doc",
+		FormatType:          FormatJSON,
+		ConfidenceThreshold: 1,
+		MatchPatterns:       []MatchPattern{{PatternID: "never", Selector: "/NoSuchRoot", Weight: 1}},
+	}
+	docExt := &ExtractRecordMatch{
+		RecordType:     "rec",
+		MatchSelectors: []MatchSelector{{XPath: "//r"}},
+		FieldMappings:  []FieldMapping{{OutputField: "id", XPath: "id", Type: "string"}},
+	}
+	twoSig, twoExt := recordScopeConfigs("//r", MatchPattern{PatternID: "r", Selector: "/r", Weight: 1})
+	twoExt.MatchSelectors = append(twoExt.MatchSelectors, MatchSelector{XPath: "//s"})
+	for _, tc := range []struct {
+		name   string
+		file   string
+		src    string
+		sig    *FileSignature
+		ext    *ExtractRecordMatch
+		want   string
+		reason DispositionReason
+	}{
+		{"json document scope", "in.json", `{"r":[{"id":"1"},{"id":"2"}]}`, docSig, docExt, "match_scope: document", DispositionReasonRouteUnsupported},
+		{"ndjson without scope", "in.ndjson", "{\"id\":\"1\"}\n", ndSig, ndExt, `must declare "match_scope: record"`, DispositionReasonValidationError},
+		{"record scope with two selectors", "in.json", `{"r":[{"id":"1"}]}`, twoSig, twoExt, "exactly one extract match selector", DispositionReasonValidationError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTempFile(t, tc.file, tc.src)
+			sink := &boundarySink{}
+			res := ProcessFileStreamingToSink(context.Background(), path, tc.sig, tc.ext, nil, provenance.RuntimeOptions{}, sink)
+			if res.Error == nil || !strings.Contains(res.Error.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", res.Error, tc.want)
+			}
+			if tc.reason == DispositionReasonRouteUnsupported && !errors.Is(res.Error, docnode.ErrRouteUnsupported) {
+				t.Fatalf("error %v is not route_unsupported", res.Error)
+			}
+			if len(sink.records) != 0 || res.SignatureMatchStatus == SignatureMatchMatched {
+				t.Fatalf("emitted %d records, status %s", len(sink.records), res.SignatureMatchStatus)
+			}
+			if len(sink.boundaries) != 1 || sink.boundaries[0].Disposition != DispositionFailed || sink.boundaries[0].DispositionReason != tc.reason {
+				t.Fatalf("boundaries %+v", sink.boundaries)
+			}
+			buffered := ProcessFileStreaming(path, tc.sig, tc.ext, nil)
+			if buffered.Error == nil || len(buffered.Records) != 0 {
+				t.Fatalf("ProcessFileStreaming: %v, %d records", buffered.Error, len(buffered.Records))
+			}
+		})
+	}
+}
