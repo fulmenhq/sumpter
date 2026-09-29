@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,9 @@ func openSeekableZstdStore(headerPath string) (IndexStore, error) {
 	layout, err := szstLayout(&szstHeader)
 	if err != nil {
 		return nil, err
+	}
+	if int64(szstHeader.Records.RecordCount) > math.MaxInt64/int64(layout.WidthBytes) {
+		return nil, fmt.Errorf("invalid header: record_count %d at %d bytes per record exceeds the largest records file", szstHeader.Records.RecordCount, layout.WidthBytes)
 	}
 	if _, err := index.SourceFormat(&index.RecordIndex{Version: szstHeader.Version, Source: szstHeader.Source}); err != nil {
 		return nil, fmt.Errorf("invalid header: %w", err)

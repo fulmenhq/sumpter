@@ -128,6 +128,15 @@ func TestSzstHeaderRefusals(t *testing.T) {
 		{"records_file absolute", func(h map[string]any) { records(h)["records_file"] = "/etc/passwd" }, "must be a file name beside the header"},
 		{"records_file traversal", func(h map[string]any) { records(h)["records_file"] = "../idx.recordindex.records.szst" }, "must be a file name beside the header"},
 		{"records_file parent", func(h map[string]any) { records(h)["records_file"] = ".." }, "is not a file name"},
+		{"record_count overflows size", func(h map[string]any) { records(h)["record_count"] = json.Number("4611686018427387905") }, "exceeds the largest records file"},
+		{"legacy record_count overflows size", func(h map[string]any) {
+			h["version"] = index.LegacySzstStoreVersion
+			r := records(h)
+			delete(r, "layout")
+			r["record_width_bytes"], r["sha_encoding"], r["endianness"] = BinaryRecordWidth, "raw32", "little"
+			delete(source(h), "format")
+			r["record_count"] = json.Number("4611686018427387905")
+		}, "exceeds the largest records file"},
 		{"records_file empty", func(h map[string]any) { records(h)["records_file"] = "" }, "records_file is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
