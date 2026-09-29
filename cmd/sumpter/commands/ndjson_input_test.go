@@ -176,7 +176,7 @@ func TestNDJSONRefusedByUnsupportedRoutes(t *testing.T) {
 	in := f.write(t, "a.ndjson", "{\"id\":\"1\"}\n")
 	idx := f.write(t, "a.idx.json", "{}")
 	err := runSumpter(t, f.args("--files", in, "--output-path", filepath.Join(f.dir, "out"), "--record-index", idx))
-	if err == nil || !strings.Contains(err.Error(), `record-index extraction supports xml input only in this release; input format is "ndjson"`) {
+	if err == nil || !strings.Contains(err.Error(), `record-index extraction supports xml and json input in this release; input format is "ndjson"`) {
 		t.Fatalf("record-index error = %v", err)
 	}
 }

@@ -518,7 +518,12 @@ func runExtract(opts *ExtractOptions) (err error) {
 	}
 	if inputFormatToken != extract.FormatXML {
 		if opts.RecordIndex != "" {
-			return fmt.Errorf("record-index extraction supports xml input only in this release; input format is %q", inputFormatToken)
+			switch {
+			case inputFormatToken != extract.FormatJSON:
+				return fmt.Errorf("record-index extraction supports xml and json input in this release; input format is %q", inputFormatToken)
+			case !extract.IsRecordScope(sigCfg):
+				return fmt.Errorf(`record-index extraction of json input evaluates the signature per record; declare "match_scope: record" in the signature`)
+			}
 		}
 		if opts.Recipe == nil && !opts.includePatternExplicit && opts.IncludePattern == recipesmanifest.DefaultIncludePattern(extract.FormatXML) {
 			opts.IncludePattern = recipesmanifest.DefaultIncludePattern(inputFormatToken)

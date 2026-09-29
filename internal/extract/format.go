@@ -399,3 +399,31 @@ func matchesSignaturePerRecord(doc docnode.Document, sig *FileSignature, ext *Ex
 	}
 	return SignatureMatchMatched, minConfidence, nil
 }
+
+// IsRecordScope reports whether a signature is evaluated per record.
+func IsRecordScope(sig *FileSignature) bool { return isRecordScope(sig) }
+
+// ScoreRecordSignature scores a record-scoped signature against one record's
+// document, as the streaming route does.
+func ScoreRecordSignature(doc docnode.Document, sig *FileSignature) (bool, float64, error) {
+	return matchesSignature(doc.Root(), sig)
+}
+
+// RecordSignatureMismatch is the error for the first record a record-scoped
+// signature does not admit.
+func RecordSignatureMismatch(num int, confidence, threshold float64) error {
+	return recordSignatureMismatch(num, confidence, threshold)
+}
+
+// CloneRecordMatchForRecordDocument returns a copy of cfg whose match
+// selector picks the root element of a record document, as the streaming
+// route extracts each scanned record.
+func CloneRecordMatchForRecordDocument(cfg *ExtractRecordMatch) *ExtractRecordMatch {
+	return cloneExtractConfigForStreaming(cfg)
+}
+
+// ExtractRecordsFromDocument extracts the records cfg selects from doc; it
+// returns none when the selection is filtered out.
+func ExtractRecordsFromDocument(doc docnode.Document, cfg *ExtractRecordMatch, externalFields map[string]interface{}) ([]map[string]interface{}, error) {
+	return extractRecords(doc, cfg, externalFields)
+}
