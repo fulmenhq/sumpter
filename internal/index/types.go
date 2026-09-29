@@ -7,10 +7,15 @@ import (
 )
 
 const (
-	// SchemaVersion is the current JSON record index schema version.
-	SchemaVersion = "record-index/v0.1.2"
+	// SchemaVersion is the current JSON record index schema version. It
+	// requires source.format.
+	SchemaVersion = "record-index/v0.1.3"
 
-	// LegacySchemaVersion is the previous JSON record index schema version.
+	// LegacySchemaVersionV012 is the previous JSON record index schema version:
+	// namespace contexts, no source.format (XML only).
+	LegacySchemaVersionV012 = "record-index/v0.1.2"
+
+	// LegacySchemaVersion is an earlier JSON record index schema version.
 	LegacySchemaVersion = "record-index/v0.1.1"
 
 	// LegacySchemaVersionV010 is the original JSON record index schema version.
@@ -21,6 +26,19 @@ const (
 
 	// OffsetKindDecompressedBytes means record offsets address a decompressed stream.
 	OffsetKindDecompressedBytes = "decompressed_bytes"
+
+	// SzstStoreVersion is the seekable-zstd store header version written from
+	// this release on: a nested records.layout and a required source.format.
+	SzstStoreVersion = "record-index-szst/v0.1.2"
+
+	// LegacySzstStoreVersion and LegacySzstStoreVersionV010 are earlier
+	// seekable-zstd store header versions: flat layout fields, XML only.
+	LegacySzstStoreVersion     = "record-index-szst/v0.1.1"
+	LegacySzstStoreVersionV010 = "record-index-szst/v0.1.0"
+
+	// SourceFormatXML and SourceFormatJSON are the closed source.format tokens.
+	SourceFormatXML  = "xml"
+	SourceFormatJSON = "json"
 )
 
 // RecordIndex represents the complete XML record index structure
@@ -37,14 +55,17 @@ type RecordIndex struct {
 
 // SourceInfo contains source XML file information and integrity metadata
 type SourceInfo struct {
-	Path              string    `json:"path"`
-	SizeBytes         int64     `json:"size_bytes"`
-	SHA256            string    `json:"sha256"`
-	Compressed        bool      `json:"compressed"`
-	CompressionFormat string    `json:"compression_format,omitempty"`
-	OffsetKind        string    `json:"offset_kind,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	Encoding          string    `json:"encoding,omitempty"`
+	Path              string `json:"path"`
+	SizeBytes         int64  `json:"size_bytes"`
+	SHA256            string `json:"sha256"`
+	Compressed        bool   `json:"compressed"`
+	CompressionFormat string `json:"compression_format,omitempty"`
+	OffsetKind        string `json:"offset_kind,omitempty"`
+	// Format is the source syntax the index was built from. Required from
+	// record-index/v0.1.3 on; earlier versions carry none and mean xml.
+	Format    string    `json:"format,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Encoding  string    `json:"encoding,omitempty"`
 }
 
 // SelectorInfo defines how records were identified

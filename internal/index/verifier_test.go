@@ -248,6 +248,7 @@ func TestVerifier_Verify_MissingFile(t *testing.T) {
 	index := &RecordIndex{
 		Version: SchemaVersion,
 		Source: SourceInfo{
+			Format:            SourceFormatXML,
 			Path:              "/nonexistent/file.xml",
 			SizeBytes:         100,
 			SHA256:            "abc123",
@@ -298,6 +299,7 @@ func TestLoadIndex(t *testing.T) {
 	index := &RecordIndex{
 		Version: SchemaVersion,
 		Source: SourceInfo{
+			Format:            SourceFormatXML,
 			Path:              "/test/file.xml",
 			SizeBytes:         1024,
 			SHA256:            "abc123",

@@ -293,7 +293,10 @@ func (v *Verifier) loadIndex() (*RecordIndex, error) {
 		return nil, fmt.Errorf("failed to decode index JSON: %w", err)
 	}
 
-	if err := ValidateRecordIndexVersion(index.Version); err != nil {
+	if _, err := SourceFormat(&index); err != nil {
+		return nil, err
+	}
+	if err := ValidateNamespaceContextShape(&index); err != nil {
 		return nil, err
 	}
 	NormalizeRecordIndex(&index)
@@ -315,7 +318,10 @@ func LoadIndex(path string) (*RecordIndex, error) {
 		return nil, fmt.Errorf("failed to decode index JSON: %w", err)
 	}
 
-	if err := ValidateRecordIndexVersion(index.Version); err != nil {
+	if _, err := SourceFormat(&index); err != nil {
+		return nil, err
+	}
+	if err := ValidateNamespaceContextShape(&index); err != nil {
 		return nil, err
 	}
 	NormalizeRecordIndex(&index)

@@ -47,9 +47,10 @@ func (t *NamespaceContextTable) RefFor(declarations []NamespaceDeclaration) int 
 func (t *NamespaceContextTable) Contexts() []NamespaceContext {
 	out := make([]NamespaceContext, len(t.contexts))
 	for i := range t.contexts {
+		// An empty context is written as an empty array, never null.
 		out[i] = NamespaceContext{
 			ID:           t.contexts[i].ID,
-			Declarations: append([]NamespaceDeclaration(nil), t.contexts[i].Declarations...),
+			Declarations: append([]NamespaceDeclaration{}, t.contexts[i].Declarations...),
 		}
 	}
 	return out
@@ -78,7 +79,7 @@ func ValidateNamespaceContextSupport(idx *RecordIndex, namespaceBound bool) erro
 	if idx == nil {
 		return fmt.Errorf("record index header is missing")
 	}
-	if idx.Version != SchemaVersion && strings.HasPrefix(idx.Version, "record-index/") {
+	if idx.Version != SchemaVersion && idx.Version != LegacySchemaVersionV012 && strings.HasPrefix(idx.Version, "record-index/") {
 		return fmt.Errorf("record index %s lacks namespace context; rebuild the index with record-index/v0.1.2 or newer for namespace-bound extraction", idx.Version)
 	}
 	if len(idx.NamespaceContexts) == 0 {

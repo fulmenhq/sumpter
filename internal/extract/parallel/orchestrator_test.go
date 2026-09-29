@@ -16,6 +16,7 @@ func TestParallelExtractor_RejectsUnsafeOffsetSemanticsWithoutVerification(t *te
 	idx := &index.RecordIndex{
 		Version: index.SchemaVersion,
 		Source: index.SourceInfo{
+			Format:            index.SourceFormatXML,
 			Path:              sourcePath,
 			Compressed:        false,
 			CompressionFormat: "none",
@@ -52,6 +53,7 @@ func TestParallelExtractor_RejectsCompressedLiveSourcePathWithoutVerification(t 
 	idx := &index.RecordIndex{
 		Version: index.SchemaVersion,
 		Source: index.SourceInfo{
+			Format:            index.SourceFormatXML,
 			Path:              sourcePath,
 			Compressed:        false,
 			CompressionFormat: "none",

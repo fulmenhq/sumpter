@@ -131,10 +131,12 @@ func cloneNamespaceContexts(contexts []NamespaceContext) []NamespaceContext {
 	}
 	out := make([]NamespaceContext, len(contexts))
 	for i := range contexts {
-		out[i] = NamespaceContext{
-			ID:           contexts[i].ID,
-			Declarations: append([]NamespaceDeclaration(nil), contexts[i].Declarations...),
+		// Keep null and empty distinct: a current header must not carry null.
+		var decls []NamespaceDeclaration
+		if contexts[i].Declarations != nil {
+			decls = append([]NamespaceDeclaration{}, contexts[i].Declarations...)
 		}
+		out[i] = NamespaceContext{ID: contexts[i].ID, Declarations: decls}
 	}
 	return out
 }

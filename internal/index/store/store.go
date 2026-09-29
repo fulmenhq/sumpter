@@ -13,6 +13,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/fulmenhq/sumpter/internal/index"
 )
@@ -74,7 +75,24 @@ type RecordIterator interface {
 // and the "seekablezstd" build tag. Otherwise, ErrSeekableZstdNotAvailable
 // is returned.
 func Open(path string) (IndexStore, error) {
-	return openStore(path)
+	s, err := openStore(path)
+	if err != nil {
+		return nil, err
+	}
+	// Every route opens the store here, so every route refuses a header whose
+	// version and source.format disagree before a record is read.
+	header, err := s.Header()
+	if err == nil {
+		_, err = index.SourceFormat(header)
+	}
+	if err == nil {
+		err = index.ValidateNamespaceContextShape(header)
+	}
+	if err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("record index header: %w", err)
+	}
+	return s, nil
 }
 
 // openStore is the internal implementation, allowing build-tag switching.

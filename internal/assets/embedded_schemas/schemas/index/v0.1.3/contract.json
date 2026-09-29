@@ -1,0 +1,11 @@
+{
+  "capability": "contract: sumpter.index/v0",
+  "entry_schema": "record-index.schema.json",
+  "object_schemas": {
+    "szst-header": "szst-header.schema.json"
+  },
+  "kinds": {
+    "entry": "output",
+    "szst-header": "output"
+  }
+}
