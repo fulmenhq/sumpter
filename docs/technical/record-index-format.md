@@ -94,12 +94,17 @@ depth, the record count, and every record hash to match.
 Each record's bytes are read from the source file opened once for the run
 and checked against the index hash before they are parsed; the record-scoped
 signature is scored on each record; and the first failure in record order
-fails the input with no rows published. A JSON record above the size limit
-fails the input: `--max-record-size-mb` defaults to 100 MiB for JSON when it
-is 0, and `--skip-large-records` does not apply. `--verify-index` also hashes
-the whole source before and after the run. It proves integrity, not
-selection: an index whose selection was forged consistently is detected by
-`index verify`, not by extraction.
+fails the input with no rows published. The records must be listed in
+document order: each starts after the one before it and either lies wholly
+inside an enclosing record, at a greater depth, or starts after that record
+ends; a record out of order, a repeated or crossing range, or a nested record
+at the depth of its enclosing record fails the input. A JSON record above the
+size limit fails the input: `--max-record-size-mb` defaults to 100 MiB for
+JSON when it is 0, and `--skip-large-records` does not apply.
+`--verify-index` also hashes the whole source before and after the run, and
+the source must still be the same file at the same size once the last hash
+ends. It proves integrity, not selection: an index whose selection was forged
+consistently is detected by `index verify`, not by extraction.
 
 ## Stale Index Behavior
 
