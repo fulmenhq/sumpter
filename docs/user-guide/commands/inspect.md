@@ -96,9 +96,14 @@ selector is the most-repeated object path at the shallowest depth (or
 `--record-selector`, any XPath). Selectors are built from key names as the
 [document node model](../../standards/document-node-model.md#selecting-keys-that-are-not-xml-names)
 describes, so keys that are not XML names are selected exactly. Field types
-come from the JSON value kinds. JSON input is declared by a signature's
-`format_type`, so the header carries two commented, ready-to-copy blocks, a
-signature with `format_type: json` and a recipe manifest fragment with
+come from the JSON value kinds. When `//` plus the record name selects exactly
+the detected records, the config uses that selector and the signature declares
+`match_scope: record` with a record-relative pattern, so the recipe reads the
+same inputs below and above the large-file threshold; otherwise the signature
+keeps document scope and the header says an input above the threshold needs
+`--allow-large-files`. JSON input is declared by a signature's `format_type`,
+so the header carries two commented, ready-to-copy blocks, a signature with
+`format_type: json` and a recipe manifest fragment with
 `defaults.input.format: json`, and names the first run:
 
 ```bash

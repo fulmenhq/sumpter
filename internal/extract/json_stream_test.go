@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/fulmenhq/sumpter/internal/docnode"
+	"github.com/fulmenhq/sumpter/internal/inspect/configgen"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
@@ -409,4 +411,59 @@ func TestMatchScopeContentHash(t *testing.T) {
 	if document == legacy || record == legacy || document == record {
 		t.Fatalf("scoped hashes: document %s, record %s, legacy %s", document, record, legacy)
 	}
+}
+
+func TestGeneratedJSONRecipeHoldsOnBothRoutes(t *testing.T) {
+	src := `{"data":{"meta":{"n":3},"items":[{"id":"a","v":1},{"id":"b","v":2},{"id":"c","v":3}]}}`
+	res, err := configgen.GenerateJSON(strings.NewReader(src), configgen.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	extPath := filepath.Join(dir, "gen.yaml")
+	if err := os.WriteFile(extPath, res.YAML, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sigPath := filepath.Join(dir, "gen-signature.yaml")
+	if err := os.WriteFile(sigPath, signatureBlock(t, string(res.YAML)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sig, err := LoadSignatureConfig(sigPath)
+	if err != nil {
+		t.Fatalf("generated signature does not load: %v", err)
+	}
+	ext, err := LoadExtractConfig(extPath)
+	if err != nil {
+		t.Fatalf("generated config does not load: %v", err)
+	}
+	if _, err := ResolveInputFormat("", false, sig, ext, nil); err != nil {
+		t.Fatalf("generated recipe rejected: %v", err)
+	}
+	if !isRecordScope(sig) {
+		t.Fatalf("generated signature is not record-scoped")
+	}
+	dom, stream, domRes, _ := runBothRoutes(t, src, sig, ext)
+	if domRes.Error != nil {
+		t.Fatalf("generated recipe did not admit its own sample: %v", domRes.Error)
+	}
+	if dom != stream || !strings.Contains(dom, "3:") {
+		t.Fatalf("routes disagree:\nDOM    %s\nstream %s", dom, stream)
+	}
+}
+
+// signatureBlock returns the commented signature block of a generated config,
+// uncommented.
+func signatureBlock(t *testing.T, config string) []byte {
+	t.Helper()
+	start := strings.Index(config, "# --- signature ---\n")
+	end := strings.Index(config, "# --- end signature ---\n")
+	if start < 0 || end < start {
+		t.Fatalf("no signature block:\n%s", config)
+	}
+	var b strings.Builder
+	for _, line := range strings.Split(config[start+len("# --- signature ---\n"):end], "\n") {
+		b.WriteString(strings.TrimPrefix(line, "# "))
+		b.WriteByte('\n')
+	}
+	return []byte(b.String())
 }
