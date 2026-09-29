@@ -1263,8 +1263,8 @@ func TestRunExtractContinueOnErrorMissingFileSkipsFailedLedger(t *testing.T) {
 		t.Fatalf("failure manifest counts = %#v, want cohort=3 applied=2 failed=1", failureManifest)
 	}
 	failure := failureManifest.Failures[0]
-	if failure.Reason != "internal_error" || !strings.Contains(failure.Detail, "failed to read file") {
-		t.Fatalf("failure row = %#v, want internal_error read failure", failure)
+	if failure.Reason != "input_unavailable" || failure.Detail != "input unavailable: not found" {
+		t.Fatalf("failure row = %#v, want input_unavailable not found", failure)
 	}
 	if strings.Contains(failure.File, dir) || strings.Contains(failure.Detail, dir) {
 		t.Fatalf("failure manifest leaked temp path: %#v", failure)

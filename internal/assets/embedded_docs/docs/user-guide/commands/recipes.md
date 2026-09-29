@@ -78,17 +78,37 @@ applicability:
 Do not place `type:` or `expression:` at the asset file top level; the schema
 requires `applicability.type` and `applicability.expression`.
 
+**Paths.** Paths given on the command line (`--files`, `--file-list`,
+`--input-path`, `--output-path`) are relative to the working directory. Paths in
+`recipe.yaml` (`defaults` and `assets`) are relative to the recipe directory.
+Entries inside a file list are relative to the list file's directory.
+
+Without `--continue-on-error`, a run stops at the first failed input. The
+outputs of inputs already processed may remain in the output directory; the
+non-zero exit is authoritative.
+
 Multi-file runs may opt into per-file failure isolation with
-`--continue-on-error`. In v0 this flag requires `--output-path`; successful
+`--continue-on-error`. A named input (`--files`, a file-list entry, or a recipe
+file) that is missing or not readable, local or `s3://`, is recorded as
+`input_unavailable` and the others continue; an object missing from an
+`--input-path` listing still stops the run. Such an input has no row in the
+provenance manifest, so an aggregate manifest then omits its input counts: a
+manifest without input counts makes no completeness claim, and `failures.json`
+is the authoritative record of dropped inputs. Under `--provenance-root`, a
+missing local input instead fails the root's containment check and stops the
+run before any output, so neither a manifest nor `failures.json` is written. In v0 this flag requires
+`--output-path`; successful
 input files still emit their normal output artifacts, recoverable per-file
 failures are written to `<output-path>/failures.json`, and the command exits
 non-zero when any file failed. Output-write and failure-manifest-write errors
 remain terminal. The failure manifest is schema-backed by
 `schemas/extract/v0.1.0/failures.schema.json` and uses the closed reason set
 `parse_error`, `signature_mismatch`, `min_occurrences_violation`,
-`validation_error`, `internal_error`, and `route_unsupported` (a deliberate
+`validation_error`, `internal_error`, `route_unsupported` (a deliberate
 refusal: the input's format has no route for it in this release, such as a
-JSON file above the large-file threshold without `--allow-large-files`).
+JSON file above the large-file threshold without `--allow-large-files`), and
+`input_unavailable` (the input is missing or not readable; the detail says
+`not found` or `permission denied`).
 
 Recipe extract configs may derive scalar fields with Sumpter DSL expressions.
 For the full expression grammar, function set, and parser behavior contracts,

@@ -90,10 +90,13 @@ func (st *recipeRunState) finalizeAggregate(startedAt time.Time) error {
 		manifest.OutputMode = outputModeAggregate
 		manifest.AggregateOutputs = st.aggWriter.shards
 		manifest.RowIdentityEmitted = opts.EmitInputIdentity
-		// Per-recipe input accounting from this recipe's own gap-free inputs[]
-		// inventory; counts stay isolated per recipe, like the rest of the manifest.
-		if err := manifest.SetInputAccounting(); err != nil {
-			return fmt.Errorf("recipe %q: compute input accounting for aggregate manifest: %w", st.plan.RecipeID, err)
+		// Per-recipe input accounting from this recipe's own inputs[] inventory,
+		// emitted only when it is gap-free (every walked input has a row); counts
+		// stay isolated per recipe, like the rest of the manifest.
+		if len(manifest.Inputs) == st.failures.CohortSize {
+			if err := manifest.SetInputAccounting(); err != nil {
+				return fmt.Errorf("recipe %q: compute input accounting for aggregate manifest: %w", st.plan.RecipeID, err)
+			}
 		}
 		if err := validateAggregateBeforeManifest(opts, manifest); err != nil {
 			return fmt.Errorf("recipe %q: %w", st.plan.RecipeID, err)

@@ -660,7 +660,8 @@
             "parse_error",
             "validation_error",
             "internal_error",
-            "route_unsupported"
+            "route_unsupported",
+            "input_unavailable"
           ]
         },
         "disposition_detail": {

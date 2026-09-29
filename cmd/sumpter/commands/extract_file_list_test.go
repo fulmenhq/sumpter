@@ -85,7 +85,7 @@ func TestRecipeFileListCLI(t *testing.T) {
 	cmd := recipeRunExtractTestCommand()
 	if err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{
 		ManifestPath: "recipe.yaml",
-		FileList:     "inputs.list",
+		FileList:     filepath.Join(ws, "inputs.list"),
 		Progress:     false,
 	}); err != nil {
 		t.Fatalf("executeExtractRecipe (--file-list): %v", err)

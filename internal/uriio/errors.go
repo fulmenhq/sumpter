@@ -23,6 +23,12 @@ var (
 	// were staged. Callers may match it with errors.Is to attribute the per-input
 	// verification failure.
 	ErrDeclaredSizeMismatch = errors.New("uriio: declared size mismatch")
+
+	// ErrObjectNotFound and ErrObjectAccessDenied classify a failed Head: the
+	// object does not exist, or the credentials may not read it. Callers match
+	// them with errors.Is; the raw provider error is never wrapped.
+	ErrObjectNotFound     = errors.New("uriio: object not found")
+	ErrObjectAccessDenied = errors.New("uriio: object access denied")
 )
 
 // LocalPath classifies ref and returns its local filesystem path. file:// URIs

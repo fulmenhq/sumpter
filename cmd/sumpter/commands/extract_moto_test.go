@@ -318,20 +318,17 @@ func TestMotoExtractDryRunDoesNotStage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1) A single cloud object that was never uploaded. A truly-dry run succeeds
-	//    and echoes the logical URI without any fetch.
+	// 1) A single cloud object that was never uploaded. The dry run checks it
+	//    with a metadata-only HEAD, fails as not found, and fetches nothing.
 	missingURI := "s3://" + m.bucket + "/" + runKeyPrefix() + "dryrun/never-uploaded.xml"
 	opts := newMatrixExtractOptions(dir, missingURI, outDir)
 	opts.CredentialsPath = m.writeCredentialsConfig(t, dir)
 	opts.DryRun = true
 
 	var runErr error
-	out := captureStdout(t, func() { runErr = runExtract(opts) })
-	if runErr != nil {
-		t.Fatalf("dry-run of a non-existent cloud object should succeed (no fetch), got: %v", runErr)
-	}
-	if !strings.Contains(out, missingURI) {
-		t.Errorf("dry-run output missing logical URI %q:\n%s", missingURI, out)
+	_ = captureStdout(t, func() { runErr = runExtract(opts) })
+	if runErr == nil || !strings.HasSuffix(runErr.Error(), missingURI+": not found") {
+		t.Fatalf("dry-run of a non-existent cloud object: error = %v, want input unavailable not found", runErr)
 	}
 	if _, err := os.Stat(stageRoot); !os.IsNotExist(err) {
 		t.Errorf("dry-run created a staging directory %q (err=%v); nothing should be staged", stageRoot, err)

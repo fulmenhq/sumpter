@@ -82,7 +82,7 @@ defaults:
 	cmd := recipeRunExtractTestCommand()
 	if err := executeExtractRecipe(cmd, ws, &recipeRunExtractOptions{
 		ManifestPath:           "recipe.yaml",
-		FileList:               "cloud-inputs.list",
+		FileList:               filepath.Join(ws, "cloud-inputs.list"),
 		CredentialsPath:        credPath,
 		InputCredentialsHandle: "reader",
 		Progress:               false,

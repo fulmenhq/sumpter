@@ -12,6 +12,7 @@ import (
 	"github.com/fulmenhq/sumpter/internal/extract"
 	"github.com/fulmenhq/sumpter/internal/provenance"
 	recipesmanifest "github.com/fulmenhq/sumpter/internal/recipes"
+	"github.com/fulmenhq/sumpter/internal/uriio"
 	"github.com/fulmenhq/sumpter/internal/valueprofile"
 )
 
@@ -52,7 +53,11 @@ type multiSharedOptions struct {
 	// each recipe's provenance ties back to a single invocation. loadRecipePlan
 	// rejects an empty RunID rather than letting each recipe independently
 	// generate a divergent UUIDv7.
-	RunID                  string
+	RunID string
+	// acquireSource, when a test sets it, replaces input acquisition for the
+	// shared input set, so acquisition failures can be injected without a
+	// network.
+	acquireSource          func(ctx context.Context, session *uriio.Session, ref, handle string) (*uriio.AcquiredSource, error)
 	ProvenanceRoot         string
 	ProvenanceRootSet      bool
 	ProvenanceRootFromFlag bool

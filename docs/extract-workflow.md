@@ -152,7 +152,7 @@ invented:
 | Provenance signal | `lifecycle` |
 | --- | --- |
 | `incomplete: true` (hard failure; orphans may exist) | `incomplete` |
-| Any failed inputs (`inputs_failed > 0` or `inputs[].disposition == "failed"`) | `partial` |
+| Any failed inputs (`inputs_failed > 0`, `inputs[].disposition == "failed"`, or a failed input recorded in `failures.json`) | `partial` |
 | Otherwise (applied and/or not_applicable only) | `complete` |
 
 `draft`, `building`, and `retired` are reserved by the contract. Sumpter extract
@@ -390,18 +390,20 @@ hundreds). Use these signals to verify every input was applied, in order of auth
     outputs. Use the default when completeness is non-negotiable.
 3. **`--continue-on-error` is an explicit opt-in to drop-tolerance**, and it moves the
    completeness burden to you. The run still exits non-zero if anything failed;
-   `failures.json` enumerates **every** dropped input (path + reason); and the manifest
-   `inputs[]` inventory is **gap-free** — every resolved input ordinal appears exactly once
-   with a `disposition` (`applied` / `failed`) and a `record_count`. A pipeline can assert
-   completeness positively: `len(inputs)` equals the expected count and no input has
-   `disposition: failed`.
+   `failures.json` enumerates **every** dropped input (path + reason) and is the
+   authoritative record of dropped inputs. In an aggregate manifest, each applied or
+   not_applicable input has an `inputs[]` row with its `disposition` and `record_count`,
+   and a failed input has a `failed` row only when its content could be hashed, because a
+   row records the input's `sha256` and size. An input that could not be read
+   (`input_unavailable`) has no row. So `len(inputs)` is not a completeness check under
+   `--continue-on-error`: gate on the exit code and `failures.json`.
 4. **`incomplete: true` is not the completeness signal.** It flags a hard output failure
    with possibly-orphaned cloud objects (R8), a different condition from "some inputs
    failed". Do not gate completeness on this flag alone.
 
 **Input-accounting summary (aggregate manifests).** A completed aggregate
-manifest carries four optional top-level integers derived from the gap-free
-`inputs[]` inventory, so a consumer can reconcile completeness from a single
+manifest carries four optional top-level integers derived from the
+`inputs[]` inventory when it has a row for every resolved input, so a consumer can reconcile completeness from a single
 place rather than walking every entry. They mirror the closed input-disposition
 enum exactly:
 
@@ -413,13 +415,16 @@ enum exactly:
 
 The reconciliation invariant is `applied + failed + not_applicable == total == len(inputs)`.
 These counts are present only on aggregate manifests with an authoritative
-inventory — omitted on per-input/default manifests and on `incomplete: true`
-manifests, which are not a completeness signal. The exit code remains
+inventory. They are omitted on per-input/default manifests, on `incomplete: true`
+manifests, and when a resolved input has no row in `inputs[]`, such as an input
+that could not be read under `--continue-on-error`. A manifest without input counts makes no
+completeness claim; `failures.json` is the authoritative record of dropped
+inputs. The exit code remains
 authoritative; the counts are a convenience over the `inputs[]` inventory, not a
 replacement for checking it. When `--artifact-descriptor` is enabled, the
 portable descriptor `lifecycle` field maps these same signals (plus
-`incomplete: true` and per-input `disposition`) onto the data-artifact/v0
-lifecycle enum — see [Portable Artifact Descriptor](#portable-artifact-descriptor).
+`incomplete: true`, per-input `disposition`, and the failed-input count recorded
+in `failures.json`) onto the data-artifact/v0 lifecycle enum — see [Portable Artifact Descriptor](#portable-artifact-descriptor).
 
 **With `extract-multi`.** `--output-mode aggregate` applies to
 [`recipes run extract-multi`](#run-multiple-recipes-in-one-pass-extract-multi) too: each
@@ -679,9 +684,9 @@ Processing **many files in one invocation** is a supported, first-class workflow
 
 - **`--input-path <dir>`** — walk a directory tree and filter by `--include-pattern` / `--exclude-pattern`. Note the walk enumerates the **entire** tree before the include pattern filters files (a filename-only pattern like `*.xml` can match in any subtree and so cannot prune directories), which can be a multi-minute stall on a large mixed-grain corpus. Sumpter now announces the enumeration phase and warns when the walk is slow. To scope precisely on a large tree, prefer `--file-list`, a narrower `--input-path`, or `--exclude-pattern` to skip known-large subtrees (exclude patterns **do** prune directories).
 
-`--file-list` is designed to accept `s3://` references under the same credential-handle posture as cloud sources, so the same mechanism carries over for cloud inputs.
+`--file-list` is designed to accept `s3://` references under the same credential-handle posture as cloud sources, so the same mechanism carries over for cloud inputs. Under `--continue-on-error`, a named `s3://` object that is missing or not readable is recorded as `input_unavailable` and the other inputs continue.
 
-**Bounded cloud input** (`extract-multi --cloud-input-mode bounded`) acquires `s3://` objects just-in-time instead of staging the whole list first. Peak staged **bytes** and **file count** are run-global (`--cloud-staging-max-bytes`, `--cloud-staging-max-files`) with a per-object cap (`--cloud-object-max-bytes`). An object larger than either the per-object cap or the total byte budget fails before staging. Fetch/parse may complete out of order; aggregate output still commits in URI-list order. Staged files are released after parse, before ordered commit. Local-only lists never open a cloud session. The default mode remains `eager`.
+**Bounded cloud input** (`extract-multi --cloud-input-mode bounded`) acquires `s3://` objects just-in-time instead of staging the whole list first. Peak staged **bytes** and **file count** are run-global (`--cloud-staging-max-bytes`, `--cloud-staging-max-files`) with a per-object cap (`--cloud-object-max-bytes`). An object larger than either the per-object cap or the total byte budget fails before staging. Fetch/parse may complete out of order; aggregate output still commits in URI-list order. Staged files are released after parse, before ordered commit. Local-only lists never open a cloud session. The default mode remains `eager`. In either mode, `--continue-on-error` records a named object that is missing or not readable as `input_unavailable` and continues with the other inputs.
 
 The shared CLI selects the **reader** handle (`--input-credentials-handle`). Each recipe declares its own **writer** handle. `extract-multi` does **not** take `--output-credentials-handle`; a shared output override would collide with recipes that use different writers. Cloud aggregate still **requires a positive `--aggregate-max-bytes`** at or below the 5 GiB single-PUT limit.
 
@@ -712,6 +717,12 @@ cloud URIs are skipped by containment and remain unchanged. Manifests add
 `input_path_form: "root_relative"`, including mixed and cloud-only input sets.
 The root is never written to the manifest, sanitized argv, logs, or errors, and
 it is not added to the ordinary sanitizer roots used by other path surfaces.
+In root mode, an error for a local input root that matches no files reads
+`no input files matched under <input>`, followed by any include and exclude
+patterns, and names no base directory; an `s3://` root is shown as given. A
+named local input that does not exist cannot be resolved inside the root, so it
+fails this check and stops the run even under `--continue-on-error`; it is not
+recorded as `input_unavailable` and no `failures.json` is written.
 
 Input ordinals are assigned in the resolved order and are not changed by this
 option:
