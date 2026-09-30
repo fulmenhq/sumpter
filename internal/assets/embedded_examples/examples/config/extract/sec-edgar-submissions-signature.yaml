@@ -1,0 +1,11 @@
+# SEC EDGAR submissions Signature Configuration
+# Matches one submissions JSON document (one company filing history).
+signature_id: sec-edgar-submissions
+name: SEC EDGAR submissions
+format_type: json
+match_patterns:
+  - pattern_id: submissions-recent
+    name: recent filings block
+    selector: /filings/recent
+    weight: 1
+confidence_threshold: 1

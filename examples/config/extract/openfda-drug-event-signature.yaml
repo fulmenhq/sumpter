@@ -1,0 +1,13 @@
+# openFDA Drug Event Signature Configuration
+# Matches each adverse event report in results[] of an openFDA bulk export,
+# scored per record so the record-index route applies.
+signature_id: openfda-drug-event
+name: openFDA drug adverse event report
+format_type: json
+match_scope: record
+match_patterns:
+  - pattern_id: drug-event-report
+    name: report with a safety report id
+    selector: /results/safetyreportid
+    weight: 1
+confidence_threshold: 1

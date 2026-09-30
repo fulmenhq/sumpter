@@ -1,0 +1,63 @@
+# SEC EDGAR companyfacts USD Fact Extraction Configuration
+# Extracts one record per reported USD fact under the us-gaap taxonomy.
+# value_text keeps the source number exactly; value is a JSON number.
+record_type: sec_companyfacts_usd_fact
+match_selectors:
+  - xpath: /facts/us-gaap/*/units/USD
+field_mappings:
+  - output_field: cik
+    xpath: /cik
+    type: string
+  - output_field: entity_name
+    xpath: /entityName
+    type: string
+  - output_field: taxonomy
+    xpath: local-name(../../..)
+    type: string
+  - output_field: concept
+    xpath: local-name(../..)
+    type: string
+  - output_field: period_end
+    xpath: end
+    type: string
+  - output_field: value
+    xpath: val
+    type: number
+  - output_field: value_text
+    xpath: val
+    type: string
+  - output_field: accession
+    xpath: accn
+    type: string
+  - output_field: fiscal_year
+    xpath: fy
+    type: integer
+  - output_field: fiscal_period
+    xpath: fp
+    type: string
+  - output_field: form
+    xpath: form
+    type: string
+  - output_field: filed
+    xpath: filed
+    type: string
+  - output_field: frame
+    xpath: frame
+    type: string
+output_schema:
+  type: object
+  properties:
+    cik: {type: string}
+    entity_name: {type: string}
+    taxonomy: {type: string}
+    concept: {type: string}
+    period_end: {type: string}
+    value: {type: number}
+    value_text: {type: string}
+    accession: {type: string}
+    fiscal_year: {type: integer}
+    fiscal_period: {type: string}
+    form: {type: string}
+    filed: {type: string}
+    frame: {type: string}
+  required: [cik, taxonomy, concept, period_end, value_text, accession, form]

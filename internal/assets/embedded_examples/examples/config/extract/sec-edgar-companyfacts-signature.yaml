@@ -1,0 +1,15 @@
+# SEC EDGAR companyfacts Signature Configuration
+# Matches one companyfacts JSON document (one company, all concepts).
+signature_id: sec-edgar-companyfacts
+name: SEC EDGAR companyfacts
+format_type: json
+match_patterns:
+  - pattern_id: companyfacts-root
+    name: companyfacts document
+    selector: /cik
+    weight: 1
+  - pattern_id: companyfacts-facts
+    name: facts object
+    selector: /facts
+    weight: 1
+confidence_threshold: 1

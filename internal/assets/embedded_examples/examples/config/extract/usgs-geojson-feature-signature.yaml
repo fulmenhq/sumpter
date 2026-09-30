@@ -1,0 +1,14 @@
+# USGS GeoJSON Feature Signature Configuration
+# Matches each earthquake feature of a USGS GeoJSON summary feed, scored per
+# record so the recipe runs on both the whole-document and record-index
+# routes.
+signature_id: usgs-geojson-feature
+name: USGS GeoJSON earthquake feature
+format_type: json
+match_scope: record
+match_patterns:
+  - pattern_id: feature-properties
+    name: feature with properties and geometry
+    selector: /features[properties and geometry]
+    weight: 1
+confidence_threshold: 1

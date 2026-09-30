@@ -1,0 +1,51 @@
+# USGS GeoJSON Feature Extraction Configuration
+# Extracts one record per GeoJSON feature. Coordinates are an ordered array:
+# longitude, latitude, depth (km). A null magnitude binds absent.
+record_type: usgs_earthquake_feature
+match_selectors:
+  - xpath: features
+field_mappings:
+  - output_field: event_id
+    xpath: id
+    type: string
+  - output_field: magnitude
+    xpath: properties/mag
+    type: number
+  - output_field: magnitude_type
+    xpath: properties/magType
+    type: string
+  - output_field: place
+    xpath: properties/place
+    type: string
+  - output_field: time_ms
+    xpath: properties/time
+    type: integer
+  - output_field: status
+    xpath: properties/status
+    type: string
+  - output_field: tsunami
+    xpath: properties/tsunami
+    type: integer
+  - output_field: longitude
+    xpath: geometry/coordinates[1]
+    type: number
+  - output_field: latitude
+    xpath: geometry/coordinates[2]
+    type: number
+  - output_field: depth_km
+    xpath: geometry/coordinates[3]
+    type: number
+output_schema:
+  type: object
+  properties:
+    event_id: {type: string}
+    magnitude: {type: number}
+    magnitude_type: {type: string}
+    place: {type: string}
+    time_ms: {type: integer}
+    status: {type: string}
+    tsunami: {type: integer}
+    longitude: {type: number}
+    latitude: {type: number}
+    depth_km: {type: number}
+  required: [event_id, time_ms, longitude, latitude, depth_km]
