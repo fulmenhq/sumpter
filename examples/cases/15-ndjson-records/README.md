@@ -12,8 +12,8 @@ The two runs need different recipes:
   record, so the signature pattern `/Order/id` and the field mappings are
   relative to that record.
 
-`input.ndjson` includes a blank line and a whitespace-only line; both are
-skipped and do not count as records. Numbers and booleans are JSON values,
+`input.ndjson` includes blank lines; they are skipped and do not count as
+records. Numbers and booleans are JSON values,
 not strings, in both inputs.
 
 Run:
