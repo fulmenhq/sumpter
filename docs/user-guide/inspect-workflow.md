@@ -1,10 +1,16 @@
-# XML Inspection and Dialect Detection Workflow
+# Inspection and XML Dialect Detection Workflow
 
-Comprehensive guide to XML inspection, dialect detection, and custom dialect development.
+Guide to XML/JSON inspection and XML-specific dialect detection/development.
 
 ## Overview
 
-Sumpter's `inspect` command provides powerful XML analysis capabilities with automatic dialect detection. This workflow guide covers:
+Sumpter's `inspect` command profiles XML by default and one JSON document with
+`--input-format json`. It does not infer formats from extensions or content.
+NDJSON inspection and JSON/NDJSON `--analyze-records` are refused; see the
+[input-route matrix](../extract-workflow.md#input-route-support) and the
+[JSON profile contract](commands/inspect.md#input-format). The dialect,
+namespace and encoding material below is specifically for XML, not a JSON
+capability or performance claim. This workflow guide covers:
 
 - **Matching Cases**: How Sumpter identifies known XML dialects
 - **Dialect Development**: Creating custom dialect definitions
@@ -23,7 +29,20 @@ sumpter inspect data.xml --output report.md
 
 # JSON output for programmatic processing
 sumpter inspect data.xml --format json
+
+# JSON source, with a JSON report (input syntax and report format are separate)
+sumpter inspect data.json --input-format json --format json
 ```
+
+JSON input must be UTF-8 (one leading UTF-8 BOM is accepted). Its reports follow
+the [document node model](../standards/document-node-model.md): arrays yield
+repeated key elements; null binds absent during extraction; number samples
+keep their source lexemes. XPath numeric operations use floating point, so
+identifiers above 2^53 need string mappings and `value_text`. JSON inspection
+uses incremental parsing and capped report metadata, not a universal memory
+bound; duplicate-key and nesting state still cost memory. For JSON record
+indexes, proceed to the [index workflow](index-workflow.md) without XML record
+analysis.
 
 ### Dialect Detection
 
@@ -334,7 +353,7 @@ selector: "@id[starts-with(., 'PREFIX-')]"
 selector: "contains(., 'specific-text')"
 
 # Match elements with numeric content
-selector: "number(.) = number(.)"  # Is numeric
+selector: "number(.) = number(.)" # Is numeric
 ```
 
 #### Pattern Weight Optimization
@@ -524,7 +543,7 @@ xml_standards:
 # Increase pattern weights
 patterns:
   - pattern_id: "key-pattern"
-    weight: 0.9  # Increase from 0.7
+    weight: 0.9 # Increase from 0.7
 
 # Add more specific patterns
 patterns:

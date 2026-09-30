@@ -21,15 +21,25 @@ const DefaultVersion = "0.1.0"
 
 var rootCmd = &cobra.Command{
 	Use:   "sumpter",
-	Short: "Sumpter - XML Streaming Engine",
-	Long: `Sumpter (XML Streaming Engine) - High-performance XML processing for enterprise data.
+	Short: "Sumpter - Recipe-driven XML/JSON/NDJSON extraction",
+	Long: `Recipe-driven extraction from XML, JSON, and NDJSON, with route-specific streaming and indexed processing.
 
-Sumpter is a Go-based streaming XML engine that transforms massive, malformed,
-and variant-heavy XML into clean, analytics-ready tables. With sub-second inspection,
-auto-generated extraction configs, and resilient outputs to JSON, NDJSON, or Parquet,
-Sumpter helps teams start fast and thrive on scale.
+Input route support (recipe/selector constraints apply):
+  Extract files    xml, json, ndjson
+  Inspect          xml, json
+  Record analysis  xml
+  Record indexes   xml, json; uncompressed source
+  Extract-multi    xml
 
-Built for: Enterprise XML processing, data transformation, and analytics pipelines.
+JSON streaming/indexed and NDJSON extraction require record-scoped recipes
+with eligible selectors and outputs. NDJSON is not an inspect or index input;
+JSON/NDJSON record analysis is refused. Uncompressed source means the document,
+not the index store (JSON or optional seekable-zstd).
+
+Formats are declared, not inferred. XML and JSON use one DSL and XPath grammar,
+with format-specific recipes, not unchanged recipes. DOM and buffered outputs
+can load a document/result set; streaming is not a universal memory bound.
+See docs/extract-workflow.md for route eligibility and output contracts.
 
 Inspired by the Fulmen ecosystem and the American West's "sumpter" horses.`,
 	Version:          getVersionFromBuild(),

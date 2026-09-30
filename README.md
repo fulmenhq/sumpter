@@ -1,19 +1,29 @@
 # Sumpter
 
-**Crush XML. Haul Data. Ship Insights. Thrive on Scale.**
+**Recipe-driven extraction from XML, JSON, and NDJSON, with route-specific streaming and indexed processing.**
 
-[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)]()
+[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)](<>)
 [![CI Status](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml/badge.svg)](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green)]()
-[![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)]()
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](<>)
+[![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)](<>)
 
-Sumpter is a streaming XML extraction engine for the inputs where the obvious tools break: large files, variant-heavy schemas, and recipe-driven outputs to NDJSON or Parquet. It's format-agnostic — the engine bakes in no vertical's schemas or record types; the shapes you extract live in recipes you author.
+Sumpter turns declared input formats into recipe-authored records for NDJSON or Parquet pipelines. The engine is domain-neutral: it bakes in no vertical's schemas or record types. XML and JSON use one DSL and XPath grammar, with format-specific recipes rather than one unchanged recipe.
+
+| Input route     | Supported source formats           |
+| --------------- | ---------------------------------- |
+| Extract files   | `xml`, `json`, `ndjson`            |
+| Inspect         | `xml`, `json`                      |
+| Record analysis | `xml`                              |
+| Record indexes  | `xml`, `json`; uncompressed source |
+| Extract-multi   | `xml`                              |
+
+JSON streaming and indexed extraction, and NDJSON extraction, need a record-scoped recipe and an eligible selector and output. NDJSON is not an inspect or index input; JSON and NDJSON record analysis is refused. JSON DOM extraction loads a document; not every route streams. An indexed **source document** must be uncompressed; its index may use JSON storage or optional seekable-zstd storage. See the authoritative [input-route matrix and eligibility rules](docs/extract-workflow.md#input-route-support).
 
 ---
 
 ## 🧭 Why Sumpter?
 
-Sumpter is the streaming XML extraction engine for production pipelines: gigabyte-class regulatory filings (think XBRL on the scale of SEC EDGAR), variant-heavy scientific XML where the schema is more guideline than contract, and any pipeline that needs reproducible recipe-driven extraction into NDJSON or Parquet with reconciliation primitives built in. If that's the shape of what you process, Sumpter is built for you. If you're doing ad-hoc XML inspection on small files, `xmlstarlet` or `xq` are still the fast answer — and we'll point you there.
+Sumpter is built for reproducible recipe-driven pipelines: regulatory filings, variant-heavy scientific XML, JSON documents, and line-delimited event records, with reconciliation primitives built in. If you're doing ad-hoc inspection on small files, `xmlstarlet` or `xq` for XML and `jq` for JSON may be the faster answer.
 
 ---
 
@@ -59,7 +69,7 @@ Sumpter is in **alpha** — for us that's about _interface stability_, not matur
 
 **Contributions are welcome** — issues, design discussion, and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md); for anything beyond a small fix, open an issue first so we can point you at in-flight work. The road to beta is about freezing the recipe/DSL/adapter contracts and raising coverage, not about whether the core works.
 
-**Memory contract:** XML input is tokenized incrementally where the streaming path applies. JSON/NDJSON file output is bounded with respect to emitted result count for sequential runs and record-index parallel runs: records stream through `RecordSink`, and the parallel route uses bounded reorder/backpressure instead of retaining the full output slice. Unambiguous record-index parallel runs enforce `min_occurrences` from index counts before publishing output and can still use the streaming route. This does not make every extract mode bounded end-to-end: DOM/non-streaming input can still load a document, and Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed floors intentionally remain buffered. See [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md) and [ADR-0009](docs/architecture/adr/0009-record-sink-output-streaming-contract.md).
+**Memory contract:** XML input is tokenized incrementally where the streaming path applies. Eligible JSON/NDJSON inputs are read record by record. JSON/NDJSON **file output** is bounded with respect to emitted result count for sequential runs and record-index parallel runs: records stream through `RecordSink`, and the parallel route uses bounded reorder/backpressure instead of retaining the full output slice. Unambiguous record-index parallel runs enforce `min_occurrences` from index counts before publishing output and can still use the streaming route. This is not an end-to-end flat-memory promise: DOM input loads a document; record routes retain active record/parser/writer state, and a file-spanning JSON record or a wide object can need input-scale memory. Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed floors intentionally remain buffered. The indexed JSON record cap defaults to 100 MiB; XML's zero limit remains unlimited. See the [document node model](docs/standards/document-node-model.md), [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md), and [ADR-0009](docs/architecture/adr/0009-record-sink-output-streaming-contract.md).
 
 Security patches target the latest `0.3.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
 
@@ -151,7 +161,7 @@ CGO_ENABLED=1 go build -tags seekablezstd -o dist/sumpter ./cmd/sumpter
 
 ## 🧰 Environment Info (JSON-first)
 
-Quickly inspect resolved paths, system details, and XML capabilities. All subcommands support `--json` and map to versioned schemas under `schemas/envinfo/v0.1.0/`.
+Quickly inspect resolved paths and system details. Ordinary human `envinfo` also shows the built-in input-route support matrix; it is not a runtime probe. `envinfo --xml` and `envinfo xml` describe XML capabilities, whose `<50MB RSS` figure is an XML input-tokenization design target, not a measured run or a JSON bound. Machine payloads remain under `schemas/envinfo/v0.1.0/`; the human route section is not added to JSON/export or single-purpose subcommands.
 
 ```bash
 # Show application paths (home, workdir, cache, logs, configs, temp)
@@ -170,7 +180,9 @@ See `schemas/envinfo/README.md` for details and validation examples.
 
 ## 🔎 Explore the examples
 
-The repository ships a corpus of self-contained, runnable examples — synthetic WidgetCo/GearCo orders that double as recipe-authoring references and extraction smoke tests. Start at [`examples/README.md`](examples/README.md) for the full case-by-feature index, or run them all with `make examples`.
+The repository ships self-contained synthetic WidgetCo/GearCo examples, including XML/JSON twins and NDJSON cases. Twins use format-specific recipes and compare typed `extract.data`, not their format-specific provenance. Start at [`examples/README.md`](examples/README.md) for the case-by-feature index, or run them all with `make examples`.
+
+JSON application notes cover [USGS GeoJSON](docs/appnotes/sourcedata/science/usgs-geojson.md), [SEC EDGAR company facts](docs/appnotes/sourcedata/finance/sec-edgar-json.md), and [openFDA](docs/appnotes/sourcedata/health/openfda-drug-event.md). These are recipe-authoring examples, not cross-feed parity or release-binary scale measurements. Numbers retain source lexemes while parsing, but XPath 1.0 numeric evaluation uses floating point: use string mappings and `value_text` for exact identifiers above 2^53. JSON `null` binds absent, unlike XML's empty string; see the [node model](docs/standards/document-node-model.md#scalars).
 
 The public-data exemplars are deliberately drawn from **five different verticals** to show the engine is domain-neutral: **financial filings** (SEC EDGAR XBRL), **genomics** (NCBI ClinVar variant archives), **geophysics** (USGS QuakeML seismic catalogs), **public-safety geospatial** (NWS CAP alerts), and **government/legal** (GovInfo USLM bills) — all public-domain, so every example ships runnable by anyone. ClinVar's ~50 GB release is sumpter's canonical scale test — it drove the streaming and seekable-index architecture. See [`docs/user-guide/public-data-examples.md`](docs/user-guide/public-data-examples.md) for acquisition and recipes, the [SEC EDGAR XBRL walkthrough](docs/appnotes/sourcedata/finance/sec-edgar-usage.md), and the [ClinVar parallel-extraction runbook](docs/runbooks/clinvar-parallel.md).
 
@@ -178,17 +190,17 @@ The public-data exemplars are deliberately drawn from **five different verticals
 
 ## 🔑 Features
 
-- **Streaming input parsing and JSONL output**: Gigabyte-class XML inputs are tokenized incrementally where the streaming path applies, and JSON/NDJSON file output streams records through the record-sink path for sequential runs and record-index parallel runs with memory bounded by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Parquet, mixed-output, sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered in v0.2.0.
-- **Record Indexing**: Build seekable indexes for parallel extraction of multi-GB XML files
+- **Route-specific input and output streaming**: XML tokenization and eligible JSON/NDJSON record parsing are separate from JSONL output streaming. See the memory contract above; Parquet, mixed-output, sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered.
+- **Record Indexing**: Build source-byte indexes over uncompressed XML or JSON for indexed and parallel extraction; NDJSON indexing is refused
 - **Compressed Indexes**: Seekable-zstd format reduces index size 10-20x with O(1) random access
 - **Parallel Extraction**: Worker pools seek directly to record offsets without parsing predecessors
-- **Multi-recipe single-pass extraction**: apply many extract recipes to one input set in a single parse-once pass (`recipes run extract-multi`) — each input file is read and parsed once, then fanned to every recipe, with isolated per-recipe output trees. See [Run multiple recipes in one pass](docs/extract-workflow.md#run-multiple-recipes-in-one-pass-extract-multi).
+- **Multi-recipe single-pass extraction (XML only)**: apply many extract recipes to one input set in a single parse-once pass (`recipes run extract-multi`) — each input file is read and parsed once, then fanned to every recipe, with isolated per-recipe output trees. See [Run multiple recipes in one pass](docs/extract-workflow.md#run-multiple-recipes-in-one-pass-extract-multi).
 - **Aggregate output mode**: stream one NDJSON file per recipe across many inputs (`--output-mode aggregate`) instead of one file per input — deterministic ordering (aggregate ordinals follow `--file-list` order), rolling shards (`--aggregate-max-records` / `--aggregate-max-bytes`), and per-shard provenance digests, for both local and `s3://` destinations. Local aggregate commits are crash-durable by default; `--emit-input-identity` optionally binds each row to its input ordinal and parsed-byte SHA-256. See [Aggregate output mode](docs/extract-workflow.md#aggregate-output-mode---output-mode-aggregate).
 - **Integrity-bound batch inputs**: `--file-list` and recipe `defaults.input.files_from` accept URI-only lines or strict JSON object lines with `uri`, `size`, and `sha256`; declared bytes are verified against the private snapshot used for parsing and fail closed on mismatch. See [Input selection](docs/extract-workflow.md#input-selection-batch-lists-directories-large-trees).
 - **Provenance-root input paths**: optionally pin local inputs to a provenance root. See [Opt-in root-relative input provenance](docs/extract-workflow.md#opt-in-root-relative-input-provenance).
 - **Parallel input processing at scale**: spread an `extract-multi` run across N workers with `--input-workers N` to process **thousands of input files and beyond** concurrently — each worker handles an input's parse plus its full per-recipe application, while a single ordered committer keeps output **byte-identical at every worker count**. Size it by measuring with `--stats` rather than by core count. See [Parallel input processing](docs/extract-workflow.md#parallel-input-processing-with---input-workers).
-- **Encoding resilience**: Normalize to UTF-8, handle BOMs and legacy encodings
-- **Structure discovery**: `inspect` surfaces element paths, attributes, and samples
+- **Encoding handling**: XML legacy encodings normalize to UTF-8; JSON/NDJSON require UTF-8 and accept one leading UTF-8 BOM
+- **Structure discovery**: `inspect` surfaces XML paths/attributes or JSON key paths/value kinds, with bounded samples
 - **Integrity verification**: SHA-256 checksums at file and record level
 - **Cloud sources and outputs**: read source data from and publish results to S3-compatible object storage (`s3://`), with credential handles (no secrets in recipe YAML). See [Cloud Sources and Outputs](docs/extract-workflow.md#cloud-sources-and-outputs-s3-compatible).
 - **Reference-table lookup**: recipes load external reference tables once per run and query them from field mappings — `in_reference` (membership) and `lookup_reference` (key→value enrichment) — from a contained local path or an `s3://` object. See [Reference Tables](docs/extract-workflow.md#reference-tables) and the [DSL reference](docs/dsl-reference.md).
@@ -201,8 +213,8 @@ The public-data exemplars are deliberately drawn from **five different verticals
 
 ## 📐 Design Principles
 
-- **Performance & Scale**: built for 100MB–10GB XML without DOM crashes, and for high-volume runs over thousands of input files with configurable worker parallelism.
-- **Resilience & Simplicity**: tolerant of malformed and variant-heavy XML.
+- **Performance & Scale**: route-specific streaming/indexing and configurable worker parallelism, with explicit DOM and buffered-output limits rather than universal memory promises.
+- **Resilience & Simplicity**: explicit format declarations and fail-loud parsing; malformed JSON is refused, not repaired.
 - **Clarity**: reports and outputs easy for humans and tooling.
 - **Observability**: progress, metrics, and logging from Day 1.
 
@@ -218,19 +230,19 @@ See also:
 
 Available today:
 
-- ✅ XML inspection and structure discovery
-- ✅ Record indexing with byte offsets and checksums
+- ✅ XML/JSON inspection and structure discovery; record analysis remains XML only
+- ✅ XML/JSON record indexing with source-byte offsets and checksums
 - ✅ Seekable-zstd compressed indexes (10-20x smaller, CGO/source builds)
 - ✅ Parallel extraction with worker pools
-- ✅ Streaming mode for very large XML files
+- ✅ XML streaming plus eligible record-scoped JSON streaming and NDJSON extraction
 - ✅ Sequential NDJSON output with sidecar manifests and record-sink streaming
-- ✅ Parquet secondary output (buffered in v0.2.0)
+- ✅ Parquet secondary output (buffered)
 - ✅ Recipe applicability gates and schema-backed dispositions
 - ✅ Multi-file continue-on-error failure manifests
 - ✅ Document-order `_runtime.record_num` semantics for single-selector extraction
 - ✅ Record-sink streaming contract and sequential sink primitives
 - ✅ Streaming record-index writers during index build
-- ✅ Multi-recipe single-pass extraction (`extract-multi`) — parse each input once, fan to every recipe
+- ✅ Multi-recipe single-pass extraction (`extract-multi`, XML only) — parse each input once, fan to every recipe
 - ✅ Parallel input processing for `extract-multi` (`--input-workers`) — concurrent across many inputs, byte-identical at every worker count, tunable with `--stats`
 - ✅ Aggregate output mode (`--output-mode aggregate`) — one streamed NDJSON file per recipe, local or `s3://`, with rolling shards + per-shard digests; local commits are crash-durable by default and row-to-input identity is opt-in
 - ✅ Integrity-bound `--file-list` / `defaults.input.files_from` JSON object lines (`uri`, `size`, `sha256`) with fail-closed parsed-byte verification

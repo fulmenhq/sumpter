@@ -11,7 +11,12 @@ sumpter envinfo [command]
 
 ## Description
 
-The `envinfo` command provides detailed insights into the system environment, network configuration, and XML processing capabilities. It's designed to help diagnose setup issues and validate system readiness for XML transformation workflows.
+The `envinfo` command reports system/environment information and optional
+network/XML capability data. Ordinary top-level human output also describes
+built-in input-route support; this section performs no runtime capability
+probe, input read or additional network access. It is omitted from JSON,
+export and all single-purpose subcommands. Machine fields/values and the
+closed `envinfo/v0.1.0` schemas are unchanged.
 
 ## Commands
 
@@ -21,7 +26,23 @@ The `envinfo` command provides detailed insights into the system environment, ne
 sumpter envinfo [flags]
 ```
 
-Displays all environment information in a comprehensive format.
+Displays environment information and the route-support section below. Input
+formats are distinct from the XML capability payload's supported **outputs**.
+
+| Input route     | Supported source formats           |
+| --------------- | ---------------------------------- |
+| Extract files   | `xml`, `json`, `ndjson`            |
+| Inspect         | `xml`, `json`                      |
+| Record analysis | `xml`                              |
+| Record indexes  | `xml`, `json`; uncompressed source |
+| Extract-multi   | `xml`                              |
+
+JSON streaming and indexed extraction, and NDJSON extraction, need a
+record-scoped recipe and an eligible selector and output. NDJSON is not an
+inspect or index input; JSON and NDJSON record analysis is refused. The source
+document for an index must be uncompressed; the index may use JSON or optional
+seekable-zstd storage. See the authoritative
+[input-route matrix](../../extract-workflow.md#input-route-support).
 
 ### Subcommands
 
@@ -65,10 +86,22 @@ Hostname        | workstation
 Working Dir     | /home/user/projects
 Timestamp       | 2024-01-15T14:30:25Z
 
+Input route support (recipe/selector constraints apply)
+==================================================
+Extract files    | xml, json, ndjson
+Inspect          | xml, json
+Record analysis  | xml
+Record indexes   | xml, json; uncompressed source
+Extract-multi    | xml
+JSON streaming/indexed and NDJSON extraction require record-scoped recipes
+with eligible selectors and outputs. NDJSON is not an inspect or index input;
+JSON/NDJSON record analysis is refused. Uncompressed source means the document,
+not the index store (JSON or optional seekable-zstd).
+
 📄 XML Processing Capabilities
 ==================================================
 Streaming       | true
-Memory Target   | <50MB RSS
+Memory Target   | <50MB RSS (XML input-tokenization design target; not measured per-run or a JSON bound)
 Encodings       | UTF-8, UTF-16, ISO-8859-1, Windows-1252
 Outputs         | JSON, NDJSON, Parquet
 
@@ -159,7 +192,7 @@ Output:
 📄 XML Processing Capabilities
 ==================================================
 Streaming       | true
-Memory Target   | <50MB RSS
+Memory Target   | <50MB RSS (XML input-tokenization design target; not measured per-run or a JSON bound)
 Encodings       | UTF-8, UTF-16, ISO-8859-1, Windows-1252
 Outputs         | JSON, NDJSON, Parquet
 ```
@@ -180,7 +213,7 @@ Outputs         | JSON, NDJSON, Parquet
 ### XML Processing Capabilities
 
 - **Streaming**: Whether streaming XML processing is supported
-- **Memory Target**: Input XML tokenization memory target; extraction outputs may buffer records per file
+- **Memory Target**: XML input-tokenization design target, not a measured run, end-to-end bound or JSON bound. Both human XML renderers qualify it; the machine value stays `<50MB RSS`. Input DOM, active records and buffered outputs still cost memory.
 - **Encodings**: Supported character encodings
 - **Outputs**: Available extract output formats
 

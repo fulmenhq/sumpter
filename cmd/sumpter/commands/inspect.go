@@ -393,19 +393,23 @@ func NewInspectCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "inspect [file]",
 		Short: "Inspect XML or JSON document structure, encoding, and content",
-		Long: `Inspect XML files to understand their structure, encoding, and content patterns.
-With --input-format json, inspect profiles one JSON document instead: key paths,
+		Long: `Inspect XML or JSON document structure, encoding, and content patterns.
+XML is the default. With --input-format json, profile one JSON document: key paths,
 counts, samples, and per-path value kinds.
 
-This command performs a streaming analysis of XML files to:
+NDJSON inspection and JSON/NDJSON --analyze-records are refused. JSON input
+must be UTF-8; --force-encoding is XML only. Input syntax is declared, never
+inferred from content or a file name; --format selects the REPORT format.
+
+XML-specific analysis includes:
 - Detect encoding (BOM, XML declaration, charset detection)
 - Analyze element structure and path frequencies
 - Enumerate attributes and their usage patterns
 - Sample text content for understanding data patterns
 - Generate reports in Markdown or JSON format
 
-The command uses streaming input parsing for large files (100MB+) with
-configurable sampling to balance speed and insight.
+Both profiles parse incrementally with capped report metadata. Parser/nesting
+and duplicate-key state still cost memory; this is not a fixed-RSS promise.
 
 The source may be an S3-compatible cloud URI (s3://) using a credential handle
 (--credentials/--credential); see docs/extract-workflow.md "Cloud Sources and
@@ -427,7 +431,7 @@ records the logical s3:// URI, never the staging path.`,
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "markdown", "Output format: markdown|json")
 	cmd.Flags().IntVar(&opts.MaxPaths, "max-paths", 200, "Maximum number of unique paths to track")
 	cmd.Flags().IntVar(&opts.SamplesPerPath, "samples-per-path", 2, "Number of text samples to collect per path")
-	cmd.Flags().StringVar(&opts.ForceEncoding, "force-encoding", "", "Force specific encoding (e.g., windows-1252)")
+	cmd.Flags().StringVar(&opts.ForceEncoding, "force-encoding", "", "Force XML encoding (e.g., windows-1252); JSON requires UTF-8")
 	cmd.Flags().StringVar(&opts.InputFormat, "input-format", "xml", "Input syntax: xml|json (declared, never detected from content)")
 	cmd.Flags().BoolVarP(&opts.Progress, "progress", "p", false, "Show progress for large files")
 	cmd.Flags().BoolVar(&opts.IncludeAttrs, "include-attributes", true, "Include attribute analysis")
@@ -437,7 +441,7 @@ records the logical s3:// URI, never the staging path.`,
 	cmd.Flags().Float64Var(&opts.OptionalThreshold, "optional-threshold", 0.5, "Element occurrence ratio below which generated fields get optional-review TODO comments")
 
 	// NEW: Record analysis flags
-	cmd.Flags().BoolVar(&opts.AnalyzeRecords, "analyze-records", false, "Enable record boundary analysis for streaming assessment")
+	cmd.Flags().BoolVar(&opts.AnalyzeRecords, "analyze-records", false, "Enable XML-only record boundary analysis for streaming assessment")
 	cmd.Flags().StringVar(&opts.RecordSelector, "record-selector", "", "XPath selector for record detection or generated config record matching (auto-detect if empty)")
 	cmd.Flags().IntVar(&opts.OOMThresholdMB, "oom-threshold-mb", 100, "OOM warning threshold in megabytes")
 	cmd.Flags().IntVar(&opts.MaxCandidates, "max-candidates", 5, "Maximum number of record candidates to analyze")

@@ -194,8 +194,13 @@ type ExtractOptions struct {
 func NewExtractCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "extract",
-		Short: "Extract structured data from XML files and manage transforms",
-		Long: `Extract structured records from XML files based on user-provided signature and extract configurations.
+		Short: "Extract structured data from XML, JSON, or NDJSON files and manage transforms",
+		Long: `Extract structured records from XML, JSON, or NDJSON files using signature and extract configurations.
+
+The signature's format_type declares the input syntax (xml by default), not
+the file extension or output --format. JSON streaming/indexed and NDJSON
+extraction require record-scoped recipes with eligible selectors and outputs.
+See docs/extract-workflow.md for route eligibility.
 
 The command supports both direct file specification and directory scanning with glob patterns.
 Files are matched against the signature configuration, and matching records are extracted
@@ -214,8 +219,14 @@ func newExtractFilesCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "files",
-		Short: "Extract structured data from XML files",
-		Long: `Extract structured records from XML files based on user-provided signature and extract configurations.
+		Short: "Extract structured data from XML, JSON, or NDJSON files",
+		Long: `Extract structured records from XML, JSON, or NDJSON files using signature and extract configurations.
+
+The signature's format_type declares the input syntax (xml by default).
+JSON streaming/indexed and NDJSON extraction require match_scope: record,
+an eligible single Name or //Name selector, and an eligible output. NDJSON
+has no whole-document or indexed route. --format/--formats select OUTPUT,
+not input syntax. See docs/extract-workflow.md for route eligibility.
 
 Choose exactly one input mode: --files for a short ad hoc set, --input-path to
 walk and pattern-filter a directory tree, or --file-list for a newline-delimited
@@ -255,7 +266,7 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 	cmd.Flags().StringVar(&opts.Files, "files", "", "Comma-separated list of file paths to process (short ad hoc sets; subject to the shell argv limit — use --file-list for large batches)")
 	cmd.Flags().StringVar(&opts.FileList, "file-list", "", "Path to a newline-delimited file listing input references (local paths or s3:// URIs), one per line; blank lines and # comments ignored. No directory walk, no argv limit — the batch input for large/precise sets. A line may instead be a JSON object {\"uri\",\"size\",\"sha256\"} declaring the input's exact bytes (fail-closed). Mutually exclusive with --files and --input-path")
 	cmd.Flags().StringVar(&opts.InputPath, "input-path", "", "Directory (or single file) to process; walks the tree and filters by --include-pattern/--exclude-pattern. The walk enumerates the whole tree before filtering and announces progress on large trees — for large or precisely-scoped sets prefer --file-list. Mutually exclusive with --files and --file-list")
-	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "*.xml", "File inclusion pattern (use quotes for globs: \"*.xml\")")
+	cmd.Flags().StringVar(&opts.IncludePattern, "include-pattern", "*.xml", "File inclusion glob (default follows declared input: *.xml, *.json or *.ndjson; explicit pattern wins)")
 	cmd.Flags().StringVar(&opts.ExcludePattern, "exclude-pattern", "", "File exclusion pattern (use quotes for globs: \"temp/*\")")
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", 0, "Maximum directory depth to scan (0 = unlimited)")
 	cmd.Flags().BoolVar(&opts.FollowSymlinks, "follow-symlinks", false, "Follow symbolic links")
