@@ -84,21 +84,33 @@ the record-by-record or record-index route for them rather than
 ## Reproduction
 
 Replace both placeholder values before running. Take `PARTITION_URL` from
-the download index; `WORK` is a directory outside the repository.
+the download index; `WORK` is a directory outside the repository. The steps
+run in a subshell with `set -eu`: a failed download, an archive that does
+not hold exactly one `.json` member, or any failed command ends the block
+with a non-zero status before later steps run. Output from an earlier run
+is removed first, and the member is written to a temporary file that is
+renamed only after extraction succeeds, so neither stale nor partial input
+reaches `sumpter`.
 
 ```bash
 PARTITION_URL='https://download.open.fda.gov/drug/event/YYYYqN/drug-event-NNNN-of-NNNN.json.zip'
 WORK='/path/to/work'
+(
+set -eu
 
 # 1. Retrieve one partition and extract its single JSON member (outside
-#    sumpter). Do not continue if this step reports a stop.
+#    sumpter). Stop with a non-zero status unless there is exactly one.
+rm -f "$WORK/drug-event.json.zip" "$WORK/drug-event.json" "$WORK/drug-event.json.part" \
+  "$WORK/drug-event.recordindex.json"
+rm -rf "$WORK/out-seq" "$WORK/out-idx"
 curl -fsS -o "$WORK/drug-event.json.zip" "$PARTITION_URL"
 MEMBERS="$(unzip -Z1 "$WORK/drug-event.json.zip")"
-if [ "$(printf '%s\n' "$MEMBERS" | wc -l)" -eq 1 ] && [ "${MEMBERS%.json}" != "$MEMBERS" ]; then
-  unzip -p "$WORK/drug-event.json.zip" "$MEMBERS" > "$WORK/drug-event.json"
-else
+if [ "$(printf '%s\n' "$MEMBERS" | wc -l)" -ne 1 ] || [ "${MEMBERS%.json}" = "$MEMBERS" ]; then
   echo "stop: expected exactly one .json member, got: $MEMBERS" >&2
+  exit 1
 fi
+unzip -p "$WORK/drug-event.json.zip" "$MEMBERS" > "$WORK/drug-event.json.part"
+mv "$WORK/drug-event.json.part" "$WORK/drug-event.json"
 
 # 2. Record-by-record extraction.
 sumpter extract files \
@@ -118,6 +130,7 @@ sumpter extract files \
   --extract-config-path examples/config/extract/openfda-drug-event-extract.yaml \
   --record-index "$WORK"/drug-event.recordindex.json --workers 4 \
   --output-path "$WORK"/out-idx
+)
 ```
 
 Record counts can be checked against the partition's `records` value in the
