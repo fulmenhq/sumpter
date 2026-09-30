@@ -93,19 +93,29 @@ func NewEnvInfoCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "envinfo",
 		Short: "Display environment and system information for Sumpter",
-		Long: `Comprehensive environment inspection tool for Sumpter XML processing.
+		Long: `Display environment information and built-in input-route support for Sumpter.
 
 This command provides detailed insights into the system environment,
-network configuration, and XML processing capabilities. It's designed
-to help diagnose setup issues and validate system readiness for XML
-transformation workflows.
+optional network configuration, and XML processing capabilities.
+
+Ordinary root human output includes an input-route support section:
+extract files accepts xml/json/ndjson; inspect and record indexes accept
+xml/json; record analysis and extract-multi are XML only. NDJSON is not an
+inspect or index input. JSON streaming/indexed and NDJSON extraction require
+record-scoped recipes with eligible selectors and outputs. Indexed source
+documents must be uncompressed; the index store may be JSON or optional
+seekable-zstd. See docs/extract-workflow.md for route eligibility.
+
+This built-in support description performs no runtime capability probe,
+input read or additional network access. It is omitted from JSON/export and
+single-purpose subcommands; machine fields and values remain unchanged.
 
 Features:
 - System information (OS, architecture, Go version, CPU cores)
 - Environment variable inspection with security filtering
 - Network interface detection (optional)
 - External IP detection (optional)
-- XML processing capabilities assessment
+- XML processing capabilities (input-tokenization design target, not run measurement)
 - Multiple output formats (human-readable, JSON, export)
 
 Security: Sensitive environment variables are automatically redacted.
@@ -436,6 +446,12 @@ func outputHumanReadable(cmd *cobra.Command, data *EnvData, exportFormat bool) e
 		return fmt.Errorf("failed to write newline: %w", err)
 	}
 
+	if !exportFormat {
+		if err := outputInputRouteSupport(out); err != nil {
+			return err
+		}
+	}
+
 	// XML Capabilities Section
 	if data.XML.StreamingSupported {
 		if err := writeFprintln(out, "📄 XML Processing Capabilities"); err != nil {
@@ -447,7 +463,11 @@ func outputHumanReadable(cmd *cobra.Command, data *EnvData, exportFormat bool) e
 		if err := writeFprintf(out, "%-16s | %t\n", "Streaming", data.XML.StreamingSupported); err != nil {
 			return fmt.Errorf("failed to write streaming info: %w", err)
 		}
-		if err := writeFprintf(out, "%-16s | %s\n", "Memory Target", data.XML.MaxMemoryTarget); err != nil {
+		memoryTarget := data.XML.MaxMemoryTarget
+		if !exportFormat {
+			memoryTarget = humanXMLMemoryTarget(memoryTarget)
+		}
+		if err := writeFprintf(out, "%-16s | %s\n", "Memory Target", memoryTarget); err != nil {
 			return fmt.Errorf("failed to write memory target: %w", err)
 		}
 		if err := writeFprintf(out, "%-16s | %s\n", "Encodings", strings.Join(data.XML.Encodings, ", ")); err != nil {
@@ -979,6 +999,35 @@ func outputEnvironmentVariables(cmd *cobra.Command, variables map[string]string)
 	return nil
 }
 
+// outputInputRouteSupport describes built-in routes, not host capabilities.
+// Keep it out of machine payloads, export output and single-purpose commands.
+func outputInputRouteSupport(out io.Writer) error {
+	lines := []string{
+		"Input route support (recipe/selector constraints apply)",
+		"==================================================",
+		"Extract files    | xml, json, ndjson",
+		"Inspect          | xml, json",
+		"Record analysis  | xml",
+		"Record indexes   | xml, json; uncompressed source",
+		"Extract-multi    | xml",
+		"JSON streaming/indexed and NDJSON extraction require record-scoped recipes",
+		"with eligible selectors and outputs. NDJSON is not an inspect or index input;",
+		"JSON/NDJSON record analysis is refused. Uncompressed source means the document,",
+		"not the index store (JSON or optional seekable-zstd).",
+		"",
+	}
+	for i, line := range lines {
+		if err := writeFprintln(out, line); err != nil {
+			return fmt.Errorf("failed to write input route support line %d: %w", i+1, err)
+		}
+	}
+	return nil
+}
+
+func humanXMLMemoryTarget(target string) string {
+	return target + " (XML input-tokenization design target; not measured per-run or a JSON bound)"
+}
+
 func collectXMLCapabilities() XMLCapabilities {
 	return XMLCapabilities{
 		StreamingSupported: true,
@@ -1000,7 +1049,7 @@ func outputXMLCapabilities(cmd *cobra.Command, capabilities XMLCapabilities) err
 	if err := writeFprintf(out, "%-16s | %t\n", "Streaming", capabilities.StreamingSupported); err != nil {
 		return fmt.Errorf("failed to write streaming info: %w", err)
 	}
-	if err := writeFprintf(out, "%-16s | %s\n", "Memory Target", capabilities.MaxMemoryTarget); err != nil {
+	if err := writeFprintf(out, "%-16s | %s\n", "Memory Target", humanXMLMemoryTarget(capabilities.MaxMemoryTarget)); err != nil {
 		return fmt.Errorf("failed to write memory target: %w", err)
 	}
 	if err := writeFprintf(out, "%-16s | %s\n", "Encodings", strings.Join(capabilities.Encodings, ", ")); err != nil {

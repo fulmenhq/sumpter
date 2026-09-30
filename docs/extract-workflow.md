@@ -1,6 +1,28 @@
 # Sumpter Extract Workflow
 
-The extract command tokenizes XML inputs incrementally through recipe-driven field mappings and produces structured JSON, NDJSON, and optional Parquet outputs. JSON/NDJSON file output uses the record-sink path for sequential runs and record-index parallel runs, streaming records as they are produced instead of retaining the full output slice for that format. Memory for those routes is bounded with respect to emitted result count by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Unambiguous record-index parallel runs enforce `min_occurrences` from index counts before publishing output and can still use the streaming route. Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed-floor recipes remain buffered in v0.2.0. Recipes control both the business payload and optional metadata so downstream consumers can decide what to retain.
+The extract command reads declared XML, JSON, or NDJSON inputs through recipe-driven field mappings and produces record envelopes or optional Parquet projections. Input parsing and output streaming are separate decisions: a JSONL writer does not make DOM input bounded. Recipes control the business payload and optional metadata.
+
+## Input route support
+
+| Input route     | Supported source formats           |
+| --------------- | ---------------------------------- |
+| Extract files   | `xml`, `json`, `ndjson`            |
+| Inspect         | `xml`, `json`                      |
+| Record analysis | `xml`                              |
+| Record indexes  | `xml`, `json`; uncompressed source |
+| Extract-multi   | `xml`                              |
+
+JSON streaming and indexed extraction, and NDJSON extraction, need a record-scoped recipe and an eligible selector and output. NDJSON is not an inspect or index input; JSON and NDJSON record analysis is refused. “Uncompressed source” means the document the index points at, not the index container: indexes can use JSON storage or optional seekable-zstd storage.
+
+| Extraction route        | Eligibility and limits                                                                                                                                                                                                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| XML DOM / streaming     | Existing document-scoped signatures; streaming uses local-name record boundaries and does not score signatures. It takes the outermost of nested same-name elements.                                                                                                   |
+| JSON DOM                | Below the large-file threshold (100 MB), or with `--allow-large-files`; loads the document. Document- or record-scoped signatures are supported.                                                                                                                       |
+| JSON streaming          | Above the threshold without whole-document opt-in; `match_scope: record`, one `Name` or `//Name` match selector, no applicability predicate, and an eligible record-sink output. A blocked route fails with `route_unsupported`, not a silent DOM fallback.            |
+| NDJSON records          | At any size; one object per nonblank line, `match_scope: record`, one `Name` or `//Name` match selector, no applicability predicate, and an eligible record-sink output. No whole-document route.                                                                      |
+| JSON indexed / parallel | Record-scoped signature and extract match selector equal to the index selector; uncompressed source, raw record ranges/hashes, eligible output. `--max-record-size-mb` defaults to 100 MiB when zero for JSON; XML zero remains unlimited. NDJSON indexes are refused. |
+
+Record-sink JSON/NDJSON file output is bounded with respect to **emitted result count** on eligible sequential and record-index parallel runs. The parallel route uses bounded reorder/backpressure; unambiguous indexed `min_occurrences` floors can be checked from index counts before publication. Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed floors remain buffered. This is not a flat-memory promise: DOM routes load a document; record routes retain active records, parser state, writer buffers and parallel reordering. A file-spanning JSON record, nested selected records, or a wide object checked for duplicate keys can require input-scale memory. See the [node model](standards/document-node-model.md#streaming-records) and [record-sink contract](#recordsink-streaming-contract).
 
 ## Input Formats
 
@@ -18,6 +40,11 @@ numbers keep their source text, `null` binds absent, and there are no
 attributes, so `@k` in an XML recipe becomes `k`. The
 [document node model](standards/document-node-model.md) is the full contract,
 including the wrapper idiom for polymorphic arrays and the inputs JSON rejects.
+XML/JSON twins share the DSL and XPath grammar, not an unchanged recipe. JSON
+refuses attribute/namespace axes and namespace maps. JSON `null` and empty
+arrays bind absent, unlike an empty XML element's empty string. Parsing retains
+number lexemes, but XPath 1.0 numeric operations use floating point; use string
+mappings and `value_text` for exact identifiers above 2^53.
 
 Below the large-file threshold a JSON file is parsed as one document; above
 it, it is read record by record, provided the signature declares
@@ -27,7 +54,8 @@ blocker, and `--allow-large-files` parses it as one document instead. An
 `ndjson` input is always read record by record and needs a
 `match_scope: record` signature. Record-index extraction accepts XML and JSON
 input (JSON under a `match_scope: record` signature), and `extract-multi`
-accepts XML input only in this release. Path-mode discovery defaults to
+accepts XML input only in this release. NDJSON also refuses applicability and
+buffered output. Path-mode discovery defaults to
 `*.json` for JSON input and `*.ndjson` for `ndjson` input. The
 [document node model](standards/document-node-model.md) defines the
 streaming records, line-delimited input, and signature scope.
@@ -35,20 +63,24 @@ streaming records, line-delimited input, and signature scope.
 The provenance manifest records each input's parsed format in
 `inputs[].format`.
 
-| Setting | `json` | `ndjson` |
-| --- | --- | --- |
-| input (`defaults.input.format`) | one JSON document per file | one JSON object per line; each line is one record |
-| output (`defaults.output.format`) | newline-delimited JSON records | the same writer as `json` |
+| Setting                           | `json`                         | `ndjson`                                          |
+| --------------------------------- | ------------------------------ | ------------------------------------------------- |
+| input (`defaults.input.format`)   | one JSON document per file     | one JSON object per line; each line is one record |
+| output (`defaults.output.format`) | newline-delimited JSON records | the same writer as `json`                         |
 
 ## Output Formats
 
-| Mode                 | Description                                                                                                                                    | When to use                                                      |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Structured (default) | A single JSON object containing metadata and recipe-authored data                                                                              | Interactive runs, debugging, consumers that expect a single file |
-| NDJSON               | Records emitted as newline-delimited JSON with sidecar manifests; sequential and record-index parallel file output stream through `RecordSink` | Pipeline ingestion and append-friendly record processing         |
-| Parquet              | Buffered secondary columnar projection declared by recipe output settings                                                                      | Analytics engines and columnar downstream storage                |
+| Destination / format              | Description                                                                                                                                  | When to use                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| File `json` (default) or `ndjson` | The same line writer: one JSON record envelope per line, with optional sidecar manifests. Eligible sequential/indexed runs use `RecordSink`. | Durable record streams and pipeline ingestion                    |
+| Stdout records                    | One JSON record envelope per line, not one wrapped document. Streaming bytes cannot be retracted on later input failure.                     | Interactive inspection or consumers that stage/commit on success |
+| File `parquet`                    | Buffered secondary projection declared by recipe output settings; requires `--output-path`.                                                  | Columnar analytics                                               |
 
-NDJSON is the default durable record output for recipe examples. Parquet is a secondary output path, still requires recipe configuration for the projected columns, and remains buffered in v0.2.0. A run that requests both JSON/NDJSON and Parquet stays on the buffered path so both outputs are produced from the same completed record set.
+Neither file extension nor an input-format token selects a different output
+envelope. Parquet still requires projected-column configuration. A run that
+requests JSON/NDJSON plus Parquet stays buffered so both outputs use the
+completed record set. Reports, dry-run previews, manifests and diagnostics are
+separate surfaces, not record files; diagnostics go to stderr.
 
 ## Portable Artifact Descriptor
 
@@ -86,10 +118,10 @@ field keys.
 
 **Grains.** The primary grain describes extract record outputs:
 
-| Run shape | Primary grain `kind` |
-| --- | --- |
-| Default / per-input extract | `record_stream` |
-| `--output-mode aggregate` (SUM-063 multi-input fan-in) | `aggregation` |
+| Run shape                                              | Primary grain `kind` |
+| ------------------------------------------------------ | -------------------- |
+| Default / per-input extract                            | `record_stream`      |
+| `--output-mode aggregate` (SUM-063 multi-input fan-in) | `aggregation`        |
 
 Aggregate-mode NDJSON representations keep the same protection floor as
 per-input NDJSON (`protection_enforceable_granularity: row`) so multi-input
@@ -108,15 +140,15 @@ enforce: Sumpter emits protection metadata; consumers enforce. These surfaces
 are gated by `--artifact-descriptor` (with `--contract-base`); ordinary extract
 output without that flag stays on the pre-B2 no-opt path.
 
-| Surface | Posture |
-| --- | --- |
-| Top-level `protection` | `default_action: block_export`, `default_export_class: internal`, opaque `profile_ref` |
-| Field catalog keys | Source-structure-derived fields (xpath/description) withheld by count only |
-| Emitted catalog fields | `sensitivity: unknown`, `export_action: block_export` (default-deny) |
-| NDJSON / aggregate NDJSON | `protection_enforceable_granularity: row` |
+| Surface                                | Posture                                                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Top-level `protection`                 | `default_action: block_export`, `default_export_class: internal`, opaque `profile_ref`                                          |
+| Field catalog keys                     | Source-structure-derived fields (xpath/description) withheld by count only                                                      |
+| Emitted catalog fields                 | `sensitivity: unknown`, `export_action: block_export` (default-deny)                                                            |
+| NDJSON / aggregate NDJSON              | `protection_enforceable_granularity: row`                                                                                       |
 | Parquet (with `--artifact-descriptor`) | `protection_enforceable_granularity: column`; page bounds + page statistics suppressed on every leaf; Bloom filters never wired |
-| Parquet (no descriptor) | Pre-B2 writer configuration (page stats/bounds retained); no portable protection claims |
-| Scan claims | `columnar_scan` only — no `predicate_pushdown` without a matching `pushdown_withheld` set |
+| Parquet (no descriptor)                | Pre-B2 writer configuration (page stats/bounds retained); no portable protection claims                                         |
+| Scan claims                            | `columnar_scan` only — no `predicate_pushdown` without a matching `pushdown_withheld` set                                       |
 
 When the B2 opt-in is enabled, Parquet physical metadata follows the contract
 “Metadata Is Content” rule: for each leaf column the writer passes both
@@ -132,13 +164,13 @@ provenance manifest (`value_profile`). Recipe config:
 defaults:
   value_profile:
     enabled: true
-    max_distinct: 100              # optional; default 100
-    small_cell_threshold: 5        # optional; default 5
+    max_distinct: 100 # optional; default 100
+    small_cell_threshold: 5 # optional; default 5
     fields:
       - field: status
         safe_to_profile: true
         sensitivity: public
-      - field: account_id          # untagged → aggregates only
+      - field: account_id # untagged → aggregates only
         protection_tags: [linkage_key]
 ```
 
@@ -157,11 +189,11 @@ manifests (no `value_profile` field).
 mapped from existing provenance completeness signals — no new accounting is
 invented:
 
-| Provenance signal | `lifecycle` |
-| --- | --- |
-| `incomplete: true` (hard failure; orphans may exist) | `incomplete` |
-| Any failed inputs (`inputs_failed > 0`, `inputs[].disposition == "failed"`, or a failed input recorded in `failures.json`) | `partial` |
-| Otherwise (applied and/or not_applicable only) | `complete` |
+| Provenance signal                                                                                                          | `lifecycle`  |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `incomplete: true` (hard failure; orphans may exist)                                                                       | `incomplete` |
+| Any failed inputs (`inputs_failed > 0`, `inputs[].disposition == "failed"`, or a failed input recorded in `failures.json`) | `partial`    |
+| Otherwise (applied and/or not_applicable only)                                                                             | `complete`   |
 
 `draft`, `building`, and `retired` are reserved by the contract. Sumpter extract
 does not emit them for finished runs (`building` would apply only to an
@@ -179,13 +211,13 @@ single PutObject and then removes the staging file, so a post-publish re-open
 would fail. Local destinations still get an end-of-run re-check of sidecars and
 record envelopes on disk.
 
-| Mode | Checks |
-| --- | --- |
-| `off` (default) | No extra output validation |
-| `sidecars` | Provenance `manifest.json`; `failures.json` / `dispositions.json` when present |
-| `artifact` | `sidecars` plus generated `artifact-descriptor.json` and `fields/records.fields.json` (requires `--artifact-descriptor` and `--contract-base`) |
-| `envelope-sample` | `artifact` plus sampled NDJSON record envelopes (first, every 100th, last) against the extract-record-envelope schema |
-| `strict` | `artifact` plus **every** NDJSON record envelope |
+| Mode              | Checks                                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `off` (default)   | No extra output validation                                                                                                                     |
+| `sidecars`        | Provenance `manifest.json`; `failures.json` / `dispositions.json` when present                                                                 |
+| `artifact`        | `sidecars` plus generated `artifact-descriptor.json` and `fields/records.fields.json` (requires `--artifact-descriptor` and `--contract-base`) |
+| `envelope-sample` | `artifact` plus sampled NDJSON record envelopes (first, every 100th, last) against the extract-record-envelope schema                          |
+| `strict`          | `artifact` plus **every** NDJSON record envelope                                                                                               |
 
 ```bash
 sumpter extract files \
@@ -390,12 +422,12 @@ hundreds). Use these signals to verify every input was applied, in order of auth
    safest pipeline gate is `sumpter … || handle_failure` — never assume success without
    checking it.
 2. **Fail-fast (the default) is the never-silently-drop mode.** Without
-    `--continue-on-error`, the first input failure (or floor miss) aborts the whole run and
-    exits non-zero. That recipe's uncommitted work cannot publish a successful aggregate
-    marker with a shortened inventory, so you cannot accidentally treat it as a complete
-    dataset. Previously committed sibling recipes and a recipe whose manifest already
-    renamed are not retracted; reconcile any non-zero invocation before consuming its
-    outputs. Use the default when completeness is non-negotiable.
+   `--continue-on-error`, the first input failure (or floor miss) aborts the whole run and
+   exits non-zero. That recipe's uncommitted work cannot publish a successful aggregate
+   marker with a shortened inventory, so you cannot accidentally treat it as a complete
+   dataset. Previously committed sibling recipes and a recipe whose manifest already
+   renamed are not retracted; reconcile any non-zero invocation before consuming its
+   outputs. Use the default when completeness is non-negotiable.
 3. **`--continue-on-error` is an explicit opt-in to drop-tolerance**, and it moves the
    completeness burden to you. The run still exits non-zero if anything failed;
    `failures.json` enumerates **every** dropped input (path + reason) and is the
@@ -735,11 +767,11 @@ recorded as `input_unavailable` and no `failures.json` is written.
 Input ordinals are assigned in the resolved order and are not changed by this
 option:
 
-| Source | Ordinal |
-| --- | --- |
-| `--file-list` | 1-based listed order after blank and `#` lines; not sorted |
-| `--files` | Caller order; not sorted |
-| `--input-path` | Discovery paths sorted before ordinals are assigned |
+| Source         | Ordinal                                                    |
+| -------------- | ---------------------------------------------------------- |
+| `--file-list`  | 1-based listed order after blank and `#` lines; not sorted |
+| `--files`      | Caller order; not sorted                                   |
+| `--input-path` | Discovery paths sorted before ordinals are assigned        |
 
 `_runtime.input_ordinal` uses the same 1-based index when
 `--emit-input-identity` is enabled for aggregate NDJSON. The identity option is
@@ -820,7 +852,7 @@ defaults:
   parameters:
     curated_prefixes: ["NM_", "NR_", "NC_"] # list-typed; operator-overridable
   parameters_internal:
-    - curated_prefixes                  # expression-visible, not emitted
+    - curated_prefixes # expression-visible, not emitted
 
 # extract.yaml — one helper, no inlined member list:
 field_mappings:
@@ -919,7 +951,7 @@ Evaluation stays **two-phase**: every top-level XPath mapping (including interna
 
 > Same posture as source/parameter internals: output shaping, not secrecy. Do not rely on it to keep sensitive values out of output.
 >
-> **Internal field *names* are not confidential.** Suppression removes internals from the portable field contract, data columns, provenance field_provenance **entries**, and value_profile — it does **not** erase names from run provenance. The full recipe still appears in `recipe.extract_yaml` (content-hash / reproducibility), and emitted fields may reference helpers by name in their `expression` lineage strings. Do not put secrets in field names (the same rule as any other mapping).
+> **Internal field _names_ are not confidential.** Suppression removes internals from the portable field contract, data columns, provenance field_provenance **entries**, and value_profile — it does **not** erase names from run provenance. The full recipe still appears in `recipe.extract_yaml` (content-hash / reproducibility), and emitted fields may reference helpers by name in their `expression` lineage strings. Do not put secrets in field names (the same rule as any other mapping).
 
 ### Reference Tables
 
@@ -1107,7 +1139,7 @@ Semantics:
   **not bound** in the map fails at **config load** (fail-closed) with the
   offending config, XPath, and prefix named — no silent 0-match from a typo'd
   or unbound prefix.
-- **Bare name tests stay lenient.** A `namespaces:` map governs *prefixed* tests;
+- **Bare name tests stay lenient.** A `namespaces:` map governs _prefixed_ tests;
   an unprefixed test like `//Record` keeps lenient matching. Because a bare test
   does **not** match fully-prefixed documents, one used alongside a non-empty map
   emits a load-time warning (it will silently under-match prefixed input) — bind
@@ -1127,7 +1159,7 @@ Scope of binding in this release:
   work at the boundary too. This is the acceptance target; see the worked
   example `examples/cases/12-namespace-binding`.
 - **Streaming and indexed modes.** The record-boundary selector is matched by
-  **local name only**, so a bound prefix on the *boundary* is not URI-resolved
+  **local name only**, so a bound prefix on the _boundary_ is not URI-resolved
   in these modes and cannot disambiguate two records that share a local name in
   different URIs — binding still applies to field/relative-path XPaths within a
   matched record. Full boundary parity across modes is tracked separately.
@@ -1150,7 +1182,7 @@ mode-dependent:
 - **Streaming** re-encodes buffered tokens, rewriting `<v:Record>` to
   `<Record xmlns="URI">`. A literal-prefix test can silently match **zero**
   records once an input crosses the streaming threshold, and a bare `//Record`
-  can conversely *start* matching — so results can change with input size, with
+  can conversely _start_ matching — so results can change with input size, with
   no diagnostic.
 - **Indexed** parses each record fragment without the ancestor `xmlns`
   declarations that were in scope on the full document, so a literal-prefix test
@@ -1242,15 +1274,28 @@ The in-tree memory-regression fixture exercises both sequential and
 record-index parallel JSON/NDJSON sink routes with synthetic many-record input
 and verifies that the streaming APIs do not populate `ExtractResult.Records`.
 
-Record-index streaming JSON/NDJSON output is transactional for the indexed
-source: if any indexed record fails to read or extract, Sumpter emits a failed
-file boundary, aborts the temporary JSONL target, and returns a terminal error.
-`--continue-on-error` remains a multi-source buffered-run recovery control; it
-does not publish partial record-index streaming output after a per-record
-failure.
+Sink callbacks and stdout records are **provisional until terminal success**
+for that input. They may already have been delivered before a late parse,
+signature or extraction failure; stdout bytes cannot be retracted. Library
+and stdout consumers must stage results and commit only on success, or otherwise
+handle provisional data. `set -o pipefail` detects failure but does not undo
+downstream side effects.
+
+File-backed JSONL record sinks withhold staged rows on a **pre-commit
+input/extraction failure**: a failed indexed record aborts the temporary target
+instead of publishing a partial successful input. This is not rollback on
+every terminal error. A local commit renames the file before later validation
+or publish checks; a later failure can leave that committed artifact. Outputs
+from earlier completed inputs can also remain. Check the command's terminal
+status and reconcile manifests/failures rather than treating file existence as
+success. `--continue-on-error` does not turn a failed record into an applied
+success or authorize partial indexed-input publication.
 
 ### Empty-output contract and `min_occurrences`
 
+A valid parsed input with zero selected matches can succeed under the default
+zero floor; this is different from **zero discovered inputs**, which is an
+error before output creation. An empty/blank-only NDJSON input is also an error.
 A successful extract run writes the requested output artifact even when a
 source file yields zero records. JSONL output is a zero-byte file. Parquet
 output is a schema-only file with zero rows, using the fields declared by the
@@ -1665,29 +1710,29 @@ The credentials config is parsed fail-closed: an unknown or misspelled field
 default. A missing or undefined handle fails at load time, before any object is
 read or written.
 
-## Streaming / NDJSON (Future Work)
+## JSONL Record Envelopes
 
-The upcoming NDJSON mode will emit:
-
-1. **Header**: `_runtime` and optional `_validation` in the first record (for consumers that want run metadata separate from data rows).
-2. **Records**: Each data row emitted as a JSON line (format defined by the recipe, similar to `extract.data`).
-3. **Footer**: Optional summary or audit record.
-
-Recipes will reuse the same `output_options` block. Additional NDJSON-specific flags (e.g., `ndjson.include_header`) will be introduced alongside the implementation.
+The `json` and `ndjson` file-output tokens already use the same JSONL writer.
+Each line is a complete record envelope with `_runtime`, `extract.data`, and
+the recipe-selected summary/validation metadata. There is no special first-line
+header or last-line footer, and no `ndjson.include_header` flag. Sidecar
+manifests carry run/input/output provenance; input `ndjson` independently means
+one source object per line.
 
 ## Consumer Guidance
 
-- If you need only the business data, read `extract.data` (structured mode) or the NDJSON record stream (future) and drop `_runtime`/`_validation`.
+- If you need only the business data, read each line's `extract.data` and drop `_runtime`/`_validation`.
 - If you need audit trails or completeness checks, inspect `_validation` and the summary contents in addition to the primary payload.
-- Recipes should keep metadata blocks lightweight so downstream consumers can safely load the entire JSON into memory, even if they discard the ancillary sections.
+- Read records incrementally rather than loading an entire JSONL file as one JSON document. A record can still be large; metadata is not an end-to-end memory guarantee.
+- For stdout/library delivery, stage provisional records and commit only on terminal success; piping directly into a side-effecting consumer cannot undo a failed input.
 
-## Example (Structured Output)
+## Example (One Record Envelope, Pretty-Printed)
 
 ```
 {
   "_runtime": {
     "generated_at": "2025-10-02T11:39:30Z",
-    "source_file": ".scratchpad/data/retail/transactions.xml",
+    "source_file": "transactions.xml",
     "record_type": "retail_daily_sales",
     "summaries_included": true,
     "validation_included": true

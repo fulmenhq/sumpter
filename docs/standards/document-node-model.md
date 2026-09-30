@@ -115,9 +115,15 @@ A plain step `a:b` selects nothing: XPath reads `a` as a namespace prefix.
 
 ## What JSON input rejects
 
-These are hard errors. Parse errors produce no records, even when well-formed
-records come before the bad byte. Load errors are raised before any input is
-read. Byte offsets are relative to the start of the file.
+These are hard errors. A parse error fails the input, even when well-formed
+records came before the bad byte. File-backed record sinks withhold staged
+rows on pre-commit input/extraction failure. Stdout/library deliveries are
+provisional until terminal success and cannot be retracted by the producer;
+consumers must handle failure before committing results. Later validation or
+publish failures can leave committed local artifacts, as can earlier completed
+inputs. See [publication boundaries](../extract-workflow.md#recordsink-streaming-contract).
+Load errors are raised before any input is read. Byte offsets are relative to
+the start of the file.
 
 When an input has more than one fault, the first fault in byte order is
 reported, whether the input is extracted or inspected. Every byte is checked,
@@ -193,8 +199,10 @@ and child elements are exactly the whole-document route's.
   in it, the nesting depth, and the keys of each open object checked for
   duplicates. A selected record that spans the input, or a very wide object,
   can need memory on the scale of the input.
-- A fault anywhere in an input fails that input, and none of its records are
-  published, including records read before the fault; see
+- A fault anywhere in an input fails that input. Pre-commit file-backed record
+  sinks withhold staged rows, but stdout/library deliveries can already contain
+  provisional records and are not retractable. This is not rollback of already
+  committed files after a later validation/publish error; see
   [What JSON input rejects](#what-json-input-rejects).
 
 ## Line-delimited JSON (`ndjson`)

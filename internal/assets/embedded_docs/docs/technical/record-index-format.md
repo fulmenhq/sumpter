@@ -94,7 +94,15 @@ depth, the record count, and every record hash to match.
 Each record's bytes are read from the source file opened once for the run
 and checked against the index hash before they are parsed; the record-scoped
 signature is scored on each record; and the first failure in record order
-fails the input with no rows published. The records must be listed in
+fails the input. File-backed record sinks withhold staged rows on pre-commit
+input/extraction failure. Stdout/library deliveries may already have occurred:
+they are provisional until terminal success and cannot be retracted by the
+producer. Consumers must handle failure before committing results. Later
+validation/publish errors can leave committed local files, and earlier
+completed inputs can remain; there is no post-rename rollback promise. See
+[publication boundaries](../extract-workflow.md#recordsink-streaming-contract).
+
+The records must be listed in
 document order: each starts after the one before it and either lies wholly
 inside an enclosing record, at a greater depth, or starts after that record
 ends; a record out of order, a repeated or crossing range, or a nested record

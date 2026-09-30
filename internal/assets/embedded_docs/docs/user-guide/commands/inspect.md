@@ -10,11 +10,11 @@ sumpter inspect [file] [flags]
 
 ## Description
 
-The `inspect` command performs a comprehensive streaming analysis of XML files to understand their structure, encoding, and content patterns. It uses streaming input parsing for large files (100MB+) with configurable sampling to balance speed and insight.
+The `inspect` command profiles XML by default or a JSON document with `--input-format json`. Both routes parse incrementally and report paths, counts and bounded samples. XML encoding, attributes and record-analysis options are XML-specific; JSON reports value kinds and follows the JSON node model. NDJSON inspection is refused. See the [input-route matrix](../../extract-workflow.md#input-route-support).
 
 ## Parameters
 
-- `file`: Path to XML file to inspect (use `-` for stdin)
+- `file`: XML or JSON source to inspect (use `-` for stdin); JSON requires `--input-format json`
 
 ## Flags
 
@@ -37,7 +37,8 @@ content or the file name.
 
 - `--input-format`: Input syntax, `xml` (default) or `json`.
 
-Under `json`, `inspect` walks the document as a stream (bounded memory) and
+Under `json`, `inspect` walks the document incrementally, retaining parser,
+nesting/duplicate-key state and capped report metadata rather than a DOM, and
 reports every key path the way extraction sees it (see the
 [document node model](../../standards/document-node-model.md)): a member whose
 value is an array produces one element per item, an empty array produces no
@@ -66,6 +67,11 @@ array.
   duplicate keys, nesting deeper than 1024, a second top-level value, truncated
   input, a top-level scalar, and empty input all fail with no report, using the
   same error text as extraction. Errors carry byte offsets, not input excerpts.
+
+Number samples preserve source text, including integers above 2^53. Parsing
+does not round them, but XPath numeric evaluation does use floating point;
+exact identifiers in recipes need string mappings and `value_text`. Incremental
+parsing is not a fixed-RSS promise for arbitrarily deep/wide objects.
 
 **Paths.** Every path entry carries `segments`, the verbatim node names from the
 root, which are the path's authoritative identity. `path` is a display string:

@@ -4,12 +4,23 @@ Guide to building and using record indexes for seekable extraction and parallel 
 
 ## Overview
 
-Record indexes map the byte boundaries of repeating XML elements in your source files. Sumpter's default index build path uses a streaming writer with memory bounded by parser state and writer buffering, allowing you to work with files that are too large to load into RAM. Once indexed, you can:
+Record indexes map record boundaries in uncompressed XML or JSON sources.
+Declare the source syntax with `--input-format` (`xml` by default), not the
+index-storage format or file extension. NDJSON indexes are refused. JSON
+indexed extraction needs a record-scoped signature, an eligible output, and
+an extract selector equal to the index selector; see the
+[input-route matrix](../extract-workflow.md#input-route-support).
+
+The default build path parses incrementally and streams index rows instead
+of retaining the full row array. Memory still includes parser/record state,
+namespace context for XML, duplicate-key/nesting state for JSON, and writer
+buffers; exact percentiles retain record sizes. This is not a universal
+fixed-RSS claim. Once indexed, you can:
 
 - Extract specific records by position without parsing the entire file
 - Run parallel extraction with worker pools that seek to different file offsets
 - Verify data integrity with SHA-256 checksums at both file and record level
-- Process multi-GB files with minimal memory overhead
+- Reuse record boundaries without loading a whole source DOM
 
 ## When to Use Indexes
 
@@ -42,7 +53,10 @@ gunzip -c large-dataset.xml.gz > large-dataset.xml
 sumpter index build large-dataset.xml --selector "//Record"
 ```
 
-Record indexes are source-byte indexes. Build them from uncompressed XML so verification and parallel extraction can seek to the same bytes recorded in the index.
+Record indexes are source-byte indexes. Decompress XML or JSON **source
+documents** before indexing so verification/extraction can seek to the same
+bytes. This does not forbid a compressed seekable-zstd **index store**;
+CGO/source-build support controls that optional store independently.
 
 ### When Indexes Don't Help
 
@@ -62,7 +76,7 @@ Record indexes are source-byte indexes. Build them from uncompressed XML so veri
 
 ### Step 1: Inspect the Source
 
-Before building an index, identify the record selector:
+Before building an index, identify the record selector. For XML:
 
 ```bash
 # Analyze XML structure
@@ -80,17 +94,25 @@ element name with exact case-sensitive matching. Use `Transaction` or
 namespace-prefixed forms are rejected because they are not yet supported for
 streaming/index mode.
 
-The inspect command shows:
+XML record analysis shows:
 
 - How many records match the selector
 - Average record size
 - Total file size
 - Estimated memory for DOM-based extraction
 
+For JSON, use `sumpter inspect data.json --input-format json` to profile key
+paths, then choose an eligible single-key selector such as `results` or
+`//results` using the [node model](../standards/document-node-model.md).
+`inspect --analyze-records` is XML only, not a prerequisite for JSON indexing.
+JSON preserves number lexemes and raw source ranges; XPath numeric operations
+still use floating point, so exact identifiers above 2^53 need string mappings
+and `value_text`. Null binds absent, not XML's empty string.
+
 ### Step 2: Build the Index
 
 ```bash
-# Basic index build (JSON format, default)
+# XML source, JSON index storage (default)
 sumpter index build data.xml \
   --selector "//Transaction" \
   --output data.recordindex.json
@@ -123,8 +145,11 @@ sumpter index build events.json \
 
 `--input-format` declares the source syntax (`xml` by default); it is never
 inferred from the file name, and `index verify` and `index stream` take the
-same flag. JSON indexes use `--input-format json`; a record's offsets are the
-value's own bytes in the source. To extract from a JSON index, the signature
+same flag. A **JSON source** uses `--input-format json` regardless of whether
+its index is stored as JSON or seekable-zstd. A record's offsets span the
+value's own raw bytes, excluding surrounding whitespace, separators and BOM;
+the BOM still counts toward absolute source offsets and the whole-source
+digest. To extract from a JSON-source index, the signature
 must declare `match_scope: record` and the extract match selector must equal
 the index's selector. `ndjson` sources are not indexed in this release. For
 JSON, `index verify` always scans the source again and compares every record,
@@ -141,22 +166,28 @@ not only the source hash. See the
 
 **Memory Usage:**
 
-- Default path is bounded by XML parser state and writer buffering
+- Default path streams index rows, retaining parser/record state and writer buffering rather than the full row array
 - Exact percentile flags (`--p50`, `--p95`, `--p99`) retain record sizes to calculate exact values
-- Tested with 59 GB XML file using <100 MB RAM
-- Index size: ~25-35 bytes per record in JSON format
+- Historical 59 GB XML measurements below apply only to that XML workload/route, not JSON or every extraction mode
+- JSON scan memory depends on active record spans, nesting and duplicate-key state; a wide object or file-spanning record can require input-scale memory
+- Indexed JSON extraction defaults to a 100 MiB record cap when `--max-record-size-mb` is zero; XML zero remains unlimited, and JSON does not apply `--skip-large-records`
 
 ### Step 3: Verify the Index
 
 ```bash
-# Quick verification (source file integrity only)
+# XML verification (source integrity by default)
 sumpter index verify data.xml \
   --index data.recordindex.json
 
-# Deep verification (validates all record checksums)
+# XML deep verification (also validates all record checksums)
 sumpter index verify data.xml \
   --index data.recordindex.json \
   --verify-records
+
+# JSON semantic verification always rescans selection as well as source identity
+sumpter index verify events.json \
+  --input-format json \
+  --index indexes/events.recordindex.json
 ```
 
 Verification checks:
@@ -165,6 +196,19 @@ Verification checks:
 - ✓ Source file SHA-256 matches index metadata
 - ✓ Source file has not been modified since index creation
 - ✓ (Deep mode) Each record's byte range checksum matches
+
+For JSON sources, `index verify` always rescans with the selector and compares
+every record's number, range, size, name, depth and hash, plus the total count.
+Structural admission and per-range hashes alone do not prove selector
+completeness. Extraction's `--verify-index` binds whole-source hashes and
+file identity/size before and after the run, but a consistently forged
+selection needs semantic `index verify` to detect it.
+
+On a pre-commit input/extraction failure, file-backed record sinks withhold
+staged output; this is not rollback of already committed artifacts after
+later validation/publish failure. Stdout/library records are provisional and
+non-retractable, and earlier completed inputs can remain. See
+[publication boundaries](../extract-workflow.md#recordsink-streaming-contract).
 
 **When to Verify:**
 
@@ -249,7 +293,10 @@ Output:
   Records verified: 588
 ```
 
-### Example 2: Large Public Variant Data (4.7 GB Archive, 3.7M Records)
+### Example 2: Large Public XML Variant Data (4.7 GB Archive, 3.7M Records)
+
+The measurements here describe the historical XML workload, not JSON input
+or release-binary proof for other routes.
 
 ```bash
 # Decompress the public archive before indexing
@@ -303,9 +350,14 @@ Sumpter supports two index formats:
 
 The durable format contract is documented in
 [Record Index Format](../technical/record-index-format.md). Current JSON
-indexes emit `record-index/v0.1.3`, which records the source syntax in
+index stores emit `record-index/v0.1.3`, which records the source syntax in
 `source.format`. Indexes built by this release are not readable by earlier
-releases.
+releases for verification/extraction. New seekable headers are also refused
+by earlier `index stream`, but earlier `index stream` on a new JSON-store
+index can print metadata/statistics and exit 0. That exit is not a refusal or
+proof of compatibility; it reads no source bytes. Current readers continue to
+accept older XML-only indexes. See the
+[compatibility contract](../technical/record-index-format.md#compatibility).
 
 ### JSON Format Structure
 
@@ -391,11 +443,15 @@ For extreme-scale indexes (millions of records), Sumpter supports a compressed b
 
 ### Why Seekable-Zstd?
 
-| Metric                   | JSON Format     | Seekable-Zstd | Improvement    |
-| ------------------------ | --------------- | ------------- | -------------- |
-| Disk Size (3.7M records) | ~1 GB           | ~50-100 MB    | 10-20x smaller |
-| Memory (streaming)       | Constant        | Constant      | Same           |
-| Random Access            | Sequential scan | O(1) seek     | Parallel-ready |
+| Metric                   | JSON Format         | Seekable-Zstd             | Improvement     |
+| ------------------------ | ------------------- | ------------------------- | --------------- |
+| Disk Size (3.7M records) | ~1 GB               | ~50-100 MB                | 10-20x smaller  |
+| Memory (streaming)       | Parser/writer state | Parser/writer/frame state | Route-dependent |
+| Random Access            | Sequential scan     | O(1) seek                 | Parallel-ready  |
+
+The size comparison is the historical XML index above. Neither store removes
+active-record/input-parser memory or buffered-output costs, and exact
+percentiles add storage proportional to record count.
 
 ### Output Files
 
@@ -509,7 +565,7 @@ sumpter index build compressed.xml \
 
 1. Detect compression from file extension
 2. Reject compressed input before hashing, scanning, or writing an index
-3. Decompress to a normal XML file
+3. Decompress to a normal XML or JSON source file
 4. Build index from source-byte offsets
 5. Mark `source.compressed = false` and `source.offset_kind = "source_bytes"` in index
 
@@ -739,7 +795,7 @@ sumpter extract files \
 
 ## Summary
 
-Record indexes enable efficient processing of large XML files by:
+Record indexes enable repeated, indexed XML/JSON processing by:
 
 - Mapping record boundaries once, using many times
 - Enabling random access without full file parsing

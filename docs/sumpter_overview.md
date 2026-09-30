@@ -1,12 +1,22 @@
 # Sumpter Overview
 
-**Crush XML. Haul Data. Ship Insights. Thrive on Scale.**
+**Recipe-driven extraction from XML, JSON, and NDJSON, with route-specific streaming and indexed processing.**
+
+| Input route     | Supported source formats           |
+| --------------- | ---------------------------------- |
+| Extract files   | `xml`, `json`, `ndjson`            |
+| Inspect         | `xml`, `json`                      |
+| Record analysis | `xml`                              |
+| Record indexes  | `xml`, `json`; uncompressed source |
+| Extract-multi   | `xml`                              |
+
+JSON streaming and indexed extraction, and NDJSON extraction, need a record-scoped recipe and an eligible selector and output. NDJSON is not an inspect or index input; JSON and NDJSON record analysis is refused. JSON DOM extraction loads a document; not every route streams. The indexed source document must be uncompressed, but the index may use JSON or optional seekable-zstd storage. The authoritative [input-route matrix](extract-workflow.md#input-route-support) defines eligibility.
 
 ---
 
 ## 1. Problem Background
 
-Enterprises still rely heavily on XML for transactions, trades, and compliance data. These files are:
+Data pipelines consume XML documents, JSON documents, and line-delimited JSON records. These inputs can be:
 
 - **Massive**: 100MB–10GB+ logs and reports (ClinVar releases run multi-GB compressed, multi-TB uncompressed across history).
 - **Variant-heavy**: multiple vendor or release dialects per domain (e.g., XBRL taxonomy variants across regulators, ClinVar revisions across releases, FIXML variants across brokerages, POS-journal dialects across vendors).
@@ -19,12 +29,13 @@ Traditional DOM parsers crash on size. Heavy ETL tools require weeks of configur
 
 ## 2. Sumpter’s Solution
 
-Sumpter is a **Go-based XML extraction engine** designed for:
+Sumpter is a **Go-based, recipe-driven extraction engine** designed for:
 
-- **Streaming input parsing and JSONL output**: token-by-token XML reads where the streaming path applies; JSON/NDJSON file output streams records through the record-sink path for sequential runs and record-index parallel runs with memory bounded by parser state, active record work, writer buffers, and the configured reorder window for parallel runs. Unambiguous record-index parallel `min_occurrences` floors are enforced from index counts before output publication and can keep the streaming route. Parquet, mixed-output, sequential `min_occurrences`, and ambiguous indexed-floor paths remain buffered in v0.2.0.
-- **Resilience**: UTF-8 normalization, BOM handling, and explicit fail-fast behavior for malformed inputs.
+- **Route-specific streaming and JSONL output**: token-by-token XML reads where applicable and eligible JSON/NDJSON record parsing. JSON/NDJSON file output streams through record sinks on eligible sequential/indexed routes with bounded output-count state and parallel reordering. Input DOM, active records, nesting and duplicate-key state still cost memory; a file-spanning JSON record or wide object may need input-scale memory. Parquet, mixed-output, sequential `min_occurrences`, and ambiguous indexed floors remain buffered. Indexed JSON records default to a 100 MiB cap; XML's zero limit remains unlimited.
+- **Resilience**: XML encoding normalization, UTF-8-only JSON/NDJSON with one leading UTF-8 BOM accepted, and explicit failures for malformed inputs, including duplicate JSON keys and invalid UTF-8.
 - **Config-driven extraction**: YAML-first configs validated against JSON Schema.
-- **Namespace-portable recipes**: an opt-in `namespaces:` map binds XPath prefixes to namespace URIs, so one recipe extracts the same fields whether a document uses different literal prefixes or a default namespace. Recipes without a map are unchanged (byte-compatible default), an undeclared prefix fails closed at config load, and bound field selection resolves consistently across whole-document, streaming, and indexed execution.
+- **One DSL and XPath grammar**: format-specific XML/JSON twin recipes can yield identical typed `extract.data`; JSON has no attributes or namespaces, and `null` binds absent rather than XML's empty string. Parsing retains number lexemes, but XPath numeric evaluation uses floating point; preserve identifiers above 2^53 with string mappings and `value_text`. See the [document node model](standards/document-node-model.md).
+- **Namespace-portable XML recipes**: an opt-in `namespaces:` map binds XPath prefixes to namespace URIs, so an XML recipe extracts the same fields across different literal prefixes or a default namespace. JSON/NDJSON refuse namespace maps and axes.
 - **Inspection and diagnostics**: structure reports, encoding detection, and environment diagnostics.
 - **Analytics-ready outputs**: JSON/NDJSON records and Parquet projections.
 - **Operational visibility**: structured logs and machine-readable command output.
@@ -47,7 +58,7 @@ Sumpter is a **Go-based XML extraction engine** designed for:
   silent-wrong sign totals. Factor-first authoring notes are in the extract
   workflow guide.
 
-This combination enables teams to move from raw XML to queryable tables **in minutes, not weeks**.
+Recipes define the source shape and the emitted fields; they are not unchanged across input formats. Start with the [worked examples](../examples/README.md) and public JSON notes for [USGS](appnotes/sourcedata/science/usgs-geojson.md), [SEC EDGAR](appnotes/sourcedata/finance/sec-edgar-json.md), and [openFDA](appnotes/sourcedata/health/openfda-drug-event.md). These examples are not release-binary scale evidence or cross-feed parity proofs.
 
 Roadmap items such as DuckDB output, service health endpoints, Prometheus metrics,
 adaptive backpressure, repair modes, and incremental Parquet writing are tracked
@@ -59,8 +70,9 @@ separately from the current public capability surface.
 
 ```
 ┌───────────────┐   ┌───────────────────┐   ┌───────────────────┐   ┌─────────────────┐
-│   Input        │──▶│  Stream Processor │──▶│  Extraction Engine │──▶│   Writers        │
-│ (File/Stdin)   │   │ (encoding/xml)    │   │ (XPath, Filters)   │   │ (JSON/NDJSON,    │
+│ Declared Input │──▶│  Selected Route   │──▶│  Extraction Engine │──▶│   Writers        │
+│ (XML/JSON/     │   │ (DOM, record,     │   │ (XPath, Filters)   │   │ (JSON/NDJSON,    │
+│  NDJSON)       │   │  indexed)         │   │                    │   │                 │
 └───────────────┘   └───────────────────┘   └───────────────────┘   │ Parquet)         │
                                                                       └─────────────────┘
                         ▲                     │
@@ -73,10 +85,10 @@ separately from the current public capability surface.
 
 **Key design choices:**
 
-- **Input streaming first**: parse XML incrementally and avoid DOM-scale memory growth.
+- **Explicit routes**: XML streaming, JSON DOM or eligible streaming/indexed records, and NDJSON records; DOM and buffered outputs are not bounded end-to-end.
 - **Recipe-owned shape**: extracted fields and output schemas are declared outside the engine.
 - **Versioned schemas**: command outputs and recipe formats have explicit schema contracts.
-- **Fail-fast safety**: malformed inputs and invalid recipes fail clearly instead of silently repairing data.
+- **Fail-fast safety**: malformed inputs and invalid recipes fail clearly instead of silently repairing data. Stdout/library deliveries are provisional and non-retractable; consumers must handle failure before committing results. File-backed record sinks withhold staged rows on pre-commit input/extraction failure, not every terminal error: later validation/publish failures can leave committed local files, as can earlier completed inputs. See [publication boundaries](extract-workflow.md#recordsink-streaming-contract).
 
 ---
 
@@ -134,4 +146,4 @@ MIT is simpler, but lacks explicit patent protection and attribution enforcement
 
 ## 8. Summary
 
-Sumpter combines **streaming speed**, **diagnostic clarity**, and **enterprise resilience** to solve the XML integration crisis. With Fulmen’s “Thrive on Scale” ethos at its core, Sumpter is positioned to become the definitive open-source tool for turning XML chaos into analytics-ready data.
+Sumpter combines declared input formats, recipe-owned shapes, route-specific streaming/indexing, and traceable outputs. Choose the route from the support matrix and its memory/recipe constraints, not from the file extension or a universal streaming promise.

@@ -3,9 +3,12 @@ package commands
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1024,4 +1027,275 @@ func TestWriteHelpers(t *testing.T) {
 			t.Errorf("writeFprintln() = %q, want %q", buf.String(), expected)
 		}
 	})
+}
+
+const wantEnvInfoRoutes = `Input route support (recipe/selector constraints apply)
+==================================================
+Extract files    | xml, json, ndjson
+Inspect          | xml, json
+Record analysis  | xml
+Record indexes   | xml, json; uncompressed source
+Extract-multi    | xml
+JSON streaming/indexed and NDJSON extraction require record-scoped recipes
+with eligible selectors and outputs. NDJSON is not an inspect or index input;
+JSON/NDJSON record analysis is refused. Uncompressed source means the document,
+not the index store (JSON or optional seekable-zstd).
+
+`
+
+const wantHumanXMLTarget = "<50MB RSS (XML input-tokenization design target; not measured per-run or a JSON bound)"
+
+func envInfoPresentationFixture() *EnvData {
+	return &EnvData{
+		System: SystemInfo{OS: "test", Architecture: "test", GoVersion: "test", NumCPU: 1,
+			Hostname: "test", WorkingDir: ".", Timestamp: time.Unix(0, 0).UTC()},
+		Variables: map[string]string{"SUMPTER_TEST": "value"},
+	}
+}
+
+func TestEnvInfoRootHumanRoutes(t *testing.T) {
+	for _, xml := range []bool{false, true} {
+		t.Run(fmt.Sprintf("xml=%t", xml), func(t *testing.T) {
+			data := envInfoPresentationFixture()
+			if xml {
+				data.XML = collectXMLCapabilities()
+			}
+			var out bytes.Buffer
+			cmd := NewEnvInfoCommand()
+			cmd.SetOut(&out)
+			if err := outputHumanReadable(cmd, data, false); err != nil {
+				t.Fatal(err)
+			}
+			text := out.String()
+			if strings.Count(text, wantEnvInfoRoutes) != 1 {
+				t.Fatalf("expected route section exactly once:\n%s", text)
+			}
+			if strings.Index(text, "Timestamp") > strings.Index(text, "Input route support") ||
+				strings.Index(text, "Input route support") > strings.Index(text, "Application Environment") {
+				t.Fatalf("route section is not after system info: %s", text)
+			}
+			if got := strings.Count(text, wantHumanXMLTarget); got != boolToCount(xml) {
+				t.Fatalf("XML target annotations = %d, want xml=%t", got, xml)
+			}
+			if xml && data.XML.MaxMemoryTarget != "<50MB RSS" {
+				t.Fatal("human renderer mutated machine target")
+			}
+		})
+	}
+}
+
+func boolToCount(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func TestEnvInfoPresentationModes(t *testing.T) {
+	t.Setenv("SUMPTER_HOME", t.TempDir())
+	t.Setenv("SUMPTER_WORKDIR", t.TempDir())
+	t.Setenv("SUMPTER_PRESENTATION_FIXTURE", "value")
+	for _, mode := range []string{"human", "json", "export", "json+export"} {
+		for _, xml := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/xml=%t", mode, xml), func(t *testing.T) {
+				args := []string{"--all", "--filter", "SUMPTER_PRESENTATION_FIXTURE"}
+				if xml {
+					args = append(args, "--xml")
+				}
+				if strings.Contains(mode, "json") {
+					args = append(args, "--json")
+				}
+				if strings.Contains(mode, "export") {
+					args = append(args, "--export")
+				}
+				var out bytes.Buffer
+				cmd := NewEnvInfoCommand()
+				cmd.SetOut(&out)
+				cmd.SetErr(io.Discard)
+				cmd.SetArgs(args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				text := out.String()
+				if got := strings.Count(text, "Input route support"); got != boolToCount(mode == "human") {
+					t.Fatalf("route section count = %d for %s", got, mode)
+				}
+				if mode != "human" && strings.Contains(text, "design target") {
+					t.Fatalf("human annotation leaked to %s", mode)
+				}
+				if strings.Contains(mode, "json") {
+					var payload map[string]json.RawMessage
+					if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+						t.Fatal(err)
+					}
+					// These struct-valued sections are emitted even when empty;
+					// pin the existing root key set, not new capability fields.
+					wantKeys := []string{"system", "network", "variables", "stats", "xml", "application"}
+					if len(payload) != len(wantKeys) {
+						t.Fatalf("unexpected root key set: %v", payload)
+					}
+					for _, key := range wantKeys {
+						if _, ok := payload[key]; !ok {
+							t.Fatalf("missing root key %s", key)
+						}
+					}
+					var caps XMLCapabilities
+					if err := json.Unmarshal(payload["xml"], &caps); err != nil {
+						t.Fatal(err)
+					}
+					wantCaps := XMLCapabilities{}
+					if xml {
+						wantCaps = collectXMLCapabilities()
+					}
+					if !reflect.DeepEqual(caps, wantCaps) {
+						t.Fatalf("machine XML values changed: %+v", caps)
+					}
+					var xmlKeys map[string]json.RawMessage
+					if err := json.Unmarshal(payload["xml"], &xmlKeys); err != nil {
+						t.Fatal(err)
+					}
+					if len(xmlKeys) != 4 {
+						t.Fatalf("new machine XML keys: %v", xmlKeys)
+					}
+				} else if mode == "export" && !strings.Contains(text, `export SUMPTER_PRESENTATION_FIXTURE="value"`) {
+					t.Fatal("existing export assignment missing")
+				}
+			})
+		}
+	}
+}
+
+func TestEnvInfoSinglePurposePresentation(t *testing.T) {
+	t.Setenv("SUMPTER_HOME", t.TempDir())
+	t.Setenv("SUMPTER_WORKDIR", t.TempDir())
+	for _, name := range []string{"system", "paths", "vars", "xml", "network"} {
+		for _, machine := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", name, machine), func(t *testing.T) {
+				var out bytes.Buffer
+				cmd := NewEnvInfoCommand()
+				cmd.SetOut(&out)
+				cmd.SetErr(io.Discard)
+				args := []string{name}
+				if machine {
+					args = append(args, "--json")
+				}
+				cmd.SetArgs(args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				text := out.String()
+				if strings.Contains(text, "Input route support") || strings.Contains(text, "record-scoped recipes") {
+					t.Fatalf("route section leaked to %s", name)
+				}
+				if name == "xml" && !machine {
+					if strings.Count(text, wantHumanXMLTarget) != 1 {
+						t.Fatalf("missing XML target qualification: %s", text)
+					}
+				} else if strings.Contains(text, "design target") {
+					t.Fatalf("XML human annotation leaked to %s/json=%t", name, machine)
+				}
+				if name == "xml" && machine {
+					want := `{
+  "streamingSupported": true,
+  "encodings": [
+    "UTF-8",
+    "UTF-16",
+    "ISO-8859-1",
+    "Windows-1252"
+  ],
+  "maxMemoryTarget": "\u003c50MB RSS",
+  "supportedOutputs": [
+    "JSON",
+    "NDJSON",
+    "Parquet"
+  ]
+}
+`
+					if text != want {
+						t.Fatalf("XML JSON byte contract changed:\n%s", text)
+					}
+				}
+			})
+		}
+	}
+}
+
+type envInfoPresentationWriter struct {
+	writes []string
+	failAt int
+	err    error
+}
+
+func (w *envInfoPresentationWriter) Write(p []byte) (int, error) {
+	w.writes = append(w.writes, string(p))
+	if len(w.writes) == w.failAt {
+		return 0, w.err
+	}
+	return len(p), nil
+}
+
+func TestEnvInfoRouteSectionWriteFailures(t *testing.T) {
+	data := envInfoPresentationFixture()
+	data.XML = collectXMLCapabilities()
+	cmd := NewEnvInfoCommand()
+	var recorded envInfoPresentationWriter
+	cmd.SetOut(&recorded)
+	if err := outputHumanReadable(cmd, data, false); err != nil {
+		t.Fatal(err)
+	}
+	first, count := -1, strings.Count(wantEnvInfoRoutes, "\n")
+	for i, write := range recorded.writes {
+		if strings.HasPrefix(write, "Input route support") {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		t.Fatal("route section never rendered")
+	}
+	for i := 0; i < count; i++ {
+		t.Run(fmt.Sprintf("line-%d", i+1), func(t *testing.T) {
+			wantErr := errors.New("test writer failure")
+			writer := &envInfoPresentationWriter{failAt: first + i + 1, err: wantErr}
+			cmd.SetOut(writer)
+			err := outputHumanReadable(cmd, data, false)
+			if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "input route support") {
+				t.Fatalf("error = %v, want route-section writer failure", err)
+			}
+			if len(writer.writes) != writer.failAt {
+				t.Fatal("renderer kept writing after error")
+			}
+		})
+	}
+}
+
+func TestEnvInfoHumanXMLTargetWriteFailures(t *testing.T) {
+	data := envInfoPresentationFixture()
+	data.XML = collectXMLCapabilities()
+	renderers := map[string]func(*cobra.Command) error{
+		"root": func(cmd *cobra.Command) error { return outputHumanReadable(cmd, data, false) },
+		"xml":  func(cmd *cobra.Command) error { return outputXMLCapabilities(cmd, data.XML) },
+	}
+	for name, render := range renderers {
+		t.Run(name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			var recorded envInfoPresentationWriter
+			cmd.SetOut(&recorded)
+			if err := render(cmd); err != nil {
+				t.Fatal(err)
+			}
+			for i, text := range recorded.writes {
+				if strings.Contains(text, wantHumanXMLTarget) {
+					wantErr := errors.New("test target writer failure")
+					writer := &envInfoPresentationWriter{failAt: i + 1, err: wantErr}
+					cmd.SetOut(writer)
+					if err := render(cmd); !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "memory target") {
+						t.Fatalf("target write error = %v", err)
+					}
+					return
+				}
+			}
+			t.Fatal("qualified target not written")
+		})
+	}
 }
