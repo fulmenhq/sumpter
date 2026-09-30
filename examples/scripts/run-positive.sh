@@ -4,7 +4,12 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXAMPLES_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-for case_dir in "$EXAMPLES_DIR"/cases/[0-8][0-9]-*/; do
-	[ -d "$case_dir" ] || continue
-	"$SCRIPT_DIR/run-case.sh" "$case_dir"
+# Capture first so an enumerator failure fails the run.
+CASES="$("$SCRIPT_DIR/list-cases.sh" --positive)"
+
+for entry in $CASES; do
+	case "$entry" in
+	*:*) "$SCRIPT_DIR/run-case.sh" "$EXAMPLES_DIR/cases/${entry%%:*}" --variant "${entry#*:}" ;;
+	*) "$SCRIPT_DIR/run-case.sh" "$EXAMPLES_DIR/cases/$entry" ;;
+	esac
 done

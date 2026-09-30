@@ -18,6 +18,26 @@ go test ./examples/...
 
 Positive cases live in `01`-`89`; negative cases live in `90`-`99`.
 
+Run one case:
+
+```bash
+examples/scripts/run-case.sh examples/cases/02-multi-record-line-items
+examples/scripts/run-case.sh examples/cases/02-multi-record-line-items --variant json
+```
+
+Without `--variant`, a case runs its root `input.xml` (or `input.json` when no
+XML input exists) against `recipe/` and `expected/`. A case may also carry
+format variants under `variants/<xml|json|ndjson>/`, each with its own
+`input.<fmt>`, `recipe/` and `expected/`. An explicit variant that does not
+exist fails; there is no fallback.
+
+`examples/scripts/list-cases.sh` prints every runnable `case[:variant]` entry
+and is the single inventory used by `make examples` and `go test`. It fails on
+an empty or malformed inventory.
+
+Negative cases run with the manifest enabled and must exit non-zero with the
+expected error, publishing no records, manifest or failure files.
+
 | Case                                             | Feature                                           |
 | ------------------------------------------------ | ------------------------------------------------- |
 | `01-basic-extraction`                            | XPath scalar extraction                           |

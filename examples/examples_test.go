@@ -21,19 +21,18 @@ func TestExamples(t *testing.T) {
 		t.Skip("example harness runs from the source examples tree, not the embedded asset mirror")
 	}
 	repoRoot := repoRoot(t)
-	cases, err := filepath.Glob(filepath.Join(repoRoot, "examples", "cases", "*-*"))
-	if err != nil {
-		t.Fatalf("failed to list cases: %v", err)
-	}
-	if len(cases) == 0 {
-		t.Fatal("no example cases found")
-	}
+	entries := listCases(t, repoRoot)
 
-	for _, caseDir := range cases {
-		caseDir := caseDir
-		t.Run(filepath.Base(caseDir), func(t *testing.T) {
+	for _, entry := range entries {
+		entry := entry
+		t.Run(entry, func(t *testing.T) {
 			t.Parallel()
-			cmd := exec.Command(filepath.Join(repoRoot, "examples", "scripts", "run-case.sh"), caseDir)
+			name, variant, _ := strings.Cut(entry, ":")
+			args := []string{filepath.Join(repoRoot, "examples", "cases", name)}
+			if variant != "" {
+				args = append(args, "--variant", variant)
+			}
+			cmd := exec.Command(filepath.Join(repoRoot, "examples", "scripts", "run-case.sh"), args...)
 			cmd.Dir = repoRoot
 			cmd.Env = append(os.Environ(), "SUMPTER_BIN="+exampleBinary(t, repoRoot))
 			output, err := cmd.CombinedOutput()
@@ -42,6 +41,148 @@ func TestExamples(t *testing.T) {
 			}
 		})
 	}
+}
+
+// requiredCases pins entries the enumerator must always yield, so a discovery
+// regression cannot silently shrink the suite.
+var requiredCases = []string{
+	"01-basic-extraction",
+	"05b-validation-metadata-grouped-reconciliation",
+	"06b-derived-field-ternary",
+	"14-json-basic-extraction",
+	"02-multi-record-line-items:json",
+	"08-polymorphic-line-items:json",
+	"09-predicate-match-selector:json",
+	"10-optional-fields:json",
+	"90-negative-malformed-xml",
+}
+
+func TestExampleInventory(t *testing.T) {
+	if runningFromEmbeddedMirror() {
+		t.Skip("example harness runs from the source examples tree, not the embedded asset mirror")
+	}
+	entries := listCases(t, repoRoot(t))
+	seen := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if seen[e] {
+			t.Errorf("duplicate inventory entry %q", e)
+		}
+		seen[e] = true
+	}
+	for _, want := range requiredCases {
+		if !seen[want] {
+			t.Errorf("inventory missing %q", want)
+		}
+	}
+}
+
+func TestExampleVariantRefusal(t *testing.T) {
+	if runningFromEmbeddedMirror() {
+		t.Skip("example harness runs from the source examples tree, not the embedded asset mirror")
+	}
+	repoRoot := repoRoot(t)
+	bin := exampleBinary(t, repoRoot)
+	for _, tc := range []struct {
+		name, caseName, variant, want string
+	}{
+		{"unknown", "14-json-basic-extraction", "yaml", "unknown variant"},
+		{"missing", "01-basic-extraction", "json", "variant not found"},
+		{"missing-ndjson", "14-json-basic-extraction", "ndjson", "variant not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(filepath.Join(repoRoot, "examples", "scripts", "run-case.sh"),
+				filepath.Join(repoRoot, "examples", "cases", tc.caseName), "--variant", tc.variant)
+			cmd.Dir = repoRoot
+			cmd.Env = append(os.Environ(), "SUMPTER_BIN="+bin)
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected refusal, got success:\n%s", output)
+			}
+			if !strings.Contains(string(output), tc.want) {
+				t.Fatalf("expected %q in output:\n%s", tc.want, output)
+			}
+		})
+	}
+}
+
+// TestListCasesFailsClosed runs a copy of the enumerator against synthetic
+// trees: an empty or malformed inventory must exit non-zero.
+func TestListCasesFailsClosed(t *testing.T) {
+	if runningFromEmbeddedMirror() {
+		t.Skip("example harness runs from the source examples tree, not the embedded asset mirror")
+	}
+	script, err := os.ReadFile(filepath.Join(repoRoot(t), "examples", "scripts", "list-cases.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(t *testing.T, path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	validCase := func(t *testing.T, root string) string {
+		dir := filepath.Join(root, "cases", "01-ok")
+		write(t, filepath.Join(dir, "recipe", "recipe.yaml"), "x")
+		write(t, filepath.Join(dir, "input.xml"), "x")
+		write(t, filepath.Join(dir, "expected", "output.json"), "x")
+		return dir
+	}
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, root string)
+	}{
+		{"empty", func(t *testing.T, root string) {
+			if err := os.MkdirAll(filepath.Join(root, "cases"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"missing-golden", func(t *testing.T, root string) {
+			dir := validCase(t, root)
+			if err := os.Remove(filepath.Join(dir, "expected", "output.json")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"unknown-variant", func(t *testing.T, root string) {
+			dir := validCase(t, root)
+			write(t, filepath.Join(dir, "variants", "yaml", "input.yaml"), "x")
+		}},
+		{"incomplete-variant", func(t *testing.T, root string) {
+			dir := validCase(t, root)
+			write(t, filepath.Join(dir, "variants", "json", "input.json"), "x")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, filepath.Join(root, "scripts", "list-cases.sh"), string(script))
+			tc.setup(t, root)
+			cmd := exec.Command("sh", filepath.Join(root, "scripts", "list-cases.sh"))
+			if out, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("expected enumerator failure, got success:\n%s", out)
+			}
+		})
+	}
+}
+
+// listCases runs the shared enumerator; any failure or empty result fails the test.
+func listCases(t *testing.T, repoRoot string) []string {
+	t.Helper()
+	cmd := exec.Command(filepath.Join(repoRoot, "examples", "scripts", "list-cases.sh"))
+	cmd.Dir = repoRoot
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("list-cases.sh failed: %v\n%s", err, stderr.String())
+	}
+	entries := strings.Fields(string(out))
+	if len(entries) == 0 {
+		t.Fatal("no example cases found")
+	}
+	return entries
 }
 
 func runningFromEmbeddedMirror() bool {

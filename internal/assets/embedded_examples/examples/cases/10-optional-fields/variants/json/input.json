@@ -1,0 +1,20 @@
+{
+  "WidgetCoData": {
+    "date": "2026-05-17",
+    "Orders": {
+      "Order": [
+        {
+          "id": "ORDER-10001",
+          "suspended": "false",
+          "Customer": "Alpha Works",
+          "PriorityCode": "A1"
+        },
+        {
+          "id": "ORDER-10002",
+          "suspended": "true",
+          "Customer": "Beta Works"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "WidgetCoData": {
+    "date": "2026-05-17",
+    "Orders": {
+      "Order": [
+        {
+          "id": "ORDER-9001",
+          "type": "standard",
+          "Customer": "Alpha Works",
+          "Status": "fulfilled"
+        },
+        {
+          "id": "ORDER-9002",
+          "type": "return",
+          "Customer": "Beta Works",
+          "Status": "review"
+        },
+        {
+          "id": "ORDER-9003",
+          "type": "return",
+          "Customer": "Gamma Works",
+          "Status": "approved"
+        }
+      ]
+    }
+  }
+}
