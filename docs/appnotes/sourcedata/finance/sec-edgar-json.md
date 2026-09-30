@@ -125,31 +125,34 @@ array refers to the same filing.
 
 ## Reproduction
 
-Paths below are placeholders. `CIK##########` is a real 10-digit CIK.
+Replace the placeholder values before running. `CIK` is a real 10-digit,
+zero-padded CIK; `USER_AGENT` identifies you, per the SEC fair-access rules;
+`WORK` is a directory outside the repository.
 
 ```bash
-# 1. Retrieve one company (outside sumpter), with a User-Agent that
-#    identifies you, per the SEC fair-access rules.
-curl -fsS -A "Example Org admin@example.org" \
-  -o /path/to/work/companyfacts.json \
-  https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json
-curl -fsS -A "Example Org admin@example.org" \
-  -o /path/to/work/submissions.json \
-  https://data.sec.gov/submissions/CIK##########.json
+CIK='0000000000'
+USER_AGENT='Example Org admin@example.org'
+WORK='/path/to/work'
+
+# 1. Retrieve one company (outside sumpter).
+curl -fsS -A "$USER_AGENT" -o "$WORK/companyfacts.json" \
+  "https://data.sec.gov/api/xbrl/companyfacts/CIK$CIK.json"
+curl -fsS -A "$USER_AGENT" -o "$WORK/submissions.json" \
+  "https://data.sec.gov/submissions/CIK$CIK.json"
 
 # 2. Extract USD facts.
 sumpter extract files \
-  --files /path/to/work/companyfacts.json \
+  --files "$WORK"/companyfacts.json \
   --signature-config-path examples/config/extract/sec-edgar-companyfacts-signature.yaml \
   --extract-config-path examples/config/extract/sec-edgar-companyfacts-usd-extract.yaml \
-  --output-path /path/to/work/out-facts
+  --output-path "$WORK"/out-facts
 
 # 3. Extract the company filing summary.
 sumpter extract files \
-  --files /path/to/work/submissions.json \
+  --files "$WORK"/submissions.json \
   --signature-config-path examples/config/extract/sec-edgar-submissions-signature.yaml \
   --extract-config-path examples/config/extract/sec-edgar-submissions-company-extract.yaml \
-  --output-path /path/to/work/out-subs
+  --output-path "$WORK"/out-subs
 ```
 
 For the bulk archives, unzip to a directory and pass it with `--input-path`;

@@ -9,14 +9,20 @@ set -eu
 CASE_DIR="${1:?case folder required}"
 shift
 VARIANT=""
+HAS_VARIANT=0
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--variant)
-		[ "$#" -ge 2 ] || {
+		[ "$HAS_VARIANT" -eq 0 ] || {
+			echo "--variant given more than once" >&2
+			exit 2
+		}
+		[ "$#" -ge 2 ] && [ -n "$2" ] || {
 			echo "--variant requires a value" >&2
 			exit 2
 		}
 		VARIANT="$2"
+		HAS_VARIANT=1
 		shift 2
 		;;
 	*)
@@ -38,7 +44,7 @@ if [ ! -x "$SUMPTER_BIN" ]; then
 	exit 2
 fi
 
-if [ -n "$VARIANT" ]; then
+if [ "$HAS_VARIANT" -eq 1 ]; then
 	case "$VARIANT" in
 	xml | json | ndjson) ;;
 	*)

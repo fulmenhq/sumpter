@@ -83,32 +83,41 @@ the record-by-record or record-index route for them rather than
 
 ## Reproduction
 
-Paths below are placeholders. Pick a partition URL from the download index.
+Replace both placeholder values before running. Take `PARTITION_URL` from
+the download index; `WORK` is a directory outside the repository.
 
 ```bash
-# 1. Retrieve and decompress one partition (outside sumpter).
-curl -fsS -o /path/to/work/drug-event.json.zip \
-  https://download.open.fda.gov/drug/event/<YYYYqN>/drug-event-NNNN-of-NNNN.json.zip
-unzip -p /path/to/work/drug-event.json.zip > /path/to/work/drug-event.json
+PARTITION_URL='https://download.open.fda.gov/drug/event/YYYYqN/drug-event-NNNN-of-NNNN.json.zip'
+WORK='/path/to/work'
+
+# 1. Retrieve one partition and extract its single JSON member (outside
+#    sumpter). Do not continue if this step reports a stop.
+curl -fsS -o "$WORK/drug-event.json.zip" "$PARTITION_URL"
+MEMBERS="$(unzip -Z1 "$WORK/drug-event.json.zip")"
+if [ "$(printf '%s\n' "$MEMBERS" | wc -l)" -eq 1 ] && [ "${MEMBERS%.json}" != "$MEMBERS" ]; then
+  unzip -p "$WORK/drug-event.json.zip" "$MEMBERS" > "$WORK/drug-event.json"
+else
+  echo "stop: expected exactly one .json member, got: $MEMBERS" >&2
+fi
 
 # 2. Record-by-record extraction.
 sumpter extract files \
-  --files /path/to/work/drug-event.json \
+  --files "$WORK"/drug-event.json \
   --signature-config-path examples/config/extract/openfda-drug-event-signature.yaml \
   --extract-config-path examples/config/extract/openfda-drug-event-extract.yaml \
-  --output-path /path/to/work/out-seq
+  --output-path "$WORK"/out-seq
 
 # 3. Record-index extraction.
-sumpter index build /path/to/work/drug-event.json \
-  --input-format json -s results -o /path/to/work/drug-event -p=false
-sumpter index verify /path/to/work/drug-event.json \
-  -i /path/to/work/drug-event.recordindex.json --input-format json --verify-records
+sumpter index build "$WORK"/drug-event.json \
+  --input-format json -s results -o "$WORK"/drug-event -p=false
+sumpter index verify "$WORK"/drug-event.json \
+  -i "$WORK"/drug-event.recordindex.json --input-format json --verify-records
 sumpter extract files \
-  --files /path/to/work/drug-event.json \
+  --files "$WORK"/drug-event.json \
   --signature-config-path examples/config/extract/openfda-drug-event-signature.yaml \
   --extract-config-path examples/config/extract/openfda-drug-event-extract.yaml \
-  --record-index /path/to/work/drug-event.recordindex.json --workers 4 \
-  --output-path /path/to/work/out-idx
+  --record-index "$WORK"/drug-event.recordindex.json --workers 4 \
+  --output-path "$WORK"/out-idx
 ```
 
 Record counts can be checked against the partition's `records` value in the

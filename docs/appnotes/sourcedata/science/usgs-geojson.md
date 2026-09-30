@@ -70,31 +70,33 @@ Coordinates are read by position (`geometry/coordinates[1]` is longitude).
 
 ## Reproduction
 
-Paths below are placeholders.
+Replace `WORK` with a directory outside the repository before running.
 
 ```bash
+WORK='/path/to/work'
+
 # 1. Retrieve one feed (outside sumpter).
-curl -fsS -o /path/to/work/all_day.geojson \
-  https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson
+curl -fsS -o "$WORK/all_day.geojson" \
+  'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson'
 
 # 2. Whole-document extraction.
 sumpter extract files \
-  --files /path/to/work/all_day.geojson \
+  --files "$WORK"/all_day.geojson \
   --signature-config-path examples/config/extract/usgs-geojson-feature-signature.yaml \
   --extract-config-path examples/config/extract/usgs-geojson-feature-extract.yaml \
-  --output-path /path/to/work/out-seq
+  --output-path "$WORK"/out-seq
 
 # 3. Record-index extraction.
-sumpter index build /path/to/work/all_day.geojson \
-  --input-format json -s features -o /path/to/work/all_day -p=false
-sumpter index verify /path/to/work/all_day.geojson \
-  -i /path/to/work/all_day.recordindex.json --input-format json --verify-records
+sumpter index build "$WORK"/all_day.geojson \
+  --input-format json -s features -o "$WORK"/all_day -p=false
+sumpter index verify "$WORK"/all_day.geojson \
+  -i "$WORK"/all_day.recordindex.json --input-format json --verify-records
 sumpter extract files \
-  --files /path/to/work/all_day.geojson \
+  --files "$WORK"/all_day.geojson \
   --signature-config-path examples/config/extract/usgs-geojson-feature-signature.yaml \
   --extract-config-path examples/config/extract/usgs-geojson-feature-extract.yaml \
-  --record-index /path/to/work/all_day.recordindex.json --workers 4 \
-  --output-path /path/to/work/out-idx
+  --record-index "$WORK"/all_day.recordindex.json --workers 4 \
+  --output-path "$WORK"/out-idx
 ```
 
 The feed file has no `.json` extension, so pass it with `--files` rather than

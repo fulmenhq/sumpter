@@ -93,18 +93,22 @@ func TestExampleVariantRefusal(t *testing.T) {
 	repoRoot := repoRoot(t)
 	bin := exampleBinary(t, repoRoot)
 	for _, tc := range []struct {
-		name, caseName, variant, want string
+		name, caseName string
+		extra          []string
+		want           string
 	}{
-		{"unknown", "14-json-basic-extraction", "yaml", "unknown variant"},
-		{"missing", "01-basic-extraction", "json", "variant not found"},
-		{"missing-ndjson", "14-json-basic-extraction", "ndjson", "variant not found"},
-		{"variant-only-default", "97-negative-ndjson-bad-line", "", "no default run"},
+		{"unknown", "14-json-basic-extraction", []string{"--variant", "yaml"}, "unknown variant"},
+		{"missing", "01-basic-extraction", []string{"--variant", "json"}, "variant not found"},
+		{"missing-ndjson", "14-json-basic-extraction", []string{"--variant", "ndjson"}, "variant not found"},
+		// An explicit but empty or absent value must not fall back to the
+		// default run, which case 14 has.
+		{"empty-value", "14-json-basic-extraction", []string{"--variant", ""}, "--variant requires a value"},
+		{"missing-value", "14-json-basic-extraction", []string{"--variant"}, "--variant requires a value"},
+		{"repeated", "02-multi-record-line-items", []string{"--variant", "json", "--variant", "json"}, "--variant given more than once"},
+		{"variant-only-default", "97-negative-ndjson-bad-line", nil, "no default run"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := []string{filepath.Join(repoRoot, "examples", "cases", tc.caseName)}
-			if tc.variant != "" {
-				args = append(args, "--variant", tc.variant)
-			}
+			args := append([]string{filepath.Join(repoRoot, "examples", "cases", tc.caseName)}, tc.extra...)
 			cmd := exec.Command(filepath.Join(repoRoot, "examples", "scripts", "run-case.sh"), args...)
 			cmd.Dir = repoRoot
 			cmd.Env = append(os.Environ(), "SUMPTER_BIN="+bin)
