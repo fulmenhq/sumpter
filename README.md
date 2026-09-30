@@ -71,7 +71,7 @@ Sumpter is in **alpha** — for us that's about _interface stability_, not matur
 
 **Memory contract:** XML input is tokenized incrementally where the streaming path applies. Eligible JSON/NDJSON inputs are read record by record. JSON/NDJSON **file output** is bounded with respect to emitted result count for sequential runs and record-index parallel runs: records stream through `RecordSink`, and the parallel route uses bounded reorder/backpressure instead of retaining the full output slice. Unambiguous record-index parallel runs enforce `min_occurrences` from index counts before publishing output and can still use the streaming route. This is not an end-to-end flat-memory promise: DOM input loads a document; record routes retain active record/parser/writer state, and a file-spanning JSON record or a wide object can need input-scale memory. Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed floors intentionally remain buffered. The indexed JSON record cap defaults to 100 MiB; XML's zero limit remains unlimited. See the [document node model](docs/standards/document-node-model.md), [ADR-0005](docs/architecture/adr/0005-hybrid-streaming-xml-architecture.md), and [ADR-0009](docs/architecture/adr/0009-record-sink-output-streaming-contract.md).
 
-Security patches target the latest `0.3.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
+Security patches target the latest `0.4.x` release; see [SECURITY.md](SECURITY.md) for the supported-versions matrix and private reporting. For governance, see [MAINTAINERS.md](MAINTAINERS.md).
 
 ---
 
