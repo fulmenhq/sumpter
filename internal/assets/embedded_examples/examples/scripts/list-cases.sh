@@ -56,18 +56,22 @@ for case_dir in "$CASES_DIR"/*-*/; do
 	case_dir="${case_dir%/}"
 	name="$(basename "$case_dir")"
 
-	[ -f "$case_dir/recipe/recipe.yaml" ] || fail "missing recipe/recipe.yaml in $case_dir"
-	if [ ! -f "$case_dir/input.xml" ] && [ ! -f "$case_dir/input.json" ]; then
-		fail "missing input.xml or input.json in $case_dir"
-	fi
-	check_expected "$name" "$case_dir"
-	if want "$name"; then
-		OUT="$OUT$name
+	# A case without a root recipe is variant-only and must carry variants.
+	if [ -d "$case_dir/recipe" ] || [ ! -d "$case_dir/variants" ]; then
+		[ -f "$case_dir/recipe/recipe.yaml" ] || fail "missing recipe/recipe.yaml in $case_dir"
+		if [ ! -f "$case_dir/input.xml" ] && [ ! -f "$case_dir/input.json" ]; then
+			fail "missing input.xml or input.json in $case_dir"
+		fi
+		check_expected "$name" "$case_dir"
+		if want "$name"; then
+			OUT="$OUT$name
 "
-		COUNT=$((COUNT + 1))
+			COUNT=$((COUNT + 1))
+		fi
 	fi
 
 	[ -d "$case_dir/variants" ] || continue
+	VARIANTS=0
 	for variant_dir in "$case_dir"/variants/*/; do
 		[ -d "$variant_dir" ] || continue
 		variant_dir="${variant_dir%/}"
@@ -79,12 +83,14 @@ for case_dir in "$CASES_DIR"/*-*/; do
 		[ -f "$variant_dir/input.$fmt" ] || fail "missing input.$fmt in $variant_dir"
 		[ -f "$variant_dir/recipe/recipe.yaml" ] || fail "missing recipe/recipe.yaml in $variant_dir"
 		check_expected "$name" "$variant_dir"
+		VARIANTS=$((VARIANTS + 1))
 		if want "$name"; then
 			OUT="$OUT$name:$fmt
 "
 			COUNT=$((COUNT + 1))
 		fi
 	done
+	[ "$VARIANTS" -gt 0 ] || fail "empty variants directory in $case_dir"
 done
 
 [ "$COUNT" -gt 0 ] || fail "no example cases found for filter $FILTER"

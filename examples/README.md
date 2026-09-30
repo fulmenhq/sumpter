@@ -35,7 +35,8 @@ JSON variants exist for cases 02 through 11, 13 and 91 (case 14 is the JSON
 twin of case 01). Each JSON variant reuses its case's golden: the recipe adds
 `format_type: json` to the signature and uses `k` in place of `@k`, since JSON
 has no attributes. Case 08 uses the ordered wrapper idiom for polymorphic
-items. Cases 12 (namespaces) and 90 (malformed XML) are XML only.
+items. Cases 12 (namespaces) and 90 (malformed XML) are XML only. Case 97 has
+only an `ndjson` variant and no default run.
 
 `examples/scripts/list-cases.sh` prints every runnable `case[:variant]` entry
 and is the single inventory used by `make examples` and `go test`. It fails on
@@ -59,8 +60,12 @@ expected error, publishing no records, manifest or failure files.
 | `09-predicate-match-selector`                    | Predicate match selectors                         |
 | `10-optional-fields`                             | Optional fields and boolean coercion              |
 | `14-json-basic-extraction`                       | JSON input (twin of case 01)                      |
+| `15-ndjson-records`                              | JSON array and line-delimited JSON (`ndjson`)     |
 | `90-negative-malformed-xml`                      | XML parser failure                                |
 | `91-negative-missing-required`                   | Output schema required failure                    |
 | `92-negative-validation-fails`                   | Validation failure                                |
 | `93-negative-parameter-required-missing`         | Missing required declared parameter               |
 | `94-negative-schema-collision`                   | Parameter/field collision                         |
+| `95-negative-malformed-json`                     | JSON syntax error after a valid record            |
+| `96-negative-truncated-json`                     | JSON truncated after a valid record               |
+| `97-negative-ndjson-bad-line`                    | NDJSON bad line after a valid line                |

@@ -59,6 +59,11 @@ var requiredCases = []string{
 	"07-declared-parameters-injection:json",
 	"13-fixture-document:json",
 	"91-negative-missing-required:json",
+	"15-ndjson-records",
+	"15-ndjson-records:ndjson",
+	"95-negative-malformed-json",
+	"96-negative-truncated-json",
+	"97-negative-ndjson-bad-line:ndjson",
 	"90-negative-malformed-xml",
 }
 
@@ -93,10 +98,14 @@ func TestExampleVariantRefusal(t *testing.T) {
 		{"unknown", "14-json-basic-extraction", "yaml", "unknown variant"},
 		{"missing", "01-basic-extraction", "json", "variant not found"},
 		{"missing-ndjson", "14-json-basic-extraction", "ndjson", "variant not found"},
+		{"variant-only-default", "97-negative-ndjson-bad-line", "", "no default run"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(filepath.Join(repoRoot, "examples", "scripts", "run-case.sh"),
-				filepath.Join(repoRoot, "examples", "cases", tc.caseName), "--variant", tc.variant)
+			args := []string{filepath.Join(repoRoot, "examples", "cases", tc.caseName)}
+			if tc.variant != "" {
+				args = append(args, "--variant", tc.variant)
+			}
+			cmd := exec.Command(filepath.Join(repoRoot, "examples", "scripts", "run-case.sh"), args...)
 			cmd.Dir = repoRoot
 			cmd.Env = append(os.Environ(), "SUMPTER_BIN="+bin)
 			output, err := cmd.CombinedOutput()
@@ -155,6 +164,18 @@ func TestListCasesFailsClosed(t *testing.T) {
 			dir := validCase(t, root)
 			write(t, filepath.Join(dir, "variants", "yaml", "input.yaml"), "x")
 		}},
+		{"empty-variants", func(t *testing.T, root string) {
+			dir := validCase(t, root)
+			if err := os.MkdirAll(filepath.Join(dir, "variants"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"variant-only-without-variants", func(t *testing.T, root string) {
+			dir := filepath.Join(root, "cases", "97-neg")
+			if err := os.MkdirAll(filepath.Join(dir, "variants"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"incomplete-variant", func(t *testing.T, root string) {
 			dir := validCase(t, root)
 			write(t, filepath.Join(dir, "variants", "json", "input.json"), "x")
@@ -167,6 +188,45 @@ func TestListCasesFailsClosed(t *testing.T) {
 			cmd := exec.Command("sh", filepath.Join(root, "scripts", "list-cases.sh"))
 			if out, err := cmd.CombinedOutput(); err == nil {
 				t.Fatalf("expected enumerator failure, got success:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestNegativeRejectsPublishedOutput pins that a negative case fails when the
+// refused run still publishes output, using a stub binary that prints the
+// expected error, writes each artifact and exits non-zero.
+func TestNegativeRejectsPublishedOutput(t *testing.T) {
+	if runningFromEmbeddedMirror() {
+		t.Skip("example harness runs from the source examples tree, not the embedded asset mirror")
+	}
+	repoRoot := repoRoot(t)
+	caseDir := filepath.Join(repoRoot, "examples", "cases", "95-negative-malformed-json")
+	want, err := os.ReadFile(filepath.Join(caseDir, "expected", "error.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range []string{"records.jsonl", "manifest.json", "failures.json", "dispositions.json"} {
+		t.Run(artifact, func(t *testing.T) {
+			stub := filepath.Join(t.TempDir(), "sumpter")
+			body := "#!/bin/sh\n" +
+				"out=\"\"\n" +
+				"while [ \"$#\" -gt 0 ]; do [ \"$1\" = --output-path ] && out=\"$2\"; shift; done\n" +
+				"mkdir -p \"$out\" && : >\"$out/" + artifact + "\"\n" +
+				"printf '%s\\n' '" + strings.TrimSpace(string(want)) + "'\n" +
+				"exit 1\n"
+			if err := os.WriteFile(stub, []byte(body), 0o700); err != nil { // #nosec G306 -- test stub must be executable.
+				t.Fatal(err)
+			}
+			cmd := exec.Command(filepath.Join(repoRoot, "examples", "scripts", "run-case.sh"), caseDir)
+			cmd.Dir = repoRoot
+			cmd.Env = append(os.Environ(), "SUMPTER_BIN="+stub)
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected failure for published %s, got success:\n%s", artifact, output)
+			}
+			if !strings.Contains(string(output), "refused run published output") {
+				t.Fatalf("expected published-output failure, got:\n%s", output)
 			}
 		})
 	}

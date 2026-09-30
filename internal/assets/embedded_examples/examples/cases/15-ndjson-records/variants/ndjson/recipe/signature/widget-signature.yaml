@@ -1,0 +1,10 @@
+signature_id: widgetco-order-lines
+name: WidgetCo Order Lines
+match_scope: record
+match_patterns:
+  - pattern_id: widgetco-order-record
+    name: Order record
+    selector: /Order/id
+    weight: 1
+confidence_threshold: 1
+format_type: ndjson

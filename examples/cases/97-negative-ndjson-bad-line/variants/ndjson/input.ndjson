@@ -1,0 +1,3 @@
+{"id": "ORDER-9701", "status": "open", "Customer": "WidgetCo North", "Quantity": 3, "TotalAmount": 42.50, "Rush": false}
+{"id": "ORDER-9702", "status": "open", "Customer": "WidgetCo South", "Quantity": 1,
+{"id": "ORDER-9703", "status": "open", "Customer": "GearCo East", "Quantity": 2, "TotalAmount": 7.25, "Rush": true}

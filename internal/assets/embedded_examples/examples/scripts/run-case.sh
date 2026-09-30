@@ -60,6 +60,10 @@ else
 	if [ ! -f "$INPUT_FILE" ] && [ -f "$CASE_DIR/input.json" ]; then
 		INPUT_FILE="$CASE_DIR/input.json"
 	fi
+	if [ ! -f "$INPUT_FILE" ] || [ ! -f "$CASE_DIR/recipe/recipe.yaml" ]; then
+		echo "FAIL [$LABEL]: no default run (variant-only case); pass --variant" >&2
+		exit 2
+	fi
 fi
 EXPECTED_DIR="$RUN_DIR/expected"
 

@@ -256,3 +256,23 @@ func TestJSONTwinXMLRecipeRejectedUnderJSON(t *testing.T) {
 		})
 	}
 }
+
+// TestNDJSONRecordsTypedParity pins that the line-delimited variant of case 15
+// yields the same typed records, in order, as its one-document JSON run.
+func TestNDJSONRecordsTypedParity(t *testing.T) {
+	caseDir := filepath.Join(examplesCasesDir(), "15-ndjson-records")
+	variantDir := filepath.Join(caseDir, "variants", "ndjson")
+
+	jsonOut := runTwinRaw(t,
+		singleYAML(t, filepath.Join(caseDir, "recipe", "signature")),
+		singleYAML(t, filepath.Join(caseDir, "recipe", "extract")),
+		filepath.Join(caseDir, "input.json"), extract.FormatJSON, true, extract.FormatJSON)
+	ndjsonOut := runTwinRaw(t,
+		singleYAML(t, filepath.Join(variantDir, "recipe", "signature")),
+		singleYAML(t, filepath.Join(variantDir, "recipe", "extract")),
+		filepath.Join(variantDir, "input.ndjson"), extract.FormatNDJSON, true, extract.FormatNDJSON)
+
+	if err := typedRecordsEqual(jsonOut, ndjsonOut); err != nil {
+		t.Fatalf("ndjson vs json typed parity: %v", err)
+	}
+}
