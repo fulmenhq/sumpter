@@ -1,0 +1,57 @@
+{
+  "records": [
+    {
+      "_validation": {
+        "accumulations": {
+          "line_amount_total": 42.5
+        },
+        "aggregations": {},
+        "array_path": "lines",
+        "expression_language": "sumpter-dsl",
+        "placement": "footer",
+        "quality_summary": {
+          "errors": 0,
+          "fatals": 0,
+          "passed": 0,
+          "total_checks": 0,
+          "warnings": 0
+        },
+        "reconciliations": [
+          {
+            "allow_unexplained": false,
+            "base_value": 42.5,
+            "components": [
+              {
+                "description": "Sum of extracted line amounts",
+                "name": "line_amounts",
+                "value": 42.5
+              }
+            ],
+            "components_total": 42.5,
+            "name": "order_total",
+            "residual": 0,
+            "severity": "warning",
+            "status": "balanced",
+            "tolerance": 0.01
+          }
+        ],
+        "record_count": 2,
+        "validations": []
+      },
+      "extract": {
+        "data": {
+          "lines": [
+            {
+              "line_amount": 18
+            },
+            {
+              "line_amount": 24.5
+            }
+          ],
+          "order_id": "ORDER-5001",
+          "reported_total": 42.5
+        }
+      }
+    }
+  ]
+}

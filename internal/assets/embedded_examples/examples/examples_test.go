@@ -54,6 +54,11 @@ var requiredCases = []string{
 	"08-polymorphic-line-items:json",
 	"09-predicate-match-selector:json",
 	"10-optional-fields:json",
+	"05b-validation-metadata-grouped-reconciliation:json",
+	"06b-derived-field-ternary:json",
+	"07-declared-parameters-injection:json",
+	"13-fixture-document:json",
+	"91-negative-missing-required:json",
 	"90-negative-malformed-xml",
 }
 

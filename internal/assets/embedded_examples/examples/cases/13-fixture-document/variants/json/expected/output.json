@@ -1,0 +1,30 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "category": "cat-d",
+          "description": "id=55bb42ef a\u0026b\u003cc\u003e",
+          "occurred_at": "2024-07-10T19:09:46Z",
+          "quantity": 10520105,
+          "record_id": "a571fba57d8ddcd1b293c9201f8a2222",
+          "status": "held",
+          "unit_value": 7655.85
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "category": "cat-a",
+          "description": "id=88e03d7d a\u0026b\u003cc\u003e",
+          "occurred_at": "2024-11-23T21:25:45Z",
+          "quantity": 95456632,
+          "record_id": "92191540a241f72377ca20f542ba3810",
+          "status": "held",
+          "unit_value": 5560.93
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "WidgetCoData": {
+    "date": "2026-05-16",
+    "Orders": {
+      "Order": [
+        {
+          "id": "ORDER-6101",
+          "Status": "online"
+        },
+        {
+          "id": "ORDER-6102",
+          "Status": "training"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "WidgetCoData": {
+    "date": "2026-05-16",
+    "Orders": {
+      "Order": {
+        "id": "ORDER-5002",
+        "ReportedTotal": "80.00",
+        "Lines": {
+          "OrderLine": [
+            {
+              "CategoryCode": "widgets",
+              "CategoryLabel": "Widgets",
+              "LineAmount": "18.00"
+            },
+            {
+              "CategoryCode": "gears",
+              "CategoryLabel": "Gears",
+              "LineAmount": "24.50"
+            },
+            {
+              "CategoryCode": "widgets",
+              "CategoryLabel": "Widgets",
+              "LineAmount": "12.00"
+            },
+            {
+              "CategoryCode": "tools",
+              "CategoryLabel": "Tools",
+              "LineAmount": "25.50"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

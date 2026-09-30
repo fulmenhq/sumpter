@@ -1,0 +1,13 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "order_id": "ORDER-7001",
+          "region_id": "north-yard",
+          "tenant_id": "widgetco-demo"
+        }
+      }
+    }
+  ]
+}

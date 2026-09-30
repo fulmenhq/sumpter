@@ -31,6 +31,12 @@ format variants under `variants/<xml|json|ndjson>/`, each with its own
 `input.<fmt>`, `recipe/` and `expected/`. An explicit variant that does not
 exist fails; there is no fallback.
 
+JSON variants exist for cases 02 through 11, 13 and 91 (case 14 is the JSON
+twin of case 01). Each JSON variant reuses its case's golden: the recipe adds
+`format_type: json` to the signature and uses `k` in place of `@k`, since JSON
+has no attributes. Case 08 uses the ordered wrapper idiom for polymorphic
+items. Cases 12 (namespaces) and 90 (malformed XML) are XML only.
+
 `examples/scripts/list-cases.sh` prints every runnable `case[:variant]` entry
 and is the single inventory used by `make examples` and `go test`. It fails on
 an empty or malformed inventory.

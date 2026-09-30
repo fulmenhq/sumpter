@@ -1,0 +1,41 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "fulfilled_lines": 1,
+          "order_id": "ORDER-3001",
+          "returned_lines": 1,
+          "total_lines": 3
+        },
+        "summary": {
+          "line_status_mix": {
+            "components": [
+              {
+                "label": "Fulfilled",
+                "name": "fulfilled",
+                "share": 0.333333,
+                "value": 1
+              },
+              {
+                "label": "Returned",
+                "name": "returned",
+                "share": 0.333333,
+                "value": 1
+              },
+              {
+                "label": "Other",
+                "name": "other",
+                "share": 0.333333,
+                "value": 1
+              }
+            ],
+            "format": "count",
+            "label": "Line Status Mix",
+            "total": 3
+          }
+        }
+      }
+    }
+  ]
+}

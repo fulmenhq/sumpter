@@ -21,12 +21,22 @@ type jsonTwinCase struct {
 	twinCase string // standalone twin case dir; empty means variants/json
 }
 
+// Case 07 is omitted: its declared parameters are injected at the recipe layer,
+// which the example runner covers against the same golden.
 var jsonTwinCases = []jsonTwinCase{
 	{id: "01", caseDir: "01-basic-extraction", twinCase: "14-json-basic-extraction"},
 	{id: "02", caseDir: "02-multi-record-line-items"},
+	{id: "03", caseDir: "03-summaries-with-remainder"},
+	{id: "04", caseDir: "04-validation-metadata-clean"},
+	{id: "05", caseDir: "05-validation-metadata-reconciliation"},
+	{id: "05b", caseDir: "05b-validation-metadata-grouped-reconciliation"},
+	{id: "06", caseDir: "06-derived-field-convenience-sums"},
+	{id: "06b", caseDir: "06b-derived-field-ternary"},
 	{id: "08", caseDir: "08-polymorphic-line-items"},
 	{id: "09", caseDir: "09-predicate-match-selector"},
 	{id: "10", caseDir: "10-optional-fields"},
+	{id: "11", caseDir: "11-parquet-secondary-output"},
+	{id: "13", caseDir: "13-fixture-document"},
 }
 
 func examplesCasesDir() string {
