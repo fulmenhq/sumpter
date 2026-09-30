@@ -23,13 +23,13 @@ JSON streaming and indexed extraction, and NDJSON extraction, need a record-scop
 
 ## 🧭 Why Sumpter?
 
-Sumpter is built for reproducible recipe-driven pipelines: regulatory filings, variant-heavy scientific XML, JSON documents, and line-delimited event records, with reconciliation primitives built in. If you're doing ad-hoc inspection on small files, `xmlstarlet` or `xq` for XML and `jq` for JSON may be the faster answer.
+Sumpter is built for reproducible recipe-driven pipelines: large XML and JSON documents, line-delimited event records, and variant-heavy feeds, with reconciliation primitives built in. If you're doing ad-hoc inspection on small files, `xmlstarlet` or `xq` for XML and `jq` for JSON may be the faster answer.
 
 ---
 
 ## ⏱️ See it in 30 seconds
 
-Inspect an XML file, run an extraction recipe against it, and read back structured records — using only the bundled `examples/` corpus, no external data required:
+Inspect a bundled WidgetCo order, run an extraction recipe, and read back structured records — no external data required. XML is the default inspect format; JSON needs `--input-format json`.
 
 ```console
 $ sumpter inspect examples/cases/01-basic-extraction/input.xml
@@ -58,6 +58,36 @@ $ jq .extract.data out/records.jsonl
 ```
 
 <sub>Recorded with Sumpter v0.1.8 (alpha) against the bundled synthetic corpus. Pass <code>--log-level error</code> to silence startup logs as shown.</sub>
+
+The same order as JSON (case 14) uses a format-specific recipe (`format json`, members instead of attributes) and yields the same `extract.data`:
+
+```console
+$ sumpter inspect examples/cases/14-json-basic-extraction/input.json --input-format json
+# JSON Inspection Report
+#
+# Encoding: UTF-8
+#
+# ## Top Paths
+# | Path                                  | Count | Attributes |
+# |---------------------------------------|-------|------------|
+# | WidgetCoData.Orders.Order             | 1     | 0          |
+# | WidgetCoData.Orders.Order.Customer    | 1     | 0          |
+# | WidgetCoData.Orders.Order.TotalAmount | 1     | 0          |
+
+$ sumpter recipes run extract examples/cases/14-json-basic-extraction/recipe \
+    --files examples/cases/14-json-basic-extraction/input.json \
+    --output-path out/
+
+$ jq .extract.data out/records.jsonl
+{
+  "customer": "WidgetCo North",
+  "order_id": "ORDER-1001",
+  "status": "open",
+  "total_amount": 42.5
+}
+```
+
+Line-delimited JSON is case 15 (`--variant ndjson`). See [JSON and NDJSON extraction](docs/user-guide/json-extraction.md).
 
 ---
 
@@ -124,14 +154,18 @@ make build
 CGO_ENABLED=1 go build -tags seekablezstd -o dist/sumpter ./cmd/sumpter
 ```
 
-**Inspect XML Structure**
+**Inspect XML or JSON**
 
 ```bash
 # Analyze XML structure
 ./dist/sumpter inspect ./examples/data/sample-widget-order.xml --progress
 
-# JSON report
+# JSON report of an XML inspect
 ./dist/sumpter inspect ./examples/data/sample-widget-order.xml --format json
+
+# Inspect a JSON document (input format is declared, never inferred)
+./dist/sumpter inspect ./examples/cases/14-json-basic-extraction/input.json \
+  --input-format json
 ```
 
 **Build and Use Record Indexes**
@@ -140,6 +174,12 @@ CGO_ENABLED=1 go build -tags seekablezstd -o dist/sumpter ./cmd/sumpter
 # Build index for parallel extraction
 ./dist/sumpter index build large-file.xml \
   --selector "//Record" \
+  --progress
+
+# JSON source: declare --input-format json; the selector names a key
+./dist/sumpter index build events.json \
+  --input-format json \
+  --selector "results" \
   --progress
 
 # Build compressed index (10-20x smaller, requires CGO build)
@@ -180,11 +220,11 @@ See `schemas/envinfo/README.md` for details and validation examples.
 
 ## 🔎 Explore the examples
 
-The repository ships self-contained synthetic WidgetCo/GearCo examples, including XML/JSON twins and NDJSON cases. Twins use format-specific recipes and compare typed `extract.data`, not their format-specific provenance. Start at [`examples/README.md`](examples/README.md) for the case-by-feature index, or run them all with `make examples`.
+The repository ships self-contained synthetic WidgetCo/GearCo examples, including XML/JSON twins and NDJSON cases. Twins use format-specific recipes and compare typed `extract.data`, not their format-specific provenance. Start with [JSON and NDJSON extraction](docs/user-guide/json-extraction.md) or [`examples/README.md`](examples/README.md), or run them all with `make examples`.
 
-JSON application notes cover [USGS GeoJSON](docs/appnotes/sourcedata/science/usgs-geojson.md), [SEC EDGAR company facts](docs/appnotes/sourcedata/finance/sec-edgar-json.md), and [openFDA](docs/appnotes/sourcedata/health/openfda-drug-event.md). These are recipe-authoring examples, not cross-feed parity or release-binary scale measurements. Numbers retain source lexemes while parsing, but XPath 1.0 numeric evaluation uses floating point: use string mappings and `value_text` for exact identifiers above 2^53. JSON `null` binds absent, unlike XML's empty string; see the [node model](docs/standards/document-node-model.md#scalars).
+Numbers retain source lexemes while parsing, but XPath 1.0 numeric evaluation uses floating point: use string mappings and `value_text` for exact identifiers above 2^53. JSON `null` binds absent; see the [node model](docs/standards/document-node-model.md#scalars).
 
-The public-data exemplars are deliberately drawn from **five different verticals** to show the engine is domain-neutral: **financial filings** (SEC EDGAR XBRL), **genomics** (NCBI ClinVar variant archives), **geophysics** (USGS QuakeML seismic catalogs), **public-safety geospatial** (NWS CAP alerts), and **government/legal** (GovInfo USLM bills) — all public-domain, so every example ships runnable by anyone. ClinVar's ~50 GB release is sumpter's canonical scale test — it drove the streaming and seekable-index architecture. See [`docs/user-guide/public-data-examples.md`](docs/user-guide/public-data-examples.md) for acquisition and recipes, the [SEC EDGAR XBRL walkthrough](docs/appnotes/sourcedata/finance/sec-edgar-usage.md), and the [ClinVar parallel-extraction runbook](docs/runbooks/clinvar-parallel.md).
+Optional public-domain recipes (XML and JSON) are listed in [`docs/user-guide/public-data-examples.md`](docs/user-guide/public-data-examples.md). Those notes are recipe-authoring examples, not cross-feed parity or release-binary scale measurements. The [ClinVar parallel-extraction runbook](docs/runbooks/clinvar-parallel.md) is the XML scale walkthrough.
 
 ---
 

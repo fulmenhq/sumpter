@@ -1,6 +1,6 @@
 # Sumpter Extract Workflow
 
-The extract command reads declared XML, JSON, or NDJSON inputs through recipe-driven field mappings and produces record envelopes or optional Parquet projections. Input parsing and output streaming are separate decisions: a JSONL writer does not make DOM input bounded. Recipes control the business payload and optional metadata.
+The extract command reads declared XML, JSON, or NDJSON inputs through recipe-driven field mappings and produces record envelopes or optional Parquet projections. Input parsing and output streaming are separate decisions: a JSONL writer does not make DOM input bounded. Recipes control the business payload and optional metadata. For a first JSON or NDJSON run with bundled examples, see [JSON and NDJSON extraction](user-guide/json-extraction.md).
 
 ## Input route support
 

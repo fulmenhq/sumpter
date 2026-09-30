@@ -18,10 +18,10 @@ JSON streaming and indexed extraction, and NDJSON extraction, need a record-scop
 
 Data pipelines consume XML documents, JSON documents, and line-delimited JSON records. These inputs can be:
 
-- **Massive**: 100MB–10GB+ logs and reports (ClinVar releases run multi-GB compressed, multi-TB uncompressed across history).
-- **Variant-heavy**: multiple vendor or release dialects per domain (e.g., XBRL taxonomy variants across regulators, ClinVar revisions across releases, FIXML variants across brokerages, POS-journal dialects across vendors).
-- **Malformed**: encoding issues, mixed namespaces, partial truncation.
-- **Critical**: used in compliance reporting, financial filings, clinical research, regulatory submissions, and operational analytics.
+- **Massive**: 100MB–10GB+ logs, feeds, and reports.
+- **Variant-heavy**: multiple vendor or release dialects per domain.
+- **Malformed**: encoding issues, mixed namespaces, partial truncation, duplicate keys.
+- **Critical**: used in reporting, analytics, and downstream record pipelines.
 
 Traditional DOM parsers crash on size. Heavy ETL tools require weeks of configuration. Custom scripts lack resilience, observability, and reuse.
 
@@ -58,7 +58,7 @@ Sumpter is a **Go-based, recipe-driven extraction engine** designed for:
   silent-wrong sign totals. Factor-first authoring notes are in the extract
   workflow guide.
 
-Recipes define the source shape and the emitted fields; they are not unchanged across input formats. Start with the [worked examples](../examples/README.md) and public JSON notes for [USGS](appnotes/sourcedata/science/usgs-geojson.md), [SEC EDGAR](appnotes/sourcedata/finance/sec-edgar-json.md), and [openFDA](appnotes/sourcedata/health/openfda-drug-event.md). These examples are not release-binary scale evidence or cross-feed parity proofs.
+Recipes define the source shape and the emitted fields; they are not unchanged across input formats. Start with [JSON and NDJSON extraction](user-guide/json-extraction.md) and the [worked examples](../examples/README.md). Optional public-domain recipes are listed from [public-data examples](user-guide/public-data-examples.md). Those notes are not release-binary scale evidence or cross-feed parity proofs.
 
 Roadmap items such as DuckDB output, service health endpoints, Prometheus metrics,
 adaptive backpressure, repair modes, and incremental Parquet writing are tracked

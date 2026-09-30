@@ -1,9 +1,10 @@
 # Public-Data Examples
 
-Sumpter is a generic streaming-XML extraction engine. It does not bake in
-any vertical's record types, schemas, or vendor dialects — those live in
-recipes (signature + extract YAML pairs) that are authored separately
-from the engine.
+Sumpter is a recipe-driven extraction engine for XML, JSON, and NDJSON. It
+does not bake in any vertical's record types, schemas, or vendor dialects —
+those live in recipes (signature + extract YAML pairs) authored separately
+from the engine. For a first JSON or NDJSON run with bundled synthetic data,
+start at [JSON and NDJSON extraction](json-extraction.md).
 
 This page is the canonical pointer to the **public-data exemplars** that
 ship with the repo. Use these when you want to:

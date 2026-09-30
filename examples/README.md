@@ -2,7 +2,8 @@
 
 These examples are self-contained recipes using a fictional WidgetCo / GearCo
 parts-and-orders domain. They double as copyable recipe authoring examples and
-as smoke tests for extraction semantics.
+as smoke tests for extraction semantics. For JSON and NDJSON first-run
+commands, see [JSON and NDJSON extraction](../docs/user-guide/json-extraction.md).
 
 Run all cases:
 

@@ -1,4 +1,4 @@
-# Inspection and XML Dialect Detection Workflow
+# Inspection workflow
 
 Guide to XML/JSON inspection and XML-specific dialect detection/development.
 

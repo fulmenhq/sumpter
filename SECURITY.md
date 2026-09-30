@@ -28,7 +28,7 @@ If you discover a potential security vulnerability, please report it privately â
 
 - **Preferred Method**: Email **security@3leaps.net** with details, including:
   - Description of the vulnerability
-  - Steps to reproduce (e.g., affected version, configuration, sample XML payload if relevant)
+  - Steps to reproduce (e.g., affected version, configuration, sample payload if relevant)
   - Potential impact (e.g., data exposure, denial of service, privilege escalation, path traversal, XXE/billion-laughs-style amplification)
   - Any proposed fixes or patches
 - **Alternative**: Use GitHub Security Advisories in this repository (if enabled) for private reporting
@@ -49,10 +49,10 @@ We prioritize confidentiality and will acknowledge your report within 3 business
 This policy applies to:
 
 - The `sumpter` CLI and its libraries (`github.com/fulmenhq/sumpter/...`)
-- The streaming XML inspection, extraction, indexing, and retrieve subsystems
+- Inspection, extraction, indexing, and retrieve for declared XML, JSON, and NDJSON inputs
 - Recipe execution and DSL evaluation paths
 - Output adapters (NDJSON, Parquet)
-- Bundled example recipes and the public-data example corpus (SEC EDGAR XBRL, ClinVar) when those examples could lead to insecure implementations if copied verbatim
+- Bundled example recipes and public-data example recipes when those examples could lead to insecure implementations if copied verbatim
 
 Out of scope:
 
@@ -69,7 +69,7 @@ If you follow this policy in good faith (e.g., no exploitation beyond proof-of-c
 
 When using sumpter in your applications and pipelines:
 
-- **XML Input Validation**: Treat untrusted XML as untrusted. Sumpter tokenizes large XML inputs incrementally, but extracted records are buffered per file before output and operator-supplied recipes or DSL expressions can amplify problematic inputs.
+- **Input Validation**: Treat untrusted XML, JSON, and NDJSON as untrusted. Large XML inputs are tokenized incrementally where the streaming path applies; eligible JSON/NDJSON inputs are read record by record. DOM JSON loads a document. Operator-supplied recipes or DSL expressions can amplify problematic inputs.
 - **Recipe Trust Boundary**: Recipes are executable configuration. Run recipes you didn't write the same way you'd run a script you didn't write â€” review the DSL, the field bindings, and any external references before invoking.
 - **Output Path Discipline**: Use the documented output-path validation and never disable it for production runs. Avoid writing into shared directories that other processes are reading from.
 - **Resource Limits**: For unattended pipelines, run sumpter with explicit memory and time bounds (ulimit, systemd resource controls, container limits). Current releases do not promise bounded end-to-end extraction memory across all paths.
