@@ -42,8 +42,14 @@ only an `ndjson` variant and no default run.
 and is the single inventory used by `make examples` and `go test`. It fails on
 an empty or malformed inventory.
 
-Negative cases run with the manifest enabled and must exit non-zero with the
-expected error, publishing no records, manifest or failure files.
+The negative case runner selects file output with the manifest enabled and
+requires a non-zero exit with the expected error and no record, manifest or
+failure files for these pre-commit failures. This is a case-runner destination
+assertion, not a promise that no callback or stdout write ever occurred.
+Streaming stdout/library deliveries can contain provisional records before a
+late failure and cannot be retracted by the producer. Later validation/publish
+errors can leave committed files, and prior completed inputs can remain; see
+[publication boundaries](../docs/extract-workflow.md#recordsink-streaming-contract).
 
 | Case                                             | Feature                                           |
 | ------------------------------------------------ | ------------------------------------------------- |

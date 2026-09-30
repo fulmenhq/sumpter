@@ -2,10 +2,10 @@
 
 **Recipe-driven extraction from XML, JSON, and NDJSON, with route-specific streaming and indexed processing.**
 
-[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)](<>)
+[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)](https://go.dev/doc/install)
 [![CI Status](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml/badge.svg)](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green)](<>)
-[![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)](<>)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
+[![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)](https://hub.docker.com/r/sumpterhq/sumpter)
 
 Sumpter turns declared input formats into recipe-authored records for NDJSON or Parquet pipelines. The engine is domain-neutral: it bakes in no vertical's schemas or record types. XML and JSON use one DSL and XPath grammar, with format-specific recipes rather than one unchanged recipe.
 
