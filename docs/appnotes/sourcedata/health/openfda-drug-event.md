@@ -84,52 +84,54 @@ the record-by-record or record-index route for them rather than
 ## Reproduction
 
 Replace both placeholder values before running. Take `PARTITION_URL` from
-the download index; `WORK` is a directory outside the repository. The steps
-run in a subshell with `set -eu`: a failed download, an archive that does
-not hold exactly one `.json` member, or any failed command ends the block
-with a non-zero status before later steps run. Output from an earlier run
-is removed first, and the member is written to a temporary file that is
-renamed only after extraction succeeds, so neither stale nor partial input
-reaches `sumpter`.
+the download index; `WORK_PARENT` is an existing directory outside the
+repository. Each run creates its own new directory under `WORK_PARENT` and
+writes the download, source, index and outputs only there; nothing already
+in `WORK_PARENT` is read, changed or deleted. Run directories are kept for
+you to clean up.
+
+The steps run in a subshell with `set -eu`: a failed download, an archive
+that does not hold exactly one `.json` member, or any failed command ends
+the block with a non-zero status before later steps run. The member is
+written to a temporary file that is renamed only after extraction succeeds.
 
 ```bash
 PARTITION_URL='https://download.open.fda.gov/drug/event/YYYYqN/drug-event-NNNN-of-NNNN.json.zip'
-WORK='/path/to/work'
+WORK_PARENT='/path/to/work'
 (
 set -eu
+RUN="$(mktemp -d "$WORK_PARENT/drug-event.XXXXXX")"
+echo "run directory: $RUN" >&2
 
 # 1. Retrieve one partition and extract its single JSON member (outside
 #    sumpter). Stop with a non-zero status unless there is exactly one.
-rm -f "$WORK/drug-event.json.zip" "$WORK/drug-event.json" "$WORK/drug-event.json.part" \
-  "$WORK/drug-event.recordindex.json"
-rm -rf "$WORK/out-seq" "$WORK/out-idx"
-curl -fsS -o "$WORK/drug-event.json.zip" "$PARTITION_URL"
-MEMBERS="$(unzip -Z1 "$WORK/drug-event.json.zip")"
+curl -fsS -o "$RUN/drug-event.json.zip" "$PARTITION_URL"
+MEMBERS="$(unzip -Z1 "$RUN/drug-event.json.zip")"
 if [ "$(printf '%s\n' "$MEMBERS" | wc -l)" -ne 1 ] || [ "${MEMBERS%.json}" = "$MEMBERS" ]; then
   echo "stop: expected exactly one .json member, got: $MEMBERS" >&2
   exit 1
 fi
-unzip -p "$WORK/drug-event.json.zip" "$MEMBERS" > "$WORK/drug-event.json.part"
-mv "$WORK/drug-event.json.part" "$WORK/drug-event.json"
+unzip -p "$RUN/drug-event.json.zip" "$MEMBERS" > "$RUN/drug-event.json.part"
+mv "$RUN/drug-event.json.part" "$RUN/drug-event.json"
 
 # 2. Record-by-record extraction.
 sumpter extract files \
-  --files "$WORK"/drug-event.json \
+  --files "$RUN"/drug-event.json \
   --signature-config-path examples/config/extract/openfda-drug-event-signature.yaml \
   --extract-config-path examples/config/extract/openfda-drug-event-extract.yaml \
-  --output-path "$WORK"/out-seq
+  --output-path "$RUN"/out-seq
 
 # 3. Record-index extraction.
-sumpter index build "$WORK"/drug-event.json \
-  --input-format json -s results -o "$WORK"/drug-event -p=false
-sumpter index verify "$WORK"/drug-event.json \
-  -i "$WORK"/drug-event.recordindex.json --input-format json --verify-records
+sumpter index build "$RUN"/drug-event.json \
+  --input-format json -s results -o "$RUN"/drug-event -p=false
+sumpter index verify "$RUN"/drug-event.json \
+  -i "$RUN"/drug-event.recordindex.json --input-format json --verify-records
 sumpter extract files \
-  --files "$WORK"/drug-event.json \
+  --files "$RUN"/drug-event.json \
   --signature-config-path examples/config/extract/openfda-drug-event-signature.yaml \
   --extract-config-path examples/config/extract/openfda-drug-event-extract.yaml \
-  --record-index "$WORK"/drug-event.recordindex.json --workers 4 \
-  --output-path "$WORK"/out-idx
+  --record-index "$RUN"/drug-event.recordindex.json --workers 4 \
+  --output-path "$RUN"/out-idx
 )
 ```
 
