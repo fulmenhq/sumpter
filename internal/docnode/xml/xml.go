@@ -12,7 +12,6 @@ import (
 
 	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
-	"github.com/fulmenhq/sumpter/internal/index"
 )
 
 // Token is the format token for XML.
@@ -45,7 +44,7 @@ func (f Format) ParseRecord(rec *docnode.Record) (docnode.Document, error) {
 	data := rec.Raw
 	switch ctx := rec.Context.(type) {
 	case nil:
-	case []index.NamespaceDeclaration:
+	case []NamespaceDeclaration:
 		injected, err := injectNamespaceContext(data, ctx)
 		if err != nil {
 			return nil, &docnode.ContextError{Err: err}

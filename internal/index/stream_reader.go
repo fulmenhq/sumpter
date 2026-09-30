@@ -31,6 +31,8 @@ type RecordIndexStream struct {
 	recordsDone     bool
 	objectDone      bool
 	recordsFieldSet bool
+
+	seen map[string]bool // header fields decoded so far
 }
 
 // OpenRecordIndexStream opens a JSON record index for streaming reads.
@@ -78,6 +80,26 @@ func (s *RecordIndexStream) Header() (*RecordIndex, error) {
 	snapshot.Records = nil
 	snapshot.NamespaceContexts = cloneNamespaceContexts(s.header.NamespaceContexts)
 	return &snapshot, nil
+}
+
+// FinalSummary returns the summary once the whole index has been read. A
+// streaming index writes its summary after the records, so it is known only
+// when NextRecord has returned io.EOF.
+func (s *RecordIndexStream) FinalSummary() (SummaryStats, error) {
+	if !s.objectDone {
+		return SummaryStats{}, fmt.Errorf("record index summary is not available until every record has been read")
+	}
+	if !s.seen["summary"] {
+		return SummaryStats{}, fmt.Errorf("invalid record index: no summary field")
+	}
+	if s.header.Summary.TotalRecords < 0 {
+		return SummaryStats{}, fmt.Errorf("invalid record index: negative total_records %d", s.header.Summary.TotalRecords)
+	}
+	// Nothing may follow the index object.
+	if _, err := s.dec.Token(); err != io.EOF {
+		return SummaryStats{}, fmt.Errorf("invalid record index: data after the index object")
+	}
+	return s.header.Summary, nil
 }
 
 // NextRecord returns the next RecordMetadata entry.
@@ -131,10 +153,12 @@ func cloneNamespaceContexts(contexts []NamespaceContext) []NamespaceContext {
 	}
 	out := make([]NamespaceContext, len(contexts))
 	for i := range contexts {
-		out[i] = NamespaceContext{
-			ID:           contexts[i].ID,
-			Declarations: append([]NamespaceDeclaration(nil), contexts[i].Declarations...),
+		// Keep null and empty distinct: a current header must not carry null.
+		var decls []NamespaceDeclaration
+		if contexts[i].Declarations != nil {
+			decls = append([]NamespaceDeclaration{}, contexts[i].Declarations...)
 		}
+		out[i] = NamespaceContext{ID: contexts[i].ID, Declarations: decls}
 	}
 	return out
 }
@@ -259,6 +283,16 @@ func (s *RecordIndexStream) parseRemainingObjectFields() error {
 }
 
 func (s *RecordIndexStream) decodeFieldIntoHeader(key string) error {
+	switch key {
+	case "version", "source", "selector", "namespace_contexts", "summary", "metadata":
+		if s.seen == nil {
+			s.seen = map[string]bool{}
+		}
+		if s.seen[key] {
+			return fmt.Errorf("invalid record index: duplicate %s field", key)
+		}
+		s.seen[key] = true
+	}
 	switch key {
 	case "version":
 		return s.dec.Decode(&s.header.Version)

@@ -162,7 +162,10 @@ buffered output such as Parquet. Then the input fails with disposition reason
 An `ndjson` input is always read record by record, at any size; it has no
 whole-document route.
 
-Record-index (parallel) extraction, `extract-multi`, `inspect` of `ndjson`
+Record-index (parallel) extraction reads `json` input under a signature with
+`match_scope: record`; each indexed record is read and parsed as on the
+streaming route (see the [record index format](../technical/record-index-format.md)).
+Record indexes over `ndjson` input, `extract-multi`, `inspect` of `ndjson`
 input, and `inspect --analyze-records` of `json` or `ndjson` input are not
 available in this release; each is refused with `route_unsupported` or a load
 error.

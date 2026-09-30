@@ -36,10 +36,11 @@ const (
 	maxUint32AsInt64 = int64(1<<32 - 1)
 )
 
-// SzstStoreVersion is the version identifier for the seekable-zstd store format.
+// SzstStoreVersion is the version identifier for the seekable-zstd store
+// format written by this release.
 // This is distinct from the JSON schema version (record-index/v0.1.2) to allow
 // independent evolution of the binary store format.
-const SzstStoreVersion = "record-index-szst/v0.1.1"
+const SzstStoreVersion = index.SzstStoreVersion
 
 // SzstIndexHeader is the header structure for seekable-zstd index stores.
 // This is written to *.recordindex.header.json alongside the binary records.
@@ -53,13 +54,24 @@ type SzstIndexHeader struct {
 	Records           SzstRecordsMetadata      `json:"records"`
 }
 
-// SzstRecordsMetadata describes the binary records file format.
+// SzstRecordsMetadata describes the binary records file format. Headers from
+// record-index-szst/v0.1.2 on describe the layout in Layout and carry none of
+// the flat layout fields, so a reader that only knows the flat fields refuses
+// the header; earlier headers carry the flat fields and no Layout.
 type SzstRecordsMetadata struct {
-	RecordCount      int    `json:"record_count"`
-	RecordWidthBytes int    `json:"record_width_bytes"`
-	SHAEncoding      string `json:"sha_encoding"` // "raw32" for binary SHA256
-	Endianness       string `json:"endianness"`   // "little" for little-endian
-	RecordsFile      string `json:"records_file"` // Relative path to .records.szst
+	RecordCount      int               `json:"record_count"`
+	RecordWidthBytes int               `json:"record_width_bytes,omitempty"`
+	SHAEncoding      string            `json:"sha_encoding,omitempty"` // "raw32" for binary SHA256
+	Endianness       string            `json:"endianness,omitempty"`   // "little" for little-endian
+	Layout           *SzstRecordLayout `json:"layout,omitempty"`
+	RecordsFile      string            `json:"records_file"` // File name of the .records.szst, beside the header
+}
+
+// SzstRecordLayout is the fixed-width binary record layout.
+type SzstRecordLayout struct {
+	WidthBytes  int    `json:"width_bytes"`
+	SHAEncoding string `json:"sha_encoding"`
+	Endianness  string `json:"endianness"`
 }
 
 // WriteSeekableIndex writes a record index in seekable-zstd format.
@@ -181,20 +193,27 @@ func (w *SeekableIndexWriter) Prepare(idx *index.RecordIndex) error {
 
 	normalized := *idx
 	index.NormalizeRecordIndex(&normalized)
+	switch normalized.Source.Format {
+	case index.SourceFormatXML, index.SourceFormatJSON:
+	default:
+		return fmt.Errorf("seekable index %s requires source.format (xml or json), got %q", SzstStoreVersion, normalized.Source.Format)
+	}
 
 	header := SzstIndexHeader{
 		Version:           SzstStoreVersion,
 		Source:            normalized.Source,
 		Selector:          normalized.Selector,
-		NamespaceContexts: normalized.NamespaceContexts,
+		NamespaceContexts: index.WritableNamespaceContexts(normalized.NamespaceContexts),
 		Summary:           normalized.Summary,
 		Metadata:          normalized.Metadata,
 		Records: SzstRecordsMetadata{
-			RecordCount:      w.recordCount,
-			RecordWidthBytes: BinaryRecordWidth,
-			SHAEncoding:      "raw32",
-			Endianness:       "little",
-			RecordsFile:      filepath.Base(w.recordsPath),
+			RecordCount: w.recordCount,
+			Layout: &SzstRecordLayout{
+				WidthBytes:  BinaryRecordWidth,
+				SHAEncoding: "raw32",
+				Endianness:  "little",
+			},
+			RecordsFile: filepath.Base(w.recordsPath),
 		},
 	}
 

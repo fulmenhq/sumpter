@@ -116,6 +116,7 @@ func TestWriteReadRoundtrip(t *testing.T) {
 	testIndex := &index.RecordIndex{
 		Version: "1.0.0",
 		Source: index.SourceInfo{
+			Format:    index.SourceFormatXML,
 			Path:      "/test/data.xml",
 			SizeBytes: 1000000,
 		},
@@ -265,6 +266,7 @@ func TestRecordsFileOverride(t *testing.T) {
 	testIndex := &index.RecordIndex{
 		Version: "1.0.0",
 		Source: index.SourceInfo{
+			Format:    index.SourceFormatXML,
 			Path:      "/test/data.xml",
 			SizeBytes: 1000,
 		},

@@ -3,6 +3,7 @@ package parallel
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/fulmenhq/sumpter/internal/extract"
@@ -79,6 +80,18 @@ func (pe *ParallelExtractor) Extract() ([]map[string]interface{}, error) {
 
 	if err := index.ValidateSourceByteOffsets(header, pe.opts.SourcePath); err != nil {
 		return nil, fmt.Errorf("record index is not safe for parallel extraction: %w", err)
+	}
+	format, err := index.SourceFormat(header)
+	if err != nil {
+		return nil, fmt.Errorf("unsupported record index header: %w", err)
+	}
+	if format == index.SourceFormatJSON {
+		// A failed JSON input returns no rows: none are trusted.
+		collector := &collectingSink{}
+		if _, err := pe.extractJSON(context.Background(), indexStore, header, collector); err != nil {
+			return nil, err
+		}
+		return collector.records, nil
 	}
 
 	// Create seekable extractor
@@ -256,6 +269,36 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 	if err := index.ValidateSourceByteOffsets(header, pe.opts.SourcePath); err != nil {
 		return summary, fmt.Errorf("record index is not safe for parallel extraction: %w", err)
 	}
+	format, err := index.SourceFormat(header)
+	if err != nil {
+		return summary, fmt.Errorf("unsupported record index header: %w", err)
+	}
+	if format == index.SourceFormatJSON {
+		count, err := pe.extractJSON(ctx, indexStore, header, sink)
+		if err == nil {
+			// A run canceled after its last check is still not applied.
+			if cerr := ctx.Err(); cerr != nil {
+				err = fmt.Errorf("extraction canceled: %w", cerr)
+			}
+		}
+		if err != nil {
+			// Rows already given to the sink are provisional; the failed
+			// boundary tells the caller to discard them.
+			summary.RecordCount = 0
+			summary.Disposition = extract.DispositionFailed
+			summary.DispositionReason = jsonFailureReason(err)
+			summary.DispositionDetail = err.Error()
+			if berr := sink.OnFileBoundary(context.Background(), summary); berr != nil {
+				return summary, fmt.Errorf("%w; failed to emit parallel file boundary: %v", err, berr)
+			}
+			return summary, err
+		}
+		summary.RecordCount = count
+		if err := sink.OnFileBoundary(ctx, summary); err != nil {
+			return summary, fmt.Errorf("failed to emit parallel file boundary: %w", err)
+		}
+		return summary, nil
+	}
 
 	extCfg, ok := pe.opts.ExtractConfig.(*extract.ExtractRecordMatch)
 	if !ok {
@@ -385,3 +428,45 @@ func (pe *ParallelExtractor) ExtractToSink(ctx context.Context, sink extract.Rec
 
 	return summary, nil
 }
+
+// extractJSON runs the JSON indexed route: it opens the source once and
+// extracts every indexed record through it.
+func (pe *ParallelExtractor) extractJSON(ctx context.Context, indexStore store.IndexStore, header *index.RecordIndex, sink extract.RecordSink) (int, error) {
+	run, err := pe.newJSONRun(indexStore, header)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = run.src.Close() }()
+	return run.run(ctx, sink)
+}
+
+// jsonFailureReason classifies a JSON indexed-route failure.
+func jsonFailureReason(err error) extract.DispositionReason {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "signature mismatch"):
+		return extract.DispositionReasonSignatureMismatch
+	case strings.Contains(msg, "failed to parse record"):
+		return extract.DispositionReasonParseError
+	case strings.Contains(msg, "match_scope: record"):
+		return extract.DispositionReasonRouteUnsupported
+	default:
+		return extract.DispositionReasonInternalError
+	}
+}
+
+// collectingSink keeps emitted records in memory for Extract.
+type collectingSink struct {
+	records []map[string]interface{}
+}
+
+func (s *collectingSink) OnRecord(_ context.Context, r extract.EmittedRecord) error {
+	s.records = append(s.records, r.Envelope())
+	return nil
+}
+
+func (s *collectingSink) OnFileBoundary(context.Context, extract.FileEmissionSummary) error {
+	return nil
+}
+
+func (s *collectingSink) Close(context.Context) error { return nil }

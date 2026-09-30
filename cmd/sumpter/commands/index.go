@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fulmenhq/sumpter/internal/config"
+	"github.com/fulmenhq/sumpter/internal/docnode"
 	"github.com/fulmenhq/sumpter/internal/extract/streaming"
 	"github.com/fulmenhq/sumpter/internal/index"
 	"github.com/fulmenhq/sumpter/internal/index/store"
@@ -90,16 +91,18 @@ func resolveSingleObjectSource(ctx context.Context, op, inputArg, credentialsPat
 func NewIndexCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "index",
-		Short: "Build and verify XML record indexes for seekable parallel extraction",
-		Long: `Build and verify XML record indexes that enable seekable parallel extraction.
+		Short: "Build and verify record indexes for seekable parallel extraction",
+		Long: `Build and verify record indexes that enable seekable parallel extraction.
 
 The index command creates metadata files containing record boundaries, byte offsets,
-and integrity checksums (SHA-256) for large XML files. These indexes enable:
+and integrity checksums (SHA-256) for large uncompressed XML or JSON files. The
+source syntax is declared with --input-format (xml by default), never inferred
+from the file name. These indexes enable:
 
   • Seekable random access to individual records
   • Parallel extraction with worker pools
   • Integrity verification and tamper detection
-  • Performance optimization for multi-GB XML files
+  • Performance optimization for multi-GB XML and JSON files
 
 Use 'sumpter index build' to create an index and 'sumpter index verify' to validate it.`,
 	}
@@ -123,12 +126,13 @@ func newIndexBuildCommand() *cobra.Command {
 		emitSzst            bool
 		credentialsPath     string
 		credentialOverrides []string
+		inputFormat         string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "build <input-xml-file>",
-		Short: "Build a record index from an XML file",
-		Long: `Build a record index by streaming through an XML file and capturing:
+		Use:   "build <input-file>",
+		Short: "Build a record index from an XML or JSON file",
+		Long: `Build a record index by streaming through an XML or JSON file and capturing:
   • Record boundary byte offsets (start/end positions)
   • Record sizes and SHA-256 checksums
   • Aggregate statistics (min/max/avg; exact percentiles are opt-in)
@@ -146,12 +150,21 @@ The source may be an S3-compatible cloud URI (s3://) using a credential handle
 (--credentials/--credential); see docs/extract-workflow.md "Cloud Sources and
 Outputs". The index file itself is always written locally.
 
+For --input-format json the selector names a key (Name or //Name, as on the
+streaming route); each matching element is a record, and its offsets are the
+value's own bytes in the source. ndjson sources are not indexed in this release.
+
 Example:
   sumpter index build clinvar.xml --selector "//VariationArchive" --output clinvar.recordindex.json
+  sumpter index build events.json --input-format json --selector "//results"
   sumpter index build clinvar.xml --selector "//VariationArchive" --emit-szst --emit-json=false`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := logging.Component("index-build")
+			format, err := indexInputFormat(inputFormat)
+			if err != nil {
+				return err
+			}
 
 			// Resolve the source through the uriio read boundary. A cloud (s3://)
 			// source is staged to a local working copy that the builder reads
@@ -233,6 +246,7 @@ Example:
 				SumpterVersion: version,
 				EmitJSON:       emitJSON,
 				EmitSzst:       emitSzst,
+				InputFormat:    format,
 			}
 
 			builder := index.NewBuilder(buildOpts)
@@ -297,6 +311,7 @@ Example:
 	cmd.Flags().BoolVarP(&progress, "progress", "p", true, "Show progress messages")
 	cmd.Flags().BoolVar(&emitJSON, "emit-json", true, "Emit JSON format (*.recordindex.json)")
 	cmd.Flags().BoolVar(&emitSzst, "emit-szst", false, "Emit seekable-zstd format (requires CGO build)")
+	cmd.Flags().StringVar(&inputFormat, "input-format", "xml", "Source syntax: xml or json (never inferred from the file name)")
 	cmd.Flags().StringVar(&credentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML) for s3:// sources")
 	cmd.Flags().StringArrayVar(&credentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
 
@@ -311,15 +326,21 @@ func newIndexVerifyCommand() *cobra.Command {
 		progress            bool
 		credentialsPath     string
 		credentialOverrides []string
+		inputFormat         string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "verify <input-xml-file>",
-		Short: "Verify a record index against its source XML file",
+		Use:   "verify <input-file>",
+		Short: "Verify a record index against its source file",
 		Long: `Verify index integrity by checking:
   • Source file size matches index metadata
   • Source file SHA-256 matches index metadata
   • (Optional) Individual record SHA-256 hashes match
+
+For a JSON index (--input-format json), verification also scans the source
+again with the index's selector and requires every record's number, range,
+size, name and depth, the record count, and every record hash to match. The
+declared --input-format must match the format the index was built from.
 
 Verification detects:
   • Source file tampering or modification
@@ -337,6 +358,10 @@ Example:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := logging.Component("index-verify")
+			format, err := indexInputFormat(inputFormat)
+			if err != nil {
+				return err
+			}
 
 			// Resolve the source through the uriio read boundary. A cloud (s3://)
 			// source is staged to a local working copy; verification then compares
@@ -399,6 +424,7 @@ Example:
 				IndexPath:     finalIndexPath,
 				VerifyRecords: verifyRecords,
 				FailFast:      failFast,
+				InputFormat:   format,
 			}
 
 			verifier := index.NewVerifier(verifyOpts)
@@ -459,6 +485,7 @@ Example:
 	cmd.Flags().StringVarP(&indexPath, "index", "i", "", "Path to index file (default: <input-basename>.recordindex.json in same directory)")
 	cmd.Flags().BoolVar(&verifyRecords, "verify-records", false, "Verify individual record checksums (slower, more thorough)")
 	cmd.Flags().BoolVar(&failFast, "fail-fast", false, "Stop on first verification error (only with --verify-records)")
+	cmd.Flags().StringVar(&inputFormat, "input-format", "xml", "Source syntax the index was built from: xml or json")
 	cmd.Flags().BoolVarP(&progress, "progress", "p", true, "Show progress messages")
 	cmd.Flags().StringVar(&credentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML) for s3:// sources")
 	cmd.Flags().StringArrayVar(&credentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
@@ -479,6 +506,7 @@ func newIndexStreamCommand() *cobra.Command {
 		progressEvery int
 		limit         int
 		verifySummary bool
+		inputFormat   string
 	)
 
 	cmd := &cobra.Command{
@@ -499,6 +527,10 @@ For RSS-level memory measurements, run with your OS time tool, e.g.:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			logger := logging.Component("index-stream")
+			format, err := indexInputFormat(inputFormat)
+			if err != nil {
+				return err
+			}
 			indexPath := args[0]
 
 			absPath, err := filepath.Abs(indexPath)
@@ -525,9 +557,17 @@ For RSS-level memory measurements, run with your OS time tool, e.g.:
 			if err != nil {
 				return fmt.Errorf("failed to read index header: %w", err)
 			}
+			indexFormat, err := index.SourceFormat(header)
+			if err != nil {
+				return fmt.Errorf("failed to read index header: %w", err)
+			}
+			if indexFormat != format {
+				return fmt.Errorf("index was built from %s input, but --input-format is %s", indexFormat, format)
+			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Index: %s\n", absPath)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Schema: %s\n", header.Version)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Format: %s\n", indexFormat)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Source: %s\n", header.Source.Path)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Selector: %s\n", header.Selector.XPath)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\n")
@@ -611,8 +651,12 @@ For RSS-level memory measurements, run with your OS time tool, e.g.:
 				if limit > 0 {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nSummary verification: skipped (limit enabled)\n")
 				} else {
-					if header.Summary.TotalRecords != count {
-						return fmt.Errorf("summary mismatch: header total_records=%d, scanned=%d", header.Summary.TotalRecords, count)
+					summary, err := store.FinalSummary(indexStore)
+					if err != nil {
+						return fmt.Errorf("failed to read index summary: %w", err)
+					}
+					if summary.TotalRecords != count {
+						return fmt.Errorf("summary mismatch: header total_records=%d, scanned=%d", summary.TotalRecords, count)
 					}
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nSummary verification: ok\n")
 				}
@@ -632,6 +676,7 @@ For RSS-level memory measurements, run with your OS time tool, e.g.:
 	cmd.Flags().IntVar(&progressEvery, "progress-every", 250000, "Print progress every N records (0 disables)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Stop after scanning N records (0 scans all)")
 	cmd.Flags().BoolVar(&verifySummary, "verify-summary", true, "Verify scanned record count matches index summary (only when --limit=0)")
+	cmd.Flags().StringVar(&inputFormat, "input-format", "xml", "Source syntax the index was built from: xml or json")
 
 	return cmd
 }
@@ -658,6 +703,12 @@ func (a *storeAdapter) Close() error {
 	return a.store.Close()
 }
 
+// FinalSummary returns the summary the store holds after its records have
+// been read.
+func (a *storeAdapter) FinalSummary() (index.SummaryStats, error) {
+	return store.FinalSummary(a.store)
+}
+
 // iteratorAdapter wraps store.RecordIterator to satisfy index.RecordIterator interface.
 type iteratorAdapter struct {
 	iter store.RecordIterator
@@ -669,4 +720,19 @@ func (a *iteratorAdapter) Next() (*index.RecordMetadata, error) {
 
 func (a *iteratorAdapter) Close() error {
 	return a.iter.Close()
+}
+
+// indexInputFormat validates an index command's --input-format. ndjson is a
+// known input token that record indexes do not support in this release.
+func indexInputFormat(token string) (string, error) {
+	switch t := strings.ToLower(strings.TrimSpace(token)); t {
+	case "", index.SourceFormatXML:
+		return index.SourceFormatXML, nil
+	case index.SourceFormatJSON:
+		return index.SourceFormatJSON, nil
+	case "ndjson":
+		return "", fmt.Errorf("record indexes are not supported for ndjson input in this release: %w", docnode.ErrRouteUnsupported)
+	default:
+		return "", fmt.Errorf("unknown --input-format %q (supported: xml, json)", token)
+	}
 }

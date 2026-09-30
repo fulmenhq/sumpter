@@ -2,8 +2,9 @@ package index
 
 import (
 	"fmt"
-	"sort"
 	"strings"
+
+	docxml "github.com/fulmenhq/sumpter/internal/docnode/xml"
 )
 
 // NamespaceContextTable deduplicates namespace contexts while preserving a
@@ -46,9 +47,10 @@ func (t *NamespaceContextTable) RefFor(declarations []NamespaceDeclaration) int 
 func (t *NamespaceContextTable) Contexts() []NamespaceContext {
 	out := make([]NamespaceContext, len(t.contexts))
 	for i := range t.contexts {
+		// An empty context is written as an empty array, never null.
 		out[i] = NamespaceContext{
 			ID:           t.contexts[i].ID,
-			Declarations: append([]NamespaceDeclaration(nil), t.contexts[i].Declarations...),
+			Declarations: append([]NamespaceDeclaration{}, t.contexts[i].Declarations...),
 		}
 	}
 	return out
@@ -56,28 +58,7 @@ func (t *NamespaceContextTable) Contexts() []NamespaceContext {
 
 // NormalizeNamespaceDeclarations sorts and deduplicates namespace declarations.
 func NormalizeNamespaceDeclarations(declarations []NamespaceDeclaration) []NamespaceDeclaration {
-	latest := map[string]string{}
-	for _, decl := range declarations {
-		prefix := strings.TrimSpace(decl.Prefix)
-		if prefix == "xml" || prefix == "xmlns" {
-			continue
-		}
-		uri := strings.TrimSpace(decl.URI)
-		if uri == "" {
-			continue
-		}
-		latest[prefix] = uri
-	}
-	prefixes := make([]string, 0, len(latest))
-	for prefix := range latest {
-		prefixes = append(prefixes, prefix)
-	}
-	sort.Strings(prefixes)
-	out := make([]NamespaceDeclaration, 0, len(prefixes))
-	for _, prefix := range prefixes {
-		out = append(out, NamespaceDeclaration{Prefix: prefix, URI: latest[prefix]})
-	}
-	return out
+	return docxml.NormalizeNamespaceDeclarations(declarations)
 }
 
 // NamespaceContextByID returns a lookup table for persisted namespace contexts.
@@ -98,7 +79,7 @@ func ValidateNamespaceContextSupport(idx *RecordIndex, namespaceBound bool) erro
 	if idx == nil {
 		return fmt.Errorf("record index header is missing")
 	}
-	if idx.Version != SchemaVersion && strings.HasPrefix(idx.Version, "record-index/") {
+	if idx.Version != SchemaVersion && idx.Version != LegacySchemaVersionV012 && strings.HasPrefix(idx.Version, "record-index/") {
 		return fmt.Errorf("record index %s lacks namespace context; rebuild the index with record-index/v0.1.2 or newer for namespace-bound extraction", idx.Version)
 	}
 	if len(idx.NamespaceContexts) == 0 {

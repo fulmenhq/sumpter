@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract://sumpter.index/v0.1.3/szst-header.schema.json",
+  "title": "Sumpter Seekable-Zstd Record Index Header",
+  "description": "Header of a seekable-zstd record index store (*.recordindex.header.json). Records are fixed-width binary rows in the records file named by records.records_file, beside the header.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Store header version",
+      "const": "record-index-szst/v0.1.2"
+    },
+    "source": {
+      "type": "object",
+      "description": "Source file information and integrity metadata",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute or relative path to the source file",
+          "minLength": 1
+        },
+        "size_bytes": {
+          "type": "integer",
+          "description": "Total size of source file in bytes",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "description": "SHA-256 hash of the source file (hex-encoded, 64 characters)",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "compressed": {
+          "type": "boolean",
+          "description": "Whether the indexed source file was compressed. Supported seekable offsets require false."
+        },
+        "compression_format": {
+          "type": "string",
+          "description": "Compression format if compressed",
+          "enum": [
+            "gzip",
+            "bzip2",
+            "xz",
+            "none"
+          ]
+        },
+        "offset_kind": {
+          "type": "string",
+          "description": "Coordinate space for record start/end offsets. Seekable extraction supports source_bytes.",
+          "enum": [
+            "source_bytes",
+            "decompressed_bytes"
+          ]
+        },
+        "format": {
+          "type": "string",
+          "description": "Source syntax the index was built from. JSON records are values addressed by raw source-byte ranges; they carry no XML namespace declarations.",
+          "enum": [
+            "xml",
+            "json"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when the index was created",
+          "format": "date-time"
+        },
+        "encoding": {
+          "type": "string",
+          "description": "Detected character encoding of the source file"
+        }
+      },
+      "required": [
+        "path",
+        "size_bytes",
+        "sha256",
+        "compressed",
+        "offset_kind",
+        "created_at",
+        "format"
+      ],
+      "additionalProperties": false
+    },
+    "selector": {
+      "type": "object",
+      "description": "Record selector configuration used to identify record boundaries",
+      "properties": {
+        "xpath": {
+          "type": "string",
+          "description": "Local-name record-boundary selector such as 'Record' or '//Record'",
+          "minLength": 1
+        },
+        "element_name": {
+          "type": "string",
+          "description": "Extracted local element name from the selector",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "xpath",
+        "element_name"
+      ],
+      "additionalProperties": false
+    },
+    "namespace_contexts": {
+      "type": "array",
+      "description": "Deduplicated namespace declarations in scope at indexed record boundaries. Records refer to this table by namespace_context_ref.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Zero-based namespace context identifier",
+            "minimum": 0
+          },
+          "declarations": {
+            "type": "array",
+            "description": "Namespace declarations in scope for this context. Prefix is empty for the default namespace.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "prefix": {
+                  "type": "string",
+                  "description": "Namespace prefix, or empty string for the default namespace"
+                },
+                "uri": {
+                  "type": "string",
+                  "description": "Namespace URI used as an inert XPath match key",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "prefix",
+                "uri"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "declarations"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "summary": {
+      "type": "object",
+      "description": "Summary statistics for the indexed records",
+      "properties": {
+        "total_records": {
+          "type": "integer",
+          "description": "Total number of records indexed",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "description": "Total bytes across all records",
+          "minimum": 0
+        },
+        "avg_record_size_bytes": {
+          "type": "number",
+          "description": "Average record size in bytes",
+          "minimum": 0
+        },
+        "min_record_size_bytes": {
+          "type": "integer",
+          "description": "Minimum record size in bytes",
+          "minimum": 0
+        },
+        "max_record_size_bytes": {
+          "type": "integer",
+          "description": "Maximum record size in bytes",
+          "minimum": 0
+        },
+        "p50_record_size_bytes": {
+          "type": "integer",
+          "description": "Median (50th percentile) record size in bytes",
+          "minimum": 0
+        },
+        "p95_record_size_bytes": {
+          "type": "integer",
+          "description": "95th percentile record size in bytes",
+          "minimum": 0
+        },
+        "p99_record_size_bytes": {
+          "type": "integer",
+          "description": "99th percentile record size in bytes",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total_records",
+        "total_bytes",
+        "avg_record_size_bytes",
+        "min_record_size_bytes",
+        "max_record_size_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata about the index build process",
+      "properties": {
+        "generator": {
+          "type": "string",
+          "description": "Tool and version that generated this index"
+        },
+        "build_duration_ms": {
+          "type": "integer",
+          "description": "Time taken to build the index in milliseconds",
+          "minimum": 0
+        },
+        "sumpter_version": {
+          "type": "string",
+          "description": "Version of Sumpter that created this index"
+        }
+      },
+      "required": [
+        "generator"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "object",
+      "description": "Binary records file description",
+      "properties": {
+        "record_count": {
+          "type": "integer",
+          "description": "Number of fixed-width records",
+          "minimum": 0
+        },
+        "layout": {
+          "type": "object",
+          "description": "Fixed-width record layout",
+          "properties": {
+            "width_bytes": {
+              "type": "integer",
+              "const": 68,
+              "description": "Record width in bytes"
+            },
+            "sha_encoding": {
+              "type": "string",
+              "const": "raw32",
+              "description": "SHA-256 stored as 32 raw bytes"
+            },
+            "endianness": {
+              "type": "string",
+              "const": "little",
+              "description": "Integer byte order"
+            }
+          },
+          "required": [
+            "width_bytes",
+            "sha_encoding",
+            "endianness"
+          ],
+          "additionalProperties": false
+        },
+        "records_file": {
+          "type": "string",
+          "description": "File name of the records file in the header's directory; a single name, never a path",
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "not": {
+            "enum": [
+              ".",
+              ".."
+            ]
+          }
+        }
+      },
+      "required": [
+        "record_count",
+        "layout",
+        "records_file"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version",
+    "source",
+    "selector",
+    "summary",
+    "metadata",
+    "records"
+  ],
+  "additionalProperties": false
+}

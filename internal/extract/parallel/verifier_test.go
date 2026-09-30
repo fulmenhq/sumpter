@@ -12,6 +12,7 @@ func TestSafetyVerifier_CompressedSourceDetection(t *testing.T) {
 	idx := &index.RecordIndex{
 		Version: "1.0.0",
 		Source: index.SourceInfo{
+			Format:            index.SourceFormatXML,
 			Path:              "/tmp/test.xml.gz",
 			Compressed:        true,
 			CompressionFormat: "gzip",
@@ -65,6 +66,7 @@ func TestSafetyVerifier_UncompressedSource(t *testing.T) {
 	idx := &index.RecordIndex{
 		Version: "1.0.0",
 		Source: index.SourceInfo{
+			Format:     index.SourceFormatXML,
 			Path:       "/tmp/test.xml",
 			Compressed: false,
 		},

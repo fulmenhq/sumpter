@@ -1,12 +1,21 @@
 package index
 
-import "time"
+import (
+	"time"
+
+	docxml "github.com/fulmenhq/sumpter/internal/docnode/xml"
+)
 
 const (
-	// SchemaVersion is the current JSON record index schema version.
-	SchemaVersion = "record-index/v0.1.2"
+	// SchemaVersion is the current JSON record index schema version. It
+	// requires source.format.
+	SchemaVersion = "record-index/v0.1.3"
 
-	// LegacySchemaVersion is the previous JSON record index schema version.
+	// LegacySchemaVersionV012 is the previous JSON record index schema version:
+	// namespace contexts, no source.format (XML only).
+	LegacySchemaVersionV012 = "record-index/v0.1.2"
+
+	// LegacySchemaVersion is an earlier JSON record index schema version.
 	LegacySchemaVersion = "record-index/v0.1.1"
 
 	// LegacySchemaVersionV010 is the original JSON record index schema version.
@@ -17,6 +26,19 @@ const (
 
 	// OffsetKindDecompressedBytes means record offsets address a decompressed stream.
 	OffsetKindDecompressedBytes = "decompressed_bytes"
+
+	// SzstStoreVersion is the seekable-zstd store header version written from
+	// this release on: a nested records.layout and a required source.format.
+	SzstStoreVersion = "record-index-szst/v0.1.2"
+
+	// LegacySzstStoreVersion and LegacySzstStoreVersionV010 are earlier
+	// seekable-zstd store header versions: flat layout fields, XML only.
+	LegacySzstStoreVersion     = "record-index-szst/v0.1.1"
+	LegacySzstStoreVersionV010 = "record-index-szst/v0.1.0"
+
+	// SourceFormatXML and SourceFormatJSON are the closed source.format tokens.
+	SourceFormatXML  = "xml"
+	SourceFormatJSON = "json"
 )
 
 // RecordIndex represents the complete XML record index structure
@@ -33,14 +55,17 @@ type RecordIndex struct {
 
 // SourceInfo contains source XML file information and integrity metadata
 type SourceInfo struct {
-	Path              string    `json:"path"`
-	SizeBytes         int64     `json:"size_bytes"`
-	SHA256            string    `json:"sha256"`
-	Compressed        bool      `json:"compressed"`
-	CompressionFormat string    `json:"compression_format,omitempty"`
-	OffsetKind        string    `json:"offset_kind,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	Encoding          string    `json:"encoding,omitempty"`
+	Path              string `json:"path"`
+	SizeBytes         int64  `json:"size_bytes"`
+	SHA256            string `json:"sha256"`
+	Compressed        bool   `json:"compressed"`
+	CompressionFormat string `json:"compression_format,omitempty"`
+	OffsetKind        string `json:"offset_kind,omitempty"`
+	// Format is the source syntax the index was built from. Required from
+	// record-index/v0.1.3 on; earlier versions carry none and mean xml.
+	Format    string    `json:"format,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Encoding  string    `json:"encoding,omitempty"`
 }
 
 // SelectorInfo defines how records were identified
@@ -56,12 +81,9 @@ type NamespaceContext struct {
 	Declarations []NamespaceDeclaration `json:"declarations"`
 }
 
-// NamespaceDeclaration records one in-scope XML namespace declaration. Prefix is
-// empty for the default namespace.
-type NamespaceDeclaration struct {
-	Prefix string `json:"prefix"`
-	URI    string `json:"uri"`
-}
+// NamespaceDeclaration records one in-scope XML namespace declaration. It is
+// owned by the XML format; the alias keeps the index's serialized shape.
+type NamespaceDeclaration = docxml.NamespaceDeclaration
 
 // RecordMetadata contains boundary and integrity metadata for a single record
 type RecordMetadata struct {
@@ -106,6 +128,7 @@ type BuildOptions struct {
 	SumpterVersion string // Sumpter version for metadata
 	EmitJSON       bool   // Emit JSON format (*.recordindex.json)
 	EmitSzst       bool   // Emit seekable-zstd format (*.recordindex.header.json + *.recordindex.records.szst)
+	InputFormat    string // Source syntax: xml (default) or json; never inferred from the file name
 }
 
 // VerifyOptions configures index verification behavior
@@ -114,6 +137,7 @@ type VerifyOptions struct {
 	IndexPath     string // Path to index file to verify
 	VerifyRecords bool   // If true, verify individual record checksums (slower)
 	FailFast      bool   // Stop on first verification error
+	InputFormat   string // Declared source syntax; must match the index's source.format when set
 }
 
 // VerifyResult contains the results of index verification

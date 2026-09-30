@@ -56,6 +56,12 @@ func (s *jsonStore) Records(ctx context.Context) (RecordIterator, error) {
 	}, nil
 }
 
+// FinalSummary returns the summary written after the records; it is
+// available once the records have been read to io.EOF.
+func (s *jsonStore) FinalSummary() (index.SummaryStats, error) {
+	return s.stream.FinalSummary()
+}
+
 // Close releases resources.
 func (s *jsonStore) Close() error {
 	return s.stream.Close()

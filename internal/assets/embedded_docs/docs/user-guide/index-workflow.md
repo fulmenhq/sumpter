@@ -113,7 +113,23 @@ sumpter index build large-file.xml \
   --emit-szst \
   --progress
 # Creates: large-file.recordindex.header.json + large-file.recordindex.records.szst
+
+# JSON source: declare the format; the selector names a key, as on the streaming route
+sumpter index build events.json \
+  --input-format json \
+  --selector "results" \
+  --output indexes/events
 ```
+
+`--input-format` declares the source syntax (`xml` by default); it is never
+inferred from the file name, and `index verify` and `index stream` take the
+same flag. JSON indexes use `--input-format json`; a record's offsets are the
+value's own bytes in the source. To extract from a JSON index, the signature
+must declare `match_scope: record` and the extract match selector must equal
+the index's selector. `ndjson` sources are not indexed in this release. For
+JSON, `index verify` always scans the source again and compares every record,
+not only the source hash. See the
+[record index format](../technical/record-index-format.md#json-sources).
 
 **What Happens During Build:**
 
@@ -287,13 +303,15 @@ Sumpter supports two index formats:
 
 The durable format contract is documented in
 [Record Index Format](../technical/record-index-format.md). Current JSON
-indexes emit `record-index/v0.1.2`.
+indexes emit `record-index/v0.1.3`, which records the source syntax in
+`source.format`. Indexes built by this release are not readable by earlier
+releases.
 
 ### JSON Format Structure
 
 ```json
 {
-  "version": "record-index/v0.1.2",
+  "version": "record-index/v0.1.3",
   "source": {
     "path": "/path/to/source.xml",
     "size_bytes": 3235840,
@@ -301,6 +319,7 @@ indexes emit `record-index/v0.1.2`.
     "compressed": false,
     "compression_format": "none",
     "offset_kind": "source_bytes",
+    "format": "xml",
     "created_at": "2024-11-17T12:35:41Z"
   },
   "selector": {
@@ -392,11 +411,11 @@ source.recordindex.records.szst  # Binary records (compressed)
 - Source file metadata (path, size, SHA-256)
 - Selector information
 - Summary statistics
-- Records encoding metadata (width, count, endianness)
+- Records encoding metadata (count, and a nested `layout` with width and endianness)
 
 **Records file** contains:
 
-- Fixed-width binary records (68 bytes each in `record-index-szst/v0.1.1`)
+- Fixed-width binary records (68 bytes each; headers from this release use `record-index-szst/v0.1.2`)
 - Seekable-zstd compression with frame-level random access
 
 ### Building Seekable-Zstd Indexes

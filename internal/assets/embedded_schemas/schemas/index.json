@@ -145,6 +145,22 @@
       "sha256": "sha256:5042994df2d123447a9475875574d1d30f64927a64c600a1887ab10b58fb90c4"
     },
     {
+      "id": "contract://sumpter.index/v0.1.3/record-index.schema.json",
+      "capability": "contract: sumpter.index/v0",
+      "version": "v0.1.3",
+      "kind": "output",
+      "path": "index/v0.1.3/record-index.schema.json",
+      "sha256": "sha256:76e9b231983ab0ec432e56d3a29f5c6752c036e298fcf5d436d5352386f65495"
+    },
+    {
+      "id": "contract://sumpter.index/v0.1.3/szst-header.schema.json",
+      "capability": "contract: sumpter.index/v0",
+      "version": "v0.1.3",
+      "kind": "output",
+      "path": "index/v0.1.3/szst-header.schema.json",
+      "sha256": "sha256:31ee288ca9639c1f9155c83e3a01a6e6331125d88ad1857c0ba6af65c192f2ea"
+    },
+    {
       "id": "contract://sumpter.inspect/v0.1.0/inspect-report.schema.yaml",
       "capability": "contract: sumpter.inspect/v0",
       "version": "v0.1.0",
@@ -219,8 +235,8 @@
       "entry": "contract://sumpter.extract/v0.1.0/extract-record-envelope.schema.json"
     },
     "index": {
-      "version": "v0.1.2",
-      "entry": "contract://sumpter.index/v0.1.2/record-index.schema.json"
+      "version": "v0.1.3",
+      "entry": "contract://sumpter.index/v0.1.3/record-index.schema.json"
     },
     "inspect": {
       "version": "v0.1.2",

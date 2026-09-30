@@ -286,8 +286,8 @@ credential handles. See docs/extract-workflow.md "Cloud Sources and Outputs".`,
 
 	// Parallel extraction flags
 	cmd.Flags().StringVar(&opts.RecordIndex, "record-index", "", "Path to record index file (enables parallel extraction)")
-	cmd.Flags().IntVar(&opts.MaxRecordSizeMB, "max-record-size-mb", 0, "Maximum record size in MB (0 = no limit)")
-	cmd.Flags().BoolVar(&opts.SkipLargeRecords, "skip-large-records", false, "Skip oversized records instead of failing")
+	cmd.Flags().IntVar(&opts.MaxRecordSizeMB, "max-record-size-mb", 0, "Maximum record size in MB for record-index extraction (0 = no limit for xml, 100 MiB for json)")
+	cmd.Flags().BoolVar(&opts.SkipLargeRecords, "skip-large-records", false, "Skip oversized records instead of failing (xml only; an oversized json record always fails the input)")
 	cmd.Flags().BoolVar(&opts.VerifyIndex, "verify-index", false, "Verify index integrity with SHA-256 before extraction")
 	cmd.Flags().StringVar(&opts.CredentialsPath, "credentials", "", "Path to a cloud credentials config (named handles; no secrets in recipe YAML)")
 	cmd.Flags().StringArrayVar(&opts.CredentialOverrides, "credential", nil, "Override a handle's AWS profile: handle=profile (repeatable; references only, never a raw key)")
@@ -518,7 +518,12 @@ func runExtract(opts *ExtractOptions) (err error) {
 	}
 	if inputFormatToken != extract.FormatXML {
 		if opts.RecordIndex != "" {
-			return fmt.Errorf("record-index extraction supports xml input only in this release; input format is %q", inputFormatToken)
+			switch {
+			case inputFormatToken != extract.FormatJSON:
+				return fmt.Errorf("record-index extraction supports xml and json input in this release; input format is %q", inputFormatToken)
+			case !extract.IsRecordScope(sigCfg):
+				return fmt.Errorf(`record-index extraction of json input evaluates the signature per record; declare "match_scope: record" in the signature`)
+			}
 		}
 		if opts.Recipe == nil && !opts.includePatternExplicit && opts.IncludePattern == recipesmanifest.DefaultIncludePattern(extract.FormatXML) {
 			opts.IncludePattern = recipesmanifest.DefaultIncludePattern(inputFormatToken)

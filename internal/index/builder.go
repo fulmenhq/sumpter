@@ -54,6 +54,16 @@ func (b *Builder) BuildTo(writers ...IndexWriter) (result *RecordIndex, err erro
 		}
 	}()
 
+	switch b.opts.InputFormat {
+	case "", SourceFormatXML:
+	case SourceFormatJSON:
+		return b.buildJSONTo(startTime, &startedWriters, writers)
+	case "ndjson":
+		return nil, fmt.Errorf("record index build is not supported for ndjson input in this release: %w", docnode.ErrRouteUnsupported)
+	default:
+		return nil, fmt.Errorf("record index build: unknown input format %q (supported: xml, json)", b.opts.InputFormat)
+	}
+
 	// Validate input file exists
 	fileInfo, err := os.Stat(b.opts.InputPath)
 	if err != nil {
@@ -95,6 +105,7 @@ func (b *Builder) BuildTo(writers ...IndexWriter) (result *RecordIndex, err erro
 			Compressed:        compressed,
 			CompressionFormat: compressionFormat,
 			OffsetKind:        OffsetKindSourceBytes,
+			Format:            SourceFormatXML,
 			CreatedAt:         time.Now().UTC(),
 		},
 		Selector: SelectorInfo{
@@ -322,6 +333,10 @@ func (b *Builder) WriteToFile(index *RecordIndex, outputPath string) error {
 	normalized := *index
 	normalized.Version = SchemaVersion
 	NormalizeRecordIndex(&normalized)
+	if err := requireWritableFormat(&normalized); err != nil {
+		return err
+	}
+	normalized.NamespaceContexts = WritableNamespaceContexts(normalized.NamespaceContexts)
 
 	// Create output directory if needed
 	dir := filepath.Dir(outputPath)
