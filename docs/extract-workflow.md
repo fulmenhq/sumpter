@@ -1724,7 +1724,7 @@ one source object per line.
 - If you need only the business data, read each line's `extract.data` and drop `_runtime`/`_validation`.
 - If you need audit trails or completeness checks, inspect `_validation` and the summary contents in addition to the primary payload.
 - Read records incrementally rather than loading an entire JSONL file as one JSON document. A record can still be large; metadata is not an end-to-end memory guarantee.
-- For stdout/library delivery, stage provisional records and commit only on terminal success; piping directly into a side-effecting consumer cannot undo a failed input.
+- Stdout and library records can arrive provisionally before terminal success and cannot be retracted. Consumers must stage their own downstream effects and commit only on success, or discard provisional data on failure. `pipefail` detects errors; it is not rollback.
 
 ## Example (One Record Envelope, Pretty-Printed)
 

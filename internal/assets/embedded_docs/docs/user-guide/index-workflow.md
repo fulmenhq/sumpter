@@ -30,12 +30,24 @@ fixed-RSS claim. Once indexed, you can:
 
 ```xml
 <!-- Multi-GB file with thousands of repeating elements -->
-<ClinicalData>
-  <Patient>...</Patient>
-  <Patient>...</Patient>
-  <!-- 100,000+ more patients -->
-</ClinicalData>
+<Records>
+  <Record>...</Record>
+  <Record>...</Record>
+  <!-- 100,000+ more records -->
+</Records>
 ```
+
+```json
+{
+  "results": [
+    { "id": "evt-1", "status": "open" },
+    { "id": "evt-2", "status": "closed" }
+  ]
+}
+```
+
+JSON sources use `--input-format json` and a single-key selector such as
+`results` or `//results`. NDJSON is not an index input.
 
 Indexing helps when:
 
