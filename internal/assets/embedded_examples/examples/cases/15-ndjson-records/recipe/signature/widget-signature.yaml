@@ -1,0 +1,9 @@
+signature_id: widgetco-orders
+name: WidgetCo Orders
+match_patterns:
+  - pattern_id: widgetco-orders-root
+    name: Orders root
+    selector: /Orders
+    weight: 1
+confidence_threshold: 1
+format_type: json

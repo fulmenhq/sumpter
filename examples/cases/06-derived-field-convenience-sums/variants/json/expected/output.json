@@ -1,0 +1,16 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "discount_amount": 2.5,
+          "gross_amount": 32,
+          "net_amount": 29.5,
+          "order_id": "ORDER-6001",
+          "quantity": 4,
+          "unit_price": 8
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{"id": "ORDER-1501", "status": "open", "Customer": "WidgetCo North", "Quantity": 3, "TotalAmount": 42.50, "Rush": false}
+
+{"id": "ORDER-1502", "status": "fulfilled", "Customer": "GearCo East", "Quantity": 12, "TotalAmount": 118.25, "Rush": true}
+
+{"id": "ORDER-1503", "status": "open", "Customer": "WidgetCo South", "Quantity": 1, "TotalAmount": 9.99, "Rush": false}

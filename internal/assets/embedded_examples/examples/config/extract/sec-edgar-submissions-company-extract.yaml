@@ -1,0 +1,43 @@
+# SEC EDGAR submissions Company Extraction Configuration
+# Extracts one record per company. filings.recent is columnar (parallel
+# arrays), so its columns are kept as ordered arrays, not joined into rows.
+record_type: sec_submissions_company
+match_selectors:
+  - xpath: /filings
+field_mappings:
+  - output_field: cik
+    xpath: /cik
+    type: string
+  - output_field: entity_name
+    xpath: /name
+    type: string
+  - output_field: tickers
+    xpath: /tickers
+    type: array
+  - output_field: recent_filing_count
+    xpath: count(recent/accessionNumber)
+    type: integer
+  - output_field: recent_accession_numbers
+    xpath: recent/accessionNumber
+    type: array
+  - output_field: recent_forms
+    xpath: recent/form
+    type: array
+  - output_field: recent_filing_dates
+    xpath: recent/filingDate
+    type: array
+  - output_field: older_filing_files
+    xpath: files/name
+    type: array
+output_schema:
+  type: object
+  properties:
+    cik: {type: string}
+    entity_name: {type: string}
+    tickers: {type: array}
+    recent_filing_count: {type: integer}
+    recent_accession_numbers: {type: array}
+    recent_forms: {type: array}
+    recent_filing_dates: {type: array}
+    older_filing_files: {type: array}
+  required: [cik, entity_name, recent_filing_count, recent_accession_numbers, recent_forms]

@@ -1,0 +1,10 @@
+{
+  "WidgetCoData": {
+    "Orders": {
+      "Order": [
+        {"id": "ORDER-9501", "status": "open", "Customer": "WidgetCo North", "TotalAmount": "42.50"},
+        {"id": "ORDER-9502" "status": "open", "Customer": "WidgetCo South", "TotalAmount": "9.99"}
+      ]
+    }
+  }
+}

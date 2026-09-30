@@ -1,0 +1,40 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "customer": "WidgetCo North",
+          "order_id": "ORDER-1501",
+          "quantity": 3,
+          "rush": false,
+          "status": "open",
+          "total_amount": 42.5
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "customer": "GearCo East",
+          "order_id": "ORDER-1502",
+          "quantity": 12,
+          "rush": true,
+          "status": "fulfilled",
+          "total_amount": 118.25
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "customer": "WidgetCo South",
+          "order_id": "ORDER-1503",
+          "quantity": 1,
+          "rush": false,
+          "status": "open",
+          "total_amount": 9.99
+        }
+      }
+    }
+  ]
+}

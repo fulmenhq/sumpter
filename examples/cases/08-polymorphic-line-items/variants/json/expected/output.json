@@ -1,0 +1,24 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "events": [
+            {
+              "item_type": "order_line",
+              "quantity": 2,
+              "sku": "GEAR-A1"
+            },
+            {
+              "item_type": "return_line",
+              "quantity": 1,
+              "reason": "quality-check",
+              "sku": "GEAR-R9"
+            }
+          ],
+          "order_id": "ORDER-8001"
+        }
+      }
+    }
+  ]
+}

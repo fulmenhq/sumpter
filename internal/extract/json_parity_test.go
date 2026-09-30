@@ -11,28 +11,47 @@ import (
 	"github.com/fulmenhq/sumpter/internal/provenance"
 )
 
-// jsonTwinCase pairs a worked XML example with its mechanical JSON twin under
-// tests/fixtures/json_twins. The twin's recipe differs only by format_type: json on
-// the signature and @k -> k in XPaths.
+// jsonTwinCase pairs a worked XML example with its JSON twin in the example
+// tree: examples/cases/<case>/variants/json, or a standalone twin case (case 14
+// is the twin of case 01). The twin's recipe differs by format_type: json on the
+// signature and @k -> k in XPaths.
 type jsonTwinCase struct {
-	id      string
-	caseDir string
+	id       string
+	caseDir  string
+	twinCase string // standalone twin case dir; empty means variants/json
 }
 
+// Case 07 is omitted: its declared parameters are injected at the recipe layer,
+// which the example runner covers against the same golden.
 var jsonTwinCases = []jsonTwinCase{
-	{id: "01", caseDir: "01-basic-extraction"},
+	{id: "01", caseDir: "01-basic-extraction", twinCase: "14-json-basic-extraction"},
 	{id: "02", caseDir: "02-multi-record-line-items"},
+	{id: "03", caseDir: "03-summaries-with-remainder"},
+	{id: "04", caseDir: "04-validation-metadata-clean"},
+	{id: "05", caseDir: "05-validation-metadata-reconciliation"},
+	{id: "05b", caseDir: "05b-validation-metadata-grouped-reconciliation"},
+	{id: "06", caseDir: "06-derived-field-convenience-sums"},
+	{id: "06b", caseDir: "06b-derived-field-ternary"},
 	{id: "08", caseDir: "08-polymorphic-line-items"},
 	{id: "09", caseDir: "09-predicate-match-selector"},
 	{id: "10", caseDir: "10-optional-fields"},
+	{id: "11", caseDir: "11-parquet-secondary-output"},
+	{id: "13", caseDir: "13-fixture-document"},
+}
+
+func examplesCasesDir() string {
+	return filepath.Join("..", "..", "examples", "cases")
 }
 
 func (c jsonTwinCase) xmlDir() string {
-	return filepath.Join("..", "..", "examples", "cases", c.caseDir)
+	return filepath.Join(examplesCasesDir(), c.caseDir)
 }
 
 func (c jsonTwinCase) twinDir() string {
-	return filepath.Join("..", "..", "tests", "fixtures", "json_twins", c.id)
+	if c.twinCase != "" {
+		return filepath.Join(examplesCasesDir(), c.twinCase)
+	}
+	return filepath.Join(c.xmlDir(), "variants", "json")
 }
 
 // singleYAML returns the only *.yaml file in dir.
@@ -54,14 +73,28 @@ func (c jsonTwinCase) xmlConfigPaths(t *testing.T) (sigPath, extPath string) {
 		singleYAML(t, filepath.Join(c.xmlDir(), "recipe", "extract"))
 }
 
-func (c jsonTwinCase) twinConfigPaths() (sigPath, extPath string) {
-	return filepath.Join(c.twinDir(), "signature.yaml"), filepath.Join(c.twinDir(), "extract.yaml")
+func (c jsonTwinCase) twinConfigPaths(t *testing.T) (sigPath, extPath string) {
+	t.Helper()
+	return singleYAML(t, filepath.Join(c.twinDir(), "recipe", "signature")),
+		singleYAML(t, filepath.Join(c.twinDir(), "recipe", "extract"))
 }
 
 // runTwin loads the configs, resolves the input format, extracts inputPath and
 // returns the canonical bytes of each record's extract block (the same
 // portion the example goldens pin).
 func runTwin(t *testing.T, sigPath, extPath, inputPath, recipeFormat string, recipeMode bool, wantFormat string) [][]byte {
+	t.Helper()
+	raw := runTwinRaw(t, sigPath, extPath, inputPath, recipeFormat, recipeMode, wantFormat)
+	out := make([][]byte, 0, len(raw))
+	for _, b := range raw {
+		out = append(out, canonicalJSON(t, b))
+	}
+	return out
+}
+
+// runTwinRaw is runTwin without float64 canonicalization: it returns each
+// record's extract block exactly as marshaled, for typed comparison.
+func runTwinRaw(t *testing.T, sigPath, extPath, inputPath, recipeFormat string, recipeMode bool, wantFormat string) [][]byte {
 	t.Helper()
 	sig, err := extract.LoadSignatureConfig(sigPath)
 	if err != nil {
@@ -91,7 +124,7 @@ func runTwin(t *testing.T, sigPath, extPath, inputPath, recipeFormat string, rec
 		if err != nil {
 			t.Fatalf("record %d: marshal extract: %v", i, err)
 		}
-		out = append(out, canonicalJSON(t, b))
+		out = append(out, b)
 	}
 	return out
 }
@@ -152,10 +185,16 @@ func TestJSONTwinParity(t *testing.T) {
 			xmlSig, xmlExt := c.xmlConfigPaths(t)
 			xmlOut := runTwin(t, xmlSig, xmlExt, filepath.Join(c.xmlDir(), "input.xml"), "", false, extract.FormatXML)
 
-			jsonSig, jsonExt := c.twinConfigPaths()
+			jsonSig, jsonExt := c.twinConfigPaths(t)
 			jsonOut := runTwin(t, jsonSig, jsonExt, filepath.Join(c.twinDir(), "input.json"), extract.FormatJSON, true, extract.FormatJSON)
 
 			assertSameExtracts(t, "json vs xml", xmlOut, jsonOut)
+
+			xmlRaw := runTwinRaw(t, xmlSig, xmlExt, filepath.Join(c.xmlDir(), "input.xml"), "", false, extract.FormatXML)
+			jsonRaw := runTwinRaw(t, jsonSig, jsonExt, filepath.Join(c.twinDir(), "input.json"), extract.FormatJSON, true, extract.FormatJSON)
+			if err := typedRecordsEqual(xmlRaw, jsonRaw); err != nil {
+				t.Errorf("json vs xml typed parity: %v", err)
+			}
 
 			golden := goldenExtracts(t, filepath.Join(c.xmlDir(), "expected", "output.json"))
 			assertSameExtracts(t, "xml vs golden", golden, xmlOut)
@@ -170,7 +209,7 @@ func TestJSONTwinRecipeContentHashDiffers(t *testing.T) {
 	for _, c := range jsonTwinCases {
 		t.Run(c.id, func(t *testing.T) {
 			xmlSigPath, xmlExtPath := c.xmlConfigPaths(t)
-			jsonSigPath, jsonExtPath := c.twinConfigPaths()
+			jsonSigPath, jsonExtPath := c.twinConfigPaths(t)
 			read := func(p string) []byte {
 				b, err := os.ReadFile(p) // #nosec G304 -- test reads repo fixtures.
 				if err != nil {
@@ -215,5 +254,25 @@ func TestJSONTwinXMLRecipeRejectedUnderJSON(t *testing.T) {
 				t.Fatal("expected attribute-axis rejection under json, got nil")
 			}
 		})
+	}
+}
+
+// TestNDJSONRecordsTypedParity pins that the line-delimited variant of case 15
+// yields the same typed records, in order, as its one-document JSON run.
+func TestNDJSONRecordsTypedParity(t *testing.T) {
+	caseDir := filepath.Join(examplesCasesDir(), "15-ndjson-records")
+	variantDir := filepath.Join(caseDir, "variants", "ndjson")
+
+	jsonOut := runTwinRaw(t,
+		singleYAML(t, filepath.Join(caseDir, "recipe", "signature")),
+		singleYAML(t, filepath.Join(caseDir, "recipe", "extract")),
+		filepath.Join(caseDir, "input.json"), extract.FormatJSON, true, extract.FormatJSON)
+	ndjsonOut := runTwinRaw(t,
+		singleYAML(t, filepath.Join(variantDir, "recipe", "signature")),
+		singleYAML(t, filepath.Join(variantDir, "recipe", "extract")),
+		filepath.Join(variantDir, "input.ndjson"), extract.FormatNDJSON, true, extract.FormatNDJSON)
+
+	if err := typedRecordsEqual(jsonOut, ndjsonOut); err != nil {
+		t.Fatalf("ndjson vs json typed parity: %v", err)
 	}
 }

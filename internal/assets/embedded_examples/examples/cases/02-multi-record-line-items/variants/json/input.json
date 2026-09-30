@@ -1,0 +1,26 @@
+{
+  "WidgetCoData": {
+    "date": "2026-05-16",
+    "Orders": {
+      "Order": {
+        "id": "ORDER-2001",
+        "status": "fulfilled",
+        "Customer": "WidgetCo West",
+        "Lines": {
+          "OrderLine": [
+            {
+              "sku": "GEAR-A1",
+              "Quantity": "3",
+              "UnitPrice": "4.50"
+            },
+            {
+              "sku": "GEAR-B2",
+              "Quantity": "2",
+              "UnitPrice": "7.25"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

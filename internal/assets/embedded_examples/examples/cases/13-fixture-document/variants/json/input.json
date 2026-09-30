@@ -1,0 +1,45 @@
+{
+  "FixtureDocument": {
+    "schemaVersion": "1",
+    "Header": {
+      "Profile": "xml_records_v1/1",
+      "ContentBaseOrdinal": "000000000000",
+      "RecordCount": "3"
+    },
+    "Record": [
+      {
+        "ordinal": "0",
+        "enabled": "0",
+        "RecordId": "disabled-record",
+        "OccurredAt": "2031-05-21T04:52:26Z",
+        "Category": "cat-d",
+        "Status": "done",
+        "Quantity": "1",
+        "Amount": "1.00",
+        "Label": "disabled"
+      },
+      {
+        "ordinal": "1",
+        "enabled": "1",
+        "RecordId": "a571fba57d8ddcd1b293c9201f8a2222",
+        "OccurredAt": "2024-07-10T19:09:46Z",
+        "Category": "cat-d",
+        "Status": "held",
+        "Quantity": "10520105",
+        "Amount": "7655.85",
+        "Label": "id=55bb42ef a&b<c>"
+      },
+      {
+        "ordinal": "2",
+        "enabled": "1",
+        "RecordId": "92191540a241f72377ca20f542ba3810",
+        "OccurredAt": "2024-11-23T21:25:45Z",
+        "Category": "cat-a",
+        "Status": "held",
+        "Quantity": "95456632",
+        "Amount": "5560.93",
+        "Label": "id=88e03d7d a&b<c>"
+      }
+    ]
+  }
+}

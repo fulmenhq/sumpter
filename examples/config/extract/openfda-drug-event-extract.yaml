@@ -1,0 +1,46 @@
+# openFDA Drug Event Extraction Configuration
+# Extracts one record per report in results[].
+record_type: openfda_drug_event
+match_selectors:
+  - xpath: results
+field_mappings:
+  - output_field: safetyreportid
+    xpath: safetyreportid
+    type: string
+  - output_field: receivedate
+    xpath: receivedate
+    type: string
+  - output_field: serious
+    xpath: serious
+    type: string
+  - output_field: seriousness_death
+    xpath: seriousnessdeath
+    type: string
+  - output_field: reporter_country
+    xpath: primarysource/reportercountry
+    type: string
+  - output_field: patient_sex
+    xpath: patient/patientsex
+    type: string
+  - output_field: reactions
+    xpath: patient/reaction/reactionmeddrapt
+    type: array
+  - output_field: drug_count
+    xpath: count(patient/drug)
+    type: integer
+  - output_field: suspect_products
+    xpath: patient/drug[drugcharacterization='1']/medicinalproduct
+    type: array
+output_schema:
+  type: object
+  properties:
+    safetyreportid: {type: string}
+    receivedate: {type: string}
+    serious: {type: string}
+    seriousness_death: {type: string}
+    reporter_country: {type: string}
+    patient_sex: {type: string}
+    reactions: {type: array}
+    drug_count: {type: integer}
+    suspect_products: {type: array}
+  required: [safetyreportid, receivedate]

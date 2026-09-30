@@ -1,0 +1,13 @@
+{
+  "WidgetCoData": {
+    "date": "2026-05-16",
+    "Orders": {
+      "Order": {
+        "id": "ORDER-6001",
+        "Quantity": "4",
+        "UnitPrice": "8.00",
+        "DiscountAmount": "2.50"
+      }
+    }
+  }
+}

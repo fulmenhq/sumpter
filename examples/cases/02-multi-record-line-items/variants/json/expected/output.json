@@ -1,0 +1,23 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "lines": [
+            {
+              "quantity": 3,
+              "sku": "GEAR-A1",
+              "unit_price": 4.5
+            },
+            {
+              "quantity": 2,
+              "sku": "GEAR-B2",
+              "unit_price": 7.25
+            }
+          ],
+          "order_id": "ORDER-2001"
+        }
+      }
+    }
+  ]
+}

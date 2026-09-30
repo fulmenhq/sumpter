@@ -166,6 +166,21 @@ US federal bills and laws are not subject to copyright (17 U.S.C. 105); the
 GovInfo USLM files state this in-band in their Dublin Core `rights` metadata.
 A small enrolled-bill sample ships with the repo.
 
+## JSON sources — USGS GeoJSON, SEC EDGAR, openFDA
+
+The same recipe pattern runs on JSON input (`format_type: json`). Three
+application notes describe recipes for public JSON sources. Each covers the
+source, the routes the recipe supports, bounded reproduction steps and
+caveats. No source data ships with the repo; the recipes are tested against
+small synthetic documents shaped like each source.
+
+| Source | Record | Routes | Application note |
+| --- | --- | --- | --- |
+| USGS earthquake GeoJSON feeds | one `features` item | whole document, record by record, record index | [USGS Earthquake GeoJSON Feeds](../appnotes/sourcedata/science/usgs-geojson.md) |
+| SEC EDGAR companyfacts | one USD fact | whole document | [SEC EDGAR JSON APIs](../appnotes/sourcedata/finance/sec-edgar-json.md) |
+| SEC EDGAR submissions | one company | whole document | [SEC EDGAR JSON APIs](../appnotes/sourcedata/finance/sec-edgar-json.md) |
+| openFDA drug adverse events | one `results` item | whole document, record by record, record index | [openFDA Drug Adverse Event Exports](../appnotes/sourcedata/health/openfda-drug-event.md) |
+
 ## Namespace-portable recipes
 
 Several formats above are multi-namespace: XBRL mixes the `xs:` and `link:`
