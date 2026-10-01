@@ -8,6 +8,8 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-30
+
 ### Added
 
 - **JSON document input** — recipes can declare `defaults.input.format: json` (with `format_type: json` in the signature) to extract records from JSON documents with the same recipe grammar and output as XML, using format-specific recipes. Record-index extraction accepts XML/JSON; `extract-multi` remains XML only. The mapping from JSON to the XPath node tree is published as the [document node model](docs/standards/document-node-model.md). Path-mode discovery defaults to `*.json` for JSON input.
@@ -32,9 +34,15 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 - **JSON record indexes and parallel extraction** — `sumpter index build --input-format json` indexes an uncompressed JSON source, with each record's offsets over the value's own bytes and a hash over exactly those bytes; `index verify --input-format json` scans the source again and requires every record, the count and every hash to match. `extract --record-index` reads a JSON source through its index under a signature with `match_scope: record` and a match selector equal to the index's: the source is opened once, each record's bytes are checked against the index hash before they are parsed, the signature is scored per record, and the first failure in record order fails the input. File-backed record sinks withhold staged rows on pre-commit input/extraction failure; stdout/library deliveries are provisional and non-retractable. Later validation/publish failures can leave committed local files. The index must list records in document order, with a nested record wholly inside its enclosing record and deeper; an out-of-order, repeated or crossing range fails the input. A JSON record above the size limit fails the input; `--max-record-size-mb` defaults to 100 MiB for JSON. `--verify-index` also requires the source to be the same file at the same size after its final hash; it proves integrity, not selection; `index verify` detects a forged selection. `ndjson` sources are not indexed in this release. `index build`, `index verify` and `index stream` take `--input-format` (`xml` by default), never inferring it. See the [record index format](docs/technical/record-index-format.md#json-sources).
 
-- **JSON/NDJSON worked examples** — format-specific XML/JSON twins with typed `extract.data` parity and refusal cases, shared case discovery, NDJSON examples, and public JSON recipes/application notes for USGS GeoJSON, SEC EDGAR and openFDA. See the [worked-example index](examples/README.md).
+- **JSON/NDJSON worked examples** — format-specific XML/JSON twins with typed `extract.data` parity and refusal cases, shared case discovery, NDJSON examples, and optional public-domain JSON recipes. See the [worked-example index](examples/README.md).
+
+- **JSON extraction user guide** — inspect, starter-config generation, extract, and NDJSON using the bundled WidgetCo examples. See [JSON extraction](docs/user-guide/json-extraction.md).
+
+- **Signed release-tag tooling** — `make release-tag` creates and verifies a GPG-signed annotated tag with a declared tagger identity; `make release-tag-push` re-verifies and pushes only that tag. Release CI requires an annotated tag with a PGP signature block; signature validity is checked locally and through GitHub verification.
 
 ### Changed
+
+- **Parquet dependency** — `github.com/parquet-go/parquet-go` is pinned at v0.32.0. The other dependency and toolchain pins remain unchanged from v0.3.6.
 
 - **Input-route documentation and human diagnostics** — explicit XML/JSON/NDJSON support and eligibility matrix, format-specific memory/publication limits, focused command help, and a human-only `envinfo` route section. Human XML memory targets are qualified as design targets, not measured run/JSON bounds; machine envinfo fields, values and schemas are unchanged.
 

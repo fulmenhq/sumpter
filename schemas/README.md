@@ -12,17 +12,17 @@ manifests, catalog, and offline resolution.
 Each family keeps one directory per version. Every version directory has a
 `contract.json` manifest that owns its schema files.
 
-| Family | Versions | Entry schema | Kind |
-| --- | --- | --- | --- |
-| `config/` | `v0.1.0` | `sumpter-config.schema.json` (+ logger, PII) | input |
-| `dialects/` | `v0.1.0` | `dialect-registry.schema.yaml` | input |
-| `envinfo/` | `v0.1.0` | `complete.schema.json` (+ network, paths, system, vars, xml) | output |
-| `extract/` | `v0.1.0` | `extract-record-envelope.schema.json` (+ dispositions, failures: output; file signature, record match: input) | mixed |
-| `index/` | `v0.1.0`, `v0.1.1`, `v0.1.2` | `record-index.schema.json` | output |
-| `inspect/` | `v0.1.0`, `v0.1.1` | `inspect-report.schema.yaml` | output |
-| `provenance/` | `v1` (`v1.json`) | `v1.json` | output |
-| `recipes/` | `v0.1.0` | `recipe.schema.yaml` (+ applicability) | input |
-| `retrieve/` | `v0.1.0` | `retrieve-config.schema.yaml` | input |
+| Family        | Versions                               | Entry schema                                                                                                  | Kind   |
+| ------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------ |
+| `config/`     | `v0.1.0`                               | `sumpter-config.schema.json` (+ logger, PII)                                                                  | input  |
+| `dialects/`   | `v0.1.0`                               | `dialect-registry.schema.yaml`                                                                                | input  |
+| `envinfo/`    | `v0.1.0`                               | `complete.schema.json` (+ network, paths, system, vars, xml)                                                  | output |
+| `extract/`    | `v0.1.0`                               | `extract-record-envelope.schema.json` (+ dispositions, failures: output; file signature, record match: input) | mixed  |
+| `index/`      | `v0.1.0`, `v0.1.1`, `v0.1.2`, `v0.1.3` | `record-index.schema.json` (+ `szst-header.schema.json` in `v0.1.3`)                                          | output |
+| `inspect/`    | `v0.1.0`, `v0.1.1`, `v0.1.2`           | `inspect-report.schema.yaml`                                                                                  | output |
+| `provenance/` | `v1` (`v1.json`)                       | `v1.json`                                                                                                     | output |
+| `recipes/`    | `v0.1.0`                               | `recipe.schema.yaml` (+ applicability)                                                                        | input  |
+| `retrieve/`   | `v0.1.0`                               | `retrieve-config.schema.yaml`                                                                                 | input  |
 
 `index.json` at this root is the generated catalog of every resource.
 

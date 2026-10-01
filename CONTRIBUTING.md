@@ -1,6 +1,6 @@
 # Contributing to Sumpter (ALPHA)
 
-Thanks for your interest in Sumpter! We're currently in the **ALPHA** phase. We value your feedback and early testing while we stabilize the streaming-XML core, the recipe DSL, and the output adapters.
+Thanks for your interest in Sumpter! We're currently in the **ALPHA** phase. We value your feedback and early testing while we stabilize the recipe-driven XML, JSON, and NDJSON core, the recipe DSL, and the output adapters.
 
 > For an overview of what alpha means across the whole project, see the **Project status: alpha** section of the [README](README.md). This document is the canonical home for the contribution posture specifically.
 

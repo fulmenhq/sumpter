@@ -10,6 +10,12 @@ recipe authors can rely on today. The reference version above is documentation
 metadata only; Sumpter does not currently accept a runtime declaration such as
 `expression_language: sumpter-dsl@v1.3`.
 
+Expressions run on fields already extracted from XML, JSON, or NDJSON. JSON
+selectors, `null`/empty-array absence, and `value_text` for identifiers above
+2^53 are in the [document node model](standards/document-node-model.md) and
+[JSON extraction](user-guide/json-extraction.md). XPath numeric operations
+use floating point even when parsing kept the original lexeme.
+
 ## Where the DSL Is Used
 
 Sumpter DSL expressions appear in these recipe surfaces:
