@@ -1,0 +1,13 @@
+signature_id: inline_xbrl_xml
+name: "Inline XBRL in strict XML"
+format_type: xml
+namespaces:
+  h: "http://www.w3.org/1999/xhtml"
+  ix: "http://www.xbrl.org/2013/inlineXBRL"
+  ix08: "http://www.xbrl.org/2008/inlineXBRL"
+match_patterns:
+  - pattern_id: inline-facts
+    name: XHTML document with inline facts
+    selector: "/h:html[descendant::*[self::ix:nonFraction or self::ix:nonNumeric or self::ix:fraction or self::ix08:nonFraction or self::ix08:nonNumeric or self::ix08:fraction]]"
+    weight: 1
+confidence_threshold: 1

@@ -86,6 +86,23 @@ empty array binds absent.
 - The string-value of an object or array element is the concatenation of its
   descendant text in document order, as in XML.
 
+## XML text, including XHTML
+
+For XML input, an element's string-value concatenates descendant character
+data in document order. String field mappings apply the current outer
+whitespace trim; internal whitespace is retained. Adjacent inline elements
+do not insert separators: `<p>A<span>B</span>C</p>` maps to `ABC`.
+An empty `<br/>` adds no display newline, so
+`<p>A<br/>B</p>` maps to `AB`. Empty elements produce `""`; missing selected
+nodes remain absent. XML entities/numeric references contribute decoded text.
+
+This is a text projection, not serialized markup or browser rendering. In
+well-formed XHTML with inline-XBRL elements, it does not join continuations,
+remove `ix:exclude` text, reconstruct escaped markup or execute transformations.
+Those are domain operations, not implicit node-model behavior. The
+[inline-XBRL inventory](../appnotes/sourcedata/finance/inline-xbrl-inventory.md)
+uses this unchanged XML behavior.
+
 ## Selecting keys that are not XML names
 
 A key that is an XML NCName (an XML name without `:`) is selected with a
@@ -163,7 +180,8 @@ unless something needs the whole document: a signature with
 `match_scope: document` (the default), an applicability predicate, or a
 buffered output such as Parquet. Then the input fails with disposition reason
 `route_unsupported`, and the error names what blocks streaming.
-`--allow-large-files` parses any input as one document instead.
+For `json`, `--allow-large-files` parses the input as one document instead.
+It does not force XML DOM; see [XML route dispatch](../extract-workflow.md#xml-route-dispatch).
 
 An `ndjson` input is always read record by record, at any size; it has no
 whole-document route.

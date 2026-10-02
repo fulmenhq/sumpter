@@ -1,0 +1,183 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "decimals": "INF",
+          "format": "sample:unsupported",
+          "id": "hidden",
+          "kind": "nonFraction",
+          "name": "sample:Hidden",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "scale": "-2",
+          "sign": "-",
+          "text": "9007199254740993",
+          "unit_ref": "usd"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "continued_at": "cont-a",
+          "id": "text",
+          "kind": "nonNumeric",
+          "language": "en",
+          "name": "sample:Description",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "text": "AlphaBetaGammaEXCLUDED"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "denominator_text": "7",
+          "id": "fraction",
+          "kind": "fraction",
+          "name": "sample:Ratio",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "numerator_text": "9007199254740993",
+          "text": "9007199254740993  7",
+          "unit_ref": "ratio"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "decimals": "0",
+          "id": "dup",
+          "kind": "nonFraction",
+          "name": "sample:Amount",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "scale": "2",
+          "sign": "+",
+          "text": "123.4500",
+          "unit_ref": "usd"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "missing",
+          "escape": "true",
+          "id": "dup",
+          "kind": "nonNumeric",
+          "name": "sample:Other",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "text": "\u003cb\u003eliteral\u003c/b\u003e"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "escape": "false",
+          "kind": "nonNumeric",
+          "name": "sample:NoID",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "text": "No identity"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "",
+          "format": "",
+          "id": "",
+          "kind": "nonFraction",
+          "name": "sample:EmptyID",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "scale": "",
+          "sign": "",
+          "text": "0",
+          "unit_ref": ""
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "id": "outer",
+          "kind": "nonNumeric",
+          "name": "sample:Outer",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "text": "ABC"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "id": "inner",
+          "kind": "nonNumeric",
+          "name": "sample:Inner",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "text": "B"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "id": "nil",
+          "kind": "nonFraction",
+          "name": "sample:Nil",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "nil": "true",
+          "text": ""
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "footnote_refs": "foot-a missing",
+          "id": "legacy",
+          "kind": "nonFraction",
+          "name": "sample:Legacy",
+          "namespace_uri": "http://www.xbrl.org/2008/inlineXBRL",
+          "precision": "6",
+          "text": "1.00000",
+          "unit_ref": "usd"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "id": "rebound",
+          "kind": "nonFraction",
+          "name": "sample:Amount",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "text": "42"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "context_ref": "ctx",
+          "id": "numeric-reference",
+          "kind": "nonNumeric",
+          "name": "sample:Unicode",
+          "namespace_uri": "http://www.xbrl.org/2013/inlineXBRL",
+          "text": "é \u0026 text"
+        }
+      }
+    }
+  ]
+}

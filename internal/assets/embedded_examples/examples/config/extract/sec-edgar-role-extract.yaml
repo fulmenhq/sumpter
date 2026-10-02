@@ -11,7 +11,7 @@ field_mappings:
     xpath: "@id"
     type: "string"
   - output_field: "role_uri"
-    xpath: "link:roleURI/@roleURI"
+    xpath: "@roleURI"
     type: "string"
   - output_field: "definition"
     xpath: "link:definition"

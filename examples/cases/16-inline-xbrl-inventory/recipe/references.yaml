@@ -1,0 +1,17 @@
+version: "recipe/v0.1.0"
+kind: extract
+id: inline_xbrl_references
+display_name: "Inline XBRL Reference Inventory (DOM)"
+created_at: "2026-10-02T00:00:00Z"
+content_version: "0.0.1"
+assets:
+  signature: signature/inline-xbrl.yaml
+  extract: extract/references.yaml
+defaults:
+  input:
+    format: xml
+  output:
+    format: json
+    pattern: references.jsonl
+  workers: 1
+  progress: false

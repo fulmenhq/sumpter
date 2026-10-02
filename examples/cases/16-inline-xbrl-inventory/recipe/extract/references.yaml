@@ -1,0 +1,42 @@
+# Lexical references only: never fetch or validate/join their targets.
+record_type: inline_xbrl_reference
+namespaces:
+  ix: "http://www.xbrl.org/2013/inlineXBRL"
+  ix08: "http://www.xbrl.org/2008/inlineXBRL"
+  link: "http://www.xbrl.org/2003/linkbase"
+  xlink: "http://www.w3.org/1999/xlink"
+match_selectors:
+  - xpath: "descendant::*[self::ix:relationship or self::ix:references or self::ix08:references or self::link:schemaRef or self::link:roleRef or self::link:arcroleRef]"
+field_mappings:
+  - {output_field: kind, xpath: "local-name(.)", type: string}
+  - {output_field: namespace_uri, xpath: "namespace-uri(.)", type: string}
+  - {output_field: id, xpath: "@id", type: string}
+  - {output_field: target, xpath: "@target", type: string}
+  - {output_field: from_refs, xpath: "@fromRefs", type: string}
+  - {output_field: to_refs, xpath: "@toRefs", type: string}
+  - {output_field: arcrole, xpath: "@arcrole", type: string}
+  - {output_field: link_role, xpath: "@linkRole", type: string}
+  - {output_field: order, xpath: "@order", type: string}
+  - {output_field: role_uri, xpath: "@roleURI", type: string}
+  - {output_field: arcrole_uri, xpath: "@arcroleURI", type: string}
+  - {output_field: href, xpath: "@xlink:href", type: string}
+  - {output_field: link_type, xpath: "@xlink:type", type: string}
+  - {output_field: text, xpath: ".", type: string}
+output_schema:
+  type: object
+  properties:
+    kind: {type: string}
+    namespace_uri: {type: string}
+    id: {type: string}
+    target: {type: string}
+    from_refs: {type: string}
+    to_refs: {type: string}
+    arcrole: {type: string}
+    link_role: {type: string}
+    order: {type: string}
+    role_uri: {type: string}
+    arcrole_uri: {type: string}
+    href: {type: string}
+    link_type: {type: string}
+    text: {type: string}
+  required: [kind, namespace_uri, text]

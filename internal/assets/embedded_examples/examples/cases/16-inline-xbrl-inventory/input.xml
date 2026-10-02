@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:alt="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:old="http://www.xbrl.org/2008/inlineXBRL"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance"
+      xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+      xmlns:link="http://www.xbrl.org/2003/linkbase"
+      xmlns:xlink="http://www.w3.org/1999/xlink"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:sample="urn:example:financial-concepts"
+      xmlns:foreign="urn:example:not-inline-xbrl">
+  <head><title>Synthetic inline-XBRL inventory</title></head>
+  <body>
+    <ix:header>
+      <ix:references target=""><link:schemaRef xlink:type="simple" xlink:href="urn:example:taxonomy"/></ix:references>
+      <ix:resources>
+        <xbrli:context id="ctx">
+          <xbrli:entity><xbrli:identifier scheme="urn:example:entity">SYNTHETIC</xbrli:identifier>
+            <xbrli:segment><xbrldi:explicitMember dimension="sample:Region">sample:North</xbrldi:explicitMember></xbrli:segment>
+          </xbrli:entity>
+          <xbrli:period><xbrli:instant>2026-01-01</xbrli:instant></xbrli:period>
+        </xbrli:context>
+        <xbrli:context id="ctx">
+          <xbrli:entity><xbrli:identifier scheme="urn:example:entity">OTHER</xbrli:identifier></xbrli:entity>
+          <xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate><xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period>
+          <xbrli:scenario><xbrldi:typedMember dimension="sample:Category"><sample:category>A</sample:category></xbrldi:typedMember></xbrli:scenario>
+        </xbrli:context>
+        <xbrli:unit id="usd"><xbrli:measure>sample:USD</xbrli:measure></xbrli:unit>
+        <xbrli:unit id="ratio"><xbrli:divide><xbrli:unitNumerator><xbrli:measure>sample:USD</xbrli:measure></xbrli:unitNumerator><xbrli:unitDenominator><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unitDenominator></xbrli:divide></xbrli:unit>
+      </ix:resources>
+      <ix:hidden><ix:nonFraction id="hidden" name="sample:Hidden" contextRef="ctx" unitRef="usd" decimals="INF" scale="-2" sign="-" format="sample:unsupported">9007199254740993</ix:nonFraction></ix:hidden>
+    </ix:header>
+    <ix:nonNumeric id="text" name="sample:Description" contextRef="ctx" continuedAt="cont-a" xml:lang="en">  Alpha<span>Beta</span><br/>Gamma<ix:exclude>EXCLUDED</ix:exclude>  </ix:nonNumeric>
+    <alt:fraction id="fraction" name="sample:Ratio" contextRef="ctx" unitRef="ratio"><alt:numerator> 9007199254740993 </alt:numerator><alt:denominator> 7 </alt:denominator></alt:fraction>
+    <ix:nonFraction id="dup" name="sample:Amount" contextRef="ctx" unitRef="usd" scale="2" sign="+" decimals="0">123.4500</ix:nonFraction>
+    <alt:nonNumeric id="dup" name="sample:Other" contextRef="missing" escape="true">&lt;b&gt;literal&lt;/b&gt;</alt:nonNumeric>
+    <ix:nonNumeric name="sample:NoID" contextRef="ctx" escape="false">No identity</ix:nonNumeric>
+    <ix:nonFraction id="" name="sample:EmptyID" contextRef="" unitRef="" format="" sign="" scale="">0</ix:nonFraction>
+    <ix:nonNumeric id="outer" name="sample:Outer" contextRef="ctx">A<alt:nonNumeric id="inner" name="sample:Inner" contextRef="ctx">B</alt:nonNumeric>C</ix:nonNumeric>
+    <ix:nonFraction id="nil" name="sample:Nil" contextRef="ctx" xsi:nil="true" foreign:nil="false"/>
+    <old:nonFraction id="legacy" name="sample:Legacy" contextRef="ctx" unitRef="usd" precision="6" footnoteRefs="foot-a missing">1.00000</old:nonFraction>
+    <div xmlns:ix="urn:example:not-inline-xbrl" xmlns:sample="urn:example:rebound-concepts">
+      <ix:nonFraction id="collision">NOT A FACT</ix:nonFraction>
+      <alt:nonFraction id="rebound" name="sample:Amount" contextRef="ctx">42</alt:nonFraction>
+    </div>
+    <foreign:nonNumeric id="foreign">NOT A FACT</foreign:nonNumeric>
+    <ix:nonNumeric id="numeric-reference" name="sample:Unicode" contextRef="ctx">&#233; &amp; text</ix:nonNumeric>
+    <ix:continuation id="cont-a" continuedAt="cont-b"> tail <ix:exclude>NOT FILTERED</ix:exclude> </ix:continuation>
+    <alt:continuation id="cont-b" continuedAt="cont-a">cycle is inventoried, not followed</alt:continuation>
+    <ix:footnote id="foot-a" footnoteRole="urn:example:footnote" xml:lang="en">First<span>note</span><br/>tail</ix:footnote>
+    <alt:footnote id="foot-a" xml:lang="fr">Duplicate footnote</alt:footnote>
+    <ix:relationship fromRefs="dup hidden" toRefs="foot-a missing" arcrole="http://www.xbrl.org/2003/arcrole/fact-footnote" linkRole="urn:example:link" order="1.00"/>
+    <link:roleRef roleURI="urn:example:role" xlink:type="simple" xlink:href="urn:example:taxonomy#role"/>
+    <link:arcroleRef arcroleURI="urn:example:arcrole" xlink:type="simple" xlink:href="urn:example:taxonomy#arcrole"/>
+  </body>
+</html>

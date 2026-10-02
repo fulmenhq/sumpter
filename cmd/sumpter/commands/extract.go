@@ -228,6 +228,12 @@ an eligible single Name or //Name selector, and an eligible output. NDJSON
 has no whole-document or indexed route. --format/--formats select OUTPUT,
 not input syntax. See docs/extract-workflow.md for route eligibility.
 
+XML uses a strict >100 MiB streaming trigger. Above it, --allow-large-files
+selects streaming, not DOM; an eligible record sink without applicability also
+selects streaming. Buffered output or applicability without the flag can retain
+DOM. Streaming/index XML boundaries require one local Name or //Name; URI-bound
+DOM predicates are a different profile.
+
 Choose exactly one input mode: --files for a short ad hoc set, --input-path to
 walk and pattern-filter a directory tree, or --file-list for a newline-delimited
 batch of references (no directory walk, no argv limit — the input for large or

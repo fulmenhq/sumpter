@@ -1,7 +1,7 @@
 # Sumpter Worked Examples
 
-These examples are self-contained recipes using a fictional WidgetCo / GearCo
-parts-and-orders domain. They double as copyable recipe authoring examples and
+These examples are self-contained recipes using synthetic data, including a
+fictional WidgetCo / GearCo parts-and-orders domain. They double as copyable recipe authoring examples and
 as smoke tests for extraction semantics. For JSON and NDJSON first-run
 commands, see [JSON and NDJSON extraction](../docs/user-guide/json-extraction.md).
 
@@ -68,6 +68,7 @@ errors can leave committed files, and prior completed inputs can remain; see
 | `10-optional-fields`                             | Optional fields and boolean coercion              |
 | `14-json-basic-extraction`                       | JSON input (twin of case 01)                      |
 | `15-ndjson-records`                              | JSON array and line-delimited JSON (`ndjson`)     |
+| `16-inline-xbrl-inventory`                       | URI-bound DOM fact/resource/reference inventory |
 | `90-negative-malformed-xml`                      | XML parser failure                                |
 | `91-negative-missing-required`                   | Output schema required failure                    |
 | `92-negative-validation-fails`                   | Validation failure                                |
