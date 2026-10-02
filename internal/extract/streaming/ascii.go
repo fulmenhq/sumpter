@@ -8,6 +8,13 @@ import (
 )
 
 func isASCIIEncoding(label string) bool {
+	// EqualFold also equates some non-ASCII letters with ASCII. Encoding labels
+	// must use ASCII bytes, not Unicode lookalikes.
+	for _, b := range []byte(label) {
+		if b > 0x7f {
+			return false
+		}
+	}
 	return strings.EqualFold(label, "ASCII") || strings.EqualFold(label, "US-ASCII")
 }
 

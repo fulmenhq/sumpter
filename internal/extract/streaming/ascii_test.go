@@ -124,7 +124,7 @@ func TestRecordScannerASCIIUTF8Control(t *testing.T) {
 }
 
 func TestRecordScannerASCIIRefusesTranscoding(t *testing.T) {
-	for _, label := range []string{"ISO-8859-1", "windows-1252", "UTF-16", "unknown"} {
+	for _, label := range []string{"ISO-8859-1", "windows-1252", "UTF-16", "unknown", "Uſ-AſCII"} {
 		for _, sizeOnly := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/size-only=%t", label, sizeOnly), func(t *testing.T) {
 				source := fmt.Sprintf(`<?xml version="1.0" encoding="%s"?><Root><Record/></Root>`, label)
