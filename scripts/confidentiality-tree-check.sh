@@ -3,62 +3,90 @@
 #
 # Per ADR-0008, the concrete confidentiality check — and anything it needs to
 # know — lives outside this repository and is supplied by the operator or CI
-# through the SUMPTER_CONFIDENTIALITY_CHECK environment variable. This hook runs
-# that check when one is configured; otherwise it is a no-op, so the gate stays
-# green for contributors who have not configured a local check.
+# through the SUMPTER_CONFIDENTIALITY_CHECK environment variable. Optional mode
+# permits unconfigured contributor checks; required mode does not.
 #
-# See docs/architecture/adr/0008-sensitive-data-outside-repository-trees.md
+# See docs/decisions/confidentiality-validation-boundaries.md
 
 set -euo pipefail
 
-checker="${SUMPTER_CONFIDENTIALITY_CHECK:-}"
+fail() {
+	echo "confidentiality hook: $1" >&2
+	exit 1
+}
 
+# The '-' expansion defaults only an absent variable, not a set empty value.
+required="${SUMPTER_REQUIRE_CONFIDENTIALITY_CHECK-0}"
+case "$required" in
+0 | 1) ;;
+*) fail "invalid SUMPTER_REQUIRE_CONFIDENTIALITY_CHECK; expected 0 or 1" ;;
+esac
+
+checker="${SUMPTER_CONFIDENTIALITY_CHECK:-}"
 if [ -z "$checker" ]; then
-	echo "confidentiality hook: no operator-configured check; skipping (see ADR-0008)."
+	if [ "$required" = 1 ]; then
+		fail "required check is not configured"
+	fi
+	echo "confidentiality hook: SKIPPED (no configured check; not confidentiality clearance)"
 	exit 0
 fi
 
-if [ ! -x "$checker" ]; then
-	echo "confidentiality hook: SUMPTER_CONFIDENTIALITY_CHECK is set but not executable" >&2
-	exit 1
+if [ ! -f "$checker" ] || [ ! -r "$checker" ] || [ ! -x "$checker" ]; then
+	fail "configured check must be a readable executable file"
 fi
 
-# Per ADR-0008 the configured check lives OUTSIDE this repository. Canonicalize
-# the checker (following symlinks to the real target) and the repo root, then
-# refuse a checker that resolves inside the tree (which would reintroduce
-# enforcement mechanics into the public surface) or that points back at this
-# hook (which would recurse). Canonicalizing the target — not just its parent —
-# is what closes the out-of-tree-symlink-to-in-repo-file bypass.
+# Fully resolve existing targets, including leaf symlinks, in either mode.
+# Preserve resolver output's final newline using a sentinel, then reject any
+# ambiguous/multiline result rather than truncating a pathname. No parent-only
+# fallback or failed Git-discovery inference is used.
 canonicalize() {
+	local path result
+	case "$1" in
+	/*) path="$1" ;;
+	*) path="$(pwd -P)/$1" ;;
+	esac
 	if command -v realpath >/dev/null 2>&1; then
-		realpath "$1" 2>/dev/null
+		result="$(realpath "$path" 2>/dev/null && printf '\001')" || return 1
 	elif command -v python3 >/dev/null 2>&1; then
-		python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1" 2>/dev/null
+		result="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve(strict=True))' "$path" 2>/dev/null && printf '\001')" || return 1
 	else
-		# Last-resort fallback: resolve the parent dir only (no symlink follow on
-		# the leaf). Weaker, but better than an unresolved relative path.
-		(cd "$(dirname "$1")" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$(basename "$1")")
+		return 1
 	fi
+	result="${result%$'\001'}"
+	case "$result" in
+	*$'\n') result="${result%$'\n'}" ;;
+	*) return 1 ;;
+	esac
+	case "$result" in
+	/*) ;;
+	*) return 1 ;;
+	esac
+	case "$result" in
+	*$'\n'* | *$'\r'* | *//* | */./* | */../* | */. | */..) return 1 ;;
+	esac
+	[ -e "$result" ] || return 1
+	printf '%s' "$result"
 }
 
-repo_root="$(canonicalize "$(dirname "${BASH_SOURCE[0]}")/..")"
-this_hook="$(canonicalize "${BASH_SOURCE[0]}")"
-checker_abs="$(canonicalize "$checker")"
+# Resolve the hook first so invocation through a symlink uses its real checkout.
+this_hook="$(canonicalize "${BASH_SOURCE[0]}")" || fail "cannot resolve hook path"
+repo_root="$(canonicalize "${this_hook%/*}/..")" || fail "cannot resolve checkout root"
+checker_abs="$(canonicalize "$checker")" || fail "cannot resolve configured check"
 
-if [ -z "$checker_abs" ]; then
-	echo "confidentiality hook: cannot resolve SUMPTER_CONFIDENTIALITY_CHECK path" >&2
-	exit 1
+if [ ! -d "$repo_root" ] || [ ! -f "$this_hook" ]; then
+	fail "invalid checkout root or hook"
+fi
+if [ ! -f "$checker_abs" ] || [ ! -r "$checker_abs" ] || [ ! -x "$checker_abs" ]; then
+	fail "resolved check must be a readable executable file"
 fi
 
 if [ "$checker_abs" = "$this_hook" ]; then
-	echo "confidentiality hook: SUMPTER_CONFIDENTIALITY_CHECK must not point at this hook (would recurse)" >&2
-	exit 1
+	fail "configured check must not point at this hook (would recurse)"
 fi
 
 case "$checker_abs" in
-"$repo_root"/*)
-	echo "confidentiality hook: SUMPTER_CONFIDENTIALITY_CHECK resolves inside the repo tree; ADR-0008 requires it to live outside the repository" >&2
-	exit 1
+"$repo_root" | "$repo_root"/*)
+	fail "configured check must live outside this checkout (see ADR-0008)"
 	;;
 esac
 
