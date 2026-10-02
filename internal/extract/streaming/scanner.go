@@ -41,8 +41,14 @@ func NewRecordScannerSizeOnly(reader io.Reader, recordSelector string) *RecordSc
 // for proper offset tracking in transcoded streams.
 func NewRecordScannerSizeOnlyWithEncoding(reader io.Reader, recordSelector string, encoding string) *RecordScanner {
 	scanner := newRecordScanner(reader, recordSelector, true)
-	// Set CharsetReader to handle encoding internally, ensuring InputOffset tracks raw bytes
-	scanner.decoder.CharsetReader = charset.NewReaderLabel
+	// ASCII needs no transcoding. Preserve the existing explicit encoding-aware
+	// analysis path for other labels; it is not used for source-byte indexes.
+	scanner.decoder.CharsetReader = func(label string, input io.Reader) (io.Reader, error) {
+		if isASCIIEncoding(label) {
+			return asciiCharsetReader(label, input)
+		}
+		return charset.NewReaderLabel(label, input)
+	}
 	return scanner
 }
 
@@ -51,9 +57,11 @@ func newRecordScanner(reader io.Reader, recordSelector string, sizeOnly bool) *R
 
 	// Wrap reader to track byte position
 	cr := &countingReader{r: reader, count: 0}
+	decoder := xml.NewDecoder(cr)
+	decoder.CharsetReader = asciiCharsetReader
 
 	return &RecordScanner{
-		decoder:        xml.NewDecoder(cr),
+		decoder:        decoder,
 		reader:         cr,
 		recordSelector: recordSelector,
 		elementName:    selector.ElementName,
