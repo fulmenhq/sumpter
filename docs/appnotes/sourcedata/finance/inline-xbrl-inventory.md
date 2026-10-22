@@ -19,10 +19,13 @@ contains three copyable recipe manifests:
 The recipes bind the 2008/2013 inline-XBRL, XBRL instance, dimensions and
 linkbase namespaces by their exact URIs. Source prefixes may differ or be
 rebound. Same-local-name elements in foreign namespaces are not selected.
-This selection is not a claim of complete conformance to either inline-XBRL
+This selection covers only `nonFraction`, `nonNumeric` and `fraction`, with
+the mapped lexical attributes. It excludes `ix:tuple`, `tupleRef` and
+fact-level `order`; relationship `order` remains part of the reference
+inventory. This is not a claim of complete conformance to either inline-XBRL
 specification or a lossless resource serialization.
 
-**Full fact inventory is DOM-only.** Use these invocations with uncompressed
+**Inventory of the supported fact kinds is DOM-only.** Use these invocations with uncompressed
 XML at or below **100 MiB (104,857,600 bytes)**, without `--record-index`:
 
 ```bash
@@ -41,7 +44,7 @@ Above 100 MiB, XML dispatch can choose streaming depending on flags and output
 eligibility. **`--allow-large-files` is not an XML force-DOM switch.** Do not
 reuse these DOM selectors as local-name scanner boundaries. Streaming and
 indexed routes accept `Name`/`//Name` boundaries; those do not identify a
-namespace URI and can omit nested same-name facts. Full-fact namespace/nesting
+namespace URI and can omit nested same-name facts. Supported-kind namespace/nesting
 parity is not advertised for these routes. See
 [route dispatch](../../../extract-workflow.md#xml-route-dispatch).
 
@@ -49,7 +52,7 @@ Each inventory uses one `descendant::*[...]` predicate with URI-bound `self::`
 tests. It preserves preorder in the tested profile without an XPath union.
 **Union selectors are excluded:** their ordering divergence remains a separate
 contract issue, not resolved by this recipe. Plain local-name boundaries are
-also excluded from the full-fact profile.
+also excluded from the supported-kind fact profile.
 
 ## What the fields mean
 

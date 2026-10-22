@@ -50,6 +50,6 @@ resolve their source namespace bindings.
 
 Use uncompressed XML no larger than **104,857,600 bytes (100 MiB)** with these
 invocations. Do not select a record index or assume `--allow-large-files` forces
-XML DOM. Streaming/index local-name boundaries do not provide this full-fact
+XML DOM. Streaming/index local-name boundaries do not provide this supported-kind fact
 profile. See the [application note](../../../docs/appnotes/sourcedata/finance/inline-xbrl-inventory.md)
 for support boundaries and the [XML text model](../../../docs/standards/document-node-model.md#xml-text-including-xhtml).

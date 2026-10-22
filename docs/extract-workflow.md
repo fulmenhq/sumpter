@@ -53,7 +53,7 @@ Streaming/indexed XML boundaries currently accept one local `Name` or
 outermost same-name records and do not establish full namespace/nesting parity
 with DOM selection. Bound field XPaths cannot repair a boundary that selected
 the wrong records. The [inline-XBRL inventory](appnotes/sourcedata/finance/inline-xbrl-inventory.md)
-advertises only its tested URI-bound DOM profile; no full-fact streaming/index
+advertises only its tested URI-bound DOM profile; no supported-kind fact streaming/index
 or input-scale RSS claim follows from it.
 
 ## Input Formats
