@@ -117,8 +117,8 @@ tools:
         - scoop
         - winget
     version_scheme: semver
-    minimum_version: 1.26.6
-    recommended_version: 1.26.6
+    minimum_version: 1.26.10
+    recommended_version: 1.26.10
   go-licenses:
     name: go-licenses
     description: License compliance for Go dependencies
@@ -156,7 +156,7 @@ tools:
     description: Fast linters runner for Go
     kind: go
     detect_command: golangci-lint --version
-    install_package: github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.2
+    install_package: github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
     version_args:
       - --version
     check_args:
@@ -165,8 +165,8 @@ tools:
       all:
         - go-install
     version_scheme: semver
-    minimum_version: 2.11.2
-    recommended_version: 2.11.2
+    minimum_version: 2.14.0
+    recommended_version: 2.14.0
   gosec:
     name: gosec
     description: Go security checker

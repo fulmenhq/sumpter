@@ -287,7 +287,7 @@ install-golangci-lint: ## Install CI-pinned golangci-lint version
 	@./scripts/toolchain-contract.sh install-golangci-lint
 
 .PHONY: lint-staticcheck-probe
-lint-staticcheck-probe: ## Verify pinned staticcheck catches SUM-035 false-green class
+lint-staticcheck-probe: ## Verify pinned staticcheck reports a known synthetic finding
 	@./scripts/toolchain-contract.sh staticcheck-probe
 
 .PHONY: lint

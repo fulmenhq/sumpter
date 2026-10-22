@@ -8,8 +8,8 @@ cannot drift silently from the contract.
 
 Current contract:
 
-- Go: `1.26.6`
-- golangci-lint: `v2.11.2`
+- Go: `1.26.10`
+- golangci-lint: `v2.14.0`
 - `GOFLAGS`: empty
 
 ## Local Checks
@@ -19,6 +19,17 @@ Run the same contract check that `make lint` runs before static analysis:
 ```bash
 make toolchain-check
 ```
+
+When another Go release is the host default, select the pinned SDK explicitly:
+
+```bash
+PATH="$HOME/sdk/go1.26.10/bin:$PATH" GOTOOLCHAIN=go1.26.10 make toolchain-check
+```
+
+The module requires Go 1.26.10. When `go.mod` omits a `toolchain` directive,
+the verifier uses its `go` directive as the implicit toolchain, matching Go's
+toolchain selection rules. The executing Go version must still match the
+selected contract exactly.
 
 If golangci-lint is missing, install the CI-pinned version:
 
@@ -36,9 +47,8 @@ toolchain before trusting a local green result.
 
 ## Staticcheck Probe
 
-SUM-036 was filed after a false-green local review where CI caught staticcheck
-`SA5011` and local `make check-all` did not. The regression probe verifies that
-the pinned local linter catches a synthetic `SA5011` case:
+The probe verifies that the pinned local linter executes staticcheck and fails
+on a synthetic `SA4000` identical-expression finding:
 
 ```bash
 make lint-staticcheck-probe
@@ -46,6 +56,11 @@ make lint-staticcheck-probe
 
 Run it after changing the linter version, Go version, `.golangci.yml`, or CI
 lint setup.
+
+The previous probe used `SA5011` (possible nil-pointer dereference). The
+staticcheck version bundled with golangci-lint 2.14.0 disables that analyzer.
+The current probe proves staticcheck execution; it does not establish equivalent
+nil-pointer analysis or a replacement for the removed `SA5011` coverage.
 
 ## Updating The Contract
 
