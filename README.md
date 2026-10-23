@@ -2,7 +2,7 @@
 
 **Recipe-driven extraction from XML, JSON, and NDJSON, with route-specific streaming and indexed processing.**
 
-[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)](https://go.dev/doc/install)
+[![Go Version](https://img.shields.io/badge/go-1.26.10%2B-blue)](https://go.dev/doc/install)
 [![CI Status](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml/badge.svg)](https://github.com/fulmenhq/sumpter/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/sumpterhq/sumpter)](https://hub.docker.com/r/sumpterhq/sumpter)
@@ -18,6 +18,8 @@ Sumpter turns declared input formats into recipe-authored records for NDJSON or 
 | Extract-multi   | `xml`                              |
 
 JSON streaming and indexed extraction, and NDJSON extraction, need a record-scoped recipe and an eligible selector and output. NDJSON is not an inspect or index input; JSON and NDJSON record analysis is refused. JSON DOM extraction loads a document; not every route streams. An indexed **source document** must be uncompressed; its index may use JSON storage or optional seekable-zstd storage. See the authoritative [input-route matrix and eligibility rules](docs/extract-workflow.md#input-route-support).
+
+The [inline-XBRL inventory example](examples/cases/16-inline-xbrl-inventory/README.md) uses the existing XML DOM route for strict XML documents up to 100 MiB. It projects supported facts, resources and references with URI-bound recipes; values remain lexical. See the [application note](docs/appnotes/sourcedata/finance/inline-xbrl-inventory.md) for the supported profile and limitations.
 
 ---
 
