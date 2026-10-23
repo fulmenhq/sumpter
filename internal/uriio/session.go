@@ -307,7 +307,7 @@ func (s *Session) acquireS3Bounded(ctx context.Context, prov *gonimbuss3.Provide
 		if body != nil {
 			_ = body.Close()
 		}
-		return nil, fmt.Errorf("uriio: get %s failed: %s", ref.LogicalURI, cloudOpError(gerr, secrets))
+		return nil, classifyObjectError("get", gerr, ref.LogicalURI, secrets)
 	}
 	defer func() { _ = body.Close() }()
 
