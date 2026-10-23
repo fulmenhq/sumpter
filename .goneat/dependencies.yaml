@@ -35,6 +35,15 @@ licenses:
     - ISC
     - 0BSD
     - Unlicense
+  exceptions:
+    # Applies to the pinned revision only; review before changing its version.
+    - package: github.com/cyberphone/json-canonicalization
+      license: Unknown
+      reason: >-
+        License identification exception for v0.0.0-20241213102144-19d51d7fe467; LICENSE SHA256 6821faaddedf2d78c95bb6d98b127e9e616097afd2f6bcc34389f000d13ab12d.
+      approved_by: "@3leapsdave"
+      approved_date: "2026-10-23"
+      until: "2026-12-22"
 # ============================================================================
 # PACKAGE COOLING POLICY (Supply Chain Security)
 # ============================================================================
