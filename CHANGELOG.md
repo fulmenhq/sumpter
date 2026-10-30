@@ -8,6 +8,25 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+## [0.4.1] - Unreleased
+
+### Added
+
+- Inline-XBRL inventory recipes, a synthetic worked example and an application note for strict XML documents no larger than 100 MiB on the DOM route. URI-bound recipes project supported facts (`nonFraction`, `nonNumeric`, `fraction`), resources and references. Values remain lexical; the recipes do not normalize numbers, join continuations or validate linked definitions.
+- Required confidentiality-check mode for local validation, with checker admission and explicit failure when required configuration is absent.
+
+### Fixed
+
+- Streaming and indexed XML scans accept ASCII and US-ASCII declarations while preserving raw source bytes, offsets and hashes. Non-ASCII bytes under these declarations are rejected.
+- The example canonicalization helper checks the same file it opened.
+- Bounded remote reads keep typed `not found` and `permission denied` errors when an object disappears or becomes unreadable between its metadata and content requests, so the input is recorded as `input_unavailable` rather than a parse error.
+
+### Changed
+
+- **Recipe content hashing uses `github.com/3leaps/canonprims` for RFC 8785 (JCS) canonicalization.** Canonical bytes and recipe content hashes are unchanged for accepted inputs. **Compatibility change:** recipe signature, extract and applicability assets containing a Unicode noncharacter (U+FDD0–U+FDEF, or any code point ending in FFFE or FFFF) in a key or string value are now refused with a `noncharacter` error, because they are outside the I-JSON input domain that RFC 8785 requires. Previously such assets were hashed. Authors of affected recipes must remove or replace the character in the source asset and recompute the recipe hash; Sumpter does not rewrite assets.
+- Minimum Go version is 1.26.10; goneat is pinned at 0.6.6, golangci-lint at 2.14.0, and CI runner images at fulmen-toolbox 0.5.14. Updated the associated module dependencies.
+- The staticcheck smoke probe checks SA4000; it no longer checks nil-dereference detection after upstream disabled SA5011.
+
 ## [0.4.0] - 2026-09-30
 
 ### Added
