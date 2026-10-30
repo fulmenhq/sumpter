@@ -24,6 +24,38 @@ JSON streaming and indexed extraction, and NDJSON extraction, need a record-scop
 
 Record-sink JSON/NDJSON file output is bounded with respect to **emitted result count** on eligible sequential and record-index parallel runs. The parallel route uses bounded reorder/backpressure; unambiguous indexed `min_occurrences` floors can be checked from index counts before publication. Parquet, mixed JSON+Parquet, sequential `min_occurrences`, and ambiguous indexed floors remain buffered. This is not a flat-memory promise: DOM routes load a document; record routes retain active records, parser state, writer buffers and parallel reordering. A file-spanning JSON record, nested selected records, or a wide object checked for duplicate keys can require input-scale memory. See the [node model](standards/document-node-model.md#streaming-records) and [record-sink contract](#recordsink-streaming-contract).
 
+### XML route dispatch
+
+The XML large-file threshold is **100 MiB (104,857,600 bytes)**, with a strict
+`>` comparison. Exactly that size remains below the streaming trigger. For
+gzip inputs, dispatch estimates expanded size as ten times the file size;
+this is a route heuristic, not a memory or decompressed-size bound.
+
+Without a record index, the existing XML dispatcher behaves as follows:
+
+| Estimated XML size | Flag/output/applicability | Input route |
+| --- | --- | --- |
+| At or below 100 MiB | Either `--allow-large-files` setting | DOM |
+| Above 100 MiB | `--allow-large-files` | Streaming; applicability is refused |
+| Above 100 MiB | No flag, eligible record sink, no applicability | Streaming |
+| Above 100 MiB | No flag, no eligible sink (buffered output) | DOM, subject to whole-file read limits |
+| Above 100 MiB | No flag, applicability declared | DOM, subject to whole-file read limits |
+
+An eligible sequential sink uses JSON/NDJSON output without selector
+`min_occurrences` floors. Parquet/mixed output and sequential floors are
+buffered. **For XML, `--allow-large-files` opts into the large streaming route;
+it is not a force-DOM switch.** JSON's same-named flag instead opts into DOM.
+`--record-index` separately selects the indexed route and requires compatible
+index/config/output settings; it is not a full-document parse.
+
+Streaming/indexed XML boundaries currently accept one local `Name` or
+`//Name`, not URI-qualified names or complex DOM predicates. They select
+outermost same-name records and do not establish full namespace/nesting parity
+with DOM selection. Bound field XPaths cannot repair a boundary that selected
+the wrong records. The [inline-XBRL inventory](appnotes/sourcedata/finance/inline-xbrl-inventory.md)
+advertises only its tested URI-bound DOM profile; no supported-kind fact streaming/index
+or input-scale RSS claim follows from it.
+
 ## Input Formats
 
 Sumpter reads XML (default), JSON documents, and line-delimited JSON
@@ -1170,8 +1202,10 @@ Scope of binding in this release:
 
 #### Portability across parse paths (whole-document / streaming / indexed)
 
-Sumpter selects a parse path by input size and flags: whole-document (below the
-~100 MB threshold), streaming (at or above it), and indexed (`--record-index`).
+Sumpter selects an XML parse path by input size, flags, output eligibility and
+applicability; see [XML route dispatch](#xml-route-dispatch). The streaming
+trigger is strictly above 100 MiB, not at that size. Indexed extraction uses
+`--record-index`.
 Namespace handling is **not identical** across these paths, so an unbound
 prefixed XPath can behave differently depending on the path — with no error.
 
@@ -1188,18 +1222,18 @@ mode-dependent:
   declarations that were in scope on the full document, so a literal-prefix test
   matches by string and `namespace-uri()` is empty.
 
-Two mode-stable forms:
+For **DOM selection**, bind by URI with a `namespaces:` map and bound prefixes
+(`//n:Record`). Prefix aliases and rebinding then resolve by URI.
+`local-name()` predicates deliberately ignore the URI and cannot disambiguate
+foreign elements with the same name.
 
-- **Bind by URI** — declare a `namespaces:` map and use bound prefixes
-  (`//n:Record`). This is the recommended, serialization-stable form. Binding is
-  fully resolved in **whole-document** mode; **streaming** preserves namespace
-  URIs, so bound field XPaths resolve there too. Full URI resolution of bound
-  XPaths in **indexed** mode is being completed — until it lands, prefer
-  whole-document/streaming for a bound recipe, or use `local-name()`.
-- **`local-name()` predicates** (`//*[local-name()='Record']`) match by local
-  name in every mode and are the mode-proof option when you cannot bind (for
-  example on an older release). They cannot disambiguate elements that share a
-  local name in different URIs — bind by URI when you need that.
+Neither form is a mode-proof **record boundary**. Streaming/index boundaries
+accept only `Name`/`//Name`, not `//n:Record` or `local-name()` predicates.
+Streaming preserves namespace URIs within re-encoded fragments for field
+evaluation; indexed fragments can lack inherited declarations. These are
+different profiles from a whole-document, URI-bound selector, particularly for
+nested records and namespace collisions. Use a route-tested recipe rather than
+assuming that changing to local-name selection preserves identity or order.
 
 ### Conditional Expressions
 

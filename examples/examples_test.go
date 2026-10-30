@@ -61,6 +61,7 @@ var requiredCases = []string{
 	"91-negative-missing-required:json",
 	"15-ndjson-records",
 	"15-ndjson-records:ndjson",
+	"16-inline-xbrl-inventory",
 	"95-negative-malformed-json",
 	"96-negative-truncated-json",
 	"97-negative-ndjson-bad-line:ndjson",

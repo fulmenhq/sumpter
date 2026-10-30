@@ -1,0 +1,61 @@
+# Raw resources, not joined context/unit definitions or continuation rendering.
+record_type: inline_xbrl_resource
+namespaces:
+  ix: "http://www.xbrl.org/2013/inlineXBRL"
+  ix08: "http://www.xbrl.org/2008/inlineXBRL"
+  xbrli: "http://www.xbrl.org/2003/instance"
+  xbrldi: "http://xbrl.org/2006/xbrldi"
+  lang: "http://www.w3.org/XML/1998/namespace"
+match_selectors:
+  - xpath: "descendant::*[self::xbrli:context or self::xbrli:unit or self::ix:continuation or self::ix:footnote or self::ix08:continuation or self::ix08:footnote]"
+field_mappings:
+  - {output_field: kind, xpath: "local-name(.)", type: string}
+  - {output_field: namespace_uri, xpath: "namespace-uri(.)", type: string}
+  - {output_field: id, xpath: "@id", type: string}
+  - {output_field: continued_at, xpath: "@continuedAt", type: string}
+  - {output_field: footnote_role, xpath: "@footnoteRole", type: string}
+  - {output_field: language, xpath: "@lang:lang", type: string}
+  - {output_field: target, xpath: "@target", type: string}
+  - {output_field: text, xpath: ".", type: string}
+  - output_field: identifiers
+    xpath: "xbrli:entity/xbrli:identifier"
+    type: array
+    item_mapping:
+      - {output_field: text, xpath: ".", type: string}
+      - {output_field: scheme, xpath: "@scheme", type: string}
+  - output_field: periods
+    xpath: "xbrli:period/*"
+    type: array
+    item_mapping:
+      - {output_field: kind, xpath: "local-name(.)", type: string}
+      - {output_field: namespace_uri, xpath: "namespace-uri(.)", type: string}
+      - {output_field: text, xpath: ".", type: string}
+  - output_field: dimensions
+    xpath: "descendant::*[self::xbrldi:explicitMember or self::xbrldi:typedMember]"
+    type: array
+    item_mapping:
+      - {output_field: kind, xpath: "local-name(.)", type: string}
+      - {output_field: dimension, xpath: "@dimension", type: string}
+      - {output_field: text, xpath: ".", type: string}
+  - output_field: measures
+    xpath: "descendant::xbrli:measure"
+    type: array
+    item_mapping:
+      - {output_field: container, xpath: "local-name(..)", type: string}
+      - {output_field: text, xpath: ".", type: string}
+output_schema:
+  type: object
+  properties:
+    kind: {type: string}
+    namespace_uri: {type: string}
+    id: {type: string}
+    continued_at: {type: string}
+    footnote_role: {type: string}
+    language: {type: string}
+    target: {type: string}
+    text: {type: string}
+    identifiers: {type: array, items: {type: object}}
+    periods: {type: array, items: {type: object}}
+    dimensions: {type: array, items: {type: object}}
+    measures: {type: array, items: {type: object}}
+  required: [kind, namespace_uri, text]

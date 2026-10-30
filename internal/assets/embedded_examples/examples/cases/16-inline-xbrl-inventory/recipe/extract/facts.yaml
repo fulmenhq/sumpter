@@ -1,0 +1,54 @@
+# DOM-only inventory. One descendant traversal, not an XPath union.
+record_type: inline_xbrl_fact
+namespaces:
+  ix: "http://www.xbrl.org/2013/inlineXBRL"
+  ix08: "http://www.xbrl.org/2008/inlineXBRL"
+  xsi: "http://www.w3.org/2001/XMLSchema-instance"
+  lang: "http://www.w3.org/XML/1998/namespace"
+match_selectors:
+  - xpath: "descendant::*[self::ix:nonFraction or self::ix:nonNumeric or self::ix:fraction or self::ix08:nonFraction or self::ix08:nonNumeric or self::ix08:fraction]"
+field_mappings:
+  - {output_field: kind, xpath: "local-name(.)", type: string}
+  - {output_field: namespace_uri, xpath: "namespace-uri(.)", type: string}
+  - {output_field: id, xpath: "@id", type: string}
+  - {output_field: name, xpath: "@name", type: string}
+  - {output_field: context_ref, xpath: "@contextRef", type: string}
+  - {output_field: unit_ref, xpath: "@unitRef", type: string}
+  - {output_field: decimals, xpath: "@decimals", type: string}
+  - {output_field: precision, xpath: "@precision", type: string}
+  - {output_field: scale, xpath: "@scale", type: string}
+  - {output_field: sign, xpath: "@sign", type: string}
+  - {output_field: format, xpath: "@format", type: string}
+  - {output_field: continued_at, xpath: "@continuedAt", type: string}
+  - {output_field: escape, xpath: "@escape", type: string}
+  - {output_field: nil, xpath: "@xsi:nil", type: string}
+  - {output_field: target, xpath: "@target", type: string}
+  - {output_field: footnote_refs, xpath: "@footnoteRefs", type: string}
+  - {output_field: language, xpath: "@lang:lang", type: string}
+  - {output_field: text, xpath: ".", type: string}
+  - {output_field: numerator_text, xpath: "*[self::ix:numerator or self::ix08:numerator]", type: string}
+  - {output_field: denominator_text, xpath: "*[self::ix:denominator or self::ix08:denominator]", type: string}
+output_schema:
+  type: object
+  properties:
+    kind: {type: string}
+    namespace_uri: {type: string}
+    id: {type: string}
+    name: {type: string}
+    context_ref: {type: string}
+    unit_ref: {type: string}
+    decimals: {type: string}
+    precision: {type: string}
+    scale: {type: string}
+    sign: {type: string}
+    format: {type: string}
+    continued_at: {type: string}
+    escape: {type: string}
+    nil: {type: string}
+    target: {type: string}
+    footnote_refs: {type: string}
+    language: {type: string}
+    text: {type: string}
+    numerator_text: {type: string}
+    denominator_text: {type: string}
+  required: [kind, namespace_uri, text]

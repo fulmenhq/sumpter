@@ -60,7 +60,7 @@ func init() {
 	// Add persistent flags
 	rootCmd.PersistentFlags().String("log-level", "info", "Log level: debug|info|warn|error")
 	rootCmd.PersistentFlags().String("log-format", "console", "Log format: console|json")
-	rootCmd.PersistentFlags().Bool("allow-large-files", false, "Allow whole-document parsing of very large inputs (XML >1GB, or JSON above the large-file threshold)")
+	rootCmd.PersistentFlags().Bool("allow-large-files", false, "Permit large inputs: XML above 100 MiB uses streaming (not force-DOM); JSON opts into whole-document parsing")
 
 	// Application environment flags
 	rootCmd.PersistentFlags().String("home", "", "Override SUMPTER_HOME directory")
