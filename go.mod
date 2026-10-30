@@ -3,6 +3,7 @@ module github.com/fulmenhq/sumpter
 go 1.26.10
 
 require (
+	github.com/3leaps/canonprims v0.1.2
 	github.com/3leaps/gonimbus v0.4.2
 	github.com/3leaps/seekable-zstd/bindings/go v0.0.0-20251229210330-c1deba15f3cb
 	github.com/antchfx/xmlquery v1.5.1
@@ -10,7 +11,6 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.12
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.22
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
-	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/fulmenhq/goneat v0.6.6
 	github.com/google/uuid v1.6.0
 	github.com/parquet-go/parquet-go v0.32.0

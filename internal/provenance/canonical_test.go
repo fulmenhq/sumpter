@@ -149,3 +149,65 @@ func TestCanonicalizeYAML_RejectsDuplicateAfterNFC(t *testing.T) {
 		t.Fatal("expected duplicate NFC-normalized keys to fail")
 	}
 }
+
+func TestCanonicalizeYAML_AcceptsDeepAndLargeAssets(t *testing.T) {
+	deep := strings.Repeat("[", 200) + strings.Repeat("]", 200) + "\n"
+	if _, err := CanonicalizeYAML([]byte(deep)); err != nil {
+		t.Fatalf("CanonicalizeYAML deep: %v", err)
+	}
+
+	// Each '<' expands to six JSON bytes, so this exceeds 16 MiB once marshaled.
+	large := "description: \"" + strings.Repeat("<", 3<<20) + "\"\n"
+	if _, err := CanonicalizeYAML([]byte(large)); err != nil {
+		t.Fatalf("CanonicalizeYAML large: %v", err)
+	}
+}
+
+func TestCanonicalizeYAML_RejectsNoncharacters(t *testing.T) {
+	for name, input := range map[string]string{
+		"value BMP literal":    "a: \"x\uFDD0y\"\n",
+		"value BMP escaped":    "a: \"x\\uFFFFy\"\n",
+		"value astral escaped": "a: \"x\\U0001FFFEy\"\n",
+		"value astral literal": "a: \"x\U0010FFFFy\"\n",
+		"key BMP escaped":      "\"k\\uFFFE\": 1\n",
+		"key astral escaped":   "\"k\\U0001FFFF\": 1\n",
+	} {
+		if _, err := CanonicalizeYAML([]byte(input)); err == nil || !strings.Contains(err.Error(), "noncharacter") {
+			t.Fatalf("%s: err = %v, want noncharacter refusal", name, err)
+		}
+	}
+}
+
+func TestCanonicalizeYAML_AcceptsValidUnicode(t *testing.T) {
+	got, err := CanonicalizeYAML([]byte("\"k\U0001F600\": \"x\uFDCF\uFDF0\uFFFD\U0001FFFD\u2028y\"\n"))
+	if err != nil {
+		t.Fatalf("CanonicalizeYAML valid Unicode: %v", err)
+	}
+	want := "{\"k\U0001F600\":\"x\uFDCF\uFDF0\uFFFD\U0001FFFD\u2028y\"}"
+	if string(got) != want {
+		t.Fatalf("canonical JSON = %q, want %q", got, want)
+	}
+}
+
+// Golden bytes cross-checked against the previous JCS library: number
+// formatting thresholds, string escapes and UTF-16 key order.
+func TestCanonicalizeYAML_GoldenJCSBytes(t *testing.T) {
+	input := []byte("\"\\uE000\": 1\n\"\\U00010000\": 2\nb: [1.0e-7, 0.000001, 1.0e+21, 1.0e+20, -0.0, 0.1, 100, -9007199254740991]\nc: \"tab\\tnul\\x01 slash/ lt< amp& ls\\u2028 q\\\" bs\\\\\"\n")
+	want := "{\"b\":[1e-7,0.000001,1e+21,100000000000000000000,0,0.1,100,-9007199254740991],\"c\":\"tab\\tnul\\u0001 slash/ lt< amp& ls\u2028 q\\\" bs\\\\\",\"\U00010000\":2,\"\uE000\":1}"
+
+	got, err := CanonicalizeYAML(input)
+	if err != nil {
+		t.Fatalf("CanonicalizeYAML: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("canonical JSON = %q, want %q", got, want)
+	}
+
+	hash, err := RecipeContentHash(input, []byte("a: 1\n"))
+	if err != nil {
+		t.Fatalf("RecipeContentHash: %v", err)
+	}
+	if hash != "sha256:1f380b479482fccb003ef49ed688246a4c8f2b83ed1ca7adc84f5272ff4b453f" {
+		t.Fatalf("RecipeContentHash = %s", hash)
+	}
+}
