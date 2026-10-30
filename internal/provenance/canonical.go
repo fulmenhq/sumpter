@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	"github.com/3leaps/canonprims/canon"
 	"golang.org/x/text/unicode/norm"
 	"gopkg.in/yaml.v3"
 )
@@ -48,7 +48,7 @@ func CanonicalizeYAML(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("marshal normalized YAML as JSON: %w", err)
 	}
 
-	canonical, err := jsoncanonicalizer.Transform(jsonData)
+	canonical, err := canon.Canonicalize(canon.JCS, jsonData, canon.DefaultLimits())
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize JSON using RFC 8785 JCS: %w", err)
 	}
