@@ -58,14 +58,20 @@ func openInput(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Stat(cleanPath)
+	file, err := os.Open(cleanPath) // #nosec G703,G304 -- local test helper reads the harness-generated JSONL file.
 	if err != nil {
 		return nil, err
 	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
 	if info.IsDir() {
+		_ = file.Close()
 		return nil, fmt.Errorf("%s is a directory", cleanPath)
 	}
-	return os.Open(cleanPath) // #nosec G703,G304 -- local test helper reads the harness-generated JSONL file.
+	return file, nil
 }
 
 func sanitizeValidation(value interface{}) interface{} {

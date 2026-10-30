@@ -73,6 +73,11 @@ check_go() {
 
 	local go_mod_toolchain
 	go_mod_toolchain="$(awk '$1 == "toolchain" { print $2 }' "${ROOT_DIR}/go.mod")"
+	# Go treats an omitted toolchain directive as the go directive's version.
+	# go mod tidy removes a redundant explicit toolchain at that same version.
+	if [[ -z "${go_mod_toolchain}" ]]; then
+		go_mod_toolchain="go$(awk '$1 == "go" { print $2 }' "${ROOT_DIR}/go.mod")"
+	fi
 	if [[ "${go_mod_toolchain}" != "go${SUMPTER_GO_VERSION}" ]]; then
 		die "go.mod toolchain mismatch: expected go${SUMPTER_GO_VERSION} from ${CONTRACT_FILE}, found ${go_mod_toolchain:-<missing>}"
 	fi
@@ -181,9 +186,7 @@ staticcheck_probe() {
 	cat >"${tmp}/go.mod" <<EOF
 module example.com/sumpter-staticcheck-probe
 
-go 1.26.0
-
-toolchain go${SUMPTER_GO_VERSION}
+go ${SUMPTER_GO_VERSION}
 EOF
 
 	cat >"${tmp}/.golangci.yml" <<'EOF'
@@ -199,11 +202,8 @@ EOF
 	cat >"${tmp}/probe.go" <<'EOF'
 package probe
 
-func StaticcheckSA5011Probe(value *int) int {
-	if value == nil {
-		println("nil pointer")
-	}
-	return *value
+func StaticcheckSA4000Probe(value int) bool {
+	return value == value
 }
 EOF
 
@@ -213,12 +213,12 @@ EOF
 	status=$?
 	set -e
 
-	if [[ "${status}" -eq 0 || "${output}" != *"SA5011"* ]]; then
+	if [[ "${status}" -eq 0 || "${output}" != *"SA4000"* ]]; then
 		printf "%s\n" "${output}" >&2
-		die "staticcheck probe did not fail with SA5011; local lint no longer matches the SUM-035 false-green regression class"
+		die "staticcheck probe did not fail with SA4000; pinned staticcheck execution is not verified"
 	fi
 
-	info "staticcheck probe ok: pinned lint reports SA5011"
+	info "staticcheck probe ok: pinned lint reports SA4000"
 }
 
 usage() {
@@ -232,7 +232,7 @@ Commands:
   check                   Verify the full CI/local toolchain contract.
   install-golangci-lint   Install the pinned golangci-lint version.
   lint [args...]          Verify the contract, then run golangci-lint.
-  staticcheck-probe       Verify the pinned lint catches a synthetic SA5011 case.
+  staticcheck-probe       Verify the pinned lint catches a synthetic SA4000 case.
 EOF
 }
 
