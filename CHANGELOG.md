@@ -8,7 +8,7 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
-## [0.4.1] - Unreleased
+## [0.4.1] - 2026-10-30
 
 ### Added
 
