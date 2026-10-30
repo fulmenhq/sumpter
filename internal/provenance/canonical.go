@@ -27,6 +27,16 @@ const (
 	yamlTimestampTag = "!!timestamp"
 )
 
+// recipeJCSLimits leaves canonprims' resource limits open: recipe assets are
+// already parsed and bounded by the YAML layer, and recipe hashes must not
+// change acceptance for assets that hashed before.
+var recipeJCSLimits = canon.Limits{
+	MaxBytes:         math.MaxInt,
+	MaxDepth:         math.MaxInt,
+	MaxObjectMembers: math.MaxInt,
+	MaxStringBytes:   math.MaxInt,
+}
+
 // CanonicalizeYAML parses YAML into generic JSON-compatible data, normalizes
 // string keys and values to NFC, and returns RFC 8785 JCS bytes.
 func CanonicalizeYAML(data []byte) ([]byte, error) {
@@ -48,7 +58,7 @@ func CanonicalizeYAML(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("marshal normalized YAML as JSON: %w", err)
 	}
 
-	canonical, err := canon.Canonicalize(canon.JCS, jsonData, canon.DefaultLimits())
+	canonical, err := canon.Canonicalize(canon.JCS, jsonData, recipeJCSLimits)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize JSON using RFC 8785 JCS: %w", err)
 	}

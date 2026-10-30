@@ -149,3 +149,42 @@ func TestCanonicalizeYAML_RejectsDuplicateAfterNFC(t *testing.T) {
 		t.Fatal("expected duplicate NFC-normalized keys to fail")
 	}
 }
+
+func TestCanonicalizeYAML_AcceptsDeepAndLargeAssets(t *testing.T) {
+	deep := strings.Repeat("[", 200) + strings.Repeat("]", 200) + "\n"
+	if _, err := CanonicalizeYAML([]byte(deep)); err != nil {
+		t.Fatalf("CanonicalizeYAML deep: %v", err)
+	}
+
+	// Each '<' expands to six JSON bytes, so this exceeds 16 MiB once marshaled.
+	large := "description: \"" + strings.Repeat("<", 3<<20) + "\"\n"
+	if _, err := CanonicalizeYAML([]byte(large)); err != nil {
+		t.Fatalf("CanonicalizeYAML large: %v", err)
+	}
+}
+
+func TestCanonicalizeYAML_RejectsNoncharacters(t *testing.T) {
+	for name, input := range map[string]string{
+		"value BMP literal":    "a: \"x\uFDD0y\"\n",
+		"value BMP escaped":    "a: \"x\\uFFFFy\"\n",
+		"value astral escaped": "a: \"x\\U0001FFFEy\"\n",
+		"value astral literal": "a: \"x\U0010FFFFy\"\n",
+		"key BMP escaped":      "\"k\\uFFFE\": 1\n",
+		"key astral escaped":   "\"k\\U0001FFFF\": 1\n",
+	} {
+		if _, err := CanonicalizeYAML([]byte(input)); err == nil || !strings.Contains(err.Error(), "noncharacter") {
+			t.Fatalf("%s: err = %v, want noncharacter refusal", name, err)
+		}
+	}
+}
+
+func TestCanonicalizeYAML_AcceptsValidUnicode(t *testing.T) {
+	got, err := CanonicalizeYAML([]byte("\"k\U0001F600\": \"x\uFDCF\uFDF0\uFFFD\U0001FFFD\u2028y\"\n"))
+	if err != nil {
+		t.Fatalf("CanonicalizeYAML valid Unicode: %v", err)
+	}
+	want := "{\"k\U0001F600\":\"x\uFDCF\uFDF0\uFFFD\U0001FFFD\u2028y\"}"
+	if string(got) != want {
+		t.Fatalf("canonical JSON = %q, want %q", got, want)
+	}
+}
