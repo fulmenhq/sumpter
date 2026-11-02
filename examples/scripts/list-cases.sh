@@ -27,7 +27,7 @@ fail() {
 
 is_negative() {
 	case "$1" in
-	9[0-9]-*) return 0 ;;
+	9[0-9]-* | 9[0-9][a-z]-* | 9[0-9][0-9]-*) return 0 ;;
 	*) return 1 ;;
 	esac
 }

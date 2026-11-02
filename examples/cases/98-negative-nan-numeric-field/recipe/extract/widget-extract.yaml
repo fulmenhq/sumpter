@@ -1,0 +1,18 @@
+record_type: widget_order_nan
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: scaled_amount
+    xpath: "number(Amount) * 10"
+    type: number
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    scaled_amount:
+      type: number
+  required: [order_id, scaled_amount]

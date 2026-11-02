@@ -68,7 +68,12 @@ errors can leave committed files, and prior completed inputs can remain; see
 | `10-optional-fields`                             | Optional fields and boolean coercion              |
 | `14-json-basic-extraction`                       | JSON input (twin of case 01)                      |
 | `15-ndjson-records`                              | JSON array and line-delimited JSON (`ndjson`)     |
-| `16-inline-xbrl-inventory`                       | URI-bound DOM fact/resource/reference inventory |
+| `16-inline-xbrl-inventory`                       | URI-bound DOM fact/resource/reference inventory   |
+| `17-xpath-string-and-regex`                      | XPath string/regex contract and `NaN` guard       |
+| `18-per-record-verdict-matrix`                   | Derive-only staging, ternary verdict, and profile |
+| `19-per-file-outcome-summary`                    | Per-file outcome summary and remainder rollups    |
+| `20-ordered-fallback-and-ancestor`               | Guarded fallback, ancestor, and sibling navigation|
+| `21-signed-sum-and-epsilon`                      | Signed XPath sums and epsilon reconciliation      |
 | `90-negative-malformed-xml`                      | XML parser failure                                |
 | `91-negative-missing-required`                   | Output schema required failure                    |
 | `92-negative-validation-fails`                   | Validation failure                                |
@@ -77,3 +82,5 @@ errors can leave committed files, and prior completed inputs can remain; see
 | `95-negative-malformed-json`                     | JSON syntax error after a valid record            |
 | `96-negative-truncated-json`                     | JSON truncated after a valid record               |
 | `97-negative-ndjson-bad-line`                    | NDJSON bad line after a valid line                |
+| `98-negative-nan-numeric-field`                  | Unguarded XPath `NaN` numeric field failure       |
+| `99-negative-invalid-xpath-regex`                | Load-time invalid XPath regex rejection           |

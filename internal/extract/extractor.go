@@ -137,6 +137,9 @@ func validateApplicabilityConfig(cfg *ApplicabilityConfig) error {
 	if strings.TrimSpace(predicate.Expression) == "" {
 		return fmt.Errorf("applicability.expression is required")
 	}
+	if err := validateXPathContract(predicate.Expression); err != nil {
+		return fmt.Errorf("invalid applicability.expression: %w", err)
+	}
 	return nil
 }
 
@@ -1454,16 +1457,23 @@ func evaluateCompiledXPathBoolean(doc docnode.Node, expr *xpath.Expr) bool {
 	}
 }
 
-func evaluateXPathBoolean(doc docnode.Node, selector string) (bool, error) {
+func evaluateXPathBoolean(doc docnode.Node, selector string) (matched bool, err error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
 		return false, fmt.Errorf("empty XPath expression")
 	}
 
-	expr, err := xpath.Compile(selector)
+	expr, err := compileXPath(selector, nil)
 	if err != nil {
 		return false, fmt.Errorf("compile XPath %q: %w", selector, err)
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			matched = false
+			err = fmt.Errorf("XPath evaluation panicked for %q: %v", selector, r)
+		}
+	}()
 
 	switch v := expr.Evaluate(doc.Navigator()).(type) {
 	case bool:
@@ -2275,7 +2285,7 @@ func extractArrayValue(format docnode.Format, node docnode.Node, mapping *FieldM
 				itemMap := &mapping.ItemMapping[j]
 				value, err := extractValue(format, itemNode, itemMap)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("failed to extract item field %s: %w", itemMap.OutputField, err)
 				}
 				item[itemMap.OutputField] = value
 			}
@@ -2317,7 +2327,7 @@ func evaluateExists(format docnode.Format, node docnode.Node, expr string, compi
 	return len(nodes) > 0, nil
 }
 
-func evaluateXPathValue(format docnode.Format, node docnode.Node, expr string, compiled *xpath.Expr) (interface{}, error) {
+func evaluateXPathValue(format docnode.Format, node docnode.Node, expr string, compiled *xpath.Expr) (val interface{}, err error) {
 	if node == nil {
 		return nil, nil
 	}
@@ -2326,13 +2336,19 @@ func evaluateXPathValue(format docnode.Format, node docnode.Node, expr string, c
 	}
 
 	xp := compiled
-	var err error
 	if xp == nil {
-		xp, err = xpath.Compile(expr)
+		xp, err = compileXPath(expr, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile XPath %s: %w", expr, err)
 		}
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			val = nil
+			err = fmt.Errorf("XPath evaluation panicked for %q: %v", expr, r)
+		}
+	}()
 
 	value := xp.Evaluate(node.Navigator())
 	switch v := value.(type) {
@@ -2371,23 +2387,29 @@ func isNullNode(format docnode.Format, nav xpath.NodeNavigator) bool {
 	return ok && s.Kind() == docnode.ScalarNull
 }
 
-func evaluateNodeSet(format docnode.Format, node docnode.Node, compiled *xpath.Expr, expr string) ([]docnode.Node, error) {
+func evaluateNodeSet(format docnode.Format, node docnode.Node, compiled *xpath.Expr, expr string) (nodes []docnode.Node, err error) {
 	if node == nil {
 		return nil, nil
 	}
 
 	xp := compiled
-	var err error
 	if xp == nil {
 		expr = strings.TrimSpace(expr)
 		if expr == "" {
 			return nil, nil
 		}
-		xp, err = xpath.Compile(expr)
+		xp, err = compileXPath(expr, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile XPath %q: %w", expr, err)
 		}
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			nodes = nil
+			err = fmt.Errorf("XPath evaluation panicked for %q: %v", expr, r)
+		}
+	}()
 
 	value := xp.Evaluate(node.Navigator())
 	switch v := value.(type) {

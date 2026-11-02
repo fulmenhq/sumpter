@@ -1,0 +1,68 @@
+{
+  "records": [
+    {
+      "_validation": {
+        "accumulations": {
+          "net_entry_total": 174.89999999999998
+        },
+        "aggregations": {},
+        "array_path": "entries",
+        "expression_language": "sumpter-dsl",
+        "placement": "footer",
+        "quality_summary": {
+          "errors": 0,
+          "fatals": 0,
+          "passed": 0,
+          "total_checks": 0,
+          "warnings": 0
+        },
+        "reconciliations": [
+          {
+            "allow_unexplained": false,
+            "base_value": 174.9,
+            "components": [
+              {
+                "description": "Sum of signed credit and debit entries",
+                "name": "signed_entries",
+                "value": 174.89999999999998
+              }
+            ],
+            "components_total": 174.89999999999998,
+            "name": "settlement_net_reconciliation",
+            "residual": 2.842170943040401e-14,
+            "severity": "warning",
+            "status": "balanced",
+            "tolerance": 0.01
+          }
+        ],
+        "record_count": 3,
+        "validations": []
+      },
+      "extract": {
+        "data": {
+          "computed_net": 174.9,
+          "entries": [
+            {
+              "direction": "credit",
+              "entry_id": "E-1",
+              "signed_amount": 200
+            },
+            {
+              "direction": "debit",
+              "entry_id": "E-2",
+              "signed_amount": -50.05
+            },
+            {
+              "direction": "credit",
+              "entry_id": "E-3",
+              "signed_amount": 24.95
+            }
+          ],
+          "settlement_id": "SET-9001",
+          "stated_net": 174.9,
+          "within_epsilon": true
+        }
+      }
+    }
+  ]
+}

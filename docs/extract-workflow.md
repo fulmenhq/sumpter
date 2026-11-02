@@ -1198,6 +1198,146 @@ field_mappings:
     type: string
 ```
 
+#### XPath string and regular-expression function contract
+
+Sumpter evaluates `xpath` expressions with the pinned `github.com/antchfx/xpath`
+engine (`v1.3.8`), which provides XPath 1.0 core string/coercion functions plus
+a curated subset of XPath 2.0 string and regular-expression functions. The
+functions below form Sumpter's **promised XPath string and regex contract**
+across all three extraction routes (DOM, indexed parallel, and streaming) and
+across both top-level `field_mappings` and nested `item_mapping` /
+`polymorphic_mapping` expressions:
+
+| Function           | Signature                             | Promised behavior                                                                                                                               |
+| ------------------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `string`           | `string(object?)`                     | Converts a node-set (document-order first node's string value), number, or boolean to string.                                                   |
+| `concat`           | `concat(s1, s2, ...)`                 | Concatenates two or more arguments after string coercion.                                                                                       |
+| `starts-with`      | `starts-with(input, prefix)`          | True when `input` begins with `prefix` (case-sensitive).                                                                                        |
+| `ends-with`        | `ends-with(input, suffix)`            | True when `input` ends with `suffix` (case-sensitive; XPath 2.0 extension).                                                                     |
+| `contains`         | `contains(input, substr)`             | True when `input` contains `substr` (case-sensitive).                                                                                           |
+| `substring-before` | `substring-before(input, sep)`        | Substring of `input` before the first occurrence of `sep`, or `""` when `sep` is not found.                                                     |
+| `substring-after`  | `substring-after(input, sep)`         | Substring of `input` after the first occurrence of `sep`, or `""` when `sep` is not found.                                                      |
+| `substring`        | `substring(input, start[, length])`   | 1-based substring of `input` (see engine caveats below for non-ASCII inputs and fractional/negative bounds).                                    |
+| `string-length`    | `string-length(input?)`               | Length of `input` (or context node string value when omitted; see engine caveats below for UTF-8 byte indexing on non-ASCII inputs).           |
+| `normalize-space`  | `normalize-space(input?)`             | Trims leading/trailing whitespace and collapses internal whitespace runs to a single space.                                                     |
+| `translate`        | `translate(input, from, to)`          | Replaces characters in `from` with corresponding characters in `to` (or removes them when `to` is shorter).                                     |
+| `lower-case`       | `lower-case(input)`                   | Unicode-aware lower-casing (XPath 2.0 extension).                                                                                               |
+| `matches`          | `matches(input, pattern)`             | True when `input` matches the literal Go RE2 regular expression `pattern` (unanchored unless `^`/`$` are written; XPath 2.0 extension).        |
+| `replace`          | `replace(input, pattern, replacement)`| Replaces matches of the literal Go RE2 `pattern` in `input` using the literal `replacement` template (XPath 2.0 extension).                     |
+| `number`           | `number(object?)`                     | Converts string, boolean, or node-set to IEEE 754 `float64` (`NaN` when not a valid number — see [XPath numeric coercion and `NaN` guard](#xpath-numeric-coercion-and-nan-guard)). |
+| `boolean`          | `boolean(object)`                     | Converts node-set (non-empty), string (non-empty), or number (non-zero and not `NaN`) to boolean.                                               |
+
+**Load-time admission rules for `matches` and `replace`.** Sumpter validates
+every XPath expression at config load / preflight time before any input record
+is processed:
+
+- `matches(input, pattern)` requires **exactly 2 arguments**, and `pattern`
+  must be a **string literal** that compiles as a valid Go `regexp` (RE2)
+  pattern.
+- `replace(input, pattern, replacement)` requires **exactly 3 arguments**, and
+  both `pattern` and `replacement` must be **string literals**.
+- In `replace(input, pattern, replacement)`, the `replacement` template is
+  validated against the compiled `pattern` at load time. Only these `$` forms
+  are accepted:
+  - `$$` — literal `$` (when `pattern` has at least one capturing group, `$`
+    followed by a digit after `$$` such as `$$1` is rejected because the
+    underlying engine rewrites `$1` after `$$` expansion; use a zero-capture
+    pattern when emitting a literal `$` followed by digits).
+  - `$0` or `${0}` — the entire match.
+  - `$1`..`$9` or `${1}`..`${N}` — numbered capturing group `1..N`, which must
+    be within the number of capturing groups in `pattern` (`1 <= group <= N`).
+    Multi-digit group indices (`>= 10`) must use braced `${10}` syntax when
+    `pattern` has fewer than 10 groups, or always use `${N}` for clarity.
+  - `${name}` — named capturing group `(?P<name>...)` declared in `pattern`.
+  - Unbraced `$name`, XPath 2.0 `\$` escapes, out-of-range group references,
+    and trailing bare `$` are rejected at config load with a descriptive error.
+
+**Explicitly excluded XPath 2.0 functions and overloads.** The following are not
+supported by the pinned XPath engine and are rejected at config load:
+
+- `upper-case(s)` — use `lower-case(s)` in XPath, or extract the field and use
+  `upper(field)` in a Sumpter DSL `expression` mapping.
+- 3-argument `matches(input, pattern, flags)` and 4-argument
+  `replace(input, pattern, replacement, flags)` — inline RE2 flags at the start
+  of the pattern literal instead (for example `(?i)` for case-insensitive
+  matching, `(?m)` for multiline `^`/`$`, or `(?s)` for dot-matches-newline).
+- `tokenize(...)` — not available in XPath; use `substring-before` /
+  `substring-after` or `replace` for structured token extraction.
+
+**Engine caveats on `antchfx/xpath` v1.3.8:**
+
+- **UTF-8 byte indexing in `string-length`, `substring`, and `translate`:**
+  `string-length(s)` returns `len(s)` in UTF-8 bytes rather than Unicode
+  codepoints, `substring(s, start[, length])` slices UTF-8 bytes with integer
+  bounds, and `translate(s, from, to)` indexes `from`/`to` by byte position.
+  For ASCII identifiers, codes, and numbers, byte and rune positions are
+  identical. For non-ASCII text where Unicode codepoint count or rune slicing
+  matters, extract the raw string with `xpath` and use the Sumpter DSL's
+  rune-aware `string_length(field)`, `mask_tail(...)`, or `mask_middle(...)`.
+- **Unicode whitespace in `normalize-space`:** Both XPath `normalize-space()`
+  and DSL `normalize_space()` use Go's `unicode.IsSpace` definition, which
+  collapses ASCII whitespace (` `, `\t`, `\r`, `\n`) as well as Unicode space
+  separators such as `\u00A0` (non-breaking space).
+
+**When to use XPath functions vs. Sumpter DSL `expression` mappings:**
+
+- Use **XPath functions** inside `match_selectors`, `applicability`, XPath
+  predicates (for example `Line[matches(SKU, '^NM_')]/Amount`), and nested
+  `item_mapping` / `polymorphic_mapping` fields (which are XPath-only).
+- Prefer a **Sumpter DSL `expression`** mapping for top-level scalar fields
+  when you need `upper(...)`, rune-aware `string_length(...)` or visual masking
+  (`mask_tail`, `mask_middle`), operator-overridable list membership
+  (`starts_with_any`, `value_in`), external reference tables (`in_reference`,
+  `lookup_reference`), or multi-branch conditional (`? :`) logic.
+
+#### XPath numeric coercion and `NaN` guard
+
+Under XPath 1.0, `number(x)` converts an empty string, an absent node-set, or
+non-numeric text (such as `<Amount>TBD</Amount>` or `<Amount>N/A</Amount>`) to
+IEEE 754 `NaN`, and any arithmetic expression over that value (for example
+`number(Amount) * 100`) also evaluates to `NaN`. Because JSON, NDJSON, and
+Parquet output writers reject `NaN` on numeric fields (`json: unsupported
+value: NaN`), an unguarded XPath `type: number` mapping over dirty or optional
+text fails record serialization.
+
+When an XML element can contain non-numeric placeholder text or be empty while
+still needing a numeric output field (or an explicit fallback such as `0`),
+guard the conversion using either a **guarded XPath expression** or a
+**two-step `internal: true` + DSL `expression` pattern**:
+
+```yaml
+field_mappings:
+  # Option 1: Guard in XPath with matches() + boolean multiplier
+  # When Amount matches a signed decimal/integer, boolean(...) is 1; otherwise
+  # the predicate filters the node out and sum(...) evaluates to 0.
+  - output_field: amount_safe_xpath
+    xpath: "sum(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')])"
+    type: number
+
+  # Option 2: Extract raw text + validity flag as internal helpers, then
+  # branch in a Sumpter DSL expression
+  - output_field: amount_is_numeric
+    xpath: "matches(normalize-space(Amount), '^-?[0-9]+(\\.[0-9]+)?$')"
+    type: boolean
+    internal: true
+  - output_field: amount_parsed
+    xpath: "sum(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')])"
+    type: number
+    internal: true
+  - output_field: amount_cents
+    expression: "amount_is_numeric ? round(amount_parsed * 100) : 0"
+    type: number
+```
+
+Notice why `sum(Node[matches(...)])` works cleanly in XPath 1.0: when the
+predicate matches, `sum()` converts the matching node's text to its numeric
+value; when the predicate does not match, the filtered node-set is empty and
+`sum()` returns `0` (`0.0`) rather than `NaN`. Avoid `number(Node) * 0` as a
+fallback: in IEEE 754 arithmetic, `NaN * 0` is still `NaN`. See worked examples
+`examples/cases/17-xpath-string-and-regex` (guarded numeric conversion) and
+`examples/cases/98-negative-nan-numeric-field` (intentional negative test for
+unguarded `NaN`).
+
 
 ### XML Namespace Binding
 

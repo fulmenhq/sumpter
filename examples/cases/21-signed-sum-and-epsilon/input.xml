@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WidgetCoData>
+  <Settlements>
+    <Settlement id="SET-9001">
+      <StatedNet>174.90</StatedNet>
+      <Entries>
+        <Entry id="E-1" direction="credit">
+          <Amount>200.00</Amount>
+        </Entry>
+        <Entry id="E-2" direction="debit">
+          <Amount>50.05</Amount>
+        </Entry>
+        <Entry id="E-3" direction="credit">
+          <Amount>24.95</Amount>
+        </Entry>
+      </Entries>
+    </Settlement>
+  </Settlements>
+</WidgetCoData>

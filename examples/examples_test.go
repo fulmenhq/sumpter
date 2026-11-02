@@ -62,9 +62,16 @@ var requiredCases = []string{
 	"15-ndjson-records",
 	"15-ndjson-records:ndjson",
 	"16-inline-xbrl-inventory",
+	"17-xpath-string-and-regex",
+	"18-per-record-verdict-matrix",
+	"19-per-file-outcome-summary",
+	"20-ordered-fallback-and-ancestor",
+	"21-signed-sum-and-epsilon",
 	"95-negative-malformed-json",
 	"96-negative-truncated-json",
 	"97-negative-ndjson-bad-line:ndjson",
+	"98-negative-nan-numeric-field",
+	"99-negative-invalid-xpath-regex",
 	"90-negative-malformed-xml",
 }
 

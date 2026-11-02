@@ -1,0 +1,99 @@
+record_type: widget_order_string_regex
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: sku_lower
+    xpath: "lower-case(SKU)"
+    type: string
+  - output_field: sku_prefix
+    xpath: "substring-before(SKU, '_')"
+    type: string
+  - output_field: sku_version
+    xpath: "substring-after(SKU, '.')"
+    type: string
+  - output_field: sku_stem
+    xpath: "replace(SKU, '^([A-Z]+_[0-9]+)\\.[0-9]+$', '$1')"
+    type: string
+  - output_field: sku_compact
+    xpath: "translate(SKU, '_.', '-')"
+    type: string
+  - output_field: is_nm_sku
+    xpath: "starts-with(SKU, 'NM_')"
+    type: boolean
+  - output_field: is_curated_sku
+    xpath: "matches(SKU, '^N[MR]_[0-9]+\\.[0-9]+$')"
+    type: boolean
+  - output_field: title_norm
+    xpath: "normalize-space(RawTitle)"
+    type: string
+  - output_field: title_len
+    xpath: "string-length(normalize-space(RawTitle))"
+    type: integer
+  - output_field: is_xml_file
+    xpath: "ends-with(FileName, '.xml')"
+    type: boolean
+  # NaN-safe numeric coercion guard for dirty/placeholder text ("TBD")
+  - output_field: quoted_amount_valid
+    xpath: "matches(normalize-space(QuotedAmount), '^-?[0-9]+(\\.[0-9]+)?$')"
+    type: boolean
+    internal: true
+  - output_field: quoted_amount_parsed
+    xpath: "sum(QuotedAmount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')])"
+    type: number
+    internal: true
+  - output_field: quoted_amount_cents
+    expression: "quoted_amount_valid ? round(quoted_amount_parsed * 100) : 0"
+    type: integer
+  - output_field: lines
+    xpath: Lines/OrderLine
+    type: array
+    item_mapping:
+      - output_field: line_prefix
+        xpath: "substring(@code, 1, 5)"
+        type: string
+      - output_field: line_slot
+        xpath: "replace(@code, '^LN-[0-9]+/([A-Z])$', '$1')"
+        type: string
+      - output_field: note_clean
+        xpath: "normalize-space(@note)"
+        type: string
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    sku_lower:
+      type: string
+    sku_prefix:
+      type: string
+    sku_version:
+      type: string
+    sku_stem:
+      type: string
+    sku_compact:
+      type: string
+    is_nm_sku:
+      type: boolean
+    is_curated_sku:
+      type: boolean
+    title_norm:
+      type: string
+    title_len:
+      type: integer
+    is_xml_file:
+      type: boolean
+    quoted_amount_cents:
+      type: integer
+    lines:
+      type: array
+  required:
+    - order_id
+    - sku_lower
+    - sku_stem
+    - is_curated_sku
+    - title_norm
+    - quoted_amount_cents
+    - lines

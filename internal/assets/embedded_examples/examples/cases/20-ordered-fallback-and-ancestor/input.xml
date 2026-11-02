@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WidgetCoData>
+  <Section code="SEC-NORTH">
+    <Order id="ORD-8001">
+      <AlphaEmail>alpha-first@widget.example</AlphaEmail>
+      <BetaEmail>beta-preferred@widget.example</BetaEmail>
+      <Lines>
+        <OrderLine lineNo="1" sku="W-10"/>
+        <OrderLine lineNo="2" sku="W-20"/>
+      </Lines>
+    </Order>
+    <Order id="ORD-8002">
+      <AlphaEmail>alpha-only@widget.example</AlphaEmail>
+      <Lines>
+        <OrderLine lineNo="1" sku="W-30"/>
+      </Lines>
+    </Order>
+  </Section>
+</WidgetCoData>

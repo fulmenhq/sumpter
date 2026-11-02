@@ -1,0 +1,56 @@
+record_type: widget_order_navigation
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: section_code
+    xpath: "ancestor::Section[1]/@code"
+    type: string
+  - output_field: prev_order_id
+    xpath: "string(preceding-sibling::Order[1]/@id)"
+    type: string
+  # Unqualified union selects the first matching node in document order (AlphaEmail on ORD-8001)
+  - output_field: doc_order_email
+    xpath: "(BetaEmail | AlphaEmail)[1]"
+    type: string
+  # Guarded fallback selects BetaEmail when present, else AlphaEmail regardless of element order
+  - output_field: priority_email
+    xpath: "(BetaEmail | AlphaEmail[not(../BetaEmail)])[1]"
+    type: string
+  - output_field: lines
+    xpath: Lines/OrderLine
+    type: array
+    item_mapping:
+      - output_field: parent_order_id
+        xpath: "../../@id"
+        type: string
+      - output_field: line_no
+        xpath: "@lineNo"
+        type: integer
+      - output_field: sku
+        xpath: "@sku"
+        type: string
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    section_code:
+      type: string
+    prev_order_id:
+      type: string
+    doc_order_email:
+      type: string
+    priority_email:
+      type: string
+    lines:
+      type: array
+  required:
+    - order_id
+    - section_code
+    - prev_order_id
+    - doc_order_email
+    - priority_email
+    - lines

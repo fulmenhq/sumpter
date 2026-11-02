@@ -80,7 +80,7 @@ OUTPUT_PATTERN="records.jsonl"
 RUN_ID="0196d5b2-0d00-7c00-8000-000000000006"
 
 case "$CASE_NAME" in
-9[0-9]-*)
+9[0-9]-* | 9[0-9][a-z]-* | 9[0-9][0-9]-*)
 	# Negatives run with the manifest on: a refused run must publish nothing.
 	NEG_OUT="$OUT_DIR/out"
 	set +e

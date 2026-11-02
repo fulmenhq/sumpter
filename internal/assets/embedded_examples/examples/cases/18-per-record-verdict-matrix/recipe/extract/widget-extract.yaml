@@ -1,0 +1,44 @@
+record_type: widget_order_verdict
+match_selectors:
+  - xpath: //Order
+field_mappings:
+  - output_field: order_id
+    xpath: "@id"
+    type: string
+  - output_field: sku
+    xpath: "SKU"
+    type: string
+  - output_field: amount
+    xpath: "Amount"
+    type: number
+  - output_field: quality_score
+    xpath: "QualityScore"
+    type: integer
+    internal: true
+  - output_field: in_curated_family
+    expression: "starts_with_any(sku, curated_prefixes)"
+    type: boolean
+    internal: true
+  - output_field: auto_approve_eligible
+    expression: "in_curated_family && (quality_score >= 90) && (amount <= 1000)"
+    type: boolean
+    internal: true
+  - output_field: verdict
+    expression: 'auto_approve_eligible ? "AUTO_APPROVE" : in_curated_family ? "MANUAL_REVIEW" : "REJECT_OUT_OF_BAND"'
+    type: string
+output_schema:
+  type: object
+  properties:
+    order_id:
+      type: string
+    sku:
+      type: string
+    amount:
+      type: number
+    verdict:
+      type: string
+  required:
+    - order_id
+    - sku
+    - amount
+    - verdict
