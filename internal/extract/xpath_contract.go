@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // validateXPathContract performs token-aware load-time validation of Sumpter's
@@ -248,7 +249,7 @@ func unquoteXPathStringLiteral(raw string) (string, bool) {
 //   - '$$' for a literal '$' (except '$$<digit>' when the pattern has >=1
 //     capturing groups, which antchfx/xpath v1.3.8's naive strings.ReplaceAll
 //     pre-pass would rewrite to '$${<digit>}')
-//   - '$0' (not followed by [0-9A-Za-z_]) or '${0}' (full match)
+//   - '$0' (not followed by a Unicode letter, digit, or '_') or '${0}' (full match)
 //   - Single-digit '$1'..'$9' (not followed by another digit) or braced
 //     '${1}'..'${N}' where 1 <= N <= re.NumSubexp() and N has no leading zero
 //   - '${name}' where 'name' is a named capturing group (?P<name>...) in pattern
@@ -256,8 +257,9 @@ func unquoteXPathStringLiteral(raw string) (string, bool) {
 // Rejected forms:
 //   - '\$' (XPath 2.0 escape not interpreted by Go's regexp.ReplaceAllString)
 //   - Leading-zero numeric group references ('$01', '${01}', '${00}')
-//   - Unbraced '$0' followed by [0-9A-Za-z_] (e.g. '$0USD', which Go regexp
-//     parses as unknown group '$0USD' -> "" because antchfx only rewrites idx >= 1)
+//   - Unbraced '$0' followed by a Unicode letter, digit, or '_' (e.g. '$0USD',
+//     '$0é', '$0١', which Go regexp parses as an unknown group name -> ""
+//     because antchfx only rewrites idx >= 1)
 //   - Unbraced multi-digit '$10'..'$99' (require braced '${10}' or '${1}0')
 //   - Out-of-range group references (e.g. '$1' when NumSubexp() == 0, or '$2'
 //     when NumSubexp() == 1)
@@ -330,8 +332,11 @@ func validateXPathReplaceTemplate(repl, pattern string, re *regexp.Regexp) error
 				if len(digits) > 1 {
 					return fmt.Errorf("xpath replace() replacement %q uses leading zero in numeric group reference $%s (use ${0}%s or a braced group index without leading zeros)", repl, digits, digits[1:])
 				}
-				if j < n && isASCIIIdentCont(repl[j]) {
-					return fmt.Errorf("xpath replace() replacement %q has unbraced \"$0\" followed by %q, which Go regexp expands as an unknown group name (use \"${0}\" before letters, digits, or '_')", repl, string(repl[j]))
+				if j < n {
+					r, _ := utf8.DecodeRuneInString(repl[j:])
+					if isGoRegexpNameRune(r) {
+						return fmt.Errorf("xpath replace() replacement %q has unbraced \"$0\" followed by %q, which Go regexp expands as an unknown group name (use \"${0}\" before letters, digits, or '_')", repl, string(r))
+					}
 				}
 				i = j
 				continue
@@ -345,7 +350,8 @@ func validateXPathReplaceTemplate(repl, pattern string, re *regexp.Regexp) error
 			}
 			i = j
 		default:
-			if unicode.IsLetter(rune(next)) || next == '_' {
+			r, _ := utf8.DecodeRuneInString(repl[i+1:])
+			if isGoRegexpNameRune(r) {
 				return fmt.Errorf("xpath replace() replacement %q has unbraced group reference starting at %q (use '${name}' for a named group or '$$' for a literal dollar sign)", repl, repl[i:])
 			}
 			return fmt.Errorf("xpath replace() replacement %q has invalid '$' sequence at %q (use '$$' for a literal dollar sign)", repl, repl[i:])
@@ -354,8 +360,8 @@ func validateXPathReplaceTemplate(repl, pattern string, re *regexp.Regexp) error
 	return nil
 }
 
-func isASCIIIdentCont(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+func isGoRegexpNameRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 func isAllASCIIUnsignedDigits(s string) bool {

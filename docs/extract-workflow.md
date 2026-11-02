@@ -1243,11 +1243,11 @@ is processed:
     followed by a digit after `$$` such as `$$1` is rejected because the
     underlying engine rewrites `$1` after `$$` expansion; use a zero-capture
     pattern when emitting a literal `$` followed by digits).
-  - `$0` (when not immediately followed by an ASCII letter, digit, or `_`) or
+  - `$0` (when not immediately followed by a Unicode letter, digit, or `_`) or
     `${0}` — the entire match. When the full match is followed immediately by a
-    letter, digit, or `_` (for example `${0}USD`), use braced `${0}` because the
-    pinned engine only rewrites `$1`..`$N` to braced form and Go's `regexp`
-    otherwise parses `$0USD` as an unbraced group name `0USD`.
+    Unicode letter, digit, or `_` (for example `${0}USD` or `${0}é`), use braced
+    `${0}` because the pinned engine only rewrites `$1`..`$N` to braced form and
+    Go's `regexp` otherwise parses `$0USD` or `$0é` as an unbraced group name.
   - Single-digit `$1`..`$9` (not followed by another digit) or braced
     `${1}`..`${N}` (without leading zeros) — numbered capturing group `1..N`,
     which must be within the number of capturing groups in `pattern`
@@ -1257,9 +1257,9 @@ is processed:
     rejected.
   - `${name}` — named capturing group `(?P<name>...)` declared in `pattern`.
   - Unbraced `$name`, unbraced multi-digit `$10`, leading-zero `$01`/`${01}`,
-    unbraced `$0` before `[0-9A-Za-z_]`, XPath 2.0 `\$` escapes, out-of-range
-    group references, and trailing bare `$` are rejected at config load with a
-    descriptive error.
+    unbraced `$0` before a Unicode letter, digit, or `_`, XPath 2.0 `\$`
+    escapes, out-of-range group references, and trailing bare `$` are rejected at
+    config load with a descriptive error.
 
 **Explicitly excluded XPath 2.0 functions and overloads.** The following are not
 supported by the pinned XPath engine and are rejected at config load:
