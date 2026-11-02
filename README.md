@@ -89,7 +89,7 @@ $ jq .extract.data out/records.jsonl
 }
 ```
 
-Line-delimited JSON is case 15 (`--variant ndjson`). See [JSON and NDJSON extraction](docs/user-guide/json-extraction.md).
+Line-delimited JSON is case 15 (`--variant ndjson`). See [JSON and NDJSON extraction](docs/user-guide/json-extraction.md). To keep and run recipes outside this repository, see [External recipe workspaces](docs/user-guide/recipes.md).
 
 ---
 

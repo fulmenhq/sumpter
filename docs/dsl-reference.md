@@ -2,7 +2,7 @@
 
 **Reference version:** Sumpter DSL reference v1.3
 **Runtime language value:** `sumpter-dsl`
-**Status:** Current recipe-author reference for v0.1.4
+**Status:** Current recipe-author reference
 
 This document is the canonical reference for the Sumpter expression language
 used by extract recipes. It describes the grammar and runtime behavior that

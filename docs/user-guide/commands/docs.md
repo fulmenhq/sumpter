@@ -66,9 +66,12 @@ Sumpter Embedded Documentation
 
 📚 user-guide:
   ├── commands/envinfo.md
+  ├── commands/extract.md
   ├── commands/inspect.md
+  ├── commands/recipes.md
   ├── commands/version.md
   ├── inspect-workflow.md
+  ├── recipes.md
 
 💡 Tip: Use 'sumpter docs show <path>' to view specific documentation
    Example: sumpter docs show standards/application-environment
@@ -123,12 +126,14 @@ sumpter docs show sop/repository-operations-sop
 
 - **commands/**: Individual command documentation
   - `envinfo.md`: Environment information command
+  - `extract.md`: Direct file extraction and transform inspection command
   - `inspect.md`: XML inspection command
   - `recipes.md`: Recipe scaffolding and acquisition command
   - `version.md`: Version information command
   - `docs.md`: This documentation command
   - `validate.md`: Configuration validation command
 - **inspect-workflow.md**: XML inspection and dialect detection workflow
+- **recipes.md**: Authoring and running external recipe workspaces
 
 ## Path Resolution
 
