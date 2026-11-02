@@ -294,7 +294,7 @@ functions (`string`, `concat`, `starts-with`, `ends-with`, `contains`,
 and `boolean`).
 
 - Use **XPath functions** inside `match_selectors`, `applicability`, XPath
-  predicates (for example `sum(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')])`),
+  predicates (for example `number(replace(normalize-space(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))`),
   and nested `item_mapping` / `polymorphic_mapping` fields (which do not evaluate
   Sumpter DSL expressions).
 - Use **Sumpter DSL `expression` functions** on top-level scalar fields when you

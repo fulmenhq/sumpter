@@ -1442,7 +1442,12 @@ func matchesPattern(doc docnode.Node, pattern MatchPattern, nsMap map[string]str
 // as evaluateXPathBoolean) to a compiled expression's result. An unsupported
 // result type is treated as a non-match, matching matchesPattern's
 // error-as-non-match posture.
-func evaluateCompiledXPathBoolean(doc docnode.Node, expr *xpath.Expr) bool {
+func evaluateCompiledXPathBoolean(doc docnode.Node, expr *xpath.Expr) (matched bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			matched = false
+		}
+	}()
 	switch v := expr.Evaluate(doc.Navigator()).(type) {
 	case bool:
 		return v

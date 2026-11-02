@@ -1243,14 +1243,23 @@ is processed:
     followed by a digit after `$$` such as `$$1` is rejected because the
     underlying engine rewrites `$1` after `$$` expansion; use a zero-capture
     pattern when emitting a literal `$` followed by digits).
-  - `$0` or `${0}` — the entire match.
-  - `$1`..`$9` or `${1}`..`${N}` — numbered capturing group `1..N`, which must
-    be within the number of capturing groups in `pattern` (`1 <= group <= N`).
-    Multi-digit group indices (`>= 10`) must use braced `${10}` syntax when
-    `pattern` has fewer than 10 groups, or always use `${N}` for clarity.
+  - `$0` (when not immediately followed by an ASCII letter, digit, or `_`) or
+    `${0}` — the entire match. When the full match is followed immediately by a
+    letter, digit, or `_` (for example `${0}USD`), use braced `${0}` because the
+    pinned engine only rewrites `$1`..`$N` to braced form and Go's `regexp`
+    otherwise parses `$0USD` as an unbraced group name `0USD`.
+  - Single-digit `$1`..`$9` (not followed by another digit) or braced
+    `${1}`..`${N}` (without leading zeros) — numbered capturing group `1..N`,
+    which must be within the number of capturing groups in `pattern`
+    (`1 <= group <= N`). Multi-digit group indices (`>= 10`) must always use
+    braced `${10}` syntax (or `${1}0` when referencing group 1 followed by a
+    literal `0`), and leading-zero group numbers (`$01`, `${01}`, `${00}`) are
+    rejected.
   - `${name}` — named capturing group `(?P<name>...)` declared in `pattern`.
-  - Unbraced `$name`, XPath 2.0 `\$` escapes, out-of-range group references,
-    and trailing bare `$` are rejected at config load with a descriptive error.
+  - Unbraced `$name`, unbraced multi-digit `$10`, leading-zero `$01`/`${01}`,
+    unbraced `$0` before `[0-9A-Za-z_]`, XPath 2.0 `\$` escapes, out-of-range
+    group references, and trailing bare `$` are rejected at config load with a
+    descriptive error.
 
 **Explicitly excluded XPath 2.0 functions and overloads.** The following are not
 supported by the pinned XPath engine and are rejected at config load:
@@ -1266,6 +1275,15 @@ supported by the pinned XPath engine and are rejected at config load:
 
 **Engine caveats on `antchfx/xpath` v1.3.8:**
 
+- **Absent bare node-set in `matches(Node, pattern)`:** When the first argument
+  to `matches` is a bare node-set query that selects no node (`Missing`), the
+  pinned engine short-circuits and returns `""` (which coerces to `false` on a
+  boolean field) without testing `pattern` against the empty string — so
+  `matches(Missing, '^$')` evaluates to `false`, whereas a present empty element
+  `matches(EmptyNode, '^$')` evaluates to `true`. Wrap the first argument in
+  `string(...)` or `normalize-space(...)` (for example
+  `matches(string(Missing), '^$')`) when an absent node should be matched as
+  `""`.
 - **UTF-8 byte indexing in `string-length`, `substring`, and `translate`:**
   `string-length(s)` returns `len(s)` in UTF-8 bytes rather than Unicode
   codepoints, `substring(s, start[, length])` slices UTF-8 bytes with integer
@@ -1300,28 +1318,31 @@ Parquet output writers reject `NaN` on numeric fields (`json: unsupported
 value: NaN`), an unguarded XPath `type: number` mapping over dirty or optional
 text fails record serialization.
 
-When an XML element can contain non-numeric placeholder text or be empty while
-still needing a numeric output field (or an explicit fallback such as `0`),
-guard the conversion using either a **guarded XPath expression** or a
-**two-step `internal: true` + DSL `expression` pattern**:
+When an XML element can contain non-numeric placeholder text, leading/trailing
+whitespace, or be empty/absent while still needing a numeric output field (or
+an explicit fallback such as `0`), guard the conversion using either a
+**guarded XPath expression** or a **two-step `internal: true` + DSL
+`expression` pattern**:
 
 ```yaml
 field_mappings:
-  # Option 1: Guard in XPath with matches() + boolean multiplier
-  # When Amount matches a signed decimal/integer, boolean(...) is 1; otherwise
-  # the predicate filters the node out and sum(...) evaluates to 0.
+  # Option 1: Guard in XPath with matches() + normalize-space() + replace()
+  # When Amount matches a signed decimal/integer after whitespace normalization,
+  # normalize-space(...) yields the trimmed numeric lexeme; otherwise the
+  # predicate filters the node out, normalize-space(...) yields "", and
+  # replace(..., '^$', '0') substitutes "0" before number() parses it.
   - output_field: amount_safe_xpath
-    xpath: "sum(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')])"
+    xpath: "number(replace(normalize-space(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))"
     type: number
 
-  # Option 2: Extract raw text + validity flag as internal helpers, then
-  # branch in a Sumpter DSL expression
+  # Option 2: Extract validity flag + NaN-safe parsed number as internal
+  # helpers, then branch or scale in a Sumpter DSL expression
   - output_field: amount_is_numeric
     xpath: "matches(normalize-space(Amount), '^-?[0-9]+(\\.[0-9]+)?$')"
     type: boolean
     internal: true
   - output_field: amount_parsed
-    xpath: "sum(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')])"
+    xpath: "number(replace(normalize-space(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))"
     type: number
     internal: true
   - output_field: amount_cents
@@ -1329,14 +1350,19 @@ field_mappings:
     type: number
 ```
 
-Notice why `sum(Node[matches(...)])` works cleanly in XPath 1.0: when the
-predicate matches, `sum()` converts the matching node's text to its numeric
-value; when the predicate does not match, the filtered node-set is empty and
-`sum()` returns `0` (`0.0`) rather than `NaN`. Avoid `number(Node) * 0` as a
-fallback: in IEEE 754 arithmetic, `NaN * 0` is still `NaN`. See worked examples
-`examples/cases/17-xpath-string-and-regex` (guarded numeric conversion) and
-`examples/cases/98-negative-nan-numeric-field` (intentional negative test for
-unguarded `NaN`).
+**Why `number(replace(normalize-space(...), '^$', '0'))` instead of `sum(Amount[matches(...)])`:**
+On the pinned `antchfx/xpath` v1.3.8 engine, `sum()` calls `strconv.ParseFloat`
+on raw, untrimmed node text and silently skips any node with leading or trailing
+whitespace — so `<Amount> 42.50 </Amount>` would pass `matches(normalize-space(.), ...)`
+yet evaluate to `0` under `sum()`. Applying `normalize-space(...)` to the
+predicated node-set and rewriting the empty-string miss `""` to `"0"` with
+`replace(..., '^$', '0')` before `number(...)` ensures validation and numeric
+conversion consume the exact same normalized string across positive, negative,
+whitespace-padded, empty, absent, and placeholder inputs. Avoid `number(Node) * 0`
+as a fallback: in IEEE 754 arithmetic, `NaN * 0` is still `NaN`. See worked
+examples `examples/cases/17-xpath-string-and-regex` (guarded numeric conversion)
+and `examples/cases/98-negative-nan-numeric-field` (intentional negative test
+for unguarded `NaN`).
 
 
 ### XML Namespace Binding

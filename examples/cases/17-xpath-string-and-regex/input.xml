@@ -5,7 +5,7 @@
       <SKU>NM_001234.5</SKU>
       <RawTitle>  Widget   Pro-X  </RawTitle>
       <FileName>invoice-5001.xml</FileName>
-      <QuotedAmount>149.95</QuotedAmount>
+      <QuotedAmount>  149.95  </QuotedAmount>
       <Lines>
         <OrderLine code="LN-01/A" note="  rush-item  "/>
         <OrderLine code="LN-02/B" note="standard"/>

@@ -41,7 +41,7 @@ field_mappings:
     type: boolean
     internal: true
   - output_field: quoted_amount_parsed
-    xpath: "sum(QuotedAmount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')])"
+    xpath: "number(replace(normalize-space(QuotedAmount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))"
     type: number
     internal: true
   - output_field: quoted_amount_cents

@@ -15,9 +15,15 @@ const xpathStringRegexConformanceXML = `<?xml version="1.0" encoding="UTF-8"?>
     <SKU>  WGT-2026-ALPHA  </SKU>
     <RawCode>ab-12-cd</RawCode>
     <Price>42.50</Price>
+    <PaddedPrice>
+      42.50
+    </PaddedPrice>
+    <NegAmount> -12.75 </NegAmount>
+    <PlaceholderAmount>TBD</PlaceholderAmount>
     <Qty>3</Qty>
     <Tag>primary</Tag>
     <EmptyNode></EmptyNode>
+    <BlankNode>   </BlankNode>
     <Items>
       <Item code="ITM-01">  First   Line  </Item>
       <Item code="ITM-02">Second-Line</Item>
@@ -53,11 +59,27 @@ func TestXPathStringAndRegexConformanceThreeRoutes(t *testing.T) {
 		{OutputField: "bool_empty_elem", XPath: "boolean(EmptyNode)", Type: "boolean"},
 		{OutputField: "bool_empty_str", XPath: "boolean(string(EmptyNode))", Type: "boolean"},
 		{OutputField: "matches_sku", XPath: "matches(normalize-space(SKU), '^WGT-[0-9]{4}-[A-Z]+$')", Type: "boolean"},
+		{OutputField: "matches_nomatch", XPath: "matches(normalize-space(SKU), '^NOPE-[0-9]+$')", Type: "boolean"},
 		{OutputField: "matches_icase", XPath: "matches(normalize-space(SKU), '(?i)^wgt-[0-9]{4}-alpha$')", Type: "boolean"},
+		{OutputField: "matches_absent_raw", XPath: "matches(MissingNode, '^$')", Type: "boolean"},
+		{OutputField: "matches_absent_str", XPath: "matches(string(MissingNode), '^$')", Type: "boolean"},
+		{OutputField: "matches_empty_elem", XPath: "matches(EmptyNode, '^$')", Type: "boolean"},
 		{OutputField: "replace_punct", XPath: "replace(RawCode, '-', '_')", Type: "string"},
+		{OutputField: "replace_nomatch", XPath: "replace(RawCode, '^NOMATCH$', 'X')", Type: "string"},
+		{OutputField: "replace_zerowidth", XPath: "replace(RawCode, '^', 'PRE:')", Type: "string"},
 		{OutputField: "replace_group", XPath: "replace(normalize-space(SKU), '^WGT-([0-9]{4})-([A-Z]+)$', '$2/$1')", Type: "string"},
 		{OutputField: "replace_braced", XPath: "replace(normalize-space(SKU), '^WGT-(?P<yr>[0-9]{4})-(?P<tag>[A-Z]+)$', '${tag}:${yr}')", Type: "string"},
 		{OutputField: "replace_dollar", XPath: "replace(Price, '^([0-9]+\\.[0-9]{2})$', '$$USD-$1')", Type: "string"},
+		{OutputField: "replace_0_suffix", XPath: "replace('abc', 'abc', '${0}USD')", Type: "string"},
+		{OutputField: "replace_1_suffix", XPath: "replace('abc', '(abc)', '$1USD')", Type: "string"},
+		{OutputField: "replace_group_10", XPath: "replace('abcdefghij', '(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)', '${10}')", Type: "string"},
+		// NaN-safe numeric coercion guard across padded, negative, placeholder, empty, blank, and absent nodes
+		{OutputField: "nan_guard_padded", XPath: "number(replace(normalize-space(PaddedPrice[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))", Type: "number"},
+		{OutputField: "nan_guard_negative", XPath: "number(replace(normalize-space(NegAmount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))", Type: "number"},
+		{OutputField: "nan_guard_placeholder", XPath: "number(replace(normalize-space(PlaceholderAmount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))", Type: "number"},
+		{OutputField: "nan_guard_empty", XPath: "number(replace(normalize-space(EmptyNode[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))", Type: "number"},
+		{OutputField: "nan_guard_blank", XPath: "number(replace(normalize-space(BlankNode[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))", Type: "number"},
+		{OutputField: "nan_guard_absent", XPath: "number(replace(normalize-space(MissingNode[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))", Type: "number"},
 		{
 			OutputField: "items",
 			XPath:       "Items/Item",
@@ -78,30 +100,45 @@ func TestXPathStringAndRegexConformanceThreeRoutes(t *testing.T) {
 	}
 
 	want := map[string]interface{}{
-		"id_str":          "REC-001",
-		"concat_id_tag":   "REC-001:primary",
-		"starts_rec":      true,
-		"ends_alpha":      true,
-		"contains_year":   true,
-		"before_dash":     "WGT",
-		"after_dash":      "2026-ALPHA",
-		"sub_2arg":        "2026-ALPHA",
-		"sub_3arg":        "2026",
-		"len_norm_sku":    int64(14),
-		"norm_sku":        "WGT-2026-ALPHA",
-		"translate_code":  "AB_12_CD",
-		"lower_sku":       "wgt-2026-alpha",
-		"num_price":       float64(42.5),
-		"bool_present":    true,
-		"bool_absent":     false,
-		"bool_empty_elem": true,
-		"bool_empty_str":  false,
-		"matches_sku":     true,
-		"matches_icase":   true,
-		"replace_punct":   "ab_12_cd",
-		"replace_group":   "ALPHA/2026",
-		"replace_braced":  "ALPHA:2026",
-		"replace_dollar":  "$USD-42.50",
+		"id_str":                "REC-001",
+		"concat_id_tag":         "REC-001:primary",
+		"starts_rec":            true,
+		"ends_alpha":            true,
+		"contains_year":         true,
+		"before_dash":           "WGT",
+		"after_dash":            "2026-ALPHA",
+		"sub_2arg":              "2026-ALPHA",
+		"sub_3arg":              "2026",
+		"len_norm_sku":          int64(14),
+		"norm_sku":              "WGT-2026-ALPHA",
+		"translate_code":        "AB_12_CD",
+		"lower_sku":             "wgt-2026-alpha",
+		"num_price":             float64(42.5),
+		"bool_present":          true,
+		"bool_absent":           false,
+		"bool_empty_elem":       true,
+		"bool_empty_str":        false,
+		"matches_sku":           true,
+		"matches_nomatch":       false,
+		"matches_icase":         true,
+		"matches_absent_raw":    false,
+		"matches_absent_str":    true,
+		"matches_empty_elem":    true,
+		"replace_punct":         "ab_12_cd",
+		"replace_nomatch":       "ab-12-cd",
+		"replace_zerowidth":     "PRE:ab-12-cd",
+		"replace_group":         "ALPHA/2026",
+		"replace_braced":        "ALPHA:2026",
+		"replace_dollar":        "$USD-42.50",
+		"replace_0_suffix":      "abcUSD",
+		"replace_1_suffix":      "abcUSD",
+		"replace_group_10":      "j",
+		"nan_guard_padded":      float64(42.5),
+		"nan_guard_negative":    float64(-12.75),
+		"nan_guard_placeholder": float64(0),
+		"nan_guard_empty":       float64(0),
+		"nan_guard_blank":       float64(0),
+		"nan_guard_absent":      float64(0),
 		"items": []map[string]interface{}{
 			{
 				"code_num":   "01",
@@ -232,9 +269,34 @@ func TestXPathStringAndRegexLoadTimeAdmission(t *testing.T) {
 			wantSubstr: "references capturing group $2, but pattern \"^WGT-([0-9]+)$\" has 1 capturing group(s)",
 		},
 		{
-			name:       "replace out-of-range group $10 on 1-group pattern",
+			name:       "replace unbraced multi-digit group $10 on 1-group pattern",
 			xpath:      "replace(SKU, '^WGT-([0-9]+)$', '$10')",
-			wantSubstr: "references capturing group $10, but pattern \"^WGT-([0-9]+)$\" has 1 capturing group(s)",
+			wantSubstr: `uses unbraced multi-digit group reference $10 (use braced "${10}"`,
+		},
+		{
+			name:       "replace unbraced multi-digit group $10 on 10-group pattern rejected in favor of ${10}",
+			xpath:      "replace('abcdefghij', '(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)', '$10')",
+			wantSubstr: `uses unbraced multi-digit group reference $10 (use braced "${10}"`,
+		},
+		{
+			name:       "replace unbraced $0 followed by identifier suffix $0USD rejected",
+			xpath:      "replace('abc', 'abc', '$0USD')",
+			wantSubstr: `has unbraced "$0" followed by "U"`,
+		},
+		{
+			name:       "replace leading-zero braced group ${01} rejected",
+			xpath:      "replace('abc', '(abc)', '${01}')",
+			wantSubstr: "uses leading zero in numeric group reference ${01}",
+		},
+		{
+			name:       "replace leading-zero unbraced group $01 rejected",
+			xpath:      "replace('abc', '(abc)', '$01')",
+			wantSubstr: "uses leading zero in numeric group reference $01",
+		},
+		{
+			name:       "replace leading-zero braced group ${00} rejected",
+			xpath:      "replace('abc', '(abc)', '${00}')",
+			wantSubstr: "uses leading zero in numeric group reference ${00}",
 		},
 		{
 			name:       "replace out-of-range braced group ${2}",
@@ -301,6 +363,16 @@ func TestXPathStringAndRegexLoadTimeAdmission(t *testing.T) {
 			name:       "contains 1 arg rejected without compile panic",
 			xpath:      "contains(SKU)",
 			wantSubstr: "xpath contains() requires 2 arguments, got 1",
+		},
+		{
+			name:       "string-length 2 args rejected",
+			xpath:      "string-length('abc', 'ignored')",
+			wantSubstr: "xpath string-length() accepts at most 1 argument, got 2",
+		},
+		{
+			name:       "normalize-space 2 args rejected",
+			xpath:      "normalize-space(' abc ', 'ignored')",
+			wantSubstr: "xpath normalize-space() accepts at most 1 argument, got 2",
 		},
 	}
 
@@ -384,6 +456,21 @@ func TestXPathRuntimePanicContainment(t *testing.T) {
 		}
 		if !strings.Contains(res.Error.Error(), "bad_item_sub") || !strings.Contains(res.Error.Error(), "panicked") {
 			t.Fatalf("unexpected error: %v", res.Error)
+		}
+	})
+
+	t.Run("signature-match-pattern-panic-recovered", func(t *testing.T) {
+		doc, err := parseXMLDoc(strings.NewReader(xpathStringRegexConformanceXML))
+		if err != nil {
+			t.Fatalf("parseXMLDoc: %v", err)
+		}
+		got := matchesPattern(doc.Root(), MatchPattern{
+			PatternID: "panic-sig",
+			Selector:  "substring('abc', 2, 100)",
+			Weight:    1.0,
+		}, nil)
+		if got {
+			t.Fatal("expected matchesPattern to recover panic and return false, got true")
 		}
 	})
 }

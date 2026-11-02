@@ -15,17 +15,20 @@ const indexedStringRegexNSXML = `<?xml version="1.0" encoding="UTF-8"?>
     <SKU>NM_001234.5</SKU>
     <RawLabel>  Alpha   Beta  </RawLabel>
     <FileName>report-2026.xml</FileName>
+    <QuotedAmount>  149.95  </QuotedAmount>
   </Record>
   <Record id="R-2">
     <SKU>XP_998877.1</SKU>
     <RawLabel>Gamma</RawLabel>
     <FileName>notes.txt</FileName>
+    <QuotedAmount>TBD</QuotedAmount>
   </Record>
 </Ledger>
 `
 
 // TestIndexedParallelXPathStringAndRegex verifies end-to-end record indexing +
-// parallel extraction evaluates the promised XPath string and regex functions.
+// parallel extraction evaluates the promised XPath string and regex functions
+// and the whitespace-safe NaN numeric guard.
 func TestIndexedParallelXPathStringAndRegex(t *testing.T) {
 	dir := t.TempDir()
 	xmlPath := filepath.Join(dir, "string-regex.xml")
@@ -44,6 +47,7 @@ func TestIndexedParallelXPathStringAndRegex(t *testing.T) {
 		{OutputField: "is_xml_file", XPath: "ends-with(n:FileName, '.xml')", Type: "boolean"},
 		{OutputField: "is_curated_sku", XPath: "matches(n:SKU, '^N[MR]_[0-9]+\\.[0-9]+$')", Type: "boolean"},
 		{OutputField: "sku_stem", XPath: "replace(n:SKU, '^([A-Z]+_[0-9]+)\\.[0-9]+$', '$1')", Type: "string"},
+		{OutputField: "quoted_amount", XPath: "number(replace(normalize-space(n:QuotedAmount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))", Type: "number"},
 	})
 
 	records, err := NewParallelExtractor(ExtractionOptions{
@@ -69,6 +73,7 @@ func TestIndexedParallelXPathStringAndRegex(t *testing.T) {
 		"is_xml_file":    true,
 		"is_curated_sku": true,
 		"sku_stem":       "NM_001234",
+		"quoted_amount":  float64(149.95),
 	}
 	for k, w := range want1 {
 		if !reflect.DeepEqual(r1[k], w) {
@@ -84,6 +89,7 @@ func TestIndexedParallelXPathStringAndRegex(t *testing.T) {
 		"is_xml_file":    false,
 		"is_curated_sku": false,
 		"sku_stem":       "XP_998877",
+		"quoted_amount":  float64(0),
 	}
 	for k, w := range want2 {
 		if !reflect.DeepEqual(r2[k], w) {

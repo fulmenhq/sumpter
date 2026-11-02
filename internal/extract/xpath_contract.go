@@ -163,6 +163,10 @@ func checkXPathFunctionCall(funcName string, args []string) error {
 	}
 
 	switch funcName {
+	case "string-length", "normalize-space", "string", "number", "boolean":
+		if len(args) > 1 {
+			return fmt.Errorf("xpath %s() accepts at most 1 argument, got %d", funcName, len(args))
+		}
 	case "lower-case":
 		if len(args) != 1 {
 			return fmt.Errorf("xpath lower-case() requires 1 argument (input), got %d", len(args))
@@ -244,13 +248,19 @@ func unquoteXPathStringLiteral(raw string) (string, bool) {
 //   - '$$' for a literal '$' (except '$$<digit>' when the pattern has >=1
 //     capturing groups, which antchfx/xpath v1.3.8's naive strings.ReplaceAll
 //     pre-pass would rewrite to '$${<digit>}')
-//   - '$0' / '${0}' (full match) and '$1'..'${N}' where 1 <= N <= re.NumSubexp()
+//   - '$0' (not followed by [0-9A-Za-z_]) or '${0}' (full match)
+//   - Single-digit '$1'..'$9' (not followed by another digit) or braced
+//     '${1}'..'${N}' where 1 <= N <= re.NumSubexp() and N has no leading zero
 //   - '${name}' where 'name' is a named capturing group (?P<name>...) in pattern
 //
 // Rejected forms:
 //   - '\$' (XPath 2.0 escape not interpreted by Go's regexp.ReplaceAllString)
+//   - Leading-zero numeric group references ('$01', '${01}', '${00}')
+//   - Unbraced '$0' followed by [0-9A-Za-z_] (e.g. '$0USD', which Go regexp
+//     parses as unknown group '$0USD' -> "" because antchfx only rewrites idx >= 1)
+//   - Unbraced multi-digit '$10'..'$99' (require braced '${10}' or '${1}0')
 //   - Out-of-range group references (e.g. '$1' when NumSubexp() == 0, or '$2'
-//     when NumSubexp() == 1, or '$10' when NumSubexp() < 10)
+//     when NumSubexp() == 1)
 //   - Unknown named group '${foo}' or unbraced '$foo'
 //   - Trailing bare '$' or unclosed '${'
 func validateXPathReplaceTemplate(repl, pattern string, re *regexp.Regexp) error {
@@ -295,7 +305,13 @@ func validateXPathReplaceTemplate(repl, pattern string, re *regexp.Regexp) error
 			if token == "" {
 				return fmt.Errorf("xpath replace() replacement %q has an empty '${}'", repl)
 			}
-			if isAllASCIIUnsignedDigits(token) {
+			if token[0] >= '0' && token[0] <= '9' {
+				if !isAllASCIIUnsignedDigits(token) {
+					return fmt.Errorf("xpath replace() replacement %q has invalid group reference ${%s}", repl, token)
+				}
+				if len(token) > 1 && token[0] == '0' {
+					return fmt.Errorf("xpath replace() replacement %q uses leading zero in numeric group reference ${%s} (use ${0} or a positive group index without leading zeros)", repl, token)
+				}
 				grp, err := strconv.Atoi(token)
 				if err != nil || grp > numSubexp {
 					return fmt.Errorf("xpath replace() replacement %q references capturing group ${%s}, but pattern %q has %d capturing group(s)", repl, token, pattern, numSubexp)
@@ -310,8 +326,21 @@ func validateXPathReplaceTemplate(repl, pattern string, re *regexp.Regexp) error
 				j++
 			}
 			digits := repl[i+1 : j]
-			grp, err := strconv.Atoi(digits)
-			if err != nil || grp > numSubexp {
+			if next == '0' {
+				if len(digits) > 1 {
+					return fmt.Errorf("xpath replace() replacement %q uses leading zero in numeric group reference $%s (use ${0}%s or a braced group index without leading zeros)", repl, digits, digits[1:])
+				}
+				if j < n && isASCIIIdentCont(repl[j]) {
+					return fmt.Errorf("xpath replace() replacement %q has unbraced \"$0\" followed by %q, which Go regexp expands as an unknown group name (use \"${0}\" before letters, digits, or '_')", repl, string(repl[j]))
+				}
+				i = j
+				continue
+			}
+			if len(digits) > 1 {
+				return fmt.Errorf("xpath replace() replacement %q uses unbraced multi-digit group reference $%s (use braced \"${%s}\" for capturing group %s, or \"${%c}%s\" for group %c followed by literal digits)", repl, digits, digits, digits, digits[0], digits[1:], digits[0])
+			}
+			grp := int(next - '0')
+			if grp > numSubexp {
 				return fmt.Errorf("xpath replace() replacement %q references capturing group $%s, but pattern %q has %d capturing group(s)", repl, digits, pattern, numSubexp)
 			}
 			i = j
@@ -323,6 +352,10 @@ func validateXPathReplaceTemplate(repl, pattern string, re *regexp.Regexp) error
 		}
 	}
 	return nil
+}
+
+func isASCIIIdentCont(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
 func isAllASCIIUnsignedDigits(s string) bool {
