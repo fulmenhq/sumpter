@@ -16,6 +16,7 @@ bin/
 
 # Dependencies
 vendor/
+third_party/
 
 # Go module cache (do not scan)
 .cache/

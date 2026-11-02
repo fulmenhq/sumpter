@@ -1133,6 +1133,53 @@ field_mappings:
 
 A **literal** trailing factor such as `* -1` was never affected.
 
+#### XPath union (`|`) document order and priority fallback
+
+Per XPath 1.0 (§3.3 and §4.2), the union operator `|` forms a single node-set
+whose proximity positions (`[1]`, `[2]`, `[last()]`) and `string()` coercion
+follow **document order**, not the order in which the union operands are
+written:
+
+- `(Alpha | Beta)[1]`, `(Beta | Alpha)[1]`, and `string(Beta | Alpha)` all
+  select the node that appears **first in the document**.
+- `(Alpha | Beta)[2]` and `(Beta | Alpha)[2]` select the second node in
+  document order, and a rooted `(//Alpha | //Beta)[last()]` selects the last
+  matching node in document order. (On the pinned `antchfx/xpath` v1.3.8
+  engine, prefer numeric indices like `[1]` / `[2]` on relative grouped unions
+  rather than `[position() = N]` or relative `(Alpha | Beta)[last()]`.)
+- An `array` field mapping over `Beta | Alpha` emits elements in document
+  order, deduplicating nodes selected by multiple branches.
+
+Do not rely on `(Preferred | Fallback)[1]` for priority fallback when
+`<Fallback>` can precede `<Preferred>` in the input. To express priority
+("use `Preferred` when present, otherwise `Fallback` regardless of element
+order"), either guard the fallback branch in XPath or move the choice to a
+Sumpter DSL `expression` field:
+
+```yaml
+field_mappings:
+  # Option 1: XPath guard — Fallback is selected only when Preferred is absent
+  - output_field: contact_email_xpath
+    xpath: "(PreferredEmail | FallbackEmail[not(../PreferredEmail)])[1]"
+    type: string
+
+  # Option 2: Extract both, decide in a DSL expression
+  - output_field: preferred_email
+    xpath: "PreferredEmail"
+    type: string
+    required: false
+    internal: true
+  - output_field: fallback_email
+    xpath: "FallbackEmail"
+    type: string
+    required: false
+    internal: true
+  - output_field: contact_email
+    expression: "preferred_email != nil ? preferred_email : fallback_email"
+    type: string
+```
+
+
 ### XML Namespace Binding
 
 The same logical vocabulary is often serialized in more than one namespace
