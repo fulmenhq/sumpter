@@ -384,6 +384,75 @@ func TestXPathUnionRecordMatchSelectorDocumentOrder(t *testing.T) {
 	})
 }
 
+// TestXPathUnionReverseAxisSingleOperandCaveat pins the documented engine
+// caveat on the vendored antchfx/xpath v1.3.8 + #178 implementation: a union
+// sorts into forward document order when both operands contribute at least one
+// distinct node, whereas a union where only a reverse-axis operand contributes
+// distinct nodes retains that reverse-axis evaluation order.
+func TestXPathUnionReverseAxisSingleOperandCaveat(t *testing.T) {
+	const xmlFixture = `<Ledger><Record><Alpha>A1</Alpha><Beta>B1</Beta><Gamma>G1</Gamma></Record></Ledger>`
+	doc, err := parseXMLDoc(strings.NewReader(xmlFixture))
+	if err != nil {
+		t.Fatalf("parseXMLDoc: %v", err)
+	}
+	gamma := findNode(doc, "//Gamma")
+	if gamma == nil {
+		t.Fatal("findNode //Gamma returned nil")
+	}
+
+	cases := []struct {
+		name string
+		expr string
+		want []string
+	}{
+		{
+			name: "reverse-axis-with-empty-right-retains-reverse-order",
+			expr: "preceding-sibling::* | Missing",
+			want: []string{"B1", "A1"},
+		},
+		{
+			name: "empty-left-with-reverse-axis-right-retains-reverse-order",
+			expr: "Missing | preceding-sibling::*",
+			want: []string{"B1", "A1"},
+		},
+		{
+			name: "reverse-axis-with-duplicate-only-right-retains-reverse-order",
+			expr: "preceding-sibling::* | ../Alpha",
+			want: []string{"B1", "A1"},
+		},
+		{
+			name: "reverse-axis-first-with-empty-right-selects-nearest-sibling",
+			expr: "(preceding-sibling::* | Missing)[1]",
+			want: []string{"B1"},
+		},
+		{
+			name: "reverse-axis-with-distinct-right-sorts-into-document-order",
+			expr: "preceding-sibling::* | .",
+			want: []string{"A1", "B1", "G1"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			xp, err := compileXPath(tc.expr, nil)
+			if err != nil {
+				t.Fatalf("compileXPath(%q): %v", tc.expr, err)
+			}
+			nodes, err := evaluateNodeSet(doc.Format(), gamma, xp, tc.expr)
+			if err != nil {
+				t.Fatalf("evaluateNodeSet(%q): %v", tc.expr, err)
+			}
+			got := make([]string, 0, len(nodes))
+			for _, n := range nodes {
+				got = append(got, n.Navigator().Value())
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("%s: got %v, want %v", tc.expr, got, tc.want)
+			}
+		})
+	}
+}
+
 func assertUnionRouteRecords(t *testing.T, route string, gotRecords []map[string]interface{}, wantRecords ...map[string]interface{}) {
 	t.Helper()
 	if len(gotRecords) != len(wantRecords) {

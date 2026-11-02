@@ -1135,20 +1135,39 @@ A **literal** trailing factor such as `* -1` was never affected.
 
 #### XPath union (`|`) document order and priority fallback
 
-Per XPath 1.0 (§3.3 and §4.2), the union operator `|` forms a single node-set
-whose proximity positions (`[1]`, `[2]`, `[last()]`) and `string()` coercion
-follow **document order**, not the order in which the union operands are
-written:
+Per XPath 1.0 (§3.3 and §4.2), the union operator `|` forms a single
+deduplicated node-set. For forward-axis union branches (and whenever both
+branches contribute at least one distinct node), proximity positions (`[1]`,
+`[2]`), `string()` coercion, and `array` field mappings follow **document
+order**, not the order in which the union operands are written:
 
 - `(Alpha | Beta)[1]`, `(Beta | Alpha)[1]`, and `string(Beta | Alpha)` all
   select the node that appears **first in the document**.
 - `(Alpha | Beta)[2]` and `(Beta | Alpha)[2]` select the second node in
   document order, and a rooted `(//Alpha | //Beta)[last()]` selects the last
-  matching node in document order. (On the pinned `antchfx/xpath` v1.3.8
-  engine, prefer numeric indices like `[1]` / `[2]` on relative grouped unions
-  rather than `[position() = N]` or relative `(Alpha | Beta)[last()]`.)
+  matching node in document order.
 - An `array` field mapping over `Beta | Alpha` emits elements in document
   order, deduplicating nodes selected by multiple branches.
+
+**Engine caveats on the pinned `antchfx/xpath` v1.3.8 union implementation:**
+
+- **Grouped union predicates:** Prefer numeric indices like `[1]` / `[2]` on
+  relative grouped unions (`(Alpha | Beta)[1]`) rather than `[position() = N]`
+  or relative `(Alpha | Beta)[last()]`.
+- **Reverse-axis single-operand unions:** The pinned engine sorts a union node-set
+  into forward document order only when the left operand matches at least one
+  node **and** the right operand contributes at least one distinct node. When
+  only one operand contributes distinct nodes (because the other operand matches
+  nothing or selects only duplicates of the first), the engine retains that
+  operand's evaluation order. For forward axes (`child::`, `descendant::`,
+  `following-sibling::`, `following::`, `@`), single-operand order is already
+  document order. For **reverse axes** (`preceding-sibling::`, `preceding::`,
+  `ancestor::`, `ancestor-or-self::`), a union where only the reverse-axis
+  branch contributes distinct nodes (for example `(preceding-sibling::* | Missing)[1]`
+  or `preceding-sibling::* | ../Alpha` when `../Alpha` is already in
+  `preceding-sibling::*`) retains reverse-axis order (`[nearest, farthest]`)
+  rather than sorting into forward document order. Do not use a union with a
+  dummy branch to force forward document order on a reverse axis.
 
 Do not rely on `(Preferred | Fallback)[1]` for priority fallback when
 `<Fallback>` can precede `<Preferred>` in the input. To express priority
