@@ -18,16 +18,25 @@ sumpter recipes init \
   --git-init
 ```
 
-`--git-init` initializes a standalone git repository inside the recipe directory
-so you can track and push it to your own remote independently of Sumpter.
+`recipes init` writes `README.md`, `recipe.yaml` (pointing at
+`signature/example-signature.yaml` and `extract/example-extract.yaml`), and
+empty `signature/`, `extract/`, `validation/`, `testdata/`, and `outputs/`
+directories (`--git-init` also initializes a standalone git repository inside
+the recipe directory so you can track and push it to your own remote
+independently of Sumpter).
+
+A finished workspace adds the signature and extract YAML files, sample inputs,
+and any optional `applicability/` or local `refdata/` assets:
 
 ```text
 widgetco-orders-recipe/
+├── README.md
 ├── recipe.yaml
 ├── signature/
 │   └── widgetco-orders-signature.yaml
 ├── extract/
 │   └── widgetco-orders-extract.yaml
+├── validation/
 ├── applicability/
 │   └── applicability.yaml          # optional
 ├── refdata/
@@ -101,8 +110,8 @@ processing:
      [document node model](../standards/document-node-model.md).
    - JSON has no attributes or namespaces: a JSON recipe writes `id` where an
      XML recipe writes `@id`.
-   - Numeric XPath evaluation uses IEEE 754 floating point; keep identifiers
-     above $2^{53}$ as `type: string`.
+   - Numeric XPath evaluation uses IEEE 754 floating point; identifiers above
+     2^53 need string mappings (`type: string`) and `value_text`.
 
 2. **Sumpter DSL** runs **after** top-level XPath fields and recipe parameters
    have been bound for a record.

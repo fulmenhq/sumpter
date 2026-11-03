@@ -51,7 +51,7 @@ sumpter extract files \
 
 - `--output-path`, `-o`: Output destination directory or `s3://` prefix
 - `--format`, `-f` / `--formats`: Output writer format (`json`, `ndjson`, `parquet`)
-- `--output-mode`: `per-input` (default) or `aggregate` (single rolling NDJSON stream across inputs; requires `--output-path` and a manifest)
+- `--output-mode`: `per-input` (default) or `aggregate` (single rolling NDJSON stream across inputs; requires `--output-path` and a provenance manifest — `--no-manifest` is refused)
 - `--parameter key=value`: Repeatable parameter injected into expression scope and emitted into `extract.data` (a JSON array of strings becomes a list parameter)
 - `--record-index`: Record index path for parallel indexed extraction (`--workers`, `--verify-index`, `--max-record-size-mb`)
 - `--continue-on-error`: Isolate recoverable per-file failures to `<output-path>/failures.json` and continue remaining inputs (requires `--output-path`; exits non-zero when any input fails)
