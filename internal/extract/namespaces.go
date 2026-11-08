@@ -22,7 +22,16 @@ import (
 //
 // The namespace URIs are inert match keys only; nothing here fetches, resolves,
 // or networks a URI.
-func compileXPath(expr string, nsMap map[string]string) (*xpath.Expr, error) {
+func compileXPath(expr string, nsMap map[string]string) (compiled *xpath.Expr, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			compiled = nil
+			err = fmt.Errorf("invalid XPath expression %q: %v", expr, r)
+		}
+	}()
+	if err := validateXPathContract(expr); err != nil {
+		return nil, err
+	}
 	if len(nsMap) == 0 {
 		return xpath.Compile(expr)
 	}

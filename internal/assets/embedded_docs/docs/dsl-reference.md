@@ -284,6 +284,32 @@ idempotent under the function contract: `mask_tail("XXXXefgh", 4)` returns
 cryptographic, not tokenization, and not hashing. Treat masked output as reduced
 fidelity display data, not as a security boundary.
 
+#### XPath Field-Mapping Functions vs. Sumpter DSL
+
+Before Sumpter DSL `expression` mappings run, `xpath` mappings can evaluate the
+pinned XPath engine's promised string, coercion, and regular-expression
+functions (`string`, `concat`, `starts-with`, `ends-with`, `contains`,
+`substring-before`, `substring-after`, `substring`, `string-length`,
+`normalize-space`, `translate`, `lower-case`, `matches`, `replace`, `number`,
+and `boolean`).
+
+- Use **XPath functions** inside `match_selectors`, `applicability`, XPath
+  predicates (for example `number(replace(normalize-space(Amount[matches(normalize-space(.), '^-?[0-9]+(\\.[0-9]+)?$')]), '^$', '0'))`),
+  and nested `item_mapping` / `polymorphic_mapping` fields (which do not evaluate
+  Sumpter DSL expressions).
+- Use **Sumpter DSL `expression` functions** on top-level scalar fields when you
+  need `upper(...)` (not supported in the pinned XPath engine), rune-aware
+  Unicode codepoint length (`string_length`) or visual masking (`mask_tail`,
+  `mask_middle`), parameter-backed set tests (`starts_with_any`, `value_in`),
+  external reference tables (`in_reference`, `lookup_reference`), or ternary
+  (`? :`) defaulting (including the two-step guard against XPath `number()`
+  `NaN` coercion).
+
+See [XPath string and regular-expression function contract](extract-workflow.md#xpath-string-and-regular-expression-function-contract)
+and [XPath numeric coercion and `NaN` guard](extract-workflow.md#xpath-numeric-coercion-and-nan-guard)
+in the extract workflow guide for the full function matrix, load-time `matches`
+/ `replace` validation rules, and engine caveats.
+
 ### Reference Table Functions
 
 These resolve a record field against an external **reference table** declared in

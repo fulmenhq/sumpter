@@ -1,0 +1,96 @@
+{
+  "records": [
+    {
+      "_validation": {
+        "accumulations": {
+          "accepted_amount": 500,
+          "accepted_count": 2,
+          "order_count": 4,
+          "total_amount": 640
+        },
+        "aggregations": {
+          "non_accepted_amount": 140,
+          "non_accepted_count": 2
+        },
+        "array_path": "orders",
+        "expression_language": "sumpter-dsl",
+        "placement": "footer",
+        "quality_summary": {
+          "errors": 0,
+          "fatals": 0,
+          "passed": 1,
+          "total_checks": 1,
+          "warnings": 0
+        },
+        "reconciliations": [],
+        "record_count": 4,
+        "validations": [
+          {
+            "message": "",
+            "name": "has_accepted_orders",
+            "result": "pass",
+            "severity": "error",
+            "value": true
+          }
+        ]
+      },
+      "extract": {
+        "data": {
+          "accepted_orders": 2,
+          "batch_id": "BATCH-2026-11",
+          "held_orders": 1,
+          "orders": [
+            {
+              "amount": 320,
+              "order_id": "ORD-7001",
+              "outcome": "accepted"
+            },
+            {
+              "amount": 180,
+              "order_id": "ORD-7002",
+              "outcome": "accepted"
+            },
+            {
+              "amount": 95,
+              "order_id": "ORD-7003",
+              "outcome": "held"
+            },
+            {
+              "amount": 45,
+              "order_id": "ORD-7004",
+              "outcome": "rejected"
+            }
+          ],
+          "total_orders": 4
+        },
+        "summary": {
+          "outcome_breakdown": {
+            "components": [
+              {
+                "label": "Accepted",
+                "name": "accepted",
+                "share": 0.5,
+                "value": 2
+              },
+              {
+                "label": "Held",
+                "name": "held",
+                "share": 0.25,
+                "value": 1
+              },
+              {
+                "label": "Rejected or Other",
+                "name": "other",
+                "share": 0.25,
+                "value": 1
+              }
+            ],
+            "format": "count",
+            "label": "Order Outcome Breakdown",
+            "total": 4
+          }
+        }
+      }
+    }
+  ]
+}

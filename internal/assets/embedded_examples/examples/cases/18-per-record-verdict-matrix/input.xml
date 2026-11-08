@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WidgetCoData>
+  <Orders>
+    <Order id="ORD-6001">
+      <SKU>NM_004500.2</SKU>
+      <Amount>250.00</Amount>
+      <QualityScore>95</QualityScore>
+    </Order>
+    <Order id="ORD-6002">
+      <SKU>NR_008900.1</SKU>
+      <Amount>1850.00</Amount>
+      <QualityScore>88</QualityScore>
+    </Order>
+    <Order id="ORD-6003">
+      <SKU>ZZ_999999.0</SKU>
+      <Amount>75.00</Amount>
+      <QualityScore>40</QualityScore>
+    </Order>
+  </Orders>
+</WidgetCoData>

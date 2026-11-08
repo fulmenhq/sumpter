@@ -1,0 +1,95 @@
+record_type: widget_batch_outcome_summary
+match_selectors:
+  - xpath: /WidgetCoData
+field_mappings:
+  - output_field: batch_id
+    xpath: "@batchId"
+    type: string
+  - output_field: total_orders
+    xpath: "count(Orders/Order)"
+    type: integer
+  - output_field: accepted_orders
+    xpath: "count(Orders/Order[@outcome='accepted'])"
+    type: integer
+  - output_field: held_orders
+    xpath: "count(Orders/Order[@outcome='held'])"
+    type: integer
+  - output_field: orders
+    xpath: Orders/Order
+    type: array
+    item_mapping:
+      - output_field: order_id
+        xpath: "@id"
+        type: string
+      - output_field: outcome
+        xpath: "@outcome"
+        type: string
+      - output_field: amount
+        xpath: "Amount"
+        type: number
+summaries:
+  - name: outcome_breakdown
+    label: Order Outcome Breakdown
+    format: count
+    total:
+      expression: total_orders
+    components:
+      - name: accepted
+        label: Accepted
+        expression: accepted_orders
+      - name: held
+        label: Held
+        expression: held_orders
+      - name: other
+        label: Rejected or Other
+        remainder: true
+validation_metadata:
+  enable: true
+  expression_language: sumpter-dsl
+  array_path: orders
+  failure_policy:
+    fail_on_fatal: true
+    fail_on_error: true
+    halt_on_first_fatal: true
+  accumulations:
+    - name: order_count
+      operation: count
+    - name: accepted_count
+      operation: count
+      filter: 'outcome == "accepted"'
+    - name: accepted_amount
+      operation: sum
+      field: amount
+      filter: 'outcome == "accepted"'
+    - name: total_amount
+      operation: sum
+      field: amount
+  aggregations:
+    - name: non_accepted_count
+      expression: order_count - accepted_count
+    - name: non_accepted_amount
+      expression: total_amount - accepted_amount
+  validations:
+    - name: has_accepted_orders
+      rule: accepted_count > 0
+      severity: error
+      message: "batch must contain at least one accepted order"
+output_schema:
+  type: object
+  properties:
+    batch_id:
+      type: string
+    total_orders:
+      type: integer
+    accepted_orders:
+      type: integer
+    held_orders:
+      type: integer
+    orders:
+      type: array
+  required:
+    - batch_id
+    - total_orders
+    - accepted_orders
+    - held_orders
+    - orders

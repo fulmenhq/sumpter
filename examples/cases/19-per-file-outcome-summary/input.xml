@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WidgetCoData batchId="BATCH-2026-11">
+  <Orders>
+    <Order id="ORD-7001" outcome="accepted">
+      <Amount>320.00</Amount>
+    </Order>
+    <Order id="ORD-7002" outcome="accepted">
+      <Amount>180.00</Amount>
+    </Order>
+    <Order id="ORD-7003" outcome="held">
+      <Amount>95.00</Amount>
+    </Order>
+    <Order id="ORD-7004" outcome="rejected">
+      <Amount>45.00</Amount>
+    </Order>
+  </Orders>
+</WidgetCoData>

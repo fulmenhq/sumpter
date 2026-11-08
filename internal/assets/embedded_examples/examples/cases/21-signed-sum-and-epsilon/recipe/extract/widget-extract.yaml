@@ -1,0 +1,64 @@
+record_type: widget_settlement_reconciliation
+match_selectors:
+  - xpath: //Settlement
+field_mappings:
+  - output_field: settlement_id
+    xpath: "@id"
+    type: string
+  - output_field: stated_net
+    xpath: "StatedNet"
+    type: number
+  - output_field: computed_net
+    xpath: "round((sum(Entries/Entry[@direction='credit']/Amount) - sum(Entries/Entry[@direction='debit']/Amount)) * 100) div 100"
+    type: number
+  - output_field: within_epsilon
+    expression: "abs(computed_net - stated_net) <= 0.01"
+    type: boolean
+  - output_field: entries
+    xpath: Entries/Entry
+    type: array
+    item_mapping:
+      - output_field: entry_id
+        xpath: "@id"
+        type: string
+      - output_field: direction
+        xpath: "@direction"
+        type: string
+      - output_field: signed_amount
+        xpath: "(1 - 2*count(@direction[.='debit'])) * number(Amount)"
+        type: number
+validation_metadata:
+  enable: true
+  expression_language: sumpter-dsl
+  array_path: entries
+  accumulations:
+    - name: net_entry_total
+      operation: sum
+      field: signed_amount
+  reconciliations:
+    - name: settlement_net_reconciliation
+      base_expression: stated_net
+      tolerance: 0.01
+      components:
+        - name: signed_entries
+          description: Sum of signed credit and debit entries
+          expression: net_entry_total
+output_schema:
+  type: object
+  properties:
+    settlement_id:
+      type: string
+    stated_net:
+      type: number
+    computed_net:
+      type: number
+    within_epsilon:
+      type: boolean
+    entries:
+      type: array
+  required:
+    - settlement_id
+    - stated_net
+    - computed_net
+    - within_epsilon
+    - entries

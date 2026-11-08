@@ -1,0 +1,34 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "amount": 250,
+          "order_id": "ORD-6001",
+          "sku": "NM_004500.2",
+          "verdict": "AUTO_APPROVE"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "amount": 1850,
+          "order_id": "ORD-6002",
+          "sku": "NR_008900.1",
+          "verdict": "MANUAL_REVIEW"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "amount": 75,
+          "order_id": "ORD-6003",
+          "sku": "ZZ_999999.0",
+          "verdict": "REJECT_OUT_OF_BAND"
+        }
+      }
+    }
+  ]
+}

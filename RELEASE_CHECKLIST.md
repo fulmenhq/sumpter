@@ -21,10 +21,10 @@ Standard checklist for sumpter releases to ensure consistency and quality.
 - [ ] Manual smoke tests completed (against `dist/sumpter` after `make build`):
   - [ ] `./dist/sumpter version` — version + build metadata
   - [ ] `./dist/sumpter --help` — CLI surface intact
-  - [ ] `./dist/sumpter doctor` — environment + dependency checks
+  - [ ] `./dist/sumpter doctor check` — environment + dependency checks
   - [ ] `./dist/sumpter envinfo` — runtime introspection
-  - [ ] `./dist/sumpter inspect --file <small-sample.xml>` — streaming inspect path
-  - [ ] `./dist/sumpter validate --recipe <sample-recipe.yaml>` — recipe load path
+  - [ ] `./dist/sumpter inspect <small-sample.xml>` — streaming inspect path
+  - [ ] `./dist/sumpter recipes run extract <sample-recipe-dir> --dry-run` — recipe load + dry-run path
   - [ ] `./dist/sumpter docs list` — embedded docs intact post-build
 
 ### Documentation

@@ -1,0 +1,8 @@
+signature_id: widgetco-data
+name: WidgetCo Data
+match_patterns:
+  - pattern_id: widgetco-root
+    name: WidgetCoData root
+    selector: /WidgetCoData
+    weight: 1
+confidence_threshold: 1

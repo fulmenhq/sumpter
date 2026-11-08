@@ -1,0 +1,45 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "doc_order_email": "alpha-first@widget.example",
+          "lines": [
+            {
+              "line_no": 1,
+              "parent_order_id": "ORD-8001",
+              "sku": "W-10"
+            },
+            {
+              "line_no": 2,
+              "parent_order_id": "ORD-8001",
+              "sku": "W-20"
+            }
+          ],
+          "order_id": "ORD-8001",
+          "prev_order_id": "",
+          "priority_email": "beta-preferred@widget.example",
+          "section_code": "SEC-NORTH"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "doc_order_email": "alpha-only@widget.example",
+          "lines": [
+            {
+              "line_no": 1,
+              "parent_order_id": "ORD-8002",
+              "sku": "W-30"
+            }
+          ],
+          "order_id": "ORD-8002",
+          "prev_order_id": "ORD-8001",
+          "priority_email": "alpha-only@widget.example",
+          "section_code": "SEC-NORTH"
+        }
+      }
+    }
+  ]
+}

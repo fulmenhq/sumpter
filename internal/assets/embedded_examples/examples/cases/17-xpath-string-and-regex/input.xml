@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WidgetCoData>
+  <Orders>
+    <Order id="ORD-5001">
+      <SKU>NM_001234.5</SKU>
+      <RawTitle>  Widget   Pro-X  </RawTitle>
+      <FileName>invoice-5001.xml</FileName>
+      <QuotedAmount>  149.95  </QuotedAmount>
+      <Lines>
+        <OrderLine code="LN-01/A" note="  rush-item  "/>
+        <OrderLine code="LN-02/B" note="standard"/>
+      </Lines>
+    </Order>
+    <Order id="ORD-5002">
+      <SKU>XP_998877.1</SKU>
+      <RawTitle>GearKit Basic</RawTitle>
+      <FileName>quote-5002.txt</FileName>
+      <QuotedAmount>TBD</QuotedAmount>
+      <Lines>
+        <OrderLine code="LN-10/C" note="backorder"/>
+      </Lines>
+    </Order>
+  </Orders>
+</WidgetCoData>

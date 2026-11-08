@@ -1,0 +1,59 @@
+{
+  "records": [
+    {
+      "extract": {
+        "data": {
+          "is_curated_sku": true,
+          "is_nm_sku": true,
+          "is_xml_file": true,
+          "lines": [
+            {
+              "line_prefix": "LN-01",
+              "line_slot": "A",
+              "note_clean": "rush-item"
+            },
+            {
+              "line_prefix": "LN-02",
+              "line_slot": "B",
+              "note_clean": "standard"
+            }
+          ],
+          "order_id": "ORD-5001",
+          "quoted_amount_cents": 14995,
+          "sku_compact": "NM-0012345",
+          "sku_lower": "nm_001234.5",
+          "sku_prefix": "NM",
+          "sku_stem": "NM_001234",
+          "sku_version": "5",
+          "title_len": 12,
+          "title_norm": "Widget Pro-X"
+        }
+      }
+    },
+    {
+      "extract": {
+        "data": {
+          "is_curated_sku": false,
+          "is_nm_sku": false,
+          "is_xml_file": false,
+          "lines": [
+            {
+              "line_prefix": "LN-10",
+              "line_slot": "C",
+              "note_clean": "backorder"
+            }
+          ],
+          "order_id": "ORD-5002",
+          "quoted_amount_cents": 0,
+          "sku_compact": "XP-9988771",
+          "sku_lower": "xp_998877.1",
+          "sku_prefix": "XP",
+          "sku_stem": "XP_998877",
+          "sku_version": "1",
+          "title_len": 13,
+          "title_norm": "GearKit Basic"
+        }
+      }
+    }
+  ]
+}
