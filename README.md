@@ -132,13 +132,15 @@ Every release publishes raw binaries for five OS/arch targets — each with `SHA
 | macOS   | —                           | `sumpter-darwin-arm64`      |
 | Windows | `sumpter-windows-amd64.exe` | `sumpter-windows-arm64.exe` |
 
-Download the binary for your platform, verify it against the published checksums, and put it on your `PATH`. Or install the latest tagged version with Go:
+Download the binary for your platform, verify it against the published checksums, and put it on your `PATH`. Or build from a source checkout (`go install github.com/fulmenhq/sumpter/cmd/sumpter@<version>` is not supported while `go.mod` carries `replace` or `exclude` directives):
 
 ```bash
-go install github.com/fulmenhq/sumpter/cmd/sumpter@latest
+git clone https://github.com/fulmenhq/sumpter.git
+cd sumpter
+make build
 ```
 
-Intel Macs: build from source — `go install github.com/fulmenhq/sumpter/cmd/sumpter@latest` (or `make build`) produces a native `darwin-amd64` binary. The `darwin-amd64` prebuilt and the Homebrew formula were retired/scoped to arm64 in v0.1.10. The prebuilt binaries are CGO-free (the seekable-zstd compressed-index path needs a source build with `CGO_ENABLED=1 -tags seekablezstd`).
+Intel Macs: build from source (`git clone` + `make build` produces a native `darwin-amd64` binary in `dist/sumpter`). The `darwin-amd64` prebuilt and the Homebrew formula were retired/scoped to arm64 in v0.1.10. The prebuilt binaries are CGO-free (the seekable-zstd compressed-index path needs a source build with `CGO_ENABLED=1 -tags seekablezstd`).
 
 **Requirements**
 

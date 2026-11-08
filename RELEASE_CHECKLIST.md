@@ -130,7 +130,7 @@ For one-off invocations without sourcing the env file, pass `RELEASE_TAG=v<versi
 
 ### Distribution
 
-- [ ] Verify `go install github.com/fulmenhq/sumpter/cmd/sumpter@v<version>` works
+- [ ] Verify a fresh tagged checkout builds cleanly (`git clone --branch v<version> https://github.com/fulmenhq/sumpter.git && cd sumpter && make build`; note that `go install github.com/fulmenhq/sumpter/cmd/sumpter@v<version>` is unsupported while `go.mod` carries `replace` or `exclude` directives)
 - [ ] Test CLI commands work correctly
 
 **Package managers (Homebrew + Scoop)** — run after the release is published; the
