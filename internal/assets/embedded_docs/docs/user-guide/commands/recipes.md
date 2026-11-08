@@ -1,6 +1,6 @@
 # Recipes Command
 
-The `recipes` command manages recipe workspaces and orchestrates recipe-driven automation such as SEC EDGAR acquisition and XML extraction.
+The `recipes` command manages recipe workspaces and orchestrates recipe-driven automation such as SEC EDGAR acquisition and XML extraction. For workspace layout, path bases, and how XPath and the Sumpter DSL fit together when keeping recipes outside this repository, see [External Recipe Workspaces](../recipes.md).
 
 ## Usage
 

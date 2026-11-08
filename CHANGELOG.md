@@ -8,6 +8,10 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+### Added
+
+- **External recipe workspace and extract command guides** — embedded user-guide pages (`docs/user-guide/recipes.md` and `docs/user-guide/commands/extract.md`) covering external recipe directory layout, path resolution bases, `recipes run extract` versus `extract files`, and the boundary between XPath and the Sumpter DSL.
+
 ### Fixed
 
 - **XPath union (`|`) document order** — union expressions (`A | B`, `(A | B)[1]`, `string(A | B)`, and record-boundary `match_selectors` unions on the DOM route) now return deduplicated nodes in source document order rather than left-to-right operand order across DOM, indexed parallel, and streaming routes (with documented caveats for relative grouped `[last()]`/`[position() = N]` and single-operand reverse-axis unions on the pinned `antchfx/xpath` engine). See [XPath union (`|`) document order and priority fallback](docs/extract-workflow.md#xpath-union--document-order-and-priority-fallback).
