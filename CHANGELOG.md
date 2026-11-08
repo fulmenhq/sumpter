@@ -8,6 +8,10 @@ Retention policy: the latest 10 versions live inline; older versions are archive
 
 ## [Unreleased]
 
+### Fixed
+
+- **XPath union (`|`) document order** — union expressions (`A | B`, `(A | B)[1]`, `string(A | B)`, and record-boundary `match_selectors` unions on the DOM route) now return deduplicated nodes in source document order rather than left-to-right operand order across DOM, indexed parallel, and streaming routes (with documented caveats for relative grouped `[last()]`/`[position() = N]` and single-operand reverse-axis unions on the pinned `antchfx/xpath` engine). See [XPath union (`|`) document order and priority fallback](docs/extract-workflow.md#xpath-union--document-order-and-priority-fallback).
+
 ## [0.4.1] - 2026-10-30
 
 ### Added

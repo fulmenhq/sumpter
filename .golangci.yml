@@ -3,6 +3,9 @@ run:
   timeout: 3m
   tests: true
 linters:
+  exclusions:
+    paths:
+      - third_party
   enable:
     - govet
     - staticcheck

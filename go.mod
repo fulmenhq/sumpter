@@ -77,3 +77,11 @@ require (
 )
 
 exclude github.com/envoyproxy/go-control-plane v0.9.4
+
+// Interim reviewed pin for xpath-union-document-order (union node-set document order).
+// Base tag: antchfx/xpath v1.3.8 (d666d4b6f3b570811b144144414971401472b83c)
+// plus merged upstream PR #178 (286597fe456d52f4a1b389e47852c3dff7a96ed4).
+// xmlquery remains v1.5.1 (no bump).
+// Remove replace + third_party when an upstream xpath release tag with #178 is adopted.
+// See third_party/antchfx-xpath/SUMPTER-PIN-README.md.
+replace github.com/antchfx/xpath => ./third_party/antchfx-xpath
